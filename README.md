@@ -61,7 +61,7 @@ This is a beta release. That means bugs are likely, crashes could occur, randomi
 - Button prompts for your controller: Xbox or PlayStation icons in the game's own UI and text when SDL reports
   that controller (or pick Nintendo / Xbox / PlayStation yourself); the icons follow your controller remapping.
 - Optional 360-degree movement, blur removal and a hidden Hero Mode icon.
-- Apple MetalFX upscaler on macOS (the default there).
+- Apple MetalFX upscaler on macOS (balanced by default at 4K, with a full-quality option).
 - Internal resolution adjustments: raise or lower the resolution in steps, match the display, or use dynamic resolution. Combined with the MetalFX upscaler, even a MacBook Air should handle this easily with the right settings. Bilinear upscaling is the only option on Windows currently.
 
 **Randomizer**

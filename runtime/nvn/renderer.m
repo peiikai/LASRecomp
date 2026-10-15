@@ -308,20 +308,32 @@ void renderer_wait_seq(uint64_t seq) {
 // Texture view cache: views are made per bind otherwise (an allocation per draw). Keyed by the base texture and
 // the view parameters; a cached view retains its base, so a key's base pointer can't be reused while cached.
 #define VIEW_TAB 16384
-static struct { uint64_t key; void *base; void *view; } view_tab[VIEW_TAB];
+static struct { uint64_t key; void *base; void *view; int active_pos; } view_tab[VIEW_TAB];
+static uint16_t active_views[VIEW_TAB];
+static int active_view_count;
+
+static void view_remove(uint32_t slot) {
+    if (!view_tab[slot].view) return;
+    CFRelease(view_tab[slot].view);
+    int pos = view_tab[slot].active_pos;
+    uint16_t moved = active_views[--active_view_count];
+    active_views[pos] = moved;
+    view_tab[moved].active_pos = pos;
+    view_tab[slot].view = NULL;
+    view_tab[slot].base = NULL;
+    view_tab[slot].key = ~0ull;
+    g_views_live--;
+}
 
 // Views keep their base texture alive: when the game frees a texture its views must go too (they piled up -
 // render targets of a 32:9 window held long after the game dropped them - and a new texture at the same address
 // could get a stale view). Entries are tombstoned (key ~0) so probe chains stay intact.
 static void views_forget(void *base) {
-    for (int i = 0; i < VIEW_TAB; i++)
-        if (view_tab[i].base == base && view_tab[i].view) {
-            CFRelease(view_tab[i].view);
-            view_tab[i].view = NULL;
-            view_tab[i].base = NULL;
-            view_tab[i].key = ~0ull;
-            g_views_live--;
-        }
+    for (int i = 0; i < active_view_count; ) {
+        uint32_t slot = active_views[i];
+        if (view_tab[slot].base == base) view_remove(slot);
+        else i++;
+    }
 }
 
 static id<MTLTexture> view_cached(id<MTLTexture> base, uint64_t params, id<MTLTexture> (^make)(void)) {
@@ -352,7 +364,9 @@ static id<MTLTexture> view_cached(id<MTLTexture> base, uint64_t params, id<MTLTe
                 (__bridge void *)base, base.label.UTF8String, (unsigned long)base.width, (unsigned long)base.height,
                 (unsigned long)base.pixelFormat, (unsigned long)base.textureType, (unsigned long long)params, g_views_live);
     }
-    if (view_tab[slot].view) { CFRelease(view_tab[slot].view); g_views_live--; }  // evict (8 probes all taken)
+    if (view_tab[slot].view) view_remove(slot);  // evict (8 probes all taken)
+    view_tab[slot].active_pos = active_view_count;
+    active_views[active_view_count++] = (uint16_t)slot;
     g_views_live++;
     view_tab[slot].key = k;
     view_tab[slot].base = (__bridge void *)base;
@@ -2670,6 +2684,7 @@ void renderer_reset(void) {
         view_tab[i].key = 0;
     }
     g_views_live = 0;
+    active_view_count = 0;
     memset(prog_tab, 0, sizeof prog_tab);
     memset(pipe_tab, 0, sizeof pipe_tab);
     [cache removeAllObjects];

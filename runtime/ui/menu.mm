@@ -472,22 +472,31 @@ static void tab_display(void) {
     }
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__
-        static const char *ups[] = {"Bilinear", "MetalFX"};
-        const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. MetalFX: Apple's "
-                         "upscaler, sharper. Bilinear: plain and soft.";
+        static const char *ups[] = {"Bilinear", "MetalFX (Balanced)", "MetalFX (Quality)"};
+        const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. Balanced: "
+                         "faster on 4K displays. Quality: full-resolution MetalFX output. Bilinear: plain and soft.";
 #else
         static const char *ups[] = {"Bilinear", "AMD FSR 1"};
         const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
                          "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.";
 #endif
-        int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
+        int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 :
+#ifdef __APPLE__
+                 g_settings.upscaler == UPSCALE_METALFX_FULL ? 2 :
+#endif
+                 1;
         char udm[512];
         if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
             snprintf(udm, sizeof udm, "%s\n\nNot used at Match display: the game already renders at your display's resolution.", ud);
             ud = udm;
             opt_disable_next();
         }
-        if (opt_choice("Upscaler", &ui, ups, 2, 1, ud)) g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR;
+        if (opt_choice("Upscaler", &ui, ups, sizeof ups / sizeof ups[0], 1, ud))
+#ifdef __APPLE__
+            g_settings.upscaler = ui == 2 ? UPSCALE_METALFX_FULL : ui ? UPSCALE_METALFX : UPSCALE_BILINEAR;
+#else
+            g_settings.upscaler = ui ? UPSCALE_FSR1 : UPSCALE_BILINEAR;
+#endif
     }
     static const char *aa[] = {"Off", "SMAA"};
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,

@@ -192,8 +192,9 @@ static void dump_largest_textures(const char *why) {
         TexBackend *b = g_reg[i] ? (TexBackend *)g_reg[i]->backend : NULL;
         if (!b || !b->tex) continue;
         uint64_t a = b->tex.allocatedSize;
-        int k = n < 16 ? n++ : 15;
-        if (k == 15 && n == 16 && a <= sz[15]) continue;
+        int k;
+        if (n < 16) k = n++;
+        else { if (a <= sz[15]) continue; k = 15; }
         while (k > 0 && sz[k - 1] < a) { sz[k] = sz[k - 1]; idx[k] = idx[k - 1]; k--; }
         sz[k] = a; idx[k] = i;
     }
@@ -474,12 +475,21 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
     uint32_t layers = t->layout.layers ? t->layout.layers : 1;
     uint64_t layer_size = tegra_layer_size(&t->layout);
     bool linear = (t->flags & 0x10) != 0;
+    bool upload_failed = false;
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < t->layout.levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
             uint32_t row = l.wb * fi->bpb;
             uint64_t sz = (uint64_t)row * l.hb * l.d;
-            uint8_t *lin = malloc(sz);
+            bool expand_rgb = mf.expand_rgb && fi->bpb == 3;
+            uint32_t out_row = expand_rgb ? l.wb * 4 : row;
+            uint64_t out_sz = (uint64_t)out_row * l.hb * l.d;
+            id<MTLBuffer> staging = [dev newBufferWithLength:out_sz options:MTLResourceStorageModeShared];
+            if (!staging) { LOG("[metal] texture upload buffer allocation failed (%llu bytes)\n", (unsigned long long)out_sz); upload_failed = true; continue; }
+            // Most formats can be deswizzled straight into the Metal upload buffer. RGB8 still needs
+            // an intermediate because it must be expanded to RGBA8 after texture patches run.
+            uint8_t *lin = expand_rgb ? malloc(sz) : staging.contents;
+            if (!lin) { LOG("[metal] RGB texture conversion allocation failed (%llu bytes)\n", (unsigned long long)sz); upload_failed = true; continue; }
             const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
             if (linear) {
                 for (uint32_t y = 0; y < l.hb; y++) memcpy(lin + (uint64_t)y * row, src + y * t->stride, row);
@@ -487,8 +497,6 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
                 tegra_deswizzle(src, lin, l.wb, l.hb, l.d, fi->bpb, l.block_height_log2, l.block_depth_log2);
             }
             if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, lin, l.w, l.h, row);
-            uint8_t *data = lin;
-            uint32_t out_row = row;
             static int bc5log;  // LARECOMP_LOG_BC5: endpoint bytes of BC5 (0x4B/0x4C) textures (unorm ~128 vs snorm ~0)
             if ((t->format == 0x4B || t->format == 0x4C) && lv == 0 && bc5log < 12 && getenv("LARECOMP_LOG_BC5")) {
                 bc5log++;
@@ -497,20 +505,15 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
                 LOG("[bc5] fmt %#x %ux%u endpoint0 quartiles (0-63,64-127,128-191,192-255): %d %d %d %d\n", t->format, l.w, l.h,
                     hist[0], hist[1], hist[2], hist[3]);
             }
-            if (mf.expand_rgb && fi->bpb == 3) {  // RGB8 -> RGBA8
+            if (expand_rgb) {  // RGB8 -> RGBA8
                 uint64_t n = (uint64_t)l.wb * l.hb * l.d;
-                data = malloc(n * 4);
+                uint8_t *data = staging.contents;
                 for (uint64_t i = 0; i < n; i++) {
                     data[i * 4] = lin[i * 3]; data[i * 4 + 1] = lin[i * 3 + 1]; data[i * 4 + 2] = lin[i * 3 + 2];
                     data[i * 4 + 3] = 255;
                 }
-                out_row = l.wb * 4;
                 free(lin);
-                lin = data;
             }
-            uint64_t out_sz = (uint64_t)out_row * l.hb * l.d;
-            id<MTLBuffer> staging = [dev newBufferWithBytes:data length:out_sz options:MTLResourceStorageModeShared];
-            free(lin);
             // the copy stays inside the texture's level: one allocated at the internal resolution (16:9, render
             // target sized - the save slots' screenshots on the title screen) can still be filled from the CPU, and its
             // full-size data overran the scaled texture (a GPU fault on Windows: runtime/nvn/vulkan/textures.c)
@@ -523,6 +526,7 @@ static void upload_texture(NvnTexture *t, TexBackend *b, id<MTLBlitCommandEncode
         }
     }
     if (own_cb) { [blit endEncoding]; [own_cb commit]; }
+    if (upload_failed) b->uploaded = false;  // retry levels that could not be staged
 }
 
 id<MTLTexture> renderer_texture(NvnTexture *t, id<MTLBlitCommandEncoder> blit, bool for_render) {
@@ -668,7 +672,7 @@ static NSUInteger g_fx_iw, g_fx_ih, g_fx_ow, g_fx_oh;
 static MTLPixelFormat g_fx_fmt;
 static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in, double ow_d, double oh_d) {
     (void)cb;
-    if (g_settings.upscaler != UPSCALE_METALFX) return nil;
+    if (g_settings.upscaler != UPSCALE_METALFX && g_settings.upscaler != UPSCALE_METALFX_FULL) return nil;
     static int supported = -1;
     if (supported < 0) {
         supported = [MTLFXSpatialScalerDescriptor supportsDevice:dev] ? 1 : 0;
@@ -679,6 +683,13 @@ static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in
     if (ow <= in.width + 1 && oh <= in.height + 1) return nil;  // not an upscale: plain sampling is right
     if (ow > 16384) ow = 16384;
     if (oh > 16384) oh = 16384;
+    // Full 4K MetalFX output dominates the frame on an 8 GB M1. In balanced mode, upscale
+    // to 75% of the output size, then let the present pass finish the last stretch. At 1440p
+    // and below, keep the full MetalFX output because its cost is much lower.
+    if (g_settings.upscaler == UPSCALE_METALFX && (uint64_t)ow * oh > 2560ull * 1440) {
+        double factor = fmax(0.75, fmax((double)in.width / ow, (double)in.height / oh));
+        if (factor < 1.0) { ow = (NSUInteger)lround(ow * factor); oh = (NSUInteger)lround(oh * factor); }
+    }
     if (!g_fx || g_fx_iw != in.width || g_fx_ih != in.height || g_fx_ow != ow || g_fx_oh != oh || g_fx_fmt != in.pixelFormat) {
         MTLFXSpatialScalerDescriptor *d = [MTLFXSpatialScalerDescriptor new];
         d.inputWidth = in.width; d.inputHeight = in.height;
@@ -968,12 +979,6 @@ void backend_present(NvnTexture *t) {
         }
         if (!drawable) return;
         id<MTLCommandBuffer> cb = [queue commandBuffer];
-        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
-        rp.colorAttachments[0].texture = drawable.texture;
-        rp.colorAttachments[0].loadAction = MTLLoadActionClear;
-        rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
-        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-        id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
         // Next frame's render resolution follows the window: the 1920x1080 image scaled to fit.
         double dw = drawable.texture.width, dh = drawable.texture.height;
         extern void widescreen_frame_end(uint64_t frame);
@@ -1004,33 +1009,26 @@ void backend_present(NvnTexture *t) {
             psx = sx, psy = sy, pdw = dw, pdh = dh;
         }
         renderer_set_scale((float)sx, (float)sy);
+        id<MTLTexture> src = nil;
         if (b && b->tex) {
-            id<MTLTexture> src = raw_view(b->tex);
+            src = raw_view(b->tex);
             // SMAA (Video tab "Anti-aliasing"): first, at the game image's size (MetalFX then upscales its result)
-            if (g_settings.antialias == AA_SMAA) {
-                [enc endEncoding];
-                src = smaa_encode(cb, src);
-                MTLRenderPassDescriptor *rp2 = [MTLRenderPassDescriptor renderPassDescriptor];
-                rp2.colorAttachments[0].texture = drawable.texture;
-                rp2.colorAttachments[0].loadAction = MTLLoadActionLoad;
-                rp2.colorAttachments[0].storeAction = MTLStoreActionStore;
-                enc = [cb renderCommandEncoderWithDescriptor:rp2];
-            }
+            if (g_settings.antialias == AA_SMAA) src = smaa_encode(cb, src);
             // MetalFX (Video tab "Upscaler"): when the game image is smaller than its place in the window, Apple's
             // spatial upscaler brings it to the window's size first (the whole image, so the interior crop below
-            // still applies); the present pass then samples it about 1:1. Its own pass: the drawable's pass is
-            // ended and resumed (load) around it.
+            // still applies); the present pass then samples it about 1:1.
             id<MTLTexture> up = metalfx_upscale(cb, src, vw / crop[2], vh / crop[3]);
-            if (up) {
-                [enc endEncoding];
-                up = metalfx_encode(cb, src);
-                MTLRenderPassDescriptor *rp2 = [MTLRenderPassDescriptor renderPassDescriptor];
-                rp2.colorAttachments[0].texture = drawable.texture;
-                rp2.colorAttachments[0].loadAction = MTLLoadActionLoad;
-                rp2.colorAttachments[0].storeAction = MTLStoreActionStore;
-                enc = [cb renderCommandEncoderWithDescriptor:rp2];
-                src = up;
-            }
+            if (up) src = metalfx_encode(cb, src);
+        }
+        // On Apple GPUs, closing and reopening the drawable pass stores and reloads a full-resolution
+        // image. Finish SMAA and MetalFX first, then clear and compose the drawable only once.
+        MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
+        rp.colorAttachments[0].texture = drawable.texture;
+        rp.colorAttachments[0].loadAction = MTLLoadActionClear;
+        rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1);
+        rp.colorAttachments[0].storeAction = MTLStoreActionStore;
+        id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
+        if (src) {
             float flip = renderer_origin_lower_left() ? 1.0f : 0.0f;
             [enc setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}];
             [enc setRenderPipelineState:present_pipe];

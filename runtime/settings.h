@@ -5,7 +5,8 @@
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
 enum { RES_MATCH = 0, /* 1..8 = 1x..8x */ RES_DYNAMIC = 9, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12 };
 // (11 was 67% of the display: larecomp.ini "67%" now loads as RES_Q75)
-enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */ };
+enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS: balanced */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */,
+       UPSCALE_METALFX_FULL = 3 /* macOS: full output resolution */ };
 #ifdef __APPLE__
 #define UPSCALE_SHARP UPSCALE_METALFX  // each OS's non-bilinear upscaler (the default)
 #else
