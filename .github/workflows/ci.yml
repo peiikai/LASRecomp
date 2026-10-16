@@ -1,5 +1,5 @@
 # LAS Recomp's checks: the runtime (everything but the game code, which the start screen builds on the player's
-# machine) compiles on Linux and macOS. No game files are involved and nothing is published. Feature tests that need
+# machine) compiles on Linux, macOS and Windows. No game files are involved and nothing is published. Feature tests that need
 # no game files go in as steps here, not as workflows of their own.
 name: CI
 on:
@@ -57,3 +57,25 @@ jobs:
         run: brew install sdl3 ffmpeg
       - name: Runtime compiles
         run: make -j"$(sysctl -n hw.ncpu)" runtime-objs
+
+  windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings, as tools/setup_windows.ps1 sets for clones
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      # MSYS2 UCRT64 with the packages tools/setup_windows.ps1 installs (minus the debugger / validation layers),
+      # binutils for windres (the exe's icon)
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: make
+          pacboy: clang:p lld:p binutils:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+            vulkan-memory-allocator:p
+      - name: Runtime compiles
+        run: make -j"$(nproc)" runtime-objs
