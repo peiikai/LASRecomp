@@ -75,12 +75,12 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
       # MSYS2 UCRT64 with the packages tools/setup_windows.ps1 installs (minus the debugger / validation layers),
-      # binutils for windres (the exe's icon)
+      # binutils for windres (the exe's icon), git for tools/test_translate.sh
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
-          install: make
+          install: make git
           pacboy: clang:p lld:p binutils:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds
