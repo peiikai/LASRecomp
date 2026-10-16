@@ -1,6 +1,6 @@
 # LAS Recomp's checks: the runtime (everything but the game code, which the start screen builds on the player's
-# machine) compiles on Linux, macOS and Windows. No game files are involved and nothing is published. Feature tests that need
-# no game files go in as steps here, not as workflows of their own.
+# machine) compiles on Linux, macOS and Windows. No game files are involved and nothing is published. Feature tests
+# that need no game files go in as steps here, not as workflows of their own.
 name: CI
 on:
   pull_request:
