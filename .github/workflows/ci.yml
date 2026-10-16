@@ -1,6 +1,8 @@
-# LAS Recomp's checks: the runtime (everything but the game code, which the start screen builds on the player's
-# machine) compiles on Linux, macOS and Windows. No game files are involved and nothing is published. Feature tests
-# that need no game files go in as steps here, not as workflows of their own.
+# LAS Recomp's checks: the app (everything but the game code, which the start screen builds on the player's machine)
+# builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD lowering against a
+# CPU emulator (tools/test_simd.py, x86-64 Linux) and the shader translator's GLSL against shaderc + SPIRV-Tools
+# (tools/test_translate.sh, Windows). Nothing is published. Feature tests that need no game files go in as steps
+# here, not as workflows of their own.
 name: CI
 on:
   pull_request:
@@ -46,8 +48,12 @@ jobs:
                 -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
           cmake --build sdl-build
           cmake --install sdl-build
-      - name: Runtime compiles
-        run: make -j"$(nproc)" runtime-objs DEPS="$HOME/sdl3"
+      - name: App builds
+        run: make -j"$(nproc)" DEPS="$HOME/sdl3"
+      - name: FP/SIMD lowering vs a CPU emulator (a sample)
+        run: |
+          python3 -m venv tools/venv && tools/venv/bin/pip install -q unicorn capstone lz4
+          tools/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
 
   macos:
     runs-on: macos-15
@@ -55,8 +61,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Packages
         run: brew install sdl3 ffmpeg
-      - name: Runtime compiles
-        run: make -j"$(sysctl -n hw.ncpu)" runtime-objs
+      - name: App builds
+        run: make -j"$(sysctl -n hw.ncpu)"
 
   windows:
     runs-on: windows-2022
@@ -77,5 +83,9 @@ jobs:
           install: make
           pacboy: clang:p lld:p binutils:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
-      - name: Runtime compiles
-        run: make -j"$(nproc)" runtime-objs
+      - name: App builds
+        run: make -j"$(nproc)"
+      # (GLSL only: the script's MSL comparison needs a reference commit that isn't in the history any more; REF=HEAD
+      # just satisfies it. The GLSL half - every fuzzed translation compiles and validates - is the check)
+      - name: Shader translator fuzz (GLSL)
+        run: REF=HEAD tools/test_translate.sh 4000 "$(nproc)" glsl
