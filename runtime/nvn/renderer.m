@@ -1876,8 +1876,32 @@ static void draw(CmdRec *r, bool indexed) {
         static int off = -1;  // LARECOMP_NO_DEPTH_BIAS: ignore the game's polygon offset (A/B tests)
         if (off < 0) off = getenv("LARECOMP_NO_DEPTH_BIAS") != NULL;
         if ((st.poly[3] & 4) && !off) memcpy(f, st.poly_offset, sizeof f);
-        static int nlog;
-        if ((st.poly[3] & 4) && nlog < 3 && getenv("LARECOMP_LOG_BIAS")) { nlog++; LOG("[bias] factor %g units %g clamp %g\n", st.poly_offset[0], st.poly_offset[1], st.poly_offset[2]); }
+        // Issue #52 (M4, macOS 26.4: floor decals painted over walls, fine without the offset) - test switches:
+        // LARECOMP_BIAS_UNITS_SCALE=<k> / LARECOMP_BIAS_SLOPE_SCALE=<k> scale the constant / slope part,
+        // LARECOMP_BIAS_CLAMP=<v> replaces the clamp (the largest offset either way)
+        static float units_k = NAN, slope_k, clamp_v;
+        static bool clamp_set;
+        if (isnan(units_k)) {
+            const char *e = getenv("LARECOMP_BIAS_UNITS_SCALE");
+            units_k = e ? (float)atof(e) : 1;
+            slope_k = (e = getenv("LARECOMP_BIAS_SLOPE_SCALE")) ? (float)atof(e) : 1;
+            if ((e = getenv("LARECOMP_BIAS_CLAMP"))) clamp_set = true, clamp_v = (float)atof(e);
+            if (units_k != 1 || slope_k != 1 || clamp_set)
+                LOG("[bias] test: units x%g, slope x%g, clamp %s%g\n", units_k, slope_k, clamp_set ? "" : "game's ", clamp_v);
+        }
+        if (st.poly[3] & 4) { f[0] *= slope_k; f[1] *= units_k; if (clamp_set) f[2] = clamp_v; }
+        static int nlog;  // LARECOMP_LOG_BIAS: the game's offsets, each different one once (up to 32)
+        static float seen[32][3];
+        if ((st.poly[3] & 4) && nlog < 32 && getenv("LARECOMP_LOG_BIAS")) {
+            bool known = false;
+            for (int i = 0; i < nlog && !known; i++) known = !memcmp(seen[i], st.poly_offset, sizeof seen[i]);
+            if (!known) {
+                memcpy(seen[nlog++], st.poly_offset, sizeof seen[0]);
+                LOG("[bias] factor %g units %g clamp %g (depth format %#lx, frame %llu)\n", st.poly_offset[0], st.poly_offset[1],
+                    st.poly_offset[2], st.rt.depth ? (unsigned long)st.rt.depth->format : 0,
+                    (unsigned long long)renderer_present_count());
+            }
+        }
         if (memcmp(f, last, sizeof f) || enc != last_bias_enc) {
             [enc setDepthBias:f[1] slopeScale:f[0] clamp:f[2]];
             memcpy(last, f, sizeof f);
