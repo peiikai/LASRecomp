@@ -23,8 +23,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends clang lld make pkg-config cmake ninja-build \
             libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev \
-            libvulkan-memory-allocator-dev libx11-dev libxext-dev libxkbcommon-dev libwayland-dev wayland-protocols \
-            libdrm-dev libgbm-dev libegl-dev libpulse-dev libasound2-dev
+            libvulkan-memory-allocator-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libdrm-dev libgbm-dev \
+            libpulse-dev libasound2-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+          # (SDL's video / audio / input backends: the same -dev packages as tools/linux/Containerfile)
       # SDL3 3.4 or newer (PNG load / save); Ubuntu ships an older one: the AppImage's pinned version
       # (tools/linux/build_deps.sh), built once and cached
       - name: SDL3 cache
