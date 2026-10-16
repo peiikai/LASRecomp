@@ -1,0 +1,56 @@
+# LAS Recomp's checks: the runtime (everything but the game code, which the start screen builds on the player's
+# machine) compiles on Linux and macOS. No game files are involved and nothing is published. Feature tests that need
+# no game files go in as steps here, not as workflows of their own.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: ['main', 'beta_*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:  # (a newer push to the same branch / PR replaces a run still going)
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages (docs/linux.md)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld make pkg-config cmake ninja-build \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev \
+            libvulkan-memory-allocator-dev libx11-dev libxext-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libdrm-dev libgbm-dev libegl-dev libpulse-dev libasound2-dev
+      # SDL3 3.4 or newer (PNG load / save); Ubuntu ships an older one: the AppImage's pinned version
+      # (tools/linux/build_deps.sh), built once and cached
+      - name: SDL3 cache
+        id: sdl
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3
+          key: sdl3-3.4.16-ubuntu-24.04
+      - name: SDL3 3.4.16 from source
+        if: steps.sdl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o sdl.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+          echo "7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68  sdl.tar.gz" | sha256sum -c
+          tar xf sdl.tar.gz
+          cmake -S SDL3-3.4.16 -B sdl-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/sdl3" \
+                -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build sdl-build
+          cmake --install sdl-build
+      - name: Runtime compiles
+        run: make -j"$(nproc)" runtime-objs DEPS="$HOME/sdl3"
+
+  macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: brew install sdl3 ffmpeg
+      - name: Runtime compiles
+        run: make -j"$(sysctl -n hw.ncpu)" runtime-objs
