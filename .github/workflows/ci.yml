@@ -1,8 +1,8 @@
 # LAS Recomp's checks: the app (build/lasrecomp: everything but the game code, which the start screen builds on the
-# player's machine) builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD lowering against a
-# CPU emulator (tools/test_simd.py, x86-64 Linux) and the shader translator's GLSL against shaderc + SPIRV-Tools
-# (tools/test_translate.sh, Windows). Nothing is published. Feature tests that need no game files go in as steps
-# here, not as workflows of their own.
+# player's machine) builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD
+# lowering against a CPU emulator (tools/test_simd.py, x86-64 Linux) and the shader translator's GLSL against shaderc +
+# SPIRV-Tools (tools/test_translate.sh, Windows). Nothing is published. Feature tests that need no game files go in as
+# steps here, not as workflows of their own.
 name: CI
 on:
   pull_request:
