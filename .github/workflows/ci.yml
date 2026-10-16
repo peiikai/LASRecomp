@@ -1,5 +1,5 @@
-# LAS Recomp's checks: the app (everything but the game code, which the start screen builds on the player's machine)
-# builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD lowering against a
+# LAS Recomp's checks: the app (build/lasrecomp: everything but the game code, which the start screen builds on the
+# player's machine) builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD lowering against a
 # CPU emulator (tools/test_simd.py, x86-64 Linux) and the shader translator's GLSL against shaderc + SPIRV-Tools
 # (tools/test_translate.sh, Windows). Nothing is published. Feature tests that need no game files go in as steps
 # here, not as workflows of their own.
@@ -49,7 +49,7 @@ jobs:
           cmake --build sdl-build
           cmake --install sdl-build
       - name: App builds
-        run: make -j"$(nproc)" DEPS="$HOME/sdl3"
+        run: make -j"$(nproc)" build/lasrecomp DEPS="$HOME/sdl3"
       - name: FP/SIMD lowering vs a CPU emulator (a sample)
         run: |
           python3 -m venv tools/venv && tools/venv/bin/pip install -q unicorn capstone lz4
@@ -62,7 +62,7 @@ jobs:
       - name: Packages
         run: brew install sdl3 ffmpeg
       - name: App builds
-        run: make -j"$(sysctl -n hw.ncpu)"
+        run: make -j"$(sysctl -n hw.ncpu)" build/lasrecomp
 
   windows:
     runs-on: windows-2022
@@ -84,7 +84,7 @@ jobs:
           pacboy: clang:p lld:p binutils:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds
-        run: make -j"$(nproc)"
+        run: make -j"$(nproc)" build/lasrecomp.exe
       # (GLSL only: the script's MSL comparison needs a reference commit that isn't in the history any more; REF=HEAD
       # just satisfies it. The GLSL half - every fuzzed translation compiles and validates - is the check)
       - name: Shader translator fuzz (GLSL)
