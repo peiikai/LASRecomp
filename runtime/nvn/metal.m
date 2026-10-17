@@ -98,7 +98,11 @@ static MtlFormat mtl_format(uint32_t f) {
     case 0x4B: return (MtlFormat){MTLPixelFormatBC5_RGUnorm};
     // 0x4C = signed RGTC2 (interior normal maps break if decoded unsigned). LARECOMP_BC5_UNORM=1 decodes it
     // unsigned: that removes the overworld grass hatch/moire (see notes/PLAN.md) but wrecks interiors.
-    case 0x4C: return (MtlFormat){getenv("LARECOMP_BC5_UNORM") ? MTLPixelFormatBC5_RGUnorm : MTLPixelFormatBC5_RGSnorm};
+    case 0x4C: {
+        static int unorm = -1;  // (per texture lookup: getenv scans the environment)
+        if (unorm < 0) unorm = getenv("LARECOMP_BC5_UNORM") != NULL;
+        return (MtlFormat){unorm ? MTLPixelFormatBC5_RGUnorm : MTLPixelFormatBC5_RGSnorm};
+    }
     case 0x4D: return (MtlFormat){MTLPixelFormatBC7_RGBAUnorm};
     case 0x4E: return (MtlFormat){MTLPixelFormatBC7_RGBAUnorm_sRGB};
     case 0x4F: return (MtlFormat){MTLPixelFormatBC6H_RGBFloat};
@@ -219,7 +223,9 @@ void renderer_get_scale(float *sx, float *sy) { *sx = g_rs_x; *sy = g_rs_y; }
 void renderer_set_scale(float sx, float sy) { g_rs_x = sx; g_rs_y = sy; }
 
 static bool tex_scalable(const NvnTexture *t) {
-    if (getenv("LARECOMP_NO_SCALE")) return false;
+    static int off = -1;  // (per texture lookup: cached)
+    if (off < 0) off = getenv("LARECOMP_NO_SCALE") != NULL;
+    if (off) return false;
     if (t->target != 1 || t->samples > 1 || !(t->flags & 8) || t->width < 32 || t->height < 16) return false;
     float a = (float)t->width / (float)t->height;
     return a > 1.74f && a < 1.81f;  // 16:9 (1920x1080 and its fractions, 704x396, 60x33...)
