@@ -164,7 +164,7 @@ void copy_files(const fs::path &from, const fs::path &to, const std::vector<File
         auto src = from / fs::u8path(f.path), dst = to / fs::u8path(f.path);
         auto part = from;
         plain_path(part);
-        for (auto &component : fs::u8path(f.path)) { part /= component; plain_path(part); }
+        for (const auto &component : fs::u8path(f.path)) { part /= component; plain_path(part); }
         fs::create_directories(dst.parent_path());
         fs::copy_file(src, dst); // destination must be new; never overwrite
         need(checksum(dst, f.size) == f.crc, "Save changed during backup or copy verification failed.");
