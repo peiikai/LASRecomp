@@ -20,14 +20,14 @@ extern "C" void save_backups_draw(float scale, bool in_game) {
     ImGui::EndDisabled();
     if (editor && in_game && game_in_play()) { save_editor_draw(scale); return; }
     editor = false;
-    ImGui::TextWrapped("%s", "Automatic backups keep the latest 20 snapshots per save area, including all slots. Unchanged saves are skipped.");
+    ImGui::TextWrapped("%s", "Keeps 20 recent backups, plus all Before restore snapshots. Times are UTC.");
     bool locked = gamelib_tables() != NULL;
-    if (locked) ImGui::TextWrapped("%s", "Restart LAS Recomp to create or restore a backup from the start screen.");
+    if (locked) ImGui::TextWrapped("%s", "Restart to create or restore backups.");
     static std::string profile, selected, message;
     static bool confirmed;
     static int seen = -10;
     static double refresh_at;
-    static SaveBackupInfo items[SAVE_BACKUP_KEEP];
+    static std::vector<SaveBackupInfo> items(SAVE_BACKUP_KEEP);
     static int count;
     static std::vector<std::string> profiles;
     if (seen != ImGui::GetFrameCount() - 1) {
@@ -81,22 +81,26 @@ extern "C" void save_backups_draw(float scale, bool in_game) {
     ImGui::BeginDisabled(locked);
     if (ImGui::Button("Create backup")) {
         char why[512];
-        bool ok = save_backup_create(root.c_str(), "Manual", "1.0.0", false, why, sizeof why);
+        bool ok = save_backup_create(root.c_str(), "Manual", false, why, sizeof why);
         message = ok ? "Backup created." : why; refresh_at = 0;
     }
     ImGui::EndDisabled();
     if (ImGui::GetTime() >= refresh_at) {
         char why[512];
-        count = save_backup_list(root.c_str(), items, SAVE_BACKUP_KEEP, why, sizeof why);
+        for (;;) { // Before restore snapshots do not consume the ordinary retention limit.
+            count = save_backup_list(root.c_str(), items.data(), (int)items.size(), why, sizeof why);
+            if (count < (int)items.size()) break;
+            items.resize(items.size() * 2);
+        }
         if (count < 0) message = why;
         refresh_at = ImGui::GetTime() + 5;
     }
     ImGui::Spacing();
-    if (count <= 0) ImGui::TextWrapped("%s", "No backups yet. A backup is made when an existing save is opened and after each completed game save.");
+    if (count <= 0) ImGui::TextWrapped("%s", "No backups yet. Existing saves are backed up on load and after saving.");
     for (int i = 0; i < count; ++i) {
         auto &b = items[i];
         char row[256];
-        snprintf(row, sizeof row, "%s  |  %s  |  %s  |  %.0f KB###%s", b.id, b.version, b.reason, b.bytes / 1024.0, b.id);
+        snprintf(row, sizeof row, "%s  |  %s  |  %.0f KB###%s", b.id, b.reason, b.bytes / 1024.0, b.id);
         if (ImGui::Selectable(row, selected == b.id)) { selected = b.id; confirmed = false; }
     }
     ImGui::Spacing();
@@ -104,10 +108,10 @@ extern "C" void save_backups_draw(float scale, bool in_game) {
     if (!confirmed) {
         if (ImGui::Button("Restore selected backup")) confirmed = true;
     } else {
-        ImGui::TextWrapped("%s", "Restore all slots in this save area? The current files will be backed up first.");
+        ImGui::TextWrapped("%s", "Restore all slots? Current progress is backed up first.");
         if (ImGui::Button("Confirm restore")) {
             char why[512];
-            bool ok = save_backup_restore(root.c_str(), selected.c_str(), "1.0.0", why, sizeof why);
+            bool ok = save_backup_restore(root.c_str(), selected.c_str(), why, sizeof why);
             message = ok ? "Backup restored. You can now start the game." : why;
             confirmed = false; refresh_at = 0;
         }

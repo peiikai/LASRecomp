@@ -479,7 +479,7 @@ typedef struct { char root[1024]; bool is_save; } HostFs;
 static void backup_save(HostFs *fs, const char *reason) {
     if (!fs->is_save) return;  // SD-card commits are not game saves.
     char why[512];
-    if (!save_backup_create(fs->root, reason, "1.0.0", true, why, sizeof why))
+    if (!save_backup_create(fs->root, reason, true, why, sizeof why))
         LOG("[save-backup] %s\n", why);  // Backup failure must not prevent saving.
 }
 typedef struct { int fd; char path[1100]; } HostFile;

@@ -11,14 +11,14 @@ extern "C" {
 // Automatic snapshots happen on mount and after the game's Commit, never after individual writes.
 #define SAVE_BACKUP_KEEP 20
 typedef struct {
-    char id[64], reason[64], version[32];
+    char id[64], reason[64];
     unsigned files;
     uint64_t bytes;
 } SaveBackupInfo;
-bool save_backup_create(const char *root, const char *reason, const char *version, bool deduplicate,
+bool save_backup_create(const char *root, const char *reason, bool deduplicate,
                         char *why, size_t cap);
 int save_backup_list(const char *root, SaveBackupInfo *out, int capacity, char *why, size_t cap);
-bool save_backup_restore(const char *root, const char *id, const char *version, char *why, size_t cap);
+bool save_backup_restore(const char *root, const char *id, char *why, size_t cap);
 #ifdef __cplusplus
 }
 #endif

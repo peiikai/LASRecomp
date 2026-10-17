@@ -67,7 +67,7 @@ bool menu_is_open(void) { return g_open.load(); }
 static void set_open(bool open);
 extern "C" void menu_test_open(void) {
     set_open(true);
-    if (getenv("LARECOMP_MENU_TAB")) { extern int g_tab_request_ext; g_tab_request_ext = atoi(getenv("LARECOMP_MENU_TAB")); }
+    if (getenv("LARECOMP_MENU_TAB")) { extern int g_tab_request_ext; g_tab_request_ext = atoi(getenv("LARECOMP_MENU_TAB")); } // 2: Saves / Backups
 }
 
 void menu_tabs_focus(bool first_tab);
@@ -275,7 +275,7 @@ static bool g_inited;
 static ImGuiContext *g_ctx;  // ours: the start screen (back to it after a reboot) has its own context
 static ImFont *g_font, *g_font_big;
 static ImFont *g_menu_font, *g_menu_font_big;  // the menu window (Baloo 2); everything else keeps g_font
-static int g_tab, g_tab_request = -2;  // (-2: no request; -1 is the Prelaunch tab)
+static int g_tab, g_tab_request = -2;  // (-2: no request; -1: Prelaunch; 2: Saves, with the Save Editor as a subpage)
 static int g_focus_tab = -99;  // put the nav cursor on this tab next frame (-100: the selected one; -99: none)
 static int g_focus_frames;
 
@@ -687,7 +687,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     static const char *names[] = {"Video", "Audio", "Saves", "Randomizer", "Warp", "Cheats", "Gameplay",
                                   "Cosmetics", "Controls", "Quit"};
     static const int order[] = {8, 0, 1, 6, 7, 3, 5, 4, 2, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Randomizer,
-                                                                // Cheats, Warp, Save Editor, Quit (ids stay: test hooks)
+                                                                // Cheats, Warp, Saves, Quit (ids stay: test hooks)
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
         if (i != 9 || !prelaunch) tabs[ntabs++] = {names[i], i, in_game || (i != 4 && i != 5)};
     int cur = 0;  // g_tab / g_tab_request hold ids
@@ -720,7 +720,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             ImGuiTabItemFlags f = g_tab_request == t.id && t.on ? ImGuiTabItemFlags_SetSelected : 0;
             char lbl[64];
             snprintf(lbl, sizeof lbl, prelaunch ? " %s " : "  %s  ", t.name);  // (ten tabs: tighter, so none is cut short)
-            ImGui::BeginDisabled(!t.on);  // (out of the game: Save Editor, Warp, Cheats)
+            ImGui::BeginDisabled(!t.on);  // (out of the game: Warp, Cheats; Saves still offers Backups)
             // focus (controller / keyboard): the tab lights up a little with a gold bar along its bottom, instead of
             // ImGui's outline (it sits 4 px outside the tab and the tab bar's clipping could cut its top off on macOS)
             // (focused_tab: from the frame before - colours go in before the tab is drawn)

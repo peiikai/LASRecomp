@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -32,18 +33,17 @@ bool link(const fs::path &p) {
     return false;
 }
 void plain_path(const fs::path &p) {
-    fs::path part;
-    for (const auto &component : fs::absolute(p)) {
-        part /= component;
-        need(!link(part), "Save and backup paths cannot contain symbolic links or reparse points.");
-    }
+    need(!link(p), "Save and backup folders cannot contain symbolic links or reparse points.");
 }
 fs::path root_path(const char *root) {
     need(root && *root, "No save folder selected.");
     auto p = fs::absolute(fs::u8path(root));
-    plain_path(p); // inspect links before collapsing '..', matching the game's path resolution
+    // Parents may be links (/home on Fedora Atomic, or a junction on Windows). Resolve them before checking
+    // the managed folder itself; scan/copy check its descendants without restricting those parent folders.
+    p = fs::weakly_canonical(p.parent_path()) / p.filename();
     p = p.lexically_normal();
     need(p.has_filename() && p != p.root_path(), "Invalid save folder.");
+    plain_path(p);
     return p;
 }
 fs::path store_path(const fs::path &root) { auto p = root; p += ".backups"; plain_path(p); return p; }
@@ -107,14 +107,12 @@ Snapshot read(const fs::path &dir, bool verify) {
     auto manifest = dir / "manifest.txt";
     need(!link(manifest) && fs::file_size(manifest) <= (1u << 20), "Invalid backup manifest.");
     std::ifstream in(manifest, std::ios::binary);
-    std::string magic, reason, version;
+    std::string magic, reason;
     std::getline(in, magic);
-    need(magic == "LASBACKUP1" && bool(in >> std::quoted(reason) >> std::quoted(version)) &&
-         reason.size() < 64 && version.size() < 32, "Invalid backup manifest.");
+    need(magic == "LASBACKUP2" && bool(in >> std::quoted(reason)) && reason.size() < 64, "Invalid backup manifest.");
     Snapshot result;
     text(result.info.id, sizeof result.info.id, dir.filename().u8string());
     text(result.info.reason, sizeof result.info.reason, reason);
-    text(result.info.version, sizeof result.info.version, version);
     std::string line;
     std::getline(in, line);
     need(line.empty(), "Invalid backup manifest header.");
@@ -148,9 +146,9 @@ std::string new_id(const fs::path &store) {
     time_t t = std::chrono::system_clock::to_time_t(now);
     struct tm tm{};
 #ifdef _WIN32
-    localtime_s(&tm, &t);
+    gmtime_s(&tm, &t);
 #else
-    localtime_r(&t, &tm);
+    gmtime_r(&t, &tm);
 #endif
     char stamp[32]; strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &tm);
     auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
@@ -164,7 +162,9 @@ void copy_files(const fs::path &from, const fs::path &to, const std::vector<File
     fs::create_directories(to);
     for (auto &f : files) {
         auto src = from / fs::u8path(f.path), dst = to / fs::u8path(f.path);
-        plain_path(src);
+        auto part = from;
+        plain_path(part);
+        for (auto &component : fs::u8path(f.path)) { part /= component; plain_path(part); }
         fs::create_directories(dst.parent_path());
         fs::copy_file(src, dst); // destination must be new; never overwrite
         need(checksum(dst, f.size) == f.crc, "Save changed during backup or copy verification failed.");
@@ -172,16 +172,43 @@ void copy_files(const fs::path &from, const fs::path &to, const std::vector<File
 }
 void prune(const fs::path &store) {
     auto dirs = snapshots(store);
-    for (size_t i = SAVE_BACKUP_KEEP; i < dirs.size(); ++i) {
+    unsigned ordinary = 0;
+    for (auto &dir : dirs) {
         // Verify the tree before deleting only an older, managed snapshot. Leave foreign/corrupt files alone.
-        try { read(dirs[i], true); fs::remove_all(dirs[i]); } catch (...) {}
+        try {
+            if (!strcmp(read(dir, false).info.reason, "Before restore")) continue;
+            if (++ordinary <= SAVE_BACKUP_KEEP) continue;
+            read(dir, true); fs::remove_all(dir);
+        } catch (...) {}
     }
 }
-void create(const fs::path &root, const char *reason, const char *version, bool dedup) {
-    need(reason && version && strlen(reason) < 64 && strlen(version) < 32, "Invalid backup description.");
+void cleanup(const fs::path &store) {
+    for (auto &entry : fs::directory_iterator(store)) {
+        auto name = entry.path().filename().u8string();
+        bool stale = false;
+        for (const char *prefix : {".pending-", ".restore-", ".previous-"})
+            if (name.rfind(prefix, 0) == 0 && valid_id(name.substr(strlen(prefix)))) stale = true;
+        if (!stale) continue;
+        try {
+            plain_path(entry.path());
+            if (!entry.is_directory()) continue;
+            for (auto it = fs::recursive_directory_iterator(entry.path()); it != fs::recursive_directory_iterator(); ++it) {
+                need(it.depth() < 16, "Staging directory is too deep.");
+                plain_path(it->path());
+                need(it->is_directory() || it->is_regular_file(), "Staging directory contains a special file.");
+            }
+            fs::remove_all(entry.path());
+        } catch (...) {} // Leave unexpected trees alone.
+    }
+}
+void create(const fs::path &root, const char *reason, bool dedup, bool clean_staging = true) {
+    need(reason && strlen(reason) < 64, "Invalid backup description.");
     auto files = scan(root);
     auto store = store_path(root);
     fs::create_directories(store);
+    // Only clean after finding a valid current save. If restore stopped between renames, leave its files
+    // intact: the retained Before restore snapshot can be selected in the launcher's normal restore list.
+    if (clean_staging) cleanup(store);
     auto old = snapshots(store);
     if (dedup && !old.empty()) {
         try { if (signature(read(old[0], true).files) == signature(files)) return; } catch (...) {}
@@ -192,7 +219,7 @@ void create(const fs::path &root, const char *reason, const char *version, bool 
     try {
         copy_files(root, stage / "files", files);
         std::ofstream out(stage / "manifest.txt", std::ios::binary);
-        out << "LASBACKUP1\n" << std::quoted(std::string(reason)) << '\n' << std::quoted(std::string(version)) << '\n' << signature(files);
+        out << "LASBACKUP2\n" << std::quoted(std::string(reason)) << '\n' << signature(files);
         out.close(); need(bool(out), "Cannot write backup manifest.");
         read(stage, true);
         fs::rename(stage, store / id);
@@ -201,10 +228,10 @@ void create(const fs::path &root, const char *reason, const char *version, bool 
 }
 }
 
-extern "C" bool save_backup_create(const char *root, const char *reason, const char *version, bool dedup, char *why, size_t cap) {
+extern "C" bool save_backup_create(const char *root, const char *reason, bool dedup, char *why, size_t cap) {
     std::lock_guard<std::mutex> guard(lock);
     text(why, cap, "");
-    try { create(root_path(root), reason, version, dedup); return true; }
+    try { create(root_path(root), reason, dedup); return true; }
     catch (const std::exception &e) { text(why, cap, e.what()); return false; }
 }
 extern "C" int save_backup_list(const char *root, SaveBackupInfo *out, int capacity, char *why, size_t cap) {
@@ -218,7 +245,7 @@ extern "C" int save_backup_list(const char *root, SaveBackupInfo *out, int capac
     } catch (const std::exception &e) { text(why, cap, e.what()); return -1; }
     return n;
 }
-extern "C" bool save_backup_restore(const char *root_name, const char *id, const char *version, char *why, size_t cap) {
+extern "C" bool save_backup_restore(const char *root_name, const char *id, char *why, size_t cap) {
     std::lock_guard<std::mutex> guard(lock);
     text(why, cap, "");
     fs::path stage;
@@ -233,7 +260,7 @@ extern "C" bool save_backup_restore(const char *root_name, const char *id, const
         owned_stage = true;
         copy_files(selected / "files", stage / "files", snapshot.files);
         bool had_save = fs::exists(root);
-        if (had_save && !fs::is_empty(root)) create(root, "Before restore", version, false);
+        if (had_save && !fs::is_empty(root)) create(root, "Before restore", false, false); // keep this restore's staging tree
         auto previous = store / (".previous-" + restore_id);
         if (had_save) fs::rename(root, previous);
         try { fs::rename(stage / "files", root); }

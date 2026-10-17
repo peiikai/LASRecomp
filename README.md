@@ -175,15 +175,21 @@ Where files live (game files, saves, seeds, settings, caches, imported fonts):
 
 The **Saves → Backups** tab on the start screen lists snapshots of each save area
 (all slots together). Existing saves are backed up before play and after completed
-game saves. Unchanged saves are skipped; the latest 20 snapshots are retained.
+game saves. Unchanged saves are skipped; the latest 20 regular snapshots and all
+**Before restore** snapshots are retained. Snapshot names use UTC.
 Vanilla and each randomizer seed keep separate histories beside their save folders,
 for example `save/save_0.backups` and `rando/<seed>/save/save_0.backups`.
 
 To restore, restart LAS Recomp, select the profile and snapshot, then confirm
 **Restore selected backup**. The current files are backed up before replacement.
 Manual backups and restores are available before the game library is loaded.
+If a restore was interrupted, select its **Before restore** snapshot to recover.
+Staging folders left by a crash are cleaned up when a valid current save is next backed up.
 These local snapshots protect against accidental save changes; copy the save and
 backup folders elsewhere if you also need protection against disk failure.
+
+For UI captures, `LARECOMP_MENU_TAB=2` and `LARECOMP_LAUNCHER_SHOT=<frame>:settings:2`
+select **Saves → Backups**. The Save Editor is its in-game subpage.
 
 ## Credits
 
