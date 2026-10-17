@@ -640,12 +640,24 @@ static void *renderer_tick(void *arg) {
                 target / (2 * (int)sizeof(float)));
         }
     }
+    // Every 10 s, how the output is doing: seconds of audio the device took, what's still queued, the gain and the
+    // loudest sample the game rendered - silence from the game, a device that doesn't take audio and sound that plays
+    // but goes nowhere look the same to the player (issue #69)
+    uint64_t put_bytes = 0, rep_put = 0, rep_t = SDL_GetTicksNS(), stall_t = 0;
+    float peak = 0;
     while (!r->quit) {
         if (r->stream) {
             while (SDL_GetAudioStreamQueued(r->stream) >= target && !r->quit) {
                 struct timespec ts = {0, 1000000};
                 nanosleep(&ts, NULL);
+                uint64_t t = SDL_GetTicksNS();
+                if (!stall_t) stall_t = t;
+                else if (t - stall_t > 1000000000ull && stall_t != 1) {
+                    LOG("[audren] the output isn't taking audio (queue full for 1 s)\n");
+                    stall_t = 1;  // (said once per stall)
+                }
             }
+            stall_t = 0;
         } else {
             clock_gettime(CLOCK_MONOTONIC, &now);
             uint64_t t = now.tv_sec * 1000000000ull + now.tv_nsec;
@@ -661,7 +673,21 @@ static void *renderer_tick(void *arg) {
             memset(out, 0, frame_bytes);
         }
         pthread_mutex_unlock(&r->lock);
-        if (r->stream) { apply_gain(r->stream); SDL_PutAudioStreamData(r->stream, out, frame_bytes); }
+        if (r->stream) {
+            apply_gain(r->stream);
+            SDL_PutAudioStreamData(r->stream, out, frame_bytes);
+            put_bytes += (uint64_t)frame_bytes;
+            for (int i = 0; i < frame_bytes / (int)sizeof(float); i++) peak = SDL_max(peak, SDL_fabsf(out[i]));
+            uint64_t t = SDL_GetTicksNS();
+            if (t - rep_t >= 10000000000ull) {
+                int queued = SDL_GetAudioStreamQueued(r->stream);
+                double played = (double)(put_bytes - rep_put) / (2 * sizeof(float) * r->sample_rate);
+                LOG("[audren] output: %.1f s of audio taken in %.1f s, %.0f ms queued, gain %.2f, game peak %.3f%s\n",
+                    played, (t - rep_t) / 1e9, queued / (2.0 * sizeof(float) * r->sample_rate) * 1000,
+                    SDL_GetAudioStreamGain(r->stream), peak, SDL_AudioStreamDevicePaused(r->stream) ? ", device paused" : "");
+                rep_t = t, rep_put = put_bytes, peak = 0;
+            }
+        }
         if (r->wav && r->state == 0) {
             fwrite(out, 1, frame_bytes, r->wav);
             r->wav_bytes += frame_bytes;
@@ -939,6 +965,15 @@ static void renderer_open_output(Renderer *r) {
     SDL_AudioSpec spec = {SDL_AUDIO_F32, 2, (int)r->sample_rate};
     r->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
     if (!r->stream) { LOG("[audren] SDL audio open failed: %s\n", SDL_GetError()); return; }
+    {   // which backend and output SDL picked (a sound problem's first question; issue #69)
+        char drivers[256] = "";
+        for (int i = 0, n = SDL_GetNumAudioDrivers(); i < n; i++)
+            SDL_snprintf(drivers + SDL_strlen(drivers), sizeof drivers - SDL_strlen(drivers), "%s%s", i ? " " : "",
+                         SDL_GetAudioDriver(i));
+        const char *dev = SDL_GetAudioDeviceName(SDL_GetAudioStreamDevice(r->stream));
+        LOG("[audren] SDL audio driver %s (built in: %s), output \"%s\"\n", SDL_GetCurrentAudioDriver(), drivers,
+            dev ? dev : "?");
+    }
     if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(r->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
     SDL_ResumeAudioStreamDevice(r->stream);
 }
