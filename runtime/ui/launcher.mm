@@ -87,7 +87,7 @@ static const uint8_t BUILD_ID[8] = {0xae, 0x16, 0xf7, 0x1e, 0x00, 0x2a, 0xf8, 0x
 // it): beta_<n> until 1.0, then v<major>.<minor>.<patch>. A test build (a pre-release for a few players to try a fix)
 // is test-<name>: the start screen says "Test build <name>", and it previews LARECOMP_TEST_OF - the update check
 // offers that release (or a later one) as soon as it's out, so its players move to it.
-#define LARECOMP_VERSION "beta_4"
+#define LARECOMP_VERSION "test-beta5-preview-2"
 #define LARECOMP_TEST_OF "beta_5"
 
 // ------------------------------------------------------------------ update check
