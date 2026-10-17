@@ -230,9 +230,10 @@ VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set,
 static const char *builtin_src(const char *name, int *stage) {
     if (!strcmp(name, "present.vert")) {
         *stage = STAGE_VERTEX;
-        // pv[0].x: flip (lower-left origin), pv[1]: uv crop (origin, size). Fullscreen triangle; Vulkan NDC y points down.
+        // pv[0].x: flip (lower-left origin), pv[1]: uv crop (origin, size), pv[2]: exposure multiplier and saturation.
+        // Fullscreen triangle; Vulkan NDC y points down.
         return "#version 450\n"
-               "layout(push_constant) uniform P { vec4 a; vec4 crop; } pc;\n"
+               "layout(push_constant) uniform P { vec4 a; vec4 crop; vec4 color; } pc;\n"
                "layout(location = 0) out vec2 uv;\n"
                "void main() {\n"
                "  vec2 p = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);\n"
@@ -247,7 +248,9 @@ static const char *builtin_src(const char *name, int *stage) {
                "layout(set = 0, binding = 0) uniform sampler2D t;\n"
                "layout(location = 0) in vec2 uv;\n"
                "layout(location = 0) out vec4 o;\n"
-               "void main() { o = vec4(texture(t, uv).rgb, 1.0); }\n";
+               "layout(push_constant) uniform P { vec4 a; vec4 crop; vec4 color; } pc;\n"
+               "void main() { vec3 c = texture(t, uv).rgb; float y = dot(c, vec3(0.2126,0.7152,0.0722));\n"
+               "  o = vec4(clamp(mix(vec3(y), c, pc.color.y) * pc.color.x, 0.0, 1.0), 1.0); }\n";
     }
     // ---- decoded video, NV12 -> RGBA (exec.c vk_convert_nv12): limited range BT.601, as swscale did (the movies
     // declare no matrix). Fullscreen triangle; Vulkan NDC y points down, so uv = p.

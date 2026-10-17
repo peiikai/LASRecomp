@@ -15,6 +15,7 @@
 
 #include "nvn.h"
 #include "../game_addresses.h"
+#include "../photo.h"
 #include "renderer.h"
 #include "texpatch.h"
 
@@ -647,8 +648,9 @@ static const char *present_src =
     "  float2 p = float2((vid << 1) & 2, vid & 2);\n"
     "  V o; o.pos = float4(p * 2.0 - 1.0, 0, 1);\n"
     "  float2 uv = float2(p.x, pv[0].x > 0.5 ? p.y : 1.0 - p.y); o.uv = pv[1].xy + uv * pv[1].zw; return o; }\n"
-    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]]) {\n"
-    "  return float4(t.sample(s, in.uv).rgb, 1.0); }\n";
+    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4 *pv [[buffer(0)]]) {\n"
+    "  float3 c = t.sample(s, in.uv).rgb; float y = dot(c, float3(0.2126,0.7152,0.0722));\n"
+    "  return float4(clamp(mix(float3(y), c, pv[2].y) * pv[2].x, 0.0, 1.0), 1.0); }\n";
 
 void backend_init(void) {
     while (!atomic_load(&ui_ready)) usleep(1000);
@@ -1000,8 +1002,9 @@ void renderer_save_texture(id<MTLTexture> tex, const char *path) {
     float flip = renderer_origin_lower_left() ? 1.0f : 0.0f;
     [e setRenderPipelineState:pipe];
     if (g_save_upright || strstr(path, "window")) flip = 0;  // the window image is already upright
-    float pv[8] = {flip, 0, 0, 0, shot_crop[0], shot_crop[1], shot_crop[2], shot_crop[3]};
+    float pv[12] = {flip, 0, 0, 0, shot_crop[0], shot_crop[1], shot_crop[2], shot_crop[3], 1, 1, 0, 0};
     [e setVertexBytes:pv length:sizeof pv atIndex:0];
+    [e setFragmentBytes:pv length:sizeof pv atIndex:0];
     [e setFragmentTexture:raw_view(tex) atIndex:0];
     [e setFragmentSamplerState:present_sampler atIndex:0];
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1038,12 +1041,18 @@ void backend_represent(void) {
 }
 
 void backend_present(NvnTexture *t) {
+    photo_mode_frame(total_frames);
     g_last_presented = t;
     extern void renderer_submit(void);
     renderer_submit();  // same queue: the present pass runs after the frame's work
     TexBackend *b = t->backend;
     if (b) b->presented = true;
     @autoreleasepool {
+        // Photos read the drawable back; ordinary play keeps Metal's framebuffer-only optimisation.
+        static int window_shot = -1;
+        if (window_shot < 0) window_shot = getenv("LARECOMP_WINDOW_SHOT") != NULL;
+        BOOL framebuffer_only = !photo_mode_active() && !window_shot;
+        if (layer.framebufferOnly != framebuffer_only) layer.framebufferOnly = framebuffer_only;
         uint64_t nd0 = SDL_GetTicksNS();
         id<CAMetalDrawable> drawable = [layer nextDrawable];
         uint64_t nd = SDL_GetTicksNS() - nd0;
@@ -1079,6 +1088,7 @@ void backend_present(NvnTexture *t) {
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
         float crop[4];  // uv origin and size
         widescreen_present_crop(total_frames, shape, crop, &vx, &vy, &vw, &vh);
+        photo_mode_compose(crop, dw, dh, &vx, &vy, &vw, &vh);
         widescreen_set_factor((float)shape);
         {   // (diagnostics) log output scale / drawable changes
             static double psx, psy, pdw, pdh;
@@ -1119,9 +1129,11 @@ void backend_present(NvnTexture *t) {
             float flip = renderer_origin_lower_left() ? 1.0f : 0.0f;
             [enc setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}];
             [enc setRenderPipelineState:present_pipe];
-            float pv[8] = {flip, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
+            float pv[12] = {flip, 0, 0, 0, crop[0], crop[1], crop[2], crop[3], 1, 1, 0, 0};
+            photo_mode_color(pv + 8);
             memcpy(g_shot_crop, crop, sizeof crop);
             [enc setVertexBytes:pv length:sizeof pv atIndex:0];
+            [enc setFragmentBytes:pv length:sizeof pv atIndex:0];
             [enc setFragmentTexture:src atIndex:0];
             [enc setFragmentSamplerState:present_sampler atIndex:0];
             [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1130,12 +1142,13 @@ void backend_present(NvnTexture *t) {
         static long menu_at = -1;  // test hook: open the menu at this frame (LARECOMP_MENU_AT)
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)total_frames + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
+        const char *photo_path = photo_mode_capture_path();
         menu_render(dev, cb, drawable.texture);
         static long win_shot = -1;  // LARECOMP_WINDOW_SHOT=<frame>: save the final window image (game + menu)
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         id<MTLTexture> shot_tex = nil;
         extern char g_window_shot_request[256];  // test hooks (runtime/hle/hookshot.c): save the next frame here
-        if ((win_shot && (long)total_frames + 1 == win_shot) || g_window_shot_request[0]) {
+        if (photo_path || (win_shot && (long)total_frames + 1 == win_shot) || g_window_shot_request[0]) {
             MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:drawable.texture.pixelFormat
                                          width:drawable.texture.width height:drawable.texture.height mipmapped:NO];
             td.usage = MTLTextureUsageShaderRead;
@@ -1150,7 +1163,9 @@ void backend_present(NvnTexture *t) {
             [cb waitUntilCompleted];
             // LARECOMP_SHOT_PATH: where (parallel test runs each write their own; default build/window.png)
             g_save_upright = true;
-            if (g_window_shot_request[0]) {
+            if (photo_path) {
+                renderer_save_texture(shot_tex, photo_path); photo_mode_capture_done();
+            } else if (g_window_shot_request[0]) {
                 renderer_save_texture(shot_tex, g_window_shot_request);
                 g_window_shot_request[0] = 0;
             } else {

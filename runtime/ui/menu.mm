@@ -26,6 +26,7 @@ extern "C" {
 #include "../hle.h"
 #include "../settings.h"
 #include "menu.h"
+#include "../photo.h"
 void input_reset(void);
 void save_editor_draw(float scale);  // save_editor.mm
 extern "C" int game_in_play(void);  // hle/warp.c
@@ -111,6 +112,10 @@ static ImGuiKey key_from_scancode(SDL_Scancode sc) {
     case SDL_SCANCODE_V: return ImGuiKey_V;
     case SDL_SCANCODE_X: return ImGuiKey_X;
     case SDL_SCANCODE_Z: return ImGuiKey_Z;
+    case SDL_SCANCODE_EQUALS: return ImGuiKey_Equal;
+    case SDL_SCANCODE_MINUS: return ImGuiKey_Minus;
+    case SDL_SCANCODE_KP_PLUS: return ImGuiKey_KeypadAdd;
+    case SDL_SCANCODE_KP_MINUS: return ImGuiKey_KeypadSubtract;
     case SDL_SCANCODE_Q: return ImGuiKey_Q;  // previous tab
     case SDL_SCANCODE_E: return ImGuiKey_E;  // next tab
     default: return ImGuiKey_None;
@@ -144,7 +149,7 @@ static std::atomic<int> g_kbd{0};  // 1 open, 2 confirmed, 3 cancelled
 static std::atomic<bool> g_last_pad{false};
 static char g_kbd_text[96];
 static int g_kbd_max = 8;
-static bool capturing() { return g_open.load() || g_kbd.load() == 1; }
+static bool capturing() { return g_open.load() || g_kbd.load() == 1 || photo_mode_active(); }
 // The game gets no input while this is true (runtime/hle/input.c): menu or name entry up.
 extern "C" bool menu_input_captured(void) { return capturing(); }
 
@@ -163,6 +168,16 @@ bool menu_handle_event(const SDL_Event *e) {
     }
     // typing (a text field, the on-screen keyboard, the name entry): keys are text, not menu shortcuts
     bool typing = g_kbd.load() == 1 || (g_open.load() && g_text_busy.load());
+    if (!typing && e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat) {
+        if (e->key.scancode == SDL_SCANCODE_F2 && (photo_mode_available() || photo_mode_active())) { set_open(false); photo_mode_toggle(); return true; }
+        if (photo_mode_active()) {
+            if (e->key.scancode == SDL_SCANCODE_ESCAPE) { photo_mode_exit(); return true; }
+            if (e->key.scancode == SDL_SCANCODE_F12) { photo_mode_capture(); return true; }
+            if (e->key.scancode == SDL_SCANCODE_TAB || e->key.scancode == SDL_SCANCODE_F1) {
+                photo_mode_toggle_controls(); return true;
+            }
+        }
+    }
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F1 ||
@@ -201,15 +216,19 @@ bool menu_handle_event(const SDL_Event *e) {
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_BACK) back_down = down;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_START) start_down = down;
         if (down && !typing && ((back_down && start_down) || e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)) {
-            set_open(!g_open.load());
+            if (photo_mode_active()) photo_mode_exit(); else set_open(!g_open.load());
             return true;
         }
+        if (photo_mode_pad_button(e->gbutton.button, down)) return true;
         if (!capturing()) return false;
         ImGuiKey k = key_from_pad(e->gbutton.button);
         if (k != ImGuiKey_None) { QEvent q = {}; q.kind = QEvent::KEY; q.key = k; q.down = down; push(q); }
         return true;
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        if ((e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e->gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+            photo_mode_pad_button(e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? PADB_LTRIGGER : PADB_RTRIGGER,
+                                  e->gaxis.value > 16000)) return true;
         if (!capturing()) return false;
         float v = e->gaxis.value / 32767.0f;
         QEvent q = {};
@@ -222,6 +241,10 @@ bool menu_handle_event(const SDL_Event *e) {
         case SDL_GAMEPAD_AXIS_LEFTY:
             q.key = ImGuiKey_GamepadLStickUp; q.value = v < -0.3f ? -v : 0; push(q);
             q.key = ImGuiKey_GamepadLStickDown; q.value = v > 0.3f ? v : 0; push(q);
+            break;
+        case SDL_GAMEPAD_AXIS_RIGHTY:
+            q.key = ImGuiKey_GamepadRStickUp; q.value = v < -0.3f ? -v : 0; push(q);
+            q.key = ImGuiKey_GamepadRStickDown; q.value = v > 0.3f ? v : 0; push(q);
             break;
         case SDL_GAMEPAD_AXIS_LEFT_TRIGGER: q.key = ImGuiKey_GamepadL2; q.value = v; push(q); break;
         case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: q.key = ImGuiKey_GamepadR2; q.value = v; push(q); break;
@@ -815,11 +838,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
 #endif
     bool open = g_open.load();
-    bool inv = !open && inventory_overlay_wanted();
-    bool trk = !open && tracker_overlay_wanted();
-    bool chaos = !open && chaos_overlay_wanted();
+    bool inv = !open && !photo_mode_active() && inventory_overlay_wanted();
+    bool trk = !open && !photo_mode_active() && tracker_overlay_wanted();
+    bool chaos = !open && !photo_mode_active() && chaos_overlay_wanted();
+    if (photo_mode_suppress_overlay()) {
+        pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); return;
+    }
     bool kbd = g_kbd.load() == 1;
-    if (!open && !kbd && !g_settings.show_fps && !inv && !trk && !chaos) {
+    if (!open && !kbd && !g_settings.show_fps && !inv && !trk && !chaos && !photo_mode_active()) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         return;
     }
@@ -864,7 +890,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     ImGui::NewFrame();
 
-    if (g_settings.show_fps) {
+    if (g_settings.show_fps && !photo_mode_active()) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 16 * scale, 16 * scale), 0, ImVec2(1, 0));
         ImGui::SetNextWindowBgAlpha(0.5f);
         ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
@@ -924,6 +950,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         osk_draw(g_font_big, scale);  // (a text field activated with the controller)
     }
 
+    if (photo_mode_active()) photo_mode_draw(scale);
     if (kbd) keyboard_draw(io, scale);
     ImGui::Render();
     g_text_busy = open && ui_text_busy();

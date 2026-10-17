@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "../kernel.h"
+#include "../photo.h"
 #include "nvn.h"
 
 void renderer_sync(void);
@@ -654,7 +655,20 @@ NVN(nvnQueueAcquireTexture) {
 NVN(nvnQueuePresentTexture) {
     NvnWindow *w = HOST(NvnWindow, A(1));
     int i = (int)A(2);
-    if (i >= 0 && i < w->num) backend_present(HOST(NvnTexture, w->textures[i]));
+    if (i >= 0 && i < w->num) {
+        backend_present(HOST(NvnTexture, w->textures[i]));
+        extern uint64_t renderer_present_count(void);
+        extern void backend_represent(void);
+        photo_mode_presented(renderer_present_count());
+        // Hold this present call after a clean frame. Re-presenting it still services the photo controls;
+        // resuming returns to the game so it can submit the next scene (other guest threads are not paused).
+        while (photo_mode_hold() && !rt_reboot_requested()) {
+            uint64_t start = plat_now_ns();
+            backend_represent();
+            photo_mode_presented(renderer_present_count());
+            plat_sleep_until_ns(start + 16666667); // a frozen view does not need to render at the monitor's maximum rate
+        }
+    }
 }
 
 // ================================================================== small state objects
