@@ -97,3 +97,6 @@ jobs:
       # just satisfies it. The GLSL half - every fuzzed translation compiles and validates - is the check)
       - name: Shader translator fuzz (GLSL)
         run: REF=HEAD tools/test_translate.sh 4000 "$(nproc)" glsl
+      # (the heap in chunks, as on GPUs whose storage buffers can't span it - Intel: shader.h maxwell_gmem_chunk_shift)
+      - name: Shader translator fuzz (GLSL, guest heap in chunks)
+        run: TT_GMEM_CHUNK_SHIFT=26 REF=HEAD tools/test_translate.sh 2000 "$(nproc)" glsl

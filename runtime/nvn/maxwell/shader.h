@@ -87,6 +87,16 @@ typedef struct {
 #define GMAP_MAX 16  // ranges in the table (GMap { uvec4 gmap[GMAP_MAX + 1]; }: [i] = addr lo, addr hi, size, word offset;
                      // [GMAP_MAX].x = count)
 extern uint64_t maxwell_gmem_base, maxwell_gmem_size;
+// (GLSL / Vulkan) A GPU whose storage buffers can't span the heap (maxStorageBufferRange: 1 GB on Intel, issue #8)
+// gets it as chunks of 1 << maxwell_gmem_chunk_shift bytes, one buffer each - chunk 0 at GMEM_BUFFER_INDEX, chunk k
+// at GMEM_CHUNK_BINDING + k - 1 - and shaders pick the chunk from the address. 0: one buffer, as before.
+extern uint32_t maxwell_gmem_chunk_shift;
+#define GMEM_CHUNK_BINDING 22
+#define GMEM_CHUNKS_MAX 10  // (bindings 22-30; 32 up are textures)
+static inline int maxwell_gmem_chunks(void) {
+    return maxwell_gmem_chunk_shift ? (int)((maxwell_gmem_size + (1ull << maxwell_gmem_chunk_shift) - 1) >> maxwell_gmem_chunk_shift) : 1;
+}
+static inline int maxwell_gmem_binding(int k) { return k ? GMEM_CHUNK_BINDING + k - 1 : GMEM_BUFFER_INDEX; }
 // Debug: when translating the shader whose code starts at maxwell_dbg_code, output register
 // maxwell_dbg_reg as captured after the instruction at maxwell_dbg_pc (greyscale, all targets).
 extern const uint8_t *maxwell_dbg_code;

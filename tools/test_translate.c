@@ -214,6 +214,8 @@ int main(int argc, char **argv) {
     bool do_msl = strcmp(mode, "glsl") != 0, do_glsl = strcmp(mode, "msl") != 0;
     maxwell_gmem_base = old_maxwell_gmem_base = 0x80000000ull;
     maxwell_gmem_size = old_maxwell_gmem_size = 0x10000000ull;
+    // TT_GMEM_CHUNK_SHIFT=<n>: the GLSL output with the heap in chunks of 1 << n bytes (shader.h; Intel's case)
+    if (getenv("TT_GMEM_CHUNK_SHIFT")) maxwell_gmem_chunk_shift = (uint32_t)atoi(getenv("TT_GMEM_CHUNK_SHIFT"));
 #ifdef WITH_GLSL
     shaderc_compiler_t comp = shaderc_compiler_initialize();
     shaderc_compile_options_t opt = shaderc_compile_options_initialize();
