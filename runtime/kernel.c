@@ -355,14 +355,11 @@ static uint32_t svc_wait_process_wide_key(uint64_t mutex, uint64_t key, uint32_t
     t->wait_tag = tag;
     __atomic_store_n(u32p(key), 1, __ATOMIC_SEQ_CST);
     uint32_t r = block_current(timeout);
-    if (r != R_OK) {
-        // timed out / cancelled: still must reacquire the mutex
-        if (!mutex_acquire_or_mark(mutex, tag)) {
-            t->wait_kind = WAIT_MUTEX;
-            t->wait_addr = mutex;
-            block_current(-1);
-        }
-    }
+    // On timeout Horizon returns WITHOUT reacquiring the mutex. The guest SDK
+    // locks it itself (also documented in libnx nx/source/kernel/condvar.c).
+    // Reacquiring here made the SDK lock its own mutex a second time and hung
+    // the 5 ms TimerEvent driving VibrationNode::Update. Successful signals
+    // still transfer ownership in svc_signal_process_wide_key below.
     pthread_mutex_unlock(&g_klock);
     return r;
 }
