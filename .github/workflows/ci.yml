@@ -54,6 +54,10 @@ jobs:
         run: python3 tools/test_settings.py
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Build cache and resume tests
+        run: |
+          python3 tools/test_build_cache.py
+          python3 tools/test_gamebuild_resume.py
       - name: FP/SIMD lowering vs a CPU emulator (a sample)
         run: |
           python3 -m venv tools/venv && tools/venv/bin/pip install -q unicorn capstone lz4
@@ -71,6 +75,10 @@ jobs:
         run: python3 tools/test_settings.py
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Build cache and resume tests
+        run: |
+          python3 tools/test_build_cache.py
+          python3 tools/test_gamebuild_resume.py
 
   windows:
     runs-on: windows-2022
@@ -90,9 +98,14 @@ jobs:
           update: true
           install: make git
           pacboy: clang:p lld:p binutils:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
-            vulkan-memory-allocator:p
+            vulkan-memory-allocator:p python:p
       - name: App builds
         run: make -j"$(nproc)" build/lasrecomp.exe
+      - name: Build cache, resume and process tests
+        run: |
+          python3 tools/test_build_cache.py
+          python3 tools/test_gamebuild_resume.py
+          python3 tools/test_windows_processes.py
       # (GLSL only: the script's MSL comparison needs a reference commit that isn't in the history any more; REF=HEAD
       # just satisfies it. The GLSL half - every fuzzed translation compiles and validates - is the check)
       - name: Shader translator fuzz (GLSL)
