@@ -505,7 +505,10 @@ static void sync_dir_of(const char *path) {
 // code page the A function takes our paths as they are)
 static int replace_file(const char *from, const char *to) {
 #ifdef _WIN32
-    return MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ? 0 : -1;
+    if (MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 0;
+    LOG("[save] replace %s failed (Windows error %lu)\n", to, (unsigned long)GetLastError());
+    errno = EIO;
+    return -1;
 #else
     return rename(from, to);
 #endif
@@ -513,6 +516,7 @@ static int replace_file(const char *from, const char *to) {
 
 static bool copy_file(const char *from, const char *to) {
     int in = open(from, O_RDONLY);
+    if (in < 0) return false;
     int out = open(to, O_CREAT | O_TRUNC | O_WRONLY, 0644);
     bool ok = out >= 0;
     char buf[65536];
@@ -528,28 +532,36 @@ static bool pending_of(HostFs *fs, const char *p, bool create, char *out, size_t
     if (!fs->journaled) return false;
     snprintf(out, n, "%s.pending", p);
     for (int i = 0; i < fs->npending; i++) if (!strcmp(fs->pending[i], p)) return true;
-    if (!create || fs->npending == PENDING_MAX) return false;
-    if (!copy_file(p, out)) { unlink(out); return false; }
+    if (!create) return false;
+    if (fs->npending == PENDING_MAX) { errno = ENOSPC; return false; }
+    if (strlen(p) >= sizeof fs->pending[0]) { errno = ENAMETOOLONG; return false; }
+    if (!copy_file(p, out)) { int error = errno; unlink(out); errno = error; return false; }
     snprintf(fs->pending[fs->npending++], sizeof fs->pending[0], "%s", p);
     return true;
 }
 
-static void commit(HostFs *fs) {
+static bool commit(HostFs *fs) {
+    int remaining = 0, error = 0;
     for (int i = 0; i < fs->npending; i++) {
-        char tmp[1100];
+        char tmp[1200];
         snprintf(tmp, sizeof tmp, "%s.pending", fs->pending[i]);
         int fd = open(tmp, O_RDWR);
-        if (fd >= 0) { fsync(fd); close(fd); }
-        if (replace_file(tmp, fs->pending[i])) {
-#ifdef _WIN32
-            LOG("[save] commit %s failed (Windows error %lu)\n", fs->pending[i], (unsigned long)GetLastError());
-#else
-            LOG("[save] commit %s failed (%d)\n", fs->pending[i], errno);
-#endif
-        }
-        else { LOG("[save] committed %s\n", fs->pending[i]); sync_dir_of(fs->pending[i]); }
+        bool ok = fd >= 0;
+        if (ok) {
+            if (fsync(fd)) { error = errno; ok = false; }
+            if (close(fd)) { error = errno; ok = false; }
+        } else error = errno;
+        if (ok && replace_file(tmp, fs->pending[i])) { error = errno; ok = false; }
+        if (!ok) {
+            LOG("[save] commit %s failed (%d)\n", fs->pending[i], error);
+            // A failed commit is still pending: report the failure and allow the game to retry it.
+            if (remaining != i) memcpy(fs->pending[remaining], fs->pending[i], sizeof fs->pending[i]);
+            remaining++;
+        } else { LOG("[save] committed %s\n", fs->pending[i]); sync_dir_of(fs->pending[i]); }
     }
-    fs->npending = 0;
+    fs->npending = remaining;
+    if (remaining) errno = error ? error : EIO;
+    return remaining == 0;
 }
 typedef struct { DIR *d; char path[1024]; int mode; } HostDir;
 
@@ -588,9 +600,11 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
     case 0: {  // Read(option, offset, size) -> B
         int64_t off = IN(int64_t, 8), size = IN(int64_t, 16);
         IpcBuf *b = out_buf(req, 0);
+        if (!b || off < 0 || size < 0) { resp->result = MAKE_RESULT(2, 6001); break; }
         if ((uint64_t)size > b->size) size = (int64_t)b->size;
         ssize_t n = pread(f->fd, (void *)(uintptr_t)b->addr, (size_t)size, off);
-        if (strstr(f->path, "savedata")) {
+        if (n < 0) resp->result = errno_result();
+        if (n > 0 && strstr(f->path, "savedata")) {
             LOG("[save] read %s off %lld size %lld -> guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)b->addr);
             extern void save_editor_file_read(const char *path, uint64_t addr, int64_t off, int64_t size);
             save_editor_file_read(f->path, b->addr, off, n);
@@ -604,16 +618,24 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
     case 1: {  // Write(option, offset, size) <- A
         int64_t off = IN(int64_t, 8), size = IN(int64_t, 16);
         IpcBuf *a = in_buf(req, 0);
+        if (!a || off < 0 || size < 0 || (uint64_t)size > a->size) { resp->result = MAKE_RESULT(2, 6001); break; }
         if (strstr(f->path, "savedata"))
             LOG("[save] write %s off %lld size %lld <- guest %llx\n", f->path, (long long)off, (long long)size, (unsigned long long)a->addr);
-        if (pwrite(f->fd, (void *)(uintptr_t)a->addr, (size_t)size, off) < 0) resp->result = errno_result();
-        else if (strstr(f->path, "savedata")) {
+        int64_t done = 0;
+        while (done < size) {
+            ssize_t n = pwrite(f->fd, (void *)(uintptr_t)(a->addr + done), (size_t)(size - done), off + done);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) { if (!n) errno = EIO; resp->result = errno_result(); break; }
+            done += n;
+        }
+        if (!resp->result && strstr(f->path, "savedata")) {
             extern void flags_ext_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
             flags_ext_save_written(f->path, a->addr, off, size);
         }
+        if (!resp->result && (IN(uint32_t, 0) & 1) && fsync(f->fd)) resp->result = errno_result();
         break;
     }
-    case 2: fsync(f->fd); break;
+    case 2: if (fsync(f->fd)) resp->result = errno_result(); break;
     case 3: if (ftruncate(f->fd, IN(int64_t, 0))) resp->result = errno_result(); break;
     case 4: {
         struct stat sb;
@@ -720,8 +742,10 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
     case 8: {  // OpenFile(mode)
         uint32_t mode = IN(uint32_t, 0);
         char work[2100];
-        struct stat sb;
-        if (!stat(p, &sb) && pending_of(fs, p, (mode & 2) != 0, work, sizeof work)) snprintf(p, sizeof p, "%s", work);
+        bool pending = pending_of(fs, p, (mode & 2) != 0, work, sizeof work);
+        // Staging is required for save writes; falling back here would overwrite the last committed save.
+        if (fs->journaled && (mode & 2) && !pending) { resp->result = errno_result(); break; }
+        if (pending) snprintf(p, sizeof p, "%s", work);
         int fd = open(p, (mode & 2) ? O_RDWR : O_RDONLY);
         if (fd < 0) { resp->result = errno_result(); break; }
         HostFile *f = calloc(1, sizeof *f);
@@ -744,7 +768,7 @@ static void filesystem(Service *s, IpcReq *req, IpcResp *resp) {
         ipc_return_object(resp, dsvc);
         break;
     }
-    case 10: commit(fs); break;  // Commit
+    case 10: if (!commit(fs)) resp->result = errno_result(); break;  // Commit
     case 11: case 12: OUT(int64_t, 0) = 0x40000000; resp_size(resp, 8); break;
     case 13: rm_rf(p, true); break;
     case 14: memset(resp->data, 0, 0x20); resp_size(resp, 0x20); break;
