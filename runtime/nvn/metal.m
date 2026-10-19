@@ -1245,7 +1245,22 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             [bl copyFromTexture:drawable.texture toTexture:shot_tex];
             [bl endEncoding];
         }
-        [cb presentDrawable:drawable];
+        // The GPU clock and the game's 30 fps mode (macOS). The system runs the GPU at the lowest clock that meets the
+        // presentation deadline it can infer. A plain present carries none, so once a 5120x1440 frame misses 60 and
+        // the game takes its 30 fps mode (presents every 33 ms), the clock settles on its floor (338 MHz on an M3 Max,
+        // powermetrics 2026-10-18), where the same frame takes 20 ms instead of 7: the game's counters keep reading a
+        // slow frame and the 30 mode never ends, at 15 ms of GPU time per frame and 60% utilisation. Presenting with
+        // an explicit time one 60 Hz frame ahead gives the system the deadline the game actually has, in both modes:
+        // the clock follows it (mid-range at 60 fps, measured 0.4-0.6 ms on a 0.3-1.8 ms calibration pass), the frame
+        // fits again and the game returns to 60. presentDrawable:afterMinimumDuration: and showing the image a second
+        // time at 60 Hz in the 30 mode did not move the clock. LARECOMP_PRESENT_DEADLINE=0: a plain present (as before).
+        static int deadline = -1;
+        if (deadline < 0) {
+            deadline = !getenv("LARECOMP_PRESENT_DEADLINE") || atoi(getenv("LARECOMP_PRESENT_DEADLINE"));
+            LOG("[metal] presents %s\n", deadline ? "carry a one-frame deadline (GPU clock)" : "without a deadline");
+        }
+        if (deadline) [cb presentDrawable:drawable atTime:CACurrentMediaTime() + 1.0 / 60.0];
+        else [cb presentDrawable:drawable];
         [cb commit];
         if (shot_tex) {
             [cb waitUntilCompleted];
