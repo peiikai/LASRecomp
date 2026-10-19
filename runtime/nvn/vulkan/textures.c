@@ -222,12 +222,10 @@ void vk_level_change_check(void) {
 }
 
 bool renderer_texture_frame_fresh(NvnTexture *t) {
-    static int on = -1;
-    if (on < 0) on = getenv("LARECOMP_NO_FRAME_CLEAR") == NULL;
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
     extern uint64_t renderer_exec_frame(void);
     uint64_t total_frames = renderer_exec_frame();  // (the frame being translated)
-    if (!on || !b || !b->scalable || b->frame_cleared == total_frames + 1) return false;
+    if (g_vk.no_frame_clear || !b || !b->scalable || b->frame_cleared == total_frames + 1) return false;
     b->frame_cleared = total_frames + 1;
     return true;
 }
