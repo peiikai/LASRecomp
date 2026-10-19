@@ -658,25 +658,34 @@ _box_cache = {}
 
 def _model_boxes(romfs, f):
     """{model name: (x0, x1, z0, z1)} of a roof file's models, cell-centred (from each shape's bounding box): a
-    room-specific lid / fade reaches 4.5 past its cell on the sides the original dungeon left empty."""
+    room-specific lid / fade reaches 4.5 past its cell on the sides the original dungeon left empty.
+    Shapes are read from each model's (FMDL) own shape array and filed under the model's name: shape names don't
+    always start with it (Tail Cave's DungeonFade1_05D / 06D hold 'DungeonFade_Lv1_DungeonFade1_05D', some Key
+    Cavern, Angler's and Turtle Rock roofs alike). Looked up by shape name those models were 'unknown' -> assumed
+    to reach over every neighbour -> swapped for the generic fade, which rims all four sides of the cell: a dark
+    seam across a kept big room where its cells meet (Tail Cave 06D|06E, beta_5)."""
     if f not in _box_cache:
         out = {}
         try:
             d = open(os.path.join(romfs, 'region_common', f), 'rb').read()
         except OSError:
             d = b''
-        for m in re.finditer(b'FSHP', d):
+        for m in re.finditer(b'FMDL', d):
             o = m.start()
-            try:
+            try:  # FMDL: +0x08 name, +0x28 shape array (FSHP records 0x60 apart), +0x6A shape count
                 no = struct.unpack_from('<Q', d, o + 8)[0]
-                n = struct.unpack_from('<H', d, no)[0]
-                name = d[no + 2:no + 2 + n].decode().split('__')[0]
-                cx, _, cz, ex, _, ez = struct.unpack_from('<6f', d, struct.unpack_from('<Q', d, o + 0x38)[0])
+                name = d[no + 2:no + 2 + struct.unpack_from('<H', d, no)[0]].decode()
+                shapes = struct.unpack_from('<Q', d, o + 0x28)[0]
+                for i in range(struct.unpack_from('<H', d, o + 0x6A)[0]):
+                    s = shapes + i * 0x60
+                    if d[s:s + 4] != b'FSHP':
+                        break
+                    cx, _, cz, ex, _, ez = struct.unpack_from('<6f', d, struct.unpack_from('<Q', d, s + 0x38)[0])
+                    b = (cx - ex, cx + ex, cz - ez, cz + ez)
+                    a = out.get(name, b)
+                    out[name] = (min(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]))
             except (struct.error, UnicodeDecodeError):
                 continue
-            b = (cx - ex, cx + ex, cz - ez, cz + ez)
-            a = out.get(name, b)
-            out[name] = (min(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]))
         _box_cache[f] = out
     return _box_cache[f]
 
