@@ -225,7 +225,10 @@ bool renderer_texture_frame_fresh(NvnTexture *t) {
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
     extern uint64_t renderer_exec_frame(void);
     uint64_t total_frames = renderer_exec_frame();  // (the frame being translated)
-    if (g_vk.no_frame_clear || !b || !b->scalable || b->frame_cleared == total_frames + 1) return false;
+    if (!b || !b->scalable || b->frame_cleared == total_frames + 1) return false;
+    // LARECOMP_NO_FRAME_CLEAR skips the clear only while the contents cover the whole target: below 1x a frame draws
+    // into part of it, and the rest would show what an earlier frame left there (issue #205: the upper part flickered)
+    if (g_vk.no_frame_clear && b->sx >= 1.0f && b->sy >= 1.0f) return false;
     b->frame_cleared = total_frames + 1;
     return true;
 }
