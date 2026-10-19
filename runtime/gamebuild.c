@@ -155,9 +155,20 @@ bool gamebuild_available(void) {
     return find_tools(&t);
 }
 
+// zig cc on Linux: an explicit target, so it uses its own glibc headers and stubs instead of looking for the system's
+// (SteamOS and other systems without development packages have none: "failed to find libc installation", #181)
+#if defined(__linux__) && defined(__x86_64__)
+#define ZIG_TARGET "x86_64-linux-gnu"
+#elif defined(__linux__) && defined(__aarch64__)
+#define ZIG_TARGET "aarch64-linux-gnu"
+#else
+#define ZIG_TARGET ""
+#endif
+
 static void compiler(Args *a, const Tools *t) {
     add(a, t->cc);
     if (t->zig) add(a, "cc");
+    if (t->zig && ZIG_TARGET[0]) add(a, "-target"), add(a, ZIG_TARGET);
 }
 
 // ------------------------------------------------------------------ generator progress (its log)
@@ -289,8 +300,9 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     // Compiler/header/flag changes invalidate every object; entry always rebuilds because it embeds GAMELIB_ID.
     const char *inputs[] = {input_paths[2], input_paths[3], input_paths[4], input_paths[5], t.cc};
     // The compiler's contents identify it, so relocating the app does not discard reusable objects.
-    snprintf(spec, sizeof spec, "LASBUILD3\n%s\n%s\n%s\nzig=%d pointer=%d\n", GAMELIB_BASE_ID,
-             GAMELIB_CFLAGS, GAMELIB_SHARED, t.zig, (int)sizeof(void *));
+    snprintf(spec, sizeof spec, "LASBUILD3\n%s\n%s\n%s\nzig=%d pointer=%d%s%s\n", GAMELIB_BASE_ID,
+             GAMELIB_CFLAGS, GAMELIB_SHARED, t.zig, (int)sizeof(void *),  // (+ the Linux zig target: objects from
+             t.zig && ZIG_TARGET[0] ? " target=" : "", t.zig ? ZIG_TARGET : "");  // before it are rebuilt once)
     if (o->progress) o->progress(0, "Checking completed build files...");
     bool resuming = build_cache_resumable(game_dir);  // (a cancelled or interrupted build; read before open marks this one)
     BuildCache *cache = build_cache_open(game_dir, spec, inputs, 5, why, why_size);
