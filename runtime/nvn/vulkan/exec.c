@@ -1231,6 +1231,26 @@ static void begin_pass(void) {
         static bool logged_none;
         if (!logged_none) logged_none = true, LOG("[vk] pass with no attachments (%d color slots bound)\n", st.rt.ncolor);
     }
+    // A pass with depth / stencil but no color attachment gets a throwaway one on Intel (LARECOMP_VK_PLACEHOLDER_COLOR=0 /
+    // 1 overrides): the UHD 630's Windows driver (Vulkan 1.3.215) crashes in the vkCmdBeginRendering after such a pass,
+    // reading near a null pointer (issues #8, #46). Pipelines and clears follow pass_ncolor / pass_color as usual.
+    static int placeholder = -1;
+    if (placeholder < 0) {
+        const char *e = getenv("LARECOMP_VK_PLACEHOLDER_COLOR");
+        placeholder = e ? atoi(e) != 0 : g_vk.props.vendorID == 0x8086;
+    }
+    bool placed = false;
+    if (placeholder && !pass_ncolor && (has_d || has_s)) {
+        VkImageView v = vk_dummy_color_view(minw, minh, pass_samples);
+        if (v) {
+            ca[0] = (VkRenderingAttachmentInfo){.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = v,
+                                                .imageLayout = VK_IMAGE_LAYOUT_GENERAL, .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+                                                .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE};
+            pass_color[0] = VK_FORMAT_R8_UNORM;
+            pass_ncolor = 1;
+            placed = true;
+        }
+    }
     pass_w = minw; pass_h = minh;
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {minw, minh}}, .layerCount = 1,
                           .colorAttachmentCount = pass_ncolor, .pColorAttachments = pass_ncolor ? ca : NULL,
@@ -1245,8 +1265,16 @@ static void begin_pass(void) {
     if (log_passes > 0) {
         log_passes--;
         LOG("[vk] pass %ux%u: %u color", minw, minh, pass_ncolor);
-        for (uint32_t i = 0; i < pass_ncolor; i++) LOG(" [%u: fmt %d view %s %s]", i, pass_color[i], ca[i].imageView ? "yes" : "none",
-                                                       ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "clear" : "load");
+        for (uint32_t i = 0; i < pass_ncolor; i++) {
+            TexBackend *b = !placed && st.rt.color[i] ? st.rt.color[i]->backend : NULL;
+            LOG(" [%u: fmt %d view %s %s", i, pass_color[i], ca[i].imageView ? "yes" : "none", placed ? "placeholder"
+                : ca[i].loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR ? "clear" : "load");
+            // (the image under it: its own format, size, levels / layers, samples; the view's first level and layer)
+            if (b) LOG(", image fmt %d %ux%u lv %u ly %u s %u, view lv %u ly %u", b->format, b->width, b->height, b->levels,
+                       b->layers, b->samples, st.rt.has_cview[i] && (st.rt.cview[i].setmask & 1) ? st.rt.cview[i].base_level : 0,
+                       st.rt.has_cview[i] && (st.rt.cview[i].setmask & 2) ? st.rt.cview[i].min_layer : 0);
+            LOG("]");
+        }
         if (has_d || has_s)
             LOG(", depth %s fmt %d, stencil %s fmt %d (same view %s, layout %d, load op %d / %d)", has_d ? "yes" : "no",
                 pass_depth, has_s ? "yes" : "no", pass_stencil, has_d && has_s && da.imageView == sa.imageView ? "yes" : "no",
@@ -4458,6 +4486,104 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
     if (small_mem) vmaDestroyImage(g_vk.vma, srcimg, small_mem);
 }
 
+// Scaled depth copies (the game's depth pyramid) are blits, but a depth format needn't support being a blit destination:
+// Intel's drivers don't for D32_SFLOAT_S8_UINT (validation on a UHD 770; a suspect in the UHD 630's crash after a
+// depth pass, issues #8, #46). There the depth goes the long way round with transfers only: to a buffer, into an
+// unsigned-integer colour image with the same bits per texel, blitted (nearest: bits kept) into a second one at the
+// new size, back to the buffer, and into the depth image. The regions are copy_texture's, already cut to the
+// contents' extent (Dynamic resolution's sub-rect, issue #191's content_extent) and kept inside their levels.
+// The scratch buffer and images are sized by the source and destination *levels* (not the regions, which follow the
+// render scale), so a changing scale doesn't regrow them; outgrown ones are destroyed once the submissions that may
+// use them are done. All of it (and depth_blit_ok's table) belongs to the translating thread: the render thread, or
+// the game's GPU thread with LARECOMP_RENDER_THREAD=0 - copy_texture runs nowhere else.
+static bool depth_blit_ok(VkFormat f) {
+    static VkFormat known[8];
+    static bool ok[8];
+    static int n;
+    for (int i = 0; i < n; i++) if (known[i] == f) return ok[i];
+    VkFormatProperties fp;
+    vkGetPhysicalDeviceFormatProperties(g_vk.phys, f, &fp);
+    bool r = (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT) && (fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT);
+    if (n < 8) { known[n] = f; ok[n++] = r; }
+    if (!r) LOG("[vk] depth format %d can't be blitted here: scaled depth copies go through a colour image\n", f);
+    return r;
+}
+
+typedef struct { VkImage img; VmaAllocation mem; uint32_t w, h; } ScratchImage;
+
+static bool scratch_image(ScratchImage *si, uint32_t w, uint32_t h, VkFormat fmt) {
+    if (si->img && si->w >= w && si->h >= h) return true;
+    if (si->w > w) w = si->w;
+    if (si->h > h) h = si->h;
+    VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = fmt,
+                            .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1, .samples = VK_SAMPLE_COUNT_1_BIT,
+                            .tiling = VK_IMAGE_TILING_OPTIMAL,
+                            .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+    VkImage img;
+    VmaAllocation mem;
+    if (vmaCreateImage(g_vk.vma, &ci, &ai, &img, &mem, NULL) != VK_SUCCESS) return false;
+    if (si->img) vk_defer_image(si->img, si->mem);  // (no views: never sampled or rendered to)
+    vk_image_init_layout(vk_upload_cmd(), img, VK_IMAGE_ASPECT_COLOR_BIT);
+    *si = (ScratchImage){img, mem, w, h};
+    return true;
+}
+
+static void depth_blit_via_color(VkCommandBuffer cb, TexBackend *s, TexBackend *d, uint32_t slv, uint32_t sly, int sx, int sy,
+                                 int sw, int sh, uint32_t dlv, uint32_t dly, int dx, int dy, int dw, int dh) {
+    if (s->samples != 1 || d->samples != 1) return;  // (buffer copies and blits are single-sample only, as before)
+    // bits per texel of the depth aspect in a buffer: 4 (D32 / X8_D24 variants) or 2 (D16)
+    uint32_t bpp = s->format == VK_FORMAT_D16_UNORM || s->format == VK_FORMAT_D16_UNORM_S8_UINT ? 2 : 4;
+    VkFormat cf = bpp == 2 ? VK_FORMAT_R16_UINT : VK_FORMAT_R32_UINT;
+    static VkBuffer buf;
+    static VmaAllocation buf_mem;
+    static VkDeviceSize buf_size;
+    static struct { VkBuffer buf; VmaAllocation mem; uint64_t seq; } old[8];  // outgrown buffers, until their work is done
+    static ScratchImage a[2], b[2];  // per colour format (R16 / R32)
+    uint64_t done = vk_completed_seq();
+    for (int i = 0; i < 8; i++)
+        if (old[i].buf && old[i].seq <= done) { vmaDestroyBuffer(g_vk.vma, old[i].buf, old[i].mem); old[i].buf = VK_NULL_HANDLE; }
+    uint32_t slw = level_extent(s->width, slv), slh = level_extent(s->height, slv);
+    uint32_t dlw = level_extent(d->width, dlv), dlh = level_extent(d->height, dlv);
+    VkDeviceSize need = (VkDeviceSize)(slw * slh > dlw * dlh ? slw * slh : dlw * dlh) * bpp;
+    if (need > buf_size) {
+        if (need < buf_size * 2) need = buf_size * 2;
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = need,
+                                 .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VkBuffer nb;
+        VmaAllocation nm;
+        if (vmaCreateBuffer(g_vk.vma, &bi, &ai, &nb, &nm, NULL) != VK_SUCCESS) return;
+        if (buf) {
+            int i = 0;
+            while (i < 8 && old[i].buf) i++;
+            if (i < 8) old[i].buf = buf, old[i].mem = buf_mem, old[i].seq = vk_pending_seq();
+            // (else kept, never freed: 8 outgrown in flight at once, with each at least twice the last - not seen)
+        }
+        buf = nb; buf_mem = nm; buf_size = need;
+    }
+    int k = bpp == 2 ? 0 : 1;
+    if (!scratch_image(&a[k], slw, slh, cf) || !scratch_image(&b[k], dlw, dlh, cf)) return;
+    VkBufferImageCopy c = {.imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, slv, sly, 1}, .imageOffset = {sx, sy, 0},
+                           .imageExtent = {(uint32_t)sw, (uint32_t)sh, 1}};
+    vkCmdCopyImageToBuffer(cb, s->image, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &c);
+    vk_full_barrier(cb);
+    c.imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+    c.imageOffset = (VkOffset3D){0, 0, 0};
+    vkCmdCopyBufferToImage(cb, buf, a[k].img, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+    vk_full_barrier(cb);
+    VkImageBlit bl = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .srcOffsets = {{0, 0, 0}, {sw, sh, 1}},
+                      .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstOffsets = {{0, 0, 0}, {dw, dh, 1}}};
+    vkCmdBlitImage(cb, a[k].img, VK_IMAGE_LAYOUT_GENERAL, b[k].img, VK_IMAGE_LAYOUT_GENERAL, 1, &bl, VK_FILTER_NEAREST);
+    vk_full_barrier(cb);
+    c.imageExtent = (VkExtent3D){(uint32_t)dw, (uint32_t)dh, 1};
+    vkCmdCopyImageToBuffer(cb, b[k].img, VK_IMAGE_LAYOUT_GENERAL, buf, 1, &c);
+    vk_full_barrier(cb);
+    c.imageSubresource = (VkImageSubresourceLayers){VK_IMAGE_ASPECT_DEPTH_BIT, dlv, dly, 1};
+    c.imageOffset = (VkOffset3D){dx, dy, 0};
+    vkCmdCopyBufferToImage(cb, buf, d->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
+}
+
 static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t flags) {
     snap_reason = "tex2tex"; snapshots_invalidate(NULL);
     NvnTexture *st_ = (NvnTexture *)(uintptr_t)src->tex, *dt = (NvnTexture *)(uintptr_t)dst->tex;
@@ -4539,6 +4665,14 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
     // scaled / converting copy: the game builds its depth pyramid this way (nearest), colour copies filter if asked
     bool depth = (sa | da) & (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
     if (depth && s->format != d->format) return;
+    static int via_color = -1;  // LARECOMP_VK_DEPTH_BLIT_VIA_COLOR=1: always (tests on GPUs that can blit depth)
+    if (via_color < 0) via_color = getenv("LARECOMP_VK_DEPTH_BLIT_VIA_COLOR") ? atoi(getenv("LARECOMP_VK_DEPTH_BLIT_VIA_COLOR")) : 0;
+    if (depth && (sa & da & VK_IMAGE_ASPECT_DEPTH_BIT) && (via_color || !depth_blit_ok(d->format) || !depth_blit_ok(s->format))) {
+        dl_note("  depth blit via colour %p lv%u (%d,%d %dx%d) -> %p lv%u (%d,%d %dx%d)", (void *)s->image, slv, sx0, sy0, sw, sh,
+                (void *)d->image, dlv, dx0, dy0, dw, dh);
+        depth_blit_via_color(cb, s, d, slv, sly, sx0, sy0, sw, sh, dlv, dly, dx0, dy0, dw, dh);
+        return;
+    }
     VkImageBlit bl = {.srcSubresource = {depth ? (sa & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : sa) : sa, slv, sly, 1},
                       .srcOffsets = {{sx0, sy0, 0}, {sx0 + sw, sy0 + sh, 1}},
                       .dstSubresource = {depth ? (da & VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_ASPECT_DEPTH_BIT : da) : da, dlv, dly, 1},

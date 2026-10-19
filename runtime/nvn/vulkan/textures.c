@@ -921,6 +921,39 @@ VkImageView vk_dummy_view(int textype) {
     return views[textype];
 }
 
+// Throwaway color attachment for passes that have none (exec.c begin_pass, Intel only): R8, at least w x h (the pass's
+// render area: the attachments' level extent, which Dynamic resolution's sub-rect lies inside), never sampled; its
+// contents are don't-care. One image per sample count, grown to the largest render area seen (the outgrown one is
+// destroyed once the submissions that may use it are done), so changing render scales don't pile up images. Only the
+// image is kept: its view comes from the view table on each use, like a game target's (a cached handle could be
+// evicted from that table and destroyed under us). Called by the translating thread only (the render thread, or the
+// game's GPU thread with LARECOMP_RENDER_THREAD=0), as vk_dummy_view and the view table are.
+VkImageView vk_dummy_color_view(uint32_t w, uint32_t h, uint32_t samples) {
+    static TexBackend imgs[5];  // samples 1, 2, 4, 8, 16
+    int k = 0;
+    while (k < 4 && (1u << k) < samples) k++;
+    TexBackend *b = &imgs[k];
+    if (!b->image || b->width < w || b->height < h || b->samples != samples) {
+        if (b->width > w) w = b->width;
+        if (b->height > h) h = b->height;
+        VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
+                                .format = VK_FORMAT_R8_UNORM, .extent = {w, h, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .samples = (VkSampleCountFlagBits)samples, .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        VkImage img;
+        VmaAllocation mem;
+        if (vmaCreateImage(g_vk.vma, &ci, &ai, &img, &mem, NULL) != VK_SUCCESS) return VK_NULL_HANDLE;
+        if (b->image) { views_forget(b); defer((Dead){.img = b->image, .mem = b->mem}); }
+        vk_image_init_layout(vk_upload_cmd(), img, VK_IMAGE_ASPECT_COLOR_BIT);
+        *b = (TexBackend){.image = img, .mem = mem, .format = VK_FORMAT_R8_UNORM, .base_type = VK_IMAGE_VIEW_TYPE_2D,
+                          .width = w, .height = h, .depth = 1, .layers = 1, .levels = 1, .samples = samples,
+                          .aspect = VK_IMAGE_ASPECT_COLOR_BIT, .gpu_owned = true};
+        LOG("[vk] placeholder color attachment %ux%u (samples %u) for passes without one\n", w, h, samples);
+    }
+    return vk_image_view(b, VK_IMAGE_VIEW_TYPE_2D, b->format, 0, 1, 0, 1, IDENTITY, VK_IMAGE_ASPECT_COLOR_BIT);
+}
+
 // ================================================================== samplers
 static VkCompareOp compare_op(uint32_t f) {
     switch (f) {
