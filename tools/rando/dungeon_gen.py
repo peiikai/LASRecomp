@@ -903,8 +903,8 @@ _grid_cache = {}
 def landing_depth(romfs, room, side, slot, min_tile):
     """(depth, floor height): how far past the edge Link lands at a doorway (Chaos jumps) and the floor there - the
     centre of the first tile inward from the edge,
-    along the doorway's line, that is floor - no collision, no deep water / lava / pit (Turtle Rock 07D: lava right
-    inside its west doorway) - starting at `min_tile` (1 = past a door of the room's own)."""
+    along the doorway's line, that is floor - no collision, no deep water / lava / pit / crumbling floor (Turtle Rock
+    07D: lava right inside its west doorway) - starting at `min_tile` (1 = past a door of the room's own)."""
     import struct
     from RandomizerCore.Tools import leb
     if room not in _grid_cache:
@@ -920,7 +920,10 @@ def landing_depth(romfs, room, side, slot, min_tile):
         row, col = {'N': (i, along), 'S': (7 - i, along), 'W': (min(along, 7), i), 'E': (min(along, 7), 9 - i)}[side]
         t, h = tile(min(row, 7), min(col, 9))
         solid = bool(t[0] & 2) and not t[2] & 8
-        hazard = (t[2] & 4 and h < -0.3) or h < -1.0
+        # bit 0: a hole under the tile - a pit, or a floor that crumbles once stood on (Turtle Rock 03G's tiles,
+        # ObjDungeonCollapse...: Link landed on one inside its west doorway, it gave way and he fell - seed
+        # 52YTE-YT280-5000H-4MG2E-G1000-0001V Tail Cave 07F E -> 06F W)
+        hazard = (t[2] & 4 and h < -0.3) or h < -1.0 or t[0] & 1
         return not solid and not hazard, h
     # never on the doorway tile itself (the game walks a Link who stands there on through the doorway - straight
     # back into the jump: DevChaos1 Color Dungeon 07H -> 08H), and only where he can walk on inward
