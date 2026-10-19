@@ -39,6 +39,14 @@ void plat_thread_realtime(uint64_t period_ns);  // periodic timing thread (vsync
 int plat_cpu_count(void);  // logical cores this process may run on (its affinity mask); 0 if unknown
 void plat_thread_guest(int prio);  // a guest thread's host scheduling class from its Switch priority (lower = more urgent)
 uint64_t plat_thread_cpu_ns(void);  // the calling thread's CPU time so far (user + system; diagnostics)
+// The calling thread is one of the frame's critical threads: on Windows, no power throttling (EcoQoS) for it and, on a
+// hybrid CPU, a preference for the performance cores (selected CPU sets; LARECOMP_PCORE=0: off). Elsewhere a no-op.
+enum { PLAT_PERF_GAME, PLAT_PERF_RENDER, PLAT_PERF_VSYNC };
+#ifdef _WIN32
+void plat_thread_perf_core(int role);
+#else
+static inline void plat_thread_perf_core(int role) { (void)role; }
+#endif
 
 // ---- process
 void plat_init(void);                                // first thing in main()
