@@ -675,7 +675,10 @@ def main():
         from RandomizerCore.randomizer_data import ENEMY_DATA as _ed
         from RandomizerCore.Randomizers import enemies as _en
         print('enemy random:', enemy_random.write(out_dir, mods.enemy_random, _ed, _en,
-                                                   settings.get('randomize-enemy-sizes', False), _uw_leb), flush=True)
+                                                   settings.get('randomize-enemy-sizes', False), _uw_leb,
+                                                   bool(settings.get('enemy-minibosses')),
+                                                   (settings['miniboss-marker-flag'], miniboss_guard.ANYWHERE)
+                                                   if 'miniboss-marker-flag' in settings else None), flush=True)
     if pot_locs or bush_locs or dig_locs:  # (after every flow edit) refills at real checks are refills, not the item
         import refill_gets
         print('refill gets:', refill_gets.apply(out_dir, romfs, settings), flush=True)
