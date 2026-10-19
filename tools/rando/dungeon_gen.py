@@ -593,6 +593,41 @@ def _jumps(cat, level, layout):
     return out
 
 
+# ---- Same-side doorways (user 2026-10-18): the doorways on one side of a single-screen room - two doorways in the
+# same wall, differing only in position or floor height - lead to the same place. Coherent already gives such a side
+# one neighbour (same doorway count, _openings_match); Chaos / Madness pair one of its free doorways and the others
+# follow it (chaos_pairs). Multi-cell rooms are left alone: their cells' doorways are separate doorways into separate
+# rooms, as players expect there (user: Tail Cave 06C S grouped with 06E S was wrong).
+
+def walls_off(cat, room, side, other):
+    """`other` (across `room`'s side) has no open tile in front of `room`'s doorways there - Link stops in them and
+    the jump takes him (an open tile: he walks on into `other`)."""
+    def tiles_of(sl):
+        return {sl // 2 - 1, sl // 2} if sl % 2 == 0 else {sl // 2}
+    across = set(cat[other]['tiles'][rooms.OPP[side]])
+    return not any(tiles_of(x[0]) & across for x in openings(cat, room)[side] if not isinstance(x[0], str))
+
+
+def _side_target(level, rows, cell, side):
+    """Where a cell side's first jump row leads: (pos, target cell, side, centre), None without one."""
+    short = cell.rsplit('_', 1)[1]
+    for row in rows:
+        if row[0] == level and row[1] == short and row[2] == side and len(row) > 6:
+            t = f'{level}_{row[5]}'
+            return cell_pos(t), t, row[6], int(row[4])
+    return None
+
+
+def _follow_row(cat, level, layout, romfs, x, tgt, lead):
+    """door_jumps row: follower doorway x (pos, cell, side, slot) -> the target doorway (as _side_target). The lead
+    (cell, side) leading back into itself (Chaos' odd one out: a wall): so does the follower."""
+    if (tgt[1], tgt[2]) == lead:
+        tgt = x
+    if romfs is None:  # (logic checks only: no landing spot needed)
+        return (level, x[1].rsplit('_', 1)[1], x[2], x[3], tgt[3], tgt[1].rsplit('_', 1)[1], tgt[2], 2.2, 0.0)
+    return _jump_row(cat, level, layout, romfs, x, tgt)
+
+
 WARP_PADS = {0xF3}  # ObjDungeonWarp: paired warp tiles naming '<room>_Warp' starts of their own dungeon
 
 
@@ -935,6 +970,7 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
     stairs = {cell_pos(c) for c, r in layout.items() if c == r and
               any(t in a for a in cat[r]['actors'] for t in ('Downstairs', 'Upstairs'))}
     parent = {p: p for p in pos}
+    follow = {}  # one cell side's other free doorways: they go where its first one goes
 
     def find(p):
         while parent[p] != p:
@@ -962,9 +998,11 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
                 if home or (theirs and [x[0] for x in mine] == [x[0] for x in theirs] and _openings_match(mine, theirs)):
                     parent[find((c, r))] = find((c + dc, r + dr))  # a real connection
                     continue
-            for x in mine:
-                if chaos_free(cat, room, s, x[0]):
-                    stubs.append(((c, r), cell, s, x[0]))
+            free = [x[0] for x in mine if chaos_free(cat, room, s, x[0])]
+            if free:  # (same side, same place: one of them is paired, the rest follow it)
+                rng.shuffle(free)
+                stubs.append(((c, r), cell, s, free[0]))
+                follow[(cell, s)] = [((c, r), cell, s, x) for x in free[1:]]
     comps = {}
     for p in pos:
         if any(openings(cat, layout[pos[p]]).values()):
@@ -981,7 +1019,8 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
     if any(k not in by_comp for k in order) and len(order) > 1:
         return None  # a piece without a free doorway can't be reached
     if madness:
-        return _madness_rows(level, layout, order, by_comp, rng, romfs_for_tiles, cat)
+        return _with_followers(cat, level, layout, romfs_for_tiles, follow,
+                               _madness_rows(level, layout, order, by_comp, rng, romfs_for_tiles, cat))
     # spanning tree: each next piece links to the linked piece with the most free doorways left
     linked = [order[0]] if order else []
     for k in order[1:]:
@@ -1014,6 +1053,17 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
     for a, b in pairs:
         for x, y in ((a, b), (b, a)) if a != b else ((a, b),):
             out.append(_jump_row(cat, level, layout, romfs_for_tiles, x, y))
+    return _with_followers(cat, level, layout, romfs_for_tiles, follow, out)
+
+
+def _with_followers(cat, level, layout, romfs, follow, rows):
+    """rows + the rows of a cell side's other free doorways, to where its paired one goes (after the pairs: the
+    map's letters label the pairs first, runtime/ui/chaos_overlay.mm)."""
+    out = list(rows)
+    for (cell, s), xs in sorted(follow.items()):
+        tgt = _side_target(level, rows, cell, s) if xs else None
+        for x in xs if tgt else ():
+            out.append(_follow_row(cat, level, layout, romfs, x, tgt, (cell, s)))
     return out
 
 
@@ -1124,6 +1174,12 @@ def plan_all_chaos(cat, seed, romfs, levels=None, rounds=None, madness=False, se
                             mine = openings(cat, room)[s]
                             if theirs and mine and [x[0] for x in mine] == [x[0] for x in theirs]:
                                 ok = False  # would join physically: keep it simple, not next to a matching doorway
+                            # a leftover never joins its neighbours: a wall across every doorway either way (an open
+                            # tile there, even another doorway's, and Link could walk on into the other room - plan()
+                            # checks this for the rooms it places: wall_behind)
+                            if (mine and not walls_off(cat, room, s, L[cell_name(lv, *n)])) or \
+                                    (theirs and not walls_off(cat, L[cell_name(lv, *n)], rooms.OPP[s], room)):
+                                ok = False
                             if theirs and not all(chaos_free(cat, L[cell_name(lv, *n)], rooms.OPP[s], x[0]) for x in theirs):
                                 ok = False
                     if ok:
