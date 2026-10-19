@@ -23,19 +23,65 @@
 VkG g_vk;
 static SDL_Window *window;
 
+// The system memory heap a whole-heap import (exec.c host_import) lands in and what it can hold: the largest heap with
+// a host-visible memory type that isn't device-local (all of them device-local: the largest host-visible one), the
+// smaller of its size and its budget (budget 0: unknown). -1: no host-visible heap. Plain types, so
+// tools/test_gmem_lowmem.py builds it without Vulkan headers.
+typedef struct { uint64_t size, budget; bool device_local, host_visible; } ImportHeap;
+static int import_heap_room(const ImportHeap *h, uint32_t n, uint64_t *room) {
+    int best = -1;
+    for (int pass = 0; pass < 2 && best < 0; pass++)
+        for (uint32_t i = 0; i < n; i++)
+            if (h[i].host_visible && (pass || !h[i].device_local) && (best < 0 || h[i].size > h[best].size)) best = (int)i;
+    if (best >= 0) *room = h[best].budget && h[best].budget < h[best].size ? h[best].budget : h[best].size;
+    return best;
+}
+// What the heap must hold beyond the import: the transient ring's chunks once they spill to system memory (64 MB
+// each), readback, the driver's own. Issue #205 (8 GB laptop, Ryzen 5 5500U, AMD's Windows driver): system heap
+// 2738 MB, budget 2601 - the 3220 MB import was accepted, then the first submission failed with out of device memory.
+// An 8 GB desktop with a GPU of its own (system heap ~3950 MB, budget ~3840) stays on one import.
+#define IMPORT_MARGIN (256ull << 20)
+
+// Whether one import of the whole heap fits its system memory heap (import_heap_room), from the physical device.
+static bool whole_import_fits(bool budget_ext) {
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT bp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+    VkPhysicalDeviceMemoryProperties2 mp2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+                                             .pNext = budget_ext ? &bp : NULL};
+    vkGetPhysicalDeviceMemoryProperties2(g_vk.phys, &mp2);
+    const VkPhysicalDeviceMemoryProperties *mp = &mp2.memoryProperties;
+    ImportHeap h[VK_MAX_MEMORY_HEAPS] = {{0}};
+    for (uint32_t i = 0; i < mp->memoryHeapCount; i++) {
+        h[i].size = mp->memoryHeaps[i].size;
+        h[i].budget = budget_ext ? bp.heapBudget[i] : 0;
+        h[i].device_local = (mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0;
+    }
+    for (uint32_t i = 0; i < mp->memoryTypeCount; i++)
+        if (mp->memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) h[mp->memoryTypes[i].heapIndex].host_visible = true;
+    uint64_t room = 0;
+    int heap = import_heap_room(h, mp->memoryHeapCount, &room);
+    if (heap < 0 || room >= HEAP_MAX + IMPORT_MARGIN) return true;
+    LOG("[vk] guest heap: memory heap %d holds %llu MB (size %llu, budget %llu), one import needs %llu MB: "
+        "imported in chunks as the game binds them\n", heap, (unsigned long long)(room >> 20),
+        (unsigned long long)(h[heap].size >> 20), (unsigned long long)(h[heap].budget >> 20),
+        (unsigned long long)((HEAP_MAX + IMPORT_MARGIN) >> 20));
+    return false;
+}
+
 // Whether the guest heap will be imported chunk by chunk (exec.c gmem_lazy): on a GPU whose storage buffers can't
-// span the heap (maxStorageBufferRange < HEAP_MAX: Intel, 1 GB), and on RADV when the dma-buf heap
+// span the heap (maxStorageBufferRange < HEAP_MAX: Intel, 1 GB); where the system memory heap or its budget can't hold
+// one import of the whole heap (whole_import_fits: 8 GB laptops, issue #205); and on RADV when the dma-buf heap
 // (exec.c guest_heap_dmabuf) has no cached host-visible memory type that holds it - the same test, which needs only
 // the physical device - or LARECOMP_VK_GMEM_LAZY=1 (=0: never; a GPU with a short range then gets windows of one
 // import, exec.c gmem_chunk_shift). Decided before the device exists because the lazy import needs buffer device
 // addresses, and on RADV enabling them puts every allocation on the driver's global BO list (amdgpu checks all of
 // them each submission): a device that imports the heap another way shouldn't pay for that.
-static bool lazy_heap_predicted(void) {
+static bool lazy_heap_predicted(bool budget_ext) {
     const char *e = getenv("LARECOMP_VK_GMEM_LAZY");
     if (e) return atoi(e) != 0;
     if (getenv("LARECOMP_VK_NO_GMEM")) return false;
     uint64_t lim = g_vk.props.limits.maxStorageBufferRange;
     if (lim && lim < HEAP_MAX) return true;  // (UHD 770 main pass: lazy 8.4 ms, 512 MB windows 8.5)
+    if (!whole_import_fits(budget_ext)) return true;
     if (!strstr(g_vk.props.deviceName, "RADV")) return false;
 #ifdef __linux__
     const char *d = getenv("LARECOMP_VK_HEAP_DMABUF");
@@ -264,7 +310,7 @@ static void create_device(void) {
     VkPhysicalDeviceVulkan12Features have12 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceFeatures2 have = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, .pNext = &have12};
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
-    g_vk.lazy_heap = lazy_heap_predicted();
+    g_vk.lazy_heap = lazy_heap_predicted(budget);
     g_vk.bda = g_vk.lazy_heap && have12.bufferDeviceAddress;
     VkPhysicalDeviceVertexAttributeDivisorFeaturesEXT div = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES_EXT,

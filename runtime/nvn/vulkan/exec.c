@@ -2566,7 +2566,8 @@ static VkDescriptorBufferInfo gmem_info(void) {
 //   about) is imported for the next frame, and the count is in the stats (after a chunk's first use it should stay 0).
 //   Buffer device addresses are enabled only where this mode will be used (device.c lazy_heap_predicted): on RADV
 //   they put every allocation on the driver's global BO list.
-//   Default on RADV when the dma-buf heap doesn't apply and wherever one storage buffer can't span the heap;
+//   Default on RADV when the dma-buf heap doesn't apply, wherever one storage buffer can't span the heap and where the
+//   system memory heap (or its budget) can't hold one import of it (8 GB laptops: issue #205);
 //   LARECOMP_VK_GMEM_LAZY=1 anywhere (tests), =0 off.
 // LARECOMP_VK_GMEM_CHUNK_MB=<n> forces chunks of n MB (a power of two, 1 GB at most), =0 one buffer.
 #define GC_MAX GMEM_CHUNKS_MAX
