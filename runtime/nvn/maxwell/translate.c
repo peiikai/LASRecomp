@@ -2187,6 +2187,9 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         info->num_insts++;
     }
     free(label);
+    // (MSL: more textures than sampler slots take a slot table, at a buffer index the vertex stage's streams use)
+    if (!c->glsl && stage == STAGE_VERTEX && info->ntex > MSL_MAX_SAMPLERS)
+        fail(c, "%d textures in a vertex shader (Metal: %d samplers)", info->ntex, MSL_MAX_SAMPLERS);
     if (c->fail) { free(c->body.buf); free(c); return info; }
     if (c->glsl) return glsl_finish(c, any_branch, dbg);
 
@@ -2262,11 +2265,18 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         sp(&args, ", constant float4 *ltint [[buffer(19)]]");
         info->uses_tint = true;
     }
+    // Metal has 16 sampler slots a stage (textures: 31). Up to 16 textures, texture i samples with sampler i. With more
+    // (issue #215: a cave floor's fragment shader with 17), the samplers come as one array of the 16 slots and a table
+    // (buffer SMAP_BUFFER_INDEX) names each texture's slot: the renderer puts each distinct sampler state the draw uses
+    // in a slot of its own, so every texture keeps its own filtering and wrapping (renderer.m sampler_slots).
+    bool smap = info->ntex > MSL_MAX_SAMPLERS;  // (not in vertex shaders: refused above)
+    if (smap) sp(&args, ", constant uint *smap [[buffer(%d)]], array<sampler, %d> ss [[sampler(0)]]", SMAP_BUFFER_INDEX,
+                 MSL_MAX_SAMPLERS);
     for (int i = 0; i < info->ntex; i++) {
         ShaderTexture *t = &info->tex[i];
         const char *tn = tex_type_name(t->type);
-        if (t->shadow) sp(&args, ", depth%s<float> t%d [[texture(%d)]], sampler s%d [[sampler(%d)]]", tn, i, i, i, i);
-        else sp(&args, ", texture%s<float> t%d [[texture(%d)]], sampler s%d [[sampler(%d)]]", tn, i, i, i, i);
+        sp(&args, ", %s%s<float> t%d [[texture(%d)]]", t->shadow ? "depth" : "texture", tn, i, i);
+        if (!smap) sp(&args, ", sampler s%d [[sampler(%d)]]", i, i);
     }
     if (stage == STAGE_VERTEX) {
         sp(&s, "vertex VOut main0(VIn in [[stage_in]], uint vid [[vertex_id]], uint iid [[instance_id]]%s%s) {\n",
@@ -2283,6 +2293,8 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
            args.buf ? args.buf : "");
     }
     free(args.buf);
+    if (smap)
+        for (int i = 0; i < info->ntex; i++) sp(&s, "  sampler s%d = ss[smap[%d]];\n", i, i);
     for (int i = 0; i < 256; i++)
         if (c->reg_used[i]) sp(&s, "  uint r%d = 0;\n", i);
     for (int i = 0; i < 7; i++)

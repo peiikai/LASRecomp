@@ -1752,8 +1752,38 @@ static void resolve_feedback(Prog *pr) {
         }
 }
 
+// Shaders with more textures than Metal's sampler slots (MSL_MAX_SAMPLERS; issue #215: a fragment shader of the Ukuku
+// Prairie cave with 17) take their samplers as an array of the slots, and a table of each texture's slot
+// (maxwell/translate.c). Each distinct sampler state the draw uses goes in a slot of its own - textures sharing a state
+// share its slot - so every texture keeps its own filtering, wrapping and compare mode. smp[i] / desc[i]: texture i's
+// state and its descriptor (NULL: the default sampler); fills slot[] and map[], returns the slots used.
+static int sampler_slots(int n, __strong id<MTLSamplerState> *smp, NvnSamplerDesc *const *desc,
+                         __strong id<MTLSamplerState> *slot, uint32_t *map) {
+    const NvnSamplerDesc *sdesc[MSL_MAX_SAMPLERS] = {0};
+    int ns = 0;
+    for (int i = 0; i < n; i++) {
+        int k = 0;
+        for (; k < ns; k++)  // (one state: the same object, or descriptors alike apart from the cached object)
+            if (slot[k] == smp[i] || (desc[i] && sdesc[k] && !memcmp(desc[i], sdesc[k], offsetof(NvnSamplerDesc, backend))))
+                break;
+        if (k == ns && ns < MSL_MAX_SAMPLERS) { slot[ns] = smp[i]; sdesc[ns++] = desc[i]; }
+        else if (k == ns) {  // more distinct states than slots (not seen in the game): the nearest slot - one with the
+            static int warned;  // same compare mode, else the last
+            if (!warned++) LOG("[metal] a shader with %d textures uses more than %d sampler states: some share one\n", n, MSL_MAX_SAMPLERS);
+            uint32_t cmp = desc[i] ? desc[i]->compare_mode : 0;
+            for (k = 0; k < ns - 1; k++)
+                if ((sdesc[k] ? sdesc[k]->compare_mode : 0) == cmp) break;
+        }
+        map[i] = (uint32_t)k;
+    }
+    return ns;
+}
+
 static void bind_textures(int stage, ShaderInfo *si) {
     if (stage == 1) draw_bottle = draw_heart = 0, draw_item_cursor = false;
+    bool mapped = si->ntex > MSL_MAX_SAMPLERS;  // (fragment only: the translator refuses such vertex shaders)
+    __strong id<MTLSamplerState> msmp[64];
+    NvnSamplerDesc *mdesc[64];
     for (int i = 0; i < si->ntex; i++) {
         ShaderTexture *st_ = &si->tex[i];
         int slot = ((int)st_->handle_offset - 0x20) / 8;  // 64-bit handles from offset 0x20
@@ -1846,7 +1876,8 @@ static void bind_textures(int stage, ShaderInfo *si) {
                     e->tex->height, e->tex->format, e->tex->addr, total, nz, renderer_is_gpu_owned(e->tex));
             }
         }
-        if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = sampler_for(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+        NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+        if (sd) smp = sampler_for(sd);
         if (!tex) tex = dummy_texture(st_->type);
         if (!smp) smp = default_sampler();
         if (g_debug_frame && tex.textureType == MTLTextureType2D && stage == 1) {
@@ -1859,7 +1890,15 @@ static void bind_textures(int stage, ShaderInfo *si) {
             else { renderer_save_texture(tex, path); renderer_save_texture_alpha(tex, apath); }
         }
         if (stage == 0) { [enc setVertexTexture:tex atIndex:i]; [enc setVertexSamplerState:smp atIndex:i]; }
+        else if (mapped) { [enc setFragmentTexture:tex atIndex:i]; msmp[i] = smp; mdesc[i] = sd; }
         else { [enc setFragmentTexture:tex atIndex:i]; [enc setFragmentSamplerState:smp atIndex:i]; }
+    }
+    if (mapped && stage == 1) {
+        __strong id<MTLSamplerState> slot[MSL_MAX_SAMPLERS];
+        uint32_t map[64];
+        int ns = sampler_slots(si->ntex, msmp, mdesc, slot, map);
+        for (int k = 0; k < MSL_MAX_SAMPLERS; k++) [enc setFragmentSamplerState:k < ns ? slot[k] : default_sampler() atIndex:k];
+        [enc setFragmentBytes:map length:(NSUInteger)si->ntex * 4 atIndex:SMAP_BUFFER_INDEX];
     }
 }
 
@@ -2069,6 +2108,9 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     CST("gmem");
     if (si->uses_gmem) [ce setBuffer:g_guest_buffer offset:0 atIndex:GMEM_BUFFER_INDEX];
     CST("textures");
+    bool cmapped = si->ntex > MSL_MAX_SAMPLERS;
+    __strong id<MTLSamplerState> msmp[64];
+    NvnSamplerDesc *mdesc[64];
     for (int i = 0; i < si->ntex; i++) {
         ShaderTexture *st_ = &si->tex[i];
         int slot = ((int)st_->handle_offset - 0x20) / 8;
@@ -2091,9 +2133,19 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
                     tex = fc;
                 }
         }
-        if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = sampler_for(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+        NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+        if (sd) smp = sampler_for(sd);
+        if (!smp) smp = default_sampler();
         [ce setTexture:tex ? tex : dummy_texture(st_->type) atIndex:i];
-        [ce setSamplerState:smp ? smp : default_sampler() atIndex:i];
+        if (cmapped) { msmp[i] = smp; mdesc[i] = sd; }
+        else [ce setSamplerState:smp atIndex:i];
+    }
+    if (cmapped) {  // (more textures than sampler slots: as bind_textures)
+        __strong id<MTLSamplerState> slot[MSL_MAX_SAMPLERS];
+        uint32_t map[64];
+        int ns = sampler_slots(si->ntex, msmp, mdesc, slot, map);
+        for (int k = 0; k < MSL_MAX_SAMPLERS; k++) [ce setSamplerState:k < ns ? slot[k] : default_sampler() atIndex:k];
+        [ce setBytes:map length:(NSUInteger)si->ntex * 4 atIndex:SMAP_BUFFER_INDEX];
     }
     if (si->uses_rscale) {
         float rs[65][4] = {{1, 1, 0, 0}};

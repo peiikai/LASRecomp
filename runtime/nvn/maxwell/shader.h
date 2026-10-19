@@ -83,6 +83,10 @@ typedef struct {
 
 // Global memory (LDG/STG) is addressed through one buffer that wraps the guest heap.
 #define GMEM_BUFFER_INDEX 17
+// (MSL) Metal's sampler slots a stage. A shader with more textures takes its samplers as an array of all the slots
+// and the slot of each texture from a table of uints at SMAP_BUFFER_INDEX (fragment, compute; [i] = texture i's slot).
+#define MSL_MAX_SAMPLERS 16
+#define SMAP_BUFFER_INDEX 22
 // (GLSL compute, Vulkan) the fast copy of a dispatch's storage buffers: its address table and its data
 #define GMAP_BUFFER_INDEX 20
 #define GFAST_BUFFER_INDEX 21
