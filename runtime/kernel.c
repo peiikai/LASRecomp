@@ -269,6 +269,7 @@ void kernel_run_main(KThread *t, uint64_t x0, uint64_t x1, uint64_t x2, uint64_t
 uint32_t kernel_current_thread_handle(void) { return t_cur ? t_cur->handle : 0; }
 Cpu *kernel_current_cpu(void) { return t_cur ? &t_cur->cpu : NULL; }
 KThread *kernel_current_thread(void) { return t_cur; }
+uint64_t kernel_current_thread_id(void) { return t_cur ? t_cur->id : 0; }
 
 // ------------------------------------------------------------------ mutex / condvar (Horizon semantics)
 // Mutex word: owner handle | WAITERS_BIT. Waiting threads sleep on the global cond and are handed ownership.
@@ -908,14 +909,17 @@ void kernel_dump_threads(const char *prefix) {
     for (int i = 0; i < 100 && !(locked = pthread_mutex_trylock(&g_klock) == 0); i++) usleep(1000);
     if (!locked) LOG("%s g_klock held for 100+ ms: read without it\n", prefix);
     static const char *const kinds[] = {"-", "mutex", "condvar", "arbiter"};
+    extern const char *hle_name_at(uint64_t pc);
     uint64_t now = plat_now_ns();
     for (KThread *t = g_threads; t; t = t->anext) {
         if (!t->started || t->finished) continue;
         bool waiting = t->wait_kind != WAIT_NONE || t->in_sync_wait;
-        LOG("%s thread %llu h %x prio %d entry %llx pc %llx lr %llx wait %s addr %llx mutex %llx tag %x%s%s for %llu ms\n",
-            prefix, (unsigned long long)t->id, t->handle, t->prio, (unsigned long long)t->entry, (unsigned long long)t->cpu.pc,
-            (unsigned long long)t->cpu.x[30], (unsigned)t->wait_kind < 4 ? kinds[t->wait_kind] : "?",
-            (unsigned long long)t->wait_addr, (unsigned long long)t->wait_mutex, t->wait_tag,
+        const char *hle = hle_name_at(t->cpu.pc);  // (pc: the last call through dispatch; an HLE one: its name)
+        LOG("%s thread %llu h %x prio %d core %d entry %llx pc %llx%s%s%s lr %llx wait %s addr %llx mutex %llx tag %x%s%s for %llu ms\n",
+            prefix, (unsigned long long)t->id, t->handle, t->prio, t->core, (unsigned long long)t->entry,
+            (unsigned long long)t->cpu.pc, hle ? " (" : "", hle ? hle : "", hle ? ")" : "", (unsigned long long)t->cpu.x[30],
+            (unsigned)t->wait_kind < 4 ? kinds[t->wait_kind] : "?", (unsigned long long)t->wait_addr,
+            (unsigned long long)t->wait_mutex, t->wait_tag,
             t->in_sync_wait ? " in WaitSynchronization" : "", t->cancel ? " (cancel pending)" : "",
             waiting ? (unsigned long long)((now - t->wait_since) / 1000000) : 0ull);
         if (t->wait_kind == WAIT_CONDVAR || t->wait_kind == WAIT_MUTEX) {
@@ -961,22 +965,47 @@ void kernel_dump_threads(const char *prefix) {
     if (locked) pthread_mutex_unlock(&g_klock);
 }
 
-// LARECOMP_HANG_DUMP=<s> (default 30, 0 off): the main guest thread in one kernel wait that long -> one dump (and one
-// more if it is still the same wait a period later). Startup hangs (Windows, few cores) leave no other trace.
+// The hang dump, one facility for the whole runtime. LARECOMP_HANG_DUMP=<s> (default 30, 0 off), checked every
+// second from the main guest thread's start:
+// - the main guest thread in one kernel wait that long (startup hangs on Windows with few cores leave no other trace)
+// - the renderer's own checks (runtime/nvn/rqueue.c, kernel_hang_hooks): no frame presented twice that long after the
+//   GPU device setup, presenting stopped that long, or one noted host wait (GPU fence, queue, nextDrawable /
+//   vkAcquire...) that long
+// -> "[hang]" lines: why, the renderer's state (render thread queue, what each noted thread waits on), every guest
+// thread with its kernel wait and guest frames, and the kernel trace. At most 6 dumps per run.
+static bool (*hang_check_fn)(uint64_t limit_ns, char *why, size_t n);
+static void (*hang_state_fn)(const char *prefix);
+void kernel_hang_hooks(bool (*check)(uint64_t limit_ns, char *why, size_t n), void (*state)(const char *prefix)) {
+    __atomic_store_n(&hang_state_fn, state, __ATOMIC_RELEASE);
+    __atomic_store_n(&hang_check_fn, check, __ATOMIC_RELEASE);
+}
 static void *hang_watch(void *arg) {
     uint64_t s = (uint64_t)(uintptr_t)arg, dumped_since = 0;
-    for (int dumps = 0; dumps < 4;) {
+    for (int dumps = 0; dumps < 6;) {
         sleep(1);
+        char why[256];
+        int n = 0;
         pthread_mutex_lock(&g_klock);
         KThread *m = g_main_thread;  // (the current boot's: kernel_reset clears it)
-        uint64_t since = m ? m->wait_since : 0;
-        bool stuck = m && m->started && !m->finished && (m->wait_kind != WAIT_NONE || m->in_sync_wait) &&
-                     plat_now_ns() - since >= s * 1000000000ull && since != dumped_since;
+        uint64_t since = m ? m->wait_since : 0, now = plat_now_ns();
+        bool stuck = m && m->started && !m->finished && (m->wait_kind != WAIT_NONE || m->in_sync_wait) && since < now &&
+                     now - since >= s * 1000000000ull && since != dumped_since;
         pthread_mutex_unlock(&g_klock);
-        if (!stuck) continue;
-        LOG("[hang] main guest thread in one kernel wait for %llu s: guest threads\n", (unsigned long long)s);
+        if (stuck) {
+            n = snprintf(why, sizeof why, "main guest thread in one kernel wait for %llu s", (unsigned long long)s);
+            dumped_since = since;
+        }
+        bool (*check)(uint64_t, char *, size_t) = __atomic_load_n(&hang_check_fn, __ATOMIC_ACQUIRE);  // (every second: it keeps its own "reported" state)
+        if (check && check(s * 1000000000ull, why + n + (n ? 2 : 0), sizeof why - (size_t)n - 2)) {
+            if (n) why[n] = ';', why[n + 1] = ' ';
+            n = 1;
+        }
+        if (!n) continue;
+        LOG("[hang] ===== %s =====\n", why);
+        void (*state)(const char *) = __atomic_load_n(&hang_state_fn, __ATOMIC_ACQUIRE);
+        if (state) state("[hang]");
         kernel_dump_threads("[hang]");
-        dumped_since = since;
+        LOG("[hang] =====\n");
         dumps++;
     }
     return NULL;

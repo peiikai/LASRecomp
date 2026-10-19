@@ -22,6 +22,7 @@ void crash_handler_install(void) { abort(); }
 void guest_call(Cpu *c, uint64_t addr) { abort(); }
 int ipc_handle_request(Cpu *c, uint32_t handle) { abort(); }
 uint32_t ipc_connect_named_port(const char *name) { abort(); }
+const char *hle_name_at(uint64_t pc) { (void)pc; return NULL; }
 
 uint64_t plat_now_ns(void) {
     struct timespec ts;

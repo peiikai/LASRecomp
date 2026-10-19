@@ -111,7 +111,7 @@ void settings_resolve_defaults(bool integrated) {
     if (e && *e) integrated = atoi(e) != 0;
     g_gpu_integrated = integrated;
     g_default_upscaler = integrated ? UPSCALE_BILINEAR : UPSCALE_SHARP;
-    g_default_res_mode = integrated ? RES_DYNAMIC : RES_MATCH;
+    g_default_res_mode = RES_MATCH;  // (Dynamic is not a default until it is reliable: user 2026-10-18)
     if (g_settings.upscaler_auto) g_settings.upscaler = g_default_upscaler;
     if (g_settings.res_auto) g_settings.res_mode = g_default_res_mode;
     LOG("[settings] %s GPU: upscaler %s (%s), resolution %s (%s), anti-aliasing %s\n", integrated ? "integrated" : "discrete / other",

@@ -130,7 +130,7 @@ struct GenOpts {
     bool pet_rooster = false, pet_ghost = false;  // pets in the pool (tools/rando/pets.py)
     bool pet_marin = false;   // Marin in the pool, the desert closed until she wakes the Walrus (open-desert off)
     int shopsanity = 0;       // off / vanilla prices / random prices (tools/rando/shopsanity.py)
-    int miniboss_freq = 0;    // miniboss-frequency: overworld mini-boss chance 1x / 2x / 3x / every room (enemies.py)
+    int miniboss_freq = 0;    // miniboss-frequency: overworld mini-boss chance 1x / 2x / 3x / every enemy that fits (enemies.py)
     int enemy_mode = 0;       // enemy-mode: seeded (fixed in the seed) / random (re-rolled at every load: enemy_random.c)
     bool trendsanity = false; // every Trendy Game prize is a check (tools/rando/trendsanity.py)
     bool boss_souls = false;  // boss-souls: a boss only appears once its soul is found (tools/rando/souls.py)
@@ -862,13 +862,13 @@ extern "C" void rando_tab_draw(float scale) {
     opt_toggle("Include mini-bosses", &g_opts.enemy_minibosses, false,
                "Some overworld enemies become mini-bosses: Hinox, Armos Knight, Dodongo Snake, Giant Buzz Blob, Smasher, "
                "Avalaunch, Rolling Bones, Cue Ball, Blaino, Master Stalfos, Moblin Chief, Lanmola, the Ball-and-Chain "
-               "Soldier or Shadow Link.");
+               "Soldier or Shadow Link. Shadow Link, Blaino and the Soldier also appear in dungeons and caves.");
     {
         opt_indent(1);
         if (!g_opts.randomize_enemies || !g_opts.enemy_minibosses) opt_disable_next();
         static const char *const freq[] = {"Normal", "2x", "3x", "All"};
         opt_choice("Mini-boss frequency", &g_opts.miniboss_freq, freq, 4, 0,
-                   "How often overworld enemies become mini-bosses. All: one in every screen with enemies.");
+                   "How often overworld enemies become mini-bosses. All: every one with room for one.");
         opt_indent(-1);
     }
     opt_indent(-1);

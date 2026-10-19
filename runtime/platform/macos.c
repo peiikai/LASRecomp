@@ -76,6 +76,11 @@ uint64_t plat_now_ns(void) {
     return mach_absolute_time() * tb.numer / tb.denom;
 }
 
+uint64_t plat_thread_cpu_ns(void) {
+    struct timespec ts;
+    return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec : 0;
+}
+
 void plat_sleep_until_ns(uint64_t t) {
     if (!tb.denom) mach_timebase_info(&tb);
     mach_wait_until(t * tb.denom / tb.numer);

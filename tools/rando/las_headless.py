@@ -675,7 +675,10 @@ def main():
         from RandomizerCore.randomizer_data import ENEMY_DATA as _ed
         from RandomizerCore.Randomizers import enemies as _en
         print('enemy random:', enemy_random.write(out_dir, mods.enemy_random, _ed, _en,
-                                                   settings.get('randomize-enemy-sizes', False), _uw_leb), flush=True)
+                                                   settings.get('randomize-enemy-sizes', False), _uw_leb,
+                                                   bool(settings.get('enemy-minibosses')),
+                                                   (settings['miniboss-marker-flag'], miniboss_guard.ANYWHERE)
+                                                   if 'miniboss-marker-flag' in settings else None), flush=True)
     if pot_locs or bush_locs or dig_locs:  # (after every flow edit) refills at real checks are refills, not the item
         import refill_gets
         print('refill gets:', refill_gets.apply(out_dir, romfs, settings), flush=True)
@@ -683,6 +686,12 @@ def main():
     print('bomb bag text:', bomb_bag_text.apply(out_dir, romfs, settings), flush=True)
     import powder_bag_text  # (same) found powder: "You found your Powder Bag!"
     print('powder bag text:', powder_bag_text.apply(out_dir, romfs, settings), flush=True)
+    import room_links  # (every room edit done: actors' links within each room must still be sound)
+    problems = room_links.check(out_dir, _uw_leb, romfs)
+    if problems:
+        for pr in problems[:20]:
+            print('room links:', pr, file=sys.stderr)
+        sys.exit(f'room links broken in {len(problems)} place(s) - the game would crash loading them; first: {problems[0]}')
     with open(os.path.join(out_dir, 'settings.json'), 'w') as f:
         s = dict(settings)
         s['excluded-locations'] = sorted(s['excluded-locations'])

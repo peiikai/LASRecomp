@@ -41,6 +41,7 @@ void plat_sleep_until_ns(uint64_t t);      // precise wait for plat_now_ns() >= 
 void plat_thread_realtime(uint64_t period_ns);  // periodic timing thread (vsync): don't coalesce its timers
 int plat_cpu_count(void);  // logical cores this process may run on (its affinity mask); 0 if unknown
 void plat_thread_guest(int prio);  // a guest thread's host scheduling class from its Switch priority (lower = more urgent)
+uint64_t plat_thread_cpu_ns(void);  // the calling thread's CPU time so far (user + system; diagnostics)
 
 // ---- process
 void plat_init(void);                                // first thing in main()

@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory() as directory:
         if mode == 'upscaler-auto':
             assert 'upscaler = auto\n' in ini.read_text()
         count += 1
-    # likewise the resolution: Dynamic on an integrated GPU until the player picks one; a saved one is kept
+    # likewise the resolution: Match display until the player picks one (also on integrated GPUs); a saved one is kept
     for lines, mode, saved in [(['resolution = auto'], 'res-auto', 'auto'), (['volume = 1'], 'res-auto', 'auto'),
                                (['resolution = match'], 'res-chosen', 'match'), (['resolution = 1x'], 'res-chosen', '1x'),
                                (['resolution = 75%'], 'res-chosen', '75%'), (['resolution = dynamic'], 'res-chosen', 'dynamic')]:

@@ -763,6 +763,15 @@ for _a in DELEGATE_FORWARDER_SITES:
 # with Warp tab jumps; same family as NO_HANDLER_SITES (the action dispatcher's).
 EMPTY_HANDLER_SITE = A.EMPTY_HANDLER_SITE  # bl main+0x108dfc0
 
+# Issue #183: the message window's question setup (main+0xef43b0) counts a question's answers as the text's pages
+# after the question's own (pages end at <0.4> and, past the style's line count, at a line break) and shows the
+# InOutChoice2/3/4 pane for it; Selecting (main+0xef2250, main+0xef2300) indexes those panes by the count with no
+# check. Every language's own text gives 2..4. Text of a 2-line language (Chinese, Japanese, Korean) in a 3-line
+# language's folder (a translation patch over the English text) makes the Mermaid's necklace question (Warashibe
+# QuestBra) a 1-answer question: pane "1" is no pane (the 0x10001 read) and the game crashes, on the console too. The
+# hook stops there with a crash message that says so instead.
+CHOICE_COUNT_SITE = A.CHOICE_COUNT_SITE  # str w8, [x19, #0x1cc4]
+
 # Issue #19 (the hang): the per-frame kick-off (main+0x15730, four inlined copies, one per owner X) rebuilds X's frame
 # job J (X+0xc8) in place. The job worker (main+0x13c21e0) runs J (main+0x10cceb0: sets X's done flag, wakes the main
 # thread, unlocks) and only then calls J's finish (main+0x10ccfa0 -> slot +0x00: base vtable, delegate cleared). A
@@ -809,6 +818,7 @@ HOOKS = {
     HOLE_CAP_SITES[0]: (0xf101451f, (), 'cmp x8, #0x51: dug-hole limit (digs.c)'),
     HOLE_CAP_SITES[1]: (0xf101411f, (), 'cmp x8, #0x50: dug-hole limit (digs.c)'),
     EMPTY_HANDLER_SITE: (0x9400005e, (A.EMPTY_HANDLER_CATCH,), 'bl std::function call: an empty event handler, as its catch'),
+    CHOICE_COUNT_SITE: (0xb91cc668, (), 'str w8, [x19, #0x1cc4]: a question\'s answer count (2..4 in the game\'s own text)'),
     FRAME_JOB_KICKOFF_SITES[0]: (0x910782d3, (), 'add x19, x22, #0x1e0: frame job kick-off, previous finish first'),
     FRAME_JOB_KICKOFF_SITES[1]: (0x910782d3, (), 'add x19, x22, #0x1e0: frame job kick-off, previous finish first'),
     FRAME_JOB_KICKOFF_SITES[2]: (0x910782d3, (), 'add x19, x22, #0x1e0: frame job kick-off, previous finish first'),

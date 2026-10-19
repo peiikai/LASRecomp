@@ -211,7 +211,9 @@ def apply(locs, mods, out_dir, romfs, leb, event_tools, oead_tools, item_get, da
                         f'\t1\t1\t0\n')
             continue
         if kind == 'dig':  # (no buried shell: the runtime brings the item up when the spot is dug)
-            room_of(level, room).actors.remove(host)
+            r = room_of(level, room)  # (with the room's links renumbered: actors refer to each other by index)
+            from RandomizerCore.Randomizers import enemies
+            enemies.remove_actors(r, [r.actors.index(host)])
         elif hole:  # (its index stays: its ItemDrop entry is retagged; the runtime keeps its sensor beacon off)
             host.parameters[k] = index
             e = next(v for v in drops['values'] if v['mKey'] == f'Seashell{index}')

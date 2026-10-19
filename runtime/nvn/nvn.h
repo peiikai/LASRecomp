@@ -32,6 +32,7 @@ typedef struct NvnTexture {
     void *backend;  // renderer-side texture
     uint64_t debug_id;
     uint32_t pool_refs;  // texture pool entries that name it (cleared when it is finalized: runtime/nvn/objects.c)
+    bool format_views;   // named through a view in a format the backend can only give with a flag (Metal: PixelFormatView)
     char label[64];
 } NvnTexture;
 
@@ -48,6 +49,13 @@ typedef struct {
     uint32_t format, target, ds_mode;
     uint8_t swizzle[4];
 } NvnTextureView;  // our layout of the guest NVNtextureView (0x28 bytes)
+
+// A view naming a texture (pool entry, render target, clear, copy): one in another format is told to the backend before
+// the texture is used through it.
+void backend_texture_view_format(NvnTexture *tex, uint32_t format);  // (runtime/nvn/metal.m, vulkan/textures.c)
+static inline void nvn_texture_note_view(NvnTexture *t, const NvnTextureView *v) {
+    if (t && v && (v->setmask & 4) && v->format != t->format) backend_texture_view_format(t, v->format);
+}
 
 typedef struct {
     NvnTexture *tex;

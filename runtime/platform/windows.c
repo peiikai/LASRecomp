@@ -23,7 +23,12 @@ static uint64_t g_lo, g_hi;
 static bool lazy_commit(uint64_t a) {
     if (a < g_lo || a >= g_hi) return false;
     MEMORY_BASIC_INFORMATION mi;
-    if (!VirtualQuery((void *)(uintptr_t)a, &mi, sizeof mi) || mi.State != MEM_RESERVE) return false;
+    if (!VirtualQuery((void *)(uintptr_t)a, &mi, sizeof mi)) return false;
+    // Two threads touching the same uncommitted chunk: the second faulted before the first committed it and now finds
+    // it committed - retry the access. (A page protected on purpose, plat_protect / LARECOMP_WATCH, isn't plain
+    // read-write and still goes on to the fault watch.) Fix from letsgo-recomp.
+    if (mi.State == MEM_COMMIT) return (mi.Protect & 0xFF) == PAGE_READWRITE && !(mi.Protect & PAGE_GUARD);
+    if (mi.State != MEM_RESERVE) return false;
     uint64_t base = a & ~(COMMIT_CHUNK - 1);
     return VirtualAlloc((void *)(uintptr_t)base, COMMIT_CHUNK, MEM_COMMIT, PAGE_READWRITE) != NULL;
 }
@@ -34,7 +39,8 @@ static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *ep) {
     EXCEPTION_RECORD *er = ep->ExceptionRecord;
     if (er->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || er->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
     uint64_t fa = er->ExceptionInformation[1];
-    if (lazy_commit(fa)) return EXCEPTION_CONTINUE_EXECUTION;
+    // (not for an execute fault: on a read-write page, retrying it would fault again forever)
+    if (er->ExceptionInformation[0] != EXCEPTION_EXECUTE_FAULT && lazy_commit(fa)) return EXCEPTION_CONTINUE_EXECUTION;
     if (g_report_crashes && rt_fault_watch(fa, ep->ContextRecord->Rip)) return EXCEPTION_CONTINUE_EXECUTION;
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -91,6 +97,35 @@ uint64_t plat_now_ns(void) {
     LARGE_INTEGER t;
     QueryPerformanceCounter(&t);
     return (uint64_t)((unsigned __int128)t.QuadPart * 1000000000u / (uint64_t)qpf.QuadPart);
+}
+
+// The calling thread's CPU time. GetThreadTimes only advances in whole scheduler ticks (15.6 ms): per frame that reads
+// 0 or 15.6. QueryThreadCycleTime counts the thread's cycles exactly, in TSC ticks on x64 (invariant TSC), so
+// those are converted with the TSC rate measured once against the performance counter (20 ms, at the first call).
+// Elsewhere (or if the cycle count fails): GetThreadTimes, kernel + user.
+#if defined(__x86_64__) || defined(_M_X64)
+#include <intrin.h>
+static double tsc_per_ns;
+static INIT_ONCE tsc_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK tsc_calibrate(PINIT_ONCE o, PVOID p, PVOID *c) {
+    (void)o, (void)p, (void)c;
+    uint64_t q0 = plat_now_ns(), t0 = __rdtsc();
+    Sleep(20);
+    uint64_t q1 = plat_now_ns(), t1 = __rdtsc();
+    if (q1 > q0 && t1 > t0) tsc_per_ns = (double)(t1 - t0) / (double)(q1 - q0);
+    return TRUE;
+}
+#endif
+uint64_t plat_thread_cpu_ns(void) {
+#if defined(__x86_64__) || defined(_M_X64)
+    InitOnceExecuteOnce(&tsc_once, tsc_calibrate, NULL, NULL);
+    ULONG64 cyc;
+    if (tsc_per_ns > 0 && QueryThreadCycleTime(GetCurrentThread(), &cyc)) return (uint64_t)((double)cyc / tsc_per_ns);
+#endif
+    FILETIME c, e, k, u;
+    if (!GetThreadTimes(GetCurrentThread(), &c, &e, &k, &u)) return 0;
+    uint64_t kt = ((uint64_t)k.dwHighDateTime << 32) | k.dwLowDateTime, ut = ((uint64_t)u.dwHighDateTime << 32) | u.dwLowDateTime;
+    return (kt + ut) * 100;  // (100 ns units)
 }
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
