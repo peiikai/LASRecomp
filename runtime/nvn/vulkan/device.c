@@ -162,6 +162,15 @@ static void pick_device(void) {
     if (g_vk.qfam == UINT32_MAX) FATAL("no graphics+present queue\n");
     LOG("[vk] using %s\n", g_vk.props.deviceName);
     settings_resolve_defaults(g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
+    // On by default on integrated GPUs only: both measured faster on an Intel UHD 770 and slightly slower on an
+    // RTX 3080 Ti. LARECOMP_VK_LEAN_USAGE / LARECOMP_VK_SMAA_STENCIL =0 / =1 override.
+    bool igpu = g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+    const char *e = getenv("LARECOMP_VK_LEAN_USAGE");
+    g_vk.lean_usage = e && *e ? atoi(e) != 0 : igpu;
+    e = getenv("LARECOMP_VK_SMAA_STENCIL");
+    g_vk.smaa_stencil = e && *e ? atoi(e) != 0 : igpu;
+    LOG("[vk] lean usage %s, SMAA stencil %s (%s GPU)\n", g_vk.lean_usage ? "on" : "off", g_vk.smaa_stencil ? "on" : "off",
+        igpu ? "integrated" : "not an integrated");
 }
 
 static bool g_fault_ext;

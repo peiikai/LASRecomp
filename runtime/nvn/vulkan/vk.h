@@ -38,6 +38,9 @@ typedef struct {
     bool custom_border, divisor, host_import, dmabuf;
     bool ssbo_chunks;  // stores and atomics from fragment and vertex shaders (exec.c: the heap in chunks counts misses)
     bool lazy_heap, bda;  // the heap imported chunk by chunk (device.c lazy_heap_predicted), buffer device addresses enabled for it
+    // on by default on integrated GPUs only (device.c; LARECOMP_VK_LEAN_USAGE / LARECOMP_VK_SMAA_STENCIL =0 / =1 override):
+    bool lean_usage;    // colour images list their view formats instead of a bare MUTABLE_FORMAT (textures.c create_image)
+    bool smaa_stencil;  // SMAA's weights pass only where the edge pass found edges (exec.c post_process)
     // window
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
@@ -100,6 +103,9 @@ typedef struct TexBackend {
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)
+    // (g_vk.lean_usage) the only formats views of this image may have: nview_fmt 0 = any compatible one
+    VkFormat view_fmt[2];
+    uint8_t nview_fmt;
 } TexBackend;
 
 TexBackend *vk_tex(NvnTexture *t, bool for_render);  // backend image (uploads CPU contents unless for_render)
@@ -112,6 +118,7 @@ VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool 
 VkImageView vk_image_view(TexBackend *b, VkImageViewType type, VkFormat fmt, uint32_t lv0, uint32_t nlv, uint32_t ly0,
                           uint32_t nly, VkComponentMapping sw, VkImageAspectFlags aspect);
 VkImageView vk_dummy_view(int textype);
+VkFormat vk_view_format(TexBackend *b, VkFormat want);  // want, or the image's own format where want isn't allowed
 void vk_convert_nv12(TexBackend *b, const void *nv12, uint32_t w, uint32_t h, uint32_t stride, uint32_t uv_off);  // exec.c
 VkImageView vk_dummy_color_view(uint32_t w, uint32_t h, uint32_t samples);
 VkSampler vk_sampler(NvnSamplerDesc *d);
