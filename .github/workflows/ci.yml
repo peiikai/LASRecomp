@@ -72,6 +72,8 @@ jobs:
         run: python3 tools/test_dynres.py
       - name: Vulkan fence sequence regression
         run: python3 tools/test_fence_sequence.py
+      - name: Guest heap import on low-memory machines
+        run: python3 tools/test_gmem_lowmem.py
       - name: Vulkan validation failure regression
         run: python3 tools/test_vulkan_validation.py
       - name: SIMD rounding and host-state regression
@@ -166,6 +168,8 @@ jobs:
           build/test-condvar.exe
       - name: Vulkan fence sequence regression
         run: python tools/test_fence_sequence.py
+      - name: Guest heap import on low-memory machines
+        run: python tools/test_gmem_lowmem.py
       - name: Vulkan validation failure regression
         run: python tools/test_vulkan_validation.py
       - name: Windows guest thread stack regression
