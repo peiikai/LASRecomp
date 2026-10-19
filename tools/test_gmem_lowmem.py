@@ -38,6 +38,10 @@ int main(void) {
     // 8 GB desktop with its own GPU (system heap = half the RAM): one import as before
     ImportHeap dgpu8[] = {{6 * 1024 * MB, 5800 * MB, true, false}, {3950 * MB, 3840 * MB, false, true}, {256 * MB, 240 * MB, true, true}};
     assert(!lazy(dgpu8, 3));
+    // ... but close: one import is tried at the start (exec.c whole_import_probe_oom), lazy chunks if it runs out
+    assert(import_heap_room(dgpu8, 3, &room) == 1 && room < IMPORT_PROBE_BELOW);
+    // the RTX has plenty: no probe, the device as before
+    assert(import_heap_room(rtx, 3, &room) == 1 && room >= IMPORT_PROBE_BELOW);
     // a big system heap whose budget other programs took: lazy
     ImportHeap busy[] = {{8 * 1024 * MB, 7 * 1024 * MB, true, false}, {8 * 1024 * MB, 3000 * MB, false, true}};
     assert(lazy(busy, 2));
@@ -49,7 +53,7 @@ int main(void) {
     // no host-visible heap at all: no opinion (the import fails on its own)
     ImportHeap none[] = {{4 * 1024 * MB, 0, true, false}};
     assert(import_heap_room(none, 1, &room) < 0 && !lazy(none, 1));
-    puts("PASS: issue #205 laptop lazy; RTX, 8 GB desktop and big unified memory keep one import");
+    puts("PASS: issue #205 laptop lazy; RTX, 8 GB desktop and big unified memory keep one import, 8 GB desktop probed");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='gmem-lowmem-') as temporary:
