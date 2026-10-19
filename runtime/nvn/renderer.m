@@ -27,7 +27,9 @@ static uint64_t stat_wait_by[3], stat_wait_n[3];
 static uint64_t stat_clears_as_load, stat_clear_passes;  // (deferred clears)
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
 static double stat_gpu_s;
-uint64_t g_gpu_total_ns;  // GPU time of all completed command buffers (dynamic resolution: output_scale.c)
+// GPU busy time (dynamic resolution: output_scale.c; the "gpu" of the [metal] stats line), ns so far: the game's
+// command buffers, the window image's (metal.m backend_present), and the plain sum of their spans (diagnostics)
+uint64_t g_gpu_total_ns, g_gpu_win_ns, g_gpu_sum_ns;
 // (forward: texture-lifetime cleanup and stats, defined further down)
 static int g_views_live;
 static void views_forget(void *base);
@@ -158,6 +160,7 @@ void renderer_texture_scale(NvnTexture *t, float *sx, float *sy);
 void renderer_texture_fraction(NvnTexture *t, float *fx, float *fy);  // (metal.m: the part the contents occupy)
 void renderer_get_scale(float *sx, float *sy);
 static float pass_sx = 1, pass_sy = 1;  // allocation scale of the current pass's attachments
+static int pass_rt_w, pass_rt_h;        // the current pass's render area (0: its attachments' whole size)
 bool renderer_texture_presented(NvnTexture *t);
 // Widescreen UI: 2D draws into the swapchain image use a centred 16:9 region (uniform scale) instead of
 // the stretched wide mapping. vp_* is the mapping for the current draw: physical = guest * s + off.
@@ -396,6 +399,29 @@ static void drain_gone(void) {
     }
 }
 
+// A completed command buffer's share of the GPU's busy time (ns), counted once: the GPU starts a buffer while the one
+// before it still runs (the game's frame is several - begin_pass commits every 8 passes - and the window image's is
+// one more), so their GPUStartTime..GPUEndTime spans overlap; a buffer can also start and then sit waiting for the one
+// before it to produce what it reads. Summed, they counted that overlap twice or more: M3 Max 5120x1440, frames that
+// held 60 fps measured "game 16 + window 3 ms", and at the 1/3 floor (1707x480) still "game 12 + window 5" - Dynamic
+// sat at its floor where a fixed 1x (3840x1080) holds 60. Their union is counted: each buffer from where the latest
+// end so far left off (one queue: they start in order). A window buffer gets only its time after the game's work.
+static pthread_mutex_t busy_lock = PTHREAD_MUTEX_INITIALIZER;
+static double busy_end;  // (s, GPU clock) the latest command buffer end counted
+uint64_t renderer_gpu_busy(id<MTLCommandBuffer> done, bool win) {
+    double s = done.GPUStartTime, e = done.GPUEndTime;
+    if (!(e > s) || e - s > 1.0) return 0;  // (not run, or nonsense)
+    pthread_mutex_lock(&busy_lock);
+    if (busy_end > e + 1.0) busy_end = 0;  // (clock base changed)
+    double from = s > busy_end ? s : busy_end;
+    if (e > busy_end) busy_end = e;
+    pthread_mutex_unlock(&busy_lock);
+    uint64_t ns = e > from ? (uint64_t)((e - from) * 1e9) : 0;
+    __atomic_add_fetch(win ? &g_gpu_win_ns : &g_gpu_total_ns, ns, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_gpu_sum_ns, (uint64_t)((e - s) * 1e9), __ATOMIC_RELAXED);
+    return ns;
+}
+
 // Commit recorded work without waiting.
 void renderer_submit(void) {
     end_pass();
@@ -404,8 +430,7 @@ void renderer_submit(void) {
         id<MTLCommandBuffer> c = cmdbuf;
         cmdbuf = nil;
         [c addCompletedHandler:^(id<MTLCommandBuffer> done) {
-            stat_gpu_s += done.GPUEndTime - done.GPUStartTime;
-            __atomic_add_fetch(&g_gpu_total_ns, (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9), __ATOMIC_RELAXED);
+            stat_gpu_s += renderer_gpu_busy(done, false) / 1e9;
             if (done.error) LOG("[metal] command buffer error: %s\n", done.error.localizedDescription.UTF8String);
         }];
         [c commit];
@@ -694,10 +719,37 @@ static void begin_pass(void) {
         if (e && e->clear_on) { e->clear_on = false; td_pending--; stat_clears_as_load++; }
         if (!w) { renderer_texture_scale(st.rt.depth, &pass_sx, &pass_sy); w = (int)tex.width; h = (int)tex.height; }
     }
+    pass_rt_w = pass_rt_h = 0;
     if (!w) {
         pass_sx = pass_sy = 1;
         rp.renderTargetWidth = 16; rp.renderTargetHeight = 16;
         rp.defaultRasterSampleCount = 1;
+    } else {
+        // Dynamic resolution draws into the top-left part of screen-sized targets: the pass's render area is that part.
+        // Apple GPUs load and store every tile of the render area (default: the attachments' whole size) at each pass
+        // however little is drawn, so a 5120x1440 target cost about the same at 1/3 of it (1707x480) as at all of it.
+        int cw = 0, ch = 0, mw = 0, mh = 0;
+        for (int i = -1; i < st.rt.ncolor; i++) {
+            NvnTexture *t = i < 0 ? st.rt.depth : st.rt.color[i];
+            id<MTLTexture> tex = i < 0 ? rp.depthAttachment.texture ?: rp.stencilAttachment.texture : rp.colorAttachments[i].texture;
+            if (!t || !tex) continue;
+            float fx, fy, sx, sy;
+            renderer_texture_fraction(t, &fx, &fy);
+            renderer_texture_scale(t, &sx, &sy);
+            // (as far as the scissor reaches: pass_size)
+            int pw = (int)ceilf(fmaxf(tex.width * fx, lroundf(t->width * sx))), ph = (int)ceilf(fmaxf(tex.height * fy, lroundf(t->height * sy)));
+            if (pw > cw) cw = pw;
+            if (ph > ch) ch = ph;
+            if (!mw || (int)tex.width < mw) mw = (int)tex.width;
+            if (!mh || (int)tex.height < mh) mh = (int)tex.height;
+        }
+        static int whole = -1;  // LARECOMP_PASS_WHOLE=1: the attachments' whole size, as before (tests)
+        if (whole < 0) whole = getenv("LARECOMP_PASS_WHOLE") && atoi(getenv("LARECOMP_PASS_WHOLE"));
+        if (!whole && cw > 0 && ch > 0 && (cw < mw || ch < mh)) {
+            pass_rt_w = cw < mw ? cw : mw, pass_rt_h = ch < mh ? ch : mh;
+            rp.renderTargetWidth = (NSUInteger)pass_rt_w;
+            rp.renderTargetHeight = (NSUInteger)pass_rt_h;
+        }
     }
     // Commit the frame in chunks: the GPU starts on the first passes while the CPU still encodes the rest. The
     // game waits for its previous frame before it submits the next one, so with one command buffer per frame the
@@ -741,6 +793,8 @@ static void apply_scissor(void) {
     if (x >= w || y >= h) { x = y = 0; sw = sh = 0; }
     if (x + sw > w) sw = w - x;
     if (y + sh > h) sh = h - y;
+    if (pass_rt_w && x + sw > pass_rt_w) sw = pass_rt_w - x;  // (inside the render area)
+    if (pass_rt_h && y + sh > pass_rt_h) sh = pass_rt_h - y;
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
     [enc setScissorRect:(MTLScissorRect){(NSUInteger)x, (NSUInteger)y, (NSUInteger)sw, (NSUInteger)sh}];

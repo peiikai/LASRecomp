@@ -931,10 +931,12 @@ static id<MTLTexture> smaa_target(id<MTLTexture> old, NSUInteger w, NSUInteger h
     return [dev newTextureWithDescriptor:td];
 }
 
+static NSUInteger smaa_area_w, smaa_area_h;  // the part of the image the passes cover (0: all of it)
 static void smaa_pass(id<MTLCommandBuffer> cb, id<MTLRenderPipelineState> p, id<MTLTexture> dst, bool clear,
                       id<MTLTexture> t0, id<MTLTexture> t1, id<MTLTexture> t2) {
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
     rp.colorAttachments[0].texture = dst;
+    if (smaa_area_w) rp.renderTargetWidth = smaa_area_w, rp.renderTargetHeight = smaa_area_h;
     rp.colorAttachments[0].loadAction = clear ? MTLLoadActionClear : MTLLoadActionDontCare;
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 0);
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
@@ -947,7 +949,8 @@ static void smaa_pass(id<MTLCommandBuffer> cb, id<MTLRenderPipelineState> p, id<
     [e endEncoding];
 }
 
-static id<MTLTexture> smaa_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in) {
+// fx, fy: the part of `in` its contents occupy (Dynamic resolution: the top-left part)
+static id<MTLTexture> smaa_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in, float fx, float fy) {
     static bool failed;  // (shader / pipeline error: logged once, SMAA stays off)
     static NSUInteger lw, lh;
     static MTLPixelFormat lf;
@@ -985,9 +988,14 @@ static id<MTLTexture> smaa_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in) {
     edges = smaa_target(edges, in.width, in.height, MTLPixelFormatRGBA8Unorm);
     weights = smaa_target(weights, in.width, in.height, MTLPixelFormatRGBA8Unorm);
     out = smaa_target(out, in.width, in.height, in.pixelFormat);
+    // Dynamic resolution: only the contents' part, and 64 pixels past it (the edge searches reach 2 x 16 pixels, so
+    // the contents' pixels never read past it) - the window step's cost then scales with the factor like the game's
+    NSUInteger aw = MIN(in.width, (NSUInteger)ceilf(in.width * fx) + 64), ah = MIN(in.height, (NSUInteger)ceilf(in.height * fy) + 64);
+    smaa_area_w = aw < in.width || ah < in.height ? aw : 0, smaa_area_h = ah;
     smaa_pass(cb, pe, edges, true, in, nil, nil);
     smaa_pass(cb, pw, weights, true, edges, area, search);
     smaa_pass(cb, pb, out, false, in, weights, nil);
+    smaa_area_w = smaa_area_h = 0;
     return out;
 }
 
@@ -1159,18 +1167,20 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         extern void widescreen_set_factor(float f);
         extern bool widescreen_allowed(void);
         // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution")
-        extern uint64_t g_gpu_total_ns;
-        static uint64_t gpu_prev;
-        // the game's command buffers and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before)
-        static _Atomic uint64_t present_ns;
+        // GPU busy time since the last frame (renderer.m renderer_gpu_busy: the union of the command buffers' spans): the
+        // game's command buffers and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before)
+        extern uint64_t g_gpu_total_ns, g_gpu_win_ns, g_gpu_sum_ns;
+        extern uint64_t renderer_gpu_busy(id<MTLCommandBuffer> done, bool win);
+        static uint64_t gpu_prev, win_prev, sum_prev;
         static int count_present = -1;
         if (count_present < 0) count_present = !getenv("LARECOMP_DYNRES_COUNT_PRESENT") || atoi(getenv("LARECOMP_DYNRES_COUNT_PRESENT"));
-        static uint64_t win_prev;
-        uint64_t gpu_now = __atomic_load_n(&g_gpu_total_ns, __ATOMIC_RELAXED), win_now = present_ns;
+        uint64_t gpu_now = __atomic_load_n(&g_gpu_total_ns, __ATOMIC_RELAXED), win_now = __atomic_load_n(&g_gpu_win_ns, __ATOMIC_RELAXED);
+        uint64_t sum_now = __atomic_load_n(&g_gpu_sum_ns, __ATOMIC_RELAXED);
         double game_ms = gpu_prev ? (gpu_now - gpu_prev) / 1e6 : -1, win_ms = count_present ? (win_now - win_prev) / 1e6 : -1;
-        gpu_prev = gpu_now, win_prev = win_now;
+        if (gpu_prev) output_scale_note_sum((sum_now - sum_prev) / 1e6);  // (the [dynres] line: the spans' plain sum too)
+        gpu_prev = gpu_now, win_prev = win_now, sum_prev = sum_now;
         [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {  // (the upscale / scaling draw and the menu)
-            present_ns += (uint64_t)((done.GPUEndTime - done.GPUStartTime) * 1e9);
+            renderer_gpu_busy(done, true);
         }];
         OutScale os;
         output_scale(dw, dh, widescreen_allowed(), SDL_GetTicksNS() / 1e9, game_ms, win_ms, &os);
@@ -1194,7 +1204,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             // SMAA (Video tab "Anti-aliasing"): first, at the game image's size (MetalFX then upscales its result)
             if (g_settings.antialias == AA_SMAA) {
                 [enc endEncoding];
-                src = smaa_encode(cb, src);
+                src = smaa_encode(cb, src, fx, fy);
                 MTLRenderPassDescriptor *rp2 = [MTLRenderPassDescriptor renderPassDescriptor];
                 rp2.colorAttachments[0].texture = drawable.texture;
                 rp2.colorAttachments[0].loadAction = MTLLoadActionLoad;

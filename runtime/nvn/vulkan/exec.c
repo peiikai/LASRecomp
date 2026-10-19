@@ -4827,15 +4827,19 @@ static VkImageView smaa_lut(int i) {
 
 // One post pass (outside the window image's rendering): srcs (bindings 0..n-1) -> dst, fragment shader `fs`.
 // clear: start from zero (SMAA's edge pass only writes edge pixels; its weights / output read them).
+// post_area_w / _h (> 0): only that top-left part of dst (Dynamic resolution: the contents' part)
+static uint32_t post_area_w, post_area_h;
 static void post_pass(VkCommandBuffer cb, const char *fs, const VkImageView *srcs, int n, TexBackend *dst, const float pc[8],
                       bool clear) {
+    uint32_t aw = post_area_w && post_area_w < dst->width ? post_area_w : dst->width;
+    uint32_t ah = post_area_h && post_area_h < dst->height ? post_area_h : dst->height;
     VkPipeline pipe = post_pipeline(fs);  // (before the rendering begins: created inside it, the NVIDIA driver crashed)
     vk_full_barrier(cb);
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = post_view(dst),
                                     .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
                                     .loadOp = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_DONT_CARE,
                                     .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
-    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {dst->width, dst->height}},
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, {aw, ah}},
                           .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
     vkCmdBeginRendering(cb, &ri);
     VkDescriptorSet ds = vk_alloc_set(post_set_layout);
@@ -4851,7 +4855,7 @@ static void post_pass(VkCommandBuffer cb, const char *fs, const VkImageView *src
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, post_layout, 0, 1, &ds, 0, NULL);
     VkViewport vp = {0, 0, (float)dst->width, (float)dst->height, 0, 1};
-    VkRect2D sc = {{0, 0}, {dst->width, dst->height}};
+    VkRect2D sc = {{0, 0}, {aw, ah}};  // (the viewport stays the whole image: gl_FragCoord is the pixel)
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
     vkCmdPushConstants(cb, post_layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 32, pc);
@@ -4879,12 +4883,16 @@ static VkImageView post_process(VkCommandBuffer cb, TexBackend *b, float fx, flo
         float m[8] = {1.0f / w, 1.0f / h, w, h};
         TexBackend *edges = post_image(0, b->width, b->height), *weights = post_image(1, b->width, b->height);
         TexBackend *out = post_image(2, b->width, b->height);
+        // Dynamic resolution: only the contents' part, and 64 pixels past it (the edge searches reach 2 x 16 pixels, so
+        // the contents' pixels never read past it) - the window step's cost then scales with the factor like the game's
+        post_area_w = cw + 64, post_area_h = ch + 64;
         VkImageView in[3] = {v};
         post_pass(cb, "smaa_edge.frag", in, 1, edges, m, true);
         VkImageView wi[3] = {post_view(edges), smaa_lut(0), smaa_lut(1)};
         post_pass(cb, "smaa_weight.frag", wi, 3, weights, m, true);
         VkImageView bi[3] = {v, post_view(weights)};
         post_pass(cb, "smaa_blend.frag", bi, 2, out, m, false);
+        post_area_w = post_area_h = 0;
         v = post_view(out);
     }
     if (fsr) {
