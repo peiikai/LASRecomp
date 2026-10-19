@@ -988,6 +988,7 @@ static int cbuf_base = 3, tex_base = 8;
     ShaderInfo *vi, *fi;
     bool failed;
     _Atomic bool ready;  // functions compiled (async compile: draws are skipped until then)
+    ShaderFp fp[2];      // (stale-program detector, shader_prep.h; render thread only)
 }
 @end
 @implementation Prog
@@ -1453,6 +1454,11 @@ static Prog *prep_find_prog(uint64_t k) {
     return pr;
 }
 
+static void prog_fp_check(Prog *pr, NvnProgram *p) {  // (the lookups below are by code address: shader_prep.h)
+    shader_fp_check(&pr->fp[0], &p->stages[0], "vs");
+    shader_fp_check(&pr->fp[1], &p->stages[1], "fs");
+}
+
 static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
     if (!(p->stage_mask & 1) || !(p->stage_mask & 2)) return nil;
     // fast path: hash of the code addresses and keys
@@ -1464,7 +1470,11 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
     if (!h) h = 1;
     uint32_t slot = (uint32_t)(h ^ (h >> 31)) & (PROG_TAB - 1);
     while (prog_tab[slot].key && prog_tab[slot].key != h) slot = (slot + 1) & (PROG_TAB - 1);
-    if (prog_tab[slot].key) { Prog *fp = (__bridge Prog *)prog_tab[slot].prog; return fp->failed ? nil : fp; }
+    if (prog_tab[slot].key) {
+        Prog *fp = (__bridge Prog *)prog_tab[slot].prog;
+        prog_fp_check(fp, p);
+        return fp->failed ? nil : fp;
+    }
     // (every byte of the keys, in hex: NSData's description shows only the first 16 and last 8 bytes of the 52-byte
     // key, so variants differing in attr_kind[16..], depth_minus_one, flip_y or a later field shared one entry -
     // whichever variant came first served the others)
@@ -1482,9 +1492,11 @@ static Prog *get_program(NvnProgram *p, ShaderKey *vkey, ShaderKey *fkey) {
     if (pr) {
         prog_tab[slot].key = h;
         prog_tab[slot].prog = (__bridge void *)pr;
+        prog_fp_check(pr, p);
         return pr->failed ? nil : pr;
     }
     pr = [Prog new];
+    prog_fp_check(pr, p);  // (takes the fingerprint)
     cache[key] = pr;
     prog_tab[slot].key = h;
     prog_tab[slot].prog = (__bridge void *)pr;  // retained by the cache dictionary
@@ -1911,6 +1923,7 @@ typedef struct {
     uint64_t code_addr;
     bool failed;
     _Atomic bool ready;  // pipeline built (async compile: dispatches are skipped until then, as draws are)
+    ShaderFp fp;         // (stale-program detector, shader_prep.h; render thread only)
 } CsProg;
 static NSMutableDictionary *g_cs_progs;  // code address -> CsProg
 
@@ -1956,7 +1969,11 @@ static CsProg *compute_program(NvnProgram *p) {
     NSMutableDictionary *progs = g_cs_progs;
     if (!progs) progs = g_cs_progs = [NSMutableDictionary new];
     NSValue *v = progs[key];
-    if (v) { CsProg *cp = v.pointerValue; return cp->failed ? NULL : cp; }
+    if (v) {
+        CsProg *cp = v.pointerValue;
+        shader_fp_check(&cp->fp, ss, "cs");  // (keyed by code address: shader_prep.h)
+        return cp->failed ? NULL : cp;
+    }
     uint32_t local[3];
     for (int i = 0; i < 3; i++) {
         local[i] = ss->control ? *(const uint32_t *)(ss->control + 0x748 + 4 * i) : 1;
@@ -1974,11 +1991,16 @@ static CsProg *compute_program(NvnProgram *p) {
             pc = [g_prep_cs[@(cs_content_key(ch, local))] pointerValue];
             pthread_mutex_unlock(&g_prep_lock);
         }
-        if (pc) { progs[key] = [NSValue valueWithPointer:pc]; return pc->failed ? NULL : pc; }
+        if (pc) {
+            progs[key] = [NSValue valueWithPointer:pc];
+            shader_fp_check(&pc->fp, ss, "cs");
+            return pc->failed ? NULL : pc;
+        }
         shader_first_visit("compute", ch, 0, cs_content_key(ch, local));
     }
     CsProg *cp = calloc(1, sizeof *cp);
     progs[key] = [NSValue valueWithPointer:cp];
+    shader_fp_check(&cp->fp, ss, "cs");  // (takes the fingerprint)
     cp->code_addr = ss->code_addr;
     memcpy(cp->local, local, sizeof local);
     if (!translate_compute(cp, (const uint8_t *)(uintptr_t)ss->code_addr, ss->const_offset ? ss->const_offset : 0x10000)) return NULL;
