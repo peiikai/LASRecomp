@@ -2477,34 +2477,45 @@ static bool gmem_import(uint64_t size) {
 // GPU first uses it, and Linux write tracking can't watch this mapping (the heap is then re-checked like on Beta 4).
 // Nothing writes the heap before boot (the start screen doesn't use guest memory): the mapping replaces it unseen.
 // Default on for RADV; LARECOMP_VK_HEAP_DMABUF=0 off, =1 on any Linux driver with dma-buf export.
-static void guest_heap_dmabuf(void) {
 #ifdef __linux__
-    if (gmem_buf || !g_vk.dev || !g_vk.dmabuf || getenv("LARECOMP_VK_NO_GMEM")) return;
+static bool gmem_dmabuf;  // the heap is the driver's memory (dma-buf) mapped at HEAP_BASE
+static bool guest_heap_dmabuf(void) {
+    if (gmem_buf || !g_vk.dev || !g_vk.dmabuf || getenv("LARECOMP_VK_NO_GMEM")) return false;
     const char *e = getenv("LARECOMP_VK_HEAP_DMABUF");
-    if (e ? !atoi(e) : !strstr(g_vk.props.deviceName, "RADV")) return;
+    if (e ? !atoi(e) : !strstr(g_vk.props.deviceName, "RADV")) return false;
     const uint64_t size = HEAP_MAX;
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
     const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
                                        VK_MEMORY_PROPERTY_HOST_CACHED_BIT;  // (cached: the game's CPU work runs in it)
     int type = -1;
-    for (uint32_t i = 0; i < mp.memoryTypeCount && type < 0; i++)
-        if ((mp.memoryTypes[i].propertyFlags & want) == want && mp.memoryHeaps[mp.memoryTypes[i].heapIndex].size >= size)
-            type = (int)i;
-    if (type < 0) { LOG("[vk] heap as driver memory: no cached host-visible memory type\n"); return; }
+    uint64_t largest = 0;  // (the largest heap with a cached host-visible type, for the log when none is big enough)
+    for (uint32_t i = 0; i < mp.memoryTypeCount && type < 0; i++) {
+        if ((mp.memoryTypes[i].propertyFlags & want) != want) continue;
+        uint64_t hs = mp.memoryHeaps[mp.memoryTypes[i].heapIndex].size;
+        if (hs >= size) type = (int)i;
+        else if (hs > largest) largest = hs;
+    }
+    if (type < 0) {
+        if (largest)  // (Steam Deck: a 3072 MB system heap)
+            LOG("[vk] heap as driver memory: the driver's cached system memory heap (%llu MB) is smaller than the guest heap "
+                "(%llu MB)\n", (unsigned long long)(largest >> 20), (unsigned long long)(size >> 20));
+        else LOG("[vk] heap as driver memory: no cached host-visible memory type\n");
+        return false;
+    }
     VkExternalMemoryBufferCreateInfo eb = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
                                            .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = &eb, .size = size,
                              .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT};
     VkBuffer buf;
-    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) { LOG("[vk] heap as driver memory: buffer failed\n"); return; }
+    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) { LOG("[vk] heap as driver memory: buffer failed\n"); return false; }
     VkMemoryRequirements req;
     vkGetBufferMemoryRequirements(g_vk.dev, buf, &req);
     if (!(req.memoryTypeBits & (1u << type))) {
         LOG("[vk] heap as driver memory: memory type %d not allowed for the buffer\n", type);
         vkDestroyBuffer(g_vk.dev, buf, NULL);
-        return;
+        return false;
     }
     VkMemoryDedicatedAllocateInfo ded = {.sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO, .buffer = buf};
     VkExportMemoryAllocateInfo ex = {.sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO, .pNext = &ded,
@@ -2513,7 +2524,7 @@ static void guest_heap_dmabuf(void) {
                                .memoryTypeIndex = (uint32_t)type};
     VkDeviceMemory mem;
     VkResult r = vkAllocateMemory(g_vk.dev, &ai, NULL, &mem);
-    if (r != VK_SUCCESS) { LOG("[vk] heap as driver memory: allocation failed (%d)\n", r); vkDestroyBuffer(g_vk.dev, buf, NULL); return; }
+    if (r != VK_SUCCESS) { LOG("[vk] heap as driver memory: allocation failed (%d)\n", r); vkDestroyBuffer(g_vk.dev, buf, NULL); return false; }
     PFN_vkGetMemoryFdKHR get_fd = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(g_vk.dev, "vkGetMemoryFdKHR");
     VkMemoryGetFdInfoKHR fi = {.sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR, .memory = mem,
                                .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
@@ -2544,7 +2555,7 @@ static void guest_heap_dmabuf(void) {
             (unsigned long long)HEAP_BASE, why);
         vkDestroyBuffer(g_vk.dev, buf, NULL);
         vkFreeMemory(g_vk.dev, mem, NULL);
-        return;
+        return false;
     }
     // the game expects a zeroed heap; the kernel hands out zeroed pages, but 8 spread pages are checked to be sure
     static const uint8_t zero_page[4096];
@@ -2557,14 +2568,38 @@ static void guest_heap_dmabuf(void) {
     gmem_buf = buf;
     gmem_mem = mem;
     gmem_size = size;
+    gmem_dmabuf = true;
     LOG("[vk] guest heap as driver memory (dma-buf, memory type %d): %llu MB at %llx - all of it is held in system memory "
         "once the GPU first uses it\n", type, (unsigned long long)(size >> 20), (unsigned long long)HEAP_BASE);
-#endif
+    return true;
 }
+#endif
+
+// The guest heap's GPU memory on Linux: the driver's own (above) where it can be, else host-pointer imports - the
+// whole heap (gmem_import) or 16 MB chunks as draws first bind them (gc_lazy: RADV without the dma-buf heap, Steam
+// Deck; GPUs whose storage buffers can't span the heap). On Mesa's drivers every such import is a userptr buffer, and
+// page write tracking (platform/linux.c: userfaultfd write protection, PAGEMAP_SCAN) changes the protection of pages
+// inside them: each tracking query over vertex or texture memory is an MMU-notifier invalidation of the imports it
+// overlaps, so the kernel driver waits for the GPU to finish with them and checks their pages again at the next
+// submission (amdgpu; the CPU and GPU stop overlapping - Steam Deck, issue #181: 30 fps on Beta 4, 20 with tracking
+// over the whole-heap import). Chunks only make the re-check smaller, not the wait. So with any userptr import,
+// tracking is off, as on Beta 4 (the vertex cache and the texture checks go without it). NVIDIA's own driver pins
+// the pages instead and keeps it. Decided here, at boot, before any query protected a page. LARECOMP_WRITE_TRACKING=1:
+// on anyway.
+static bool gmem_userptr;  // the heap is imported by host pointer: userptr (vertex cache default, vcache_lookup)
 
 void backend_guest_heap_prepare(void) {
+    gmem_userptr = false;
+#ifdef __linux__
     guest_heap_dmabuf();
-    if (g_vk.dev) gmem_chunk_shift();  // (the chunk / lazy decision, before the first draw binds anything)
+#endif
+    if (!g_vk.dev) return;
+    gmem_chunk_shift();  // (the chunk / lazy decision, before the first draw binds anything)
+#ifdef __linux__
+    if (gmem_dmabuf || !g_vk.host_import || getenv("LARECOMP_VK_NO_GMEM") || g_vk.props.vendorID == 0x10DE) return;
+    gmem_userptr = true;
+    plat_write_tracking_off(gc_lazy ? "the guest heap is imported in userptr chunks" : "the guest heap is a userptr import");
+#endif
 }
 
 static uint64_t gmem_tried;  // heap size the import was last attempted for (gmem_info imports / re-imports)
@@ -3224,6 +3259,12 @@ static bool vcache_lookup(uint64_t addr, uint64_t size, VkBuffer *buf, VkDeviceS
     if (vc_on < 0) {
         const char *e = getenv("LARECOMP_VK_VCACHE");
         vc_on = !e || atoi(e) != 0;
+        // integrated GPU with a userptr heap (only with LARECOMP_WRITE_TRACKING=1: tracking is off there otherwise): the
+        // heap already is the GPU's memory, no bus to save - the copies would only cost. LARECOMP_VK_VCACHE=1: on.
+        if (vc_on && !e && gmem_userptr && g_vk.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
+            LOG("[vk] vertex cache off: integrated GPU\n");
+            vc_on = 0;
+        }
         if (vc_on && !pt_init()) {
             LOG("[vk] vertex cache off: no page write tracking\n");
             vc_on = 0;
@@ -3369,6 +3410,9 @@ void vk_exec_reset(void) {
         vkFreeMemory(g_vk.dev, gmem_mem, NULL);
         gmem_buf = VK_NULL_HANDLE;
         gmem_mem = VK_NULL_HANDLE;
+#ifdef __linux__
+        gmem_dmabuf = false;  // (the next boot decides again)
+#endif
     }
     gmem_size = gmem_tried = 0;
     for (int k = 0; k < gc_n; k++) {  // (lazy chunks: their pages are replaced too)

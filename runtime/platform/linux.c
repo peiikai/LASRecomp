@@ -93,6 +93,18 @@ static void wt_init(uint64_t lo, uint64_t hi) {
     g_wt_page = pg;
 }
 
+// Tracking off after all (the Vulkan backend at boot, before any query protected a page: nothing is protected yet), with
+// the reason logged; LARECOMP_WRITE_TRACKING=1 keeps it on. Closing the userfaultfd unregisters the window.
+void plat_write_tracking_off(const char *why) {
+    if (g_uffd < 0 && g_pagemap < 0) return;
+    const char *e = getenv("LARECOMP_WRITE_TRACKING");
+    if (e && atoi(e)) { fprintf(stderr, "[plat] page write tracking kept on (LARECOMP_WRITE_TRACKING=1): %s\n", why); return; }
+    fprintf(stderr, "[plat] page write tracking off: %s\n", why);
+    if (g_pagemap >= 0) close(g_pagemap);
+    if (g_uffd >= 0) close(g_uffd);
+    g_pagemap = g_uffd = -1;
+}
+
 // ---- guest address space
 // Everything readable/writable from the start, like macOS: the guest maps at 4K granularity, and untouched pages
 // cost nothing (MAP_NORESERVE: the 12 GB window doesn't count against overcommit).
