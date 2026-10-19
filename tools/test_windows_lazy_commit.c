@@ -14,15 +14,18 @@ void rt_fault_report(const char *what, uint64_t fault_addr, uint64_t host_pc, ui
 }
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) { (void)pc; (void)offset; return NULL; }
 
-#define THREADS 8
+#define MAX_THREADS 8
 #define CHUNKS 512
 static uint64_t g_base;
+static LONG g_threads;  // (one per CPU, up to 8: spinning threads must not wait on each other's time slices)
 static volatile LONG g_arrived, g_round;
 
 // All threads leave together, then write into the same untouched chunk at once
 static void barrier(LONG round) {
-    if (InterlockedIncrement(&g_arrived) == THREADS * (round + 1)) InterlockedExchange(&g_round, round + 1);
-    while (g_round <= round) YieldProcessor();
+    if (InterlockedIncrement(&g_arrived) == g_threads * (round + 1)) InterlockedExchange(&g_round, round + 1);
+    for (int spin = 0; g_round <= round; spin++)
+        if (spin > 1000) SwitchToThread();
+        else YieldProcessor();
 }
 
 static DWORD WINAPI toucher(LPVOID arg) {
@@ -55,16 +58,17 @@ int main(void) {
     assert(!lazy_commit(lo + size));
 
     g_base = lo;
-    HANDLE th[THREADS];
-    for (uint32_t t = 0; t < THREADS; t++) {
+    g_threads = plat_cpu_count() < 2 ? 2 : plat_cpu_count() > MAX_THREADS ? MAX_THREADS : plat_cpu_count();
+    HANDLE th[MAX_THREADS];
+    for (uint32_t t = 0; t < (uint32_t)g_threads; t++) {
         th[t] = CreateThread(NULL, 0, toucher, (LPVOID)(uintptr_t)t, 0, NULL);
         assert(th[t]);
     }
-    assert(WaitForMultipleObjects(THREADS, th, TRUE, 60000) == WAIT_OBJECT_0);
-    for (uint32_t t = 0; t < THREADS; t++) CloseHandle(th[t]);
+    assert(WaitForMultipleObjects((DWORD)g_threads, th, TRUE, 60000) == WAIT_OBJECT_0);
+    for (uint32_t t = 0; t < (uint32_t)g_threads; t++) CloseHandle(th[t]);
     for (uint32_t k = 0; k < CHUNKS; k++)
-        for (uint32_t t = 0; t < THREADS; t++)
+        for (uint32_t t = 0; t < (uint32_t)g_threads; t++)
             assert(*(uint32_t *)(uintptr_t)(lo + (uint64_t)k * COMMIT_CHUNK + t * 4096 % COMMIT_CHUNK) == 0x1000u * t + k);
-    printf("lazy commit: %d threads x %d chunks, ok\n", THREADS, CHUNKS);
+    printf("lazy commit: %ld threads x %d chunks, ok\n", (long)g_threads, CHUNKS);
     return 0;
 }
