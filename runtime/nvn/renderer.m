@@ -601,8 +601,12 @@ static int mtl_color_bytes(MTLPixelFormat f) {  // texel size of an ordinary col
         return 0;
     }
 }
-static MTLPixelFormat mtl_linear_twin(MTLPixelFormat f) {  // compressed sRGB format -> its linear one
+static MTLPixelFormat mtl_linear_twin(MTLPixelFormat f) {  // sRGB format -> its linear one
     switch (f) {
+    case MTLPixelFormatR8Unorm_sRGB: return MTLPixelFormatR8Unorm;
+    case MTLPixelFormatRG8Unorm_sRGB: return MTLPixelFormatRG8Unorm;
+    case MTLPixelFormatRGBA8Unorm_sRGB: return MTLPixelFormatRGBA8Unorm;
+    case MTLPixelFormatBGRA8Unorm_sRGB: return MTLPixelFormatBGRA8Unorm;
     case MTLPixelFormatBC1_RGBA_sRGB: return MTLPixelFormatBC1_RGBA;
     case MTLPixelFormatBC2_RGBA_sRGB: return MTLPixelFormatBC2_RGBA;
     case MTLPixelFormatBC3_RGBA_sRGB: return MTLPixelFormatBC3_RGBA;
@@ -619,13 +623,19 @@ static bool mtl_view_compatible(MTLPixelFormat base, MTLPixelFormat view) {
     if (bb || vb) return bb == vb;
     return mtl_linear_twin(base) == mtl_linear_twin(view);  // (depth / stencil formats have no twin)
 }
+// A view in another format than the sRGB / linear twin needs MTLTextureUsagePixelFormatView on the texture (metal.m
+// create_backend_texture: given only to textures the game views that way, as the flag stops lossless compression).
+bool renderer_view_needs_format_flag(MTLPixelFormat base, MTLPixelFormat view) {
+    return base != view && mtl_linear_twin(base) != mtl_linear_twin(view);
+}
 
 static id<MTLTexture> view_texture(NvnTexture *t, const NvnTextureView *v, bool has_view, bool render,
                                    id<MTLBlitCommandEncoder> blit) {
     id<MTLTexture> base = renderer_texture(t, blit, render);
     if (!has_view || !v->setmask) return base;
     MTLPixelFormat pf = (v->setmask & 4) ? renderer_pixel_format(v->format) : base.pixelFormat;
-    if (!mtl_view_compatible(base.pixelFormat, pf)) {  // (see mtl_view_compatible: the base format instead)
+    if (!mtl_view_compatible(base.pixelFormat, pf) ||  // (see mtl_view_compatible: the base format instead)
+        (renderer_view_needs_format_flag(base.pixelFormat, pf) && !(base.usage & MTLTextureUsagePixelFormatView))) {
         static int nlog;
         if (!nlog++)
             LOG("[view] texture %ux%u fmt %#x (mtl %lu) can't be viewed as nvn %#x (mtl %lu): its own format instead "
@@ -1712,7 +1722,7 @@ static void resolve_feedback(Prog *pr) {
                                                                                            height:src.height mipmapped:NO];
                 d.textureType = src.textureType == MTLTextureType2DMultisample ? MTLTextureType2DMultisample : MTLTextureType2D;
                 d.sampleCount = src.sampleCount;
-                d.usage = MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView;
+                d.usage = MTLTextureUsageShaderRead;  // (only same-format views of it: compressible)
                 d.storageMode = MTLStorageModePrivate;
                 dst = [dev newTextureWithDescriptor:d];
                 copies[key] = dst;

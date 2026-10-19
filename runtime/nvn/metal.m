@@ -173,6 +173,7 @@ typedef struct {
     int reg;             // slot in g_reg (live textures, for the "largest textures" dump) + 1
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
+    bool format_views;   // allocated with MTLTextureUsagePixelFormatView (NvnTexture.format_views)
 } TexBackend;
 
 // Live textures (diagnostics: the overworld slowdown at 32:9 - the same textures used 870 MB and 4x the GPU time
@@ -325,6 +326,7 @@ static MTLTextureType mtl_tex_type(uint32_t target, uint32_t samples) {
 
 static void create_backend_texture(NvnTexture *t, TexBackend *b);
 static void release_backend_texture(NvnTexture *t, TexBackend *b);
+static void texture_allow_format_views(NvnTexture *t, TexBackend *b);
 int g_tex_live;              // (stats: Metal textures alive and their size)
 uint64_t g_tex_live_bytes;
 void renderer_texture_gone(void *nvn_tex, void *mtl_tex);  // renderer.m
@@ -336,6 +338,7 @@ static TexBackend *tex_backend(NvnTexture *t) {
             release_backend_texture(t, b);
             create_backend_texture(t, b);
         }
+        if (t->format_views && !b->format_views) texture_allow_format_views(t, b);
         return b;
     }
     TexBackend *b = calloc(1, sizeof *b);
@@ -383,11 +386,14 @@ static void create_backend_texture(NvnTexture *t, TexBackend *b) {
         if (d.mipmapLevelCount > m) d.mipmapLevelCount = m;
     }
     if (t->samples > 1) { d.sampleCount = t->samples; d.mipmapLevelCount = 1; }
-    d.usage = MTLTextureUsageShaderRead | MTLTextureUsagePixelFormatView | MTLTextureUsageRenderTarget |
-              MTLTextureUsageShaderWrite;
+    // No ShaderWrite (images are never bound on Metal) and PixelFormatView only for a texture the game views in another
+    // format (backend_texture_view_format): either flag keeps Apple GPUs from compressing the texture losslessly, which
+    // cost 6-11% of the GPU time at 5120x1440 (2026-10-18).
+    d.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget | (t->format_views ? MTLTextureUsagePixelFormatView : 0);
+    b->format_views = t->format_views;
     d.storageMode = MTLStorageModePrivate;
-    // Shaders sample depth through ordinary texture2d bindings (Maxwell has no separate depth type);
-    // keep depth uncompressed so those reads see the stored values.
+    // Depth stays uncompressed: compressed, the ambient occlusion around walls, trees and furniture disappeared (every
+    // lit scene, 2026-10-18), although depth sampled in isolation reads the same values either way.
     if (renderer_format_is_depth(t->format)) d.allowGPUOptimizedContents = NO;
     if (mf.force_alpha_one)
         d.swizzle = MTLTextureSwizzleChannelsMake(MTLTextureSwizzleRed, MTLTextureSwizzleGreen,
@@ -404,6 +410,38 @@ static void create_backend_texture(NvnTexture *t, TexBackend *b) {
     CFBridgingRetain(tex);
     g_tex_live++;
     g_tex_live_bytes += tex.allocatedSize;
+}
+
+bool renderer_view_needs_format_flag(MTLPixelFormat base, MTLPixelFormat view);  // renderer.m
+void backend_texture_view_format(NvnTexture *t, uint32_t format) {
+    if (!t->format_views && renderer_view_needs_format_flag(mtl_format(t->format).pf, mtl_format(format).pf))
+        t->format_views = true;  // (tex_backend: an allocation without the flag is replaced)
+}
+
+// A texture first viewed in another format after it was allocated without PixelFormatView (not seen in the game: the
+// views come with the pool registration, before the first use): reallocated with the flag. Guest-backed contents are
+// uploaded again; GPU-written ones are copied over in a command buffer of their own (it sees the work submitted so
+// far, not writes still being recorded).
+static void texture_allow_format_views(NvnTexture *t, TexBackend *b) {
+    static int nlog;
+    if (nlog++ < 10)
+        LOG("[metal] texture %ux%u fmt %#x: a view in another format after its first use, reallocated with format views\n",
+            t->width, t->height, t->format);
+    id<MTLTexture> old = b->tex;  // (a strong reference: alive for the copy)
+    release_backend_texture(t, b);
+    create_backend_texture(t, b);
+    b->uploaded = false;
+    if (b->gpu_owned && old.width == b->tex.width && old.height == b->tex.height && old.pixelFormat == b->tex.pixelFormat &&
+        old.mipmapLevelCount == b->tex.mipmapLevelCount && old.arrayLength == b->tex.arrayLength &&
+        old.sampleCount == b->tex.sampleCount) {
+        @autoreleasepool {
+            id<MTLCommandBuffer> cb = [queue commandBuffer];
+            id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+            [blit copyFromTexture:old toTexture:b->tex];
+            [blit endEncoding];
+            [cb commit];
+        }
+    }
 }
 
 static void release_backend_texture(NvnTexture *t, TexBackend *b) {  // (also drops the renderer's views of it)

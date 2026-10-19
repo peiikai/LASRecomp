@@ -1035,3 +1035,5 @@ VkSampler vk_default_sampler(bool linear) {
     }
     return s[linear];
 }
+
+void backend_texture_view_format(NvnTexture *t, uint32_t format) { (void)t; (void)format; }  // (images are made mutable-format)
