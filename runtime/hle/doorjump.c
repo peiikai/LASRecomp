@@ -195,6 +195,15 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
         lx_ = px_, lz_ = pz_;
     }
     bool arrived = in && frame - in_level_since >= 120 && ((moved_ && still_ >= 60) || frame - in_level_since >= 900);
+    // ...and stands on a floor: warped onto a cell start over a pit (a cell's centre can be one - tools/doorjump_test.sh
+    // ENTRANCE=<cell>) he falls and the game respawns him at a stale spot, over and over: placed in that state, every
+    // jump is undone (seed B5Chaos Tail Cave 07F E: 51 jumps fired, Link never moved)
+    static int fall_logged;
+    if (arrived && pos[1] < -1.0f) {
+        if (!fall_logged++) LOG("[doorjump-test] f%llu Link is falling (y %.2f): not placed until he stands - warped into a pit?\n",
+                                (unsigned long long)frame, pos[1]);
+        arrived = false;
+    }
     if (placed < 0 && (long)frame >= at && arrived) {
         // a doorway without a row (want >= 0): no jump, he walks on into the neighbour across the edge
         Jump plain = {0};
@@ -414,6 +423,9 @@ void doorjump_tick(uint64_t frame) {
         // ...unless he's dropping: where the neighbour has no wall at this doorway there's nothing under him past the
         // edge - jump at once, before he falls (Tail Cave 05F south in a generated layout: fell, then respawned)
         bool falling = pos[1] < -0.3f;
+        // ...but not once he's deep in a fall: the game's fall-out (and its respawn) is under way and undoes every
+        // position write - jumping each frame only fires the jump (and its map letter) over and over
+        if (pos[1] < -3.0f) { j->still = 0; continue; }
         if (!falling && (j->still < rest || (fabsf(out) > 0.02f && j->still < rest + 8))) continue;
         j->still = 0;
         float nx = x, nz = z, across = j->depth;  // just past the edge, in front of the partner doorway
