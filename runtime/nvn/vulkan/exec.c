@@ -2427,21 +2427,22 @@ static VkBuffer gmem_buf;
 static VkDeviceMemory gmem_mem;
 static uint64_t gmem_size;
 
-// Heap bytes [off, off + size) as a buffer (VK_EXT_external_memory_host; a page-aligned range of the mapped heap).
-static bool host_import(uint64_t off, uint64_t size, VkBuffer *out_buf, VkDeviceMemory *out_mem, bool bda) {
+// Host memory [host, host + size) as a buffer (VK_EXT_external_memory_host; page-aligned). The allocation's result:
+// out of memory tells whole_import_probe_oom to go lazy.
+static VkResult host_import_ptr(void *host, uint64_t size, VkBuffer *out_buf, VkDeviceMemory *out_mem, bool bda) {
     PFN_vkGetMemoryHostPointerPropertiesEXT props =
         (PFN_vkGetMemoryHostPointerPropertiesEXT)vkGetDeviceProcAddr(g_vk.dev, "vkGetMemoryHostPointerPropertiesEXT");
     VkMemoryHostPointerPropertiesEXT mp = {.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
-    void *host = (void *)(uintptr_t)(HEAP_BASE + off);
     if (!props || props(g_vk.dev, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, host, &mp) != VK_SUCCESS || !mp.memoryTypeBits)
-        return false;
+        return VK_ERROR_INITIALIZATION_FAILED;
     VkImportMemoryHostPointerInfoEXT imp = {.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT,
                                             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT, .pHostPointer = host};
     VkMemoryAllocateFlagsInfo fl = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO, .pNext = &imp, .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT};
     VkMemoryAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext = bda ? (void *)&fl : (void *)&imp, .allocationSize = size,
                                .memoryTypeIndex = (uint32_t)__builtin_ctz(mp.memoryTypeBits)};
     VkDeviceMemory mem;
-    if (vkAllocateMemory(g_vk.dev, &ai, NULL, &mem) != VK_SUCCESS) return false;
+    VkResult r = vkAllocateMemory(g_vk.dev, &ai, NULL, &mem);
+    if (r != VK_SUCCESS) return r;
     VkExternalMemoryBufferCreateInfo eb = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
                                            .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = &eb, .size = size,
@@ -2449,11 +2450,86 @@ static bool host_import(uint64_t off, uint64_t size, VkBuffer *out_buf, VkDevice
                                       VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
                                       (bda ? VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT : 0)};
     VkBuffer buf;
-    if (vkCreateBuffer(g_vk.dev, &bi, NULL, &buf) != VK_SUCCESS) { vkFreeMemory(g_vk.dev, mem, NULL); return false; }
-    vkBindBufferMemory(g_vk.dev, buf, mem, 0);
+    r = vkCreateBuffer(g_vk.dev, &bi, NULL, &buf);
+    if (r != VK_SUCCESS) { vkFreeMemory(g_vk.dev, mem, NULL); return r; }
+    r = vkBindBufferMemory(g_vk.dev, buf, mem, 0);
+    if (r != VK_SUCCESS) { vkDestroyBuffer(g_vk.dev, buf, NULL); vkFreeMemory(g_vk.dev, mem, NULL); return r; }
     *out_buf = buf;
     *out_mem = mem;
-    return true;
+    return VK_SUCCESS;
+}
+// Heap bytes [off, off + size) as a buffer (a page-aligned range of the mapped heap).
+static bool host_import(uint64_t off, uint64_t size, VkBuffer *out_buf, VkDeviceMemory *out_mem, bool bda) {
+    return host_import_ptr((void *)(uintptr_t)(HEAP_BASE + off), size, out_buf, out_mem, bda) == VK_SUCCESS;
+}
+
+// One import of the whole heap, tried once at the start where it should fit but not by much (device.c
+// whole_import_fits: g_vk.heap_probe): HEAP_MAX of scratch host memory imported and used by one submission, then
+// freed. True: it ran out of memory (the import or the submission: issue #205's driver took the import and failed
+// the first submission), and the heap is imported in lazy chunks instead - decided here, at device creation (vk_exec_init),
+// before any shader is translated or the game starts. Costs: the import pins HEAP_MAX of RAM for a moment (well under a
+// second). Any other failure: logged, and the heap is imported as one buffer as before.
+// LARECOMP_VK_SIM_HEAP_OOM=1: the probe runs, then reports out of memory (tests the fallback on any GPU).
+static bool whole_import_probe_oom(void) {
+    const uint64_t size = HEAP_MAX, align = 64 << 10;  // (minImportedHostPointerAlignment: 4 KB here, 64 KB at most)
+    const char *sim = getenv("LARECOMP_VK_SIM_HEAP_OOM");
+    uint64_t t0 = plat_now_ns();
+    VkResult r = VK_ERROR_OUT_OF_HOST_MEMORY;
+    const char *step = "host memory";
+    void *raw = malloc(size + align);
+    VkBuffer buf = VK_NULL_HANDLE;
+    VkDeviceMemory mem = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    if (raw) {
+        step = "import";
+        r = host_import_ptr((void *)(((uintptr_t)raw + align - 1) & ~(uintptr_t)(align - 1)), size, &buf, &mem, false);
+    }
+    if (r == VK_SUCCESS) {  // a submission that uses it: where the driver makes it resident
+        step = "submission";
+        VkCommandPoolCreateInfo pi = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .queueFamilyIndex = g_vk.qfam};
+        VkFenceCreateInfo fi = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        VkCommandBuffer cb = VK_NULL_HANDLE;
+        r = vkCreateCommandPool(g_vk.dev, &pi, NULL, &pool);
+        if (r == VK_SUCCESS) r = vkCreateFence(g_vk.dev, &fi, NULL, &fence);
+        if (r == VK_SUCCESS) {
+            VkCommandBufferAllocateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = pool,
+                                              .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
+            r = vkAllocateCommandBuffers(g_vk.dev, &ci, &cb);
+        }
+        if (r == VK_SUCCESS) {
+            VkCommandBufferBeginInfo bi = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                                           .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+            vkBeginCommandBuffer(cb, &bi);
+            vkCmdFillBuffer(cb, buf, 0, 256, 0);         // (zeros into zeroed memory: the start and the end of it)
+            vkCmdFillBuffer(cb, buf, size - 256, 256, 0);
+            r = vkEndCommandBuffer(cb);
+        }
+        if (r == VK_SUCCESS) {
+            VkCommandBufferSubmitInfo cbs = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO, .commandBuffer = cb};
+            VkSubmitInfo2 si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .commandBufferInfoCount = 1, .pCommandBufferInfos = &cbs};
+            r = vkQueueSubmit2(g_vk.queue, 1, &si, fence);
+            if (r == VK_SUCCESS) r = vkWaitForFences(g_vk.dev, 1, &fence, VK_TRUE, 10000000000ull);
+        }
+    }
+    if (r == VK_ERROR_DEVICE_LOST) vk_devlost_dump();
+    if (fence) vkDestroyFence(g_vk.dev, fence, NULL);
+    if (pool) vkDestroyCommandPool(g_vk.dev, pool, NULL);
+    if (buf) vkDestroyBuffer(g_vk.dev, buf, NULL);
+    if (mem) vkFreeMemory(g_vk.dev, mem, NULL);
+    free(raw);
+    bool oom = r == VK_ERROR_OUT_OF_DEVICE_MEMORY || r == VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (r == VK_SUCCESS && sim && atoi(sim)) { oom = true; r = VK_ERROR_OUT_OF_DEVICE_MEMORY; step = "simulated (LARECOMP_VK_SIM_HEAP_OOM)"; }
+    unsigned ms = (unsigned)((plat_now_ns() - t0) / 1000000);
+    if (oom)
+        LOG("[vk] guest heap: one import of %llu MB ran out of memory (%s, error %d, %u ms): falling back to chunks "
+            "imported as the game binds them\n", (unsigned long long)(size >> 20), step, r, ms);
+    else if (r != VK_SUCCESS)
+        LOG("[vk] guest heap: one import of %llu MB failed to test (%s, error %d, %u ms): one buffer as before\n",
+            (unsigned long long)(size >> 20), step, r, ms);
+    else
+        LOG("[vk] guest heap: one import of %llu MB works here (%u ms)\n", (unsigned long long)(size >> 20), ms);
+    return oom;
 }
 
 static bool gmem_import(uint64_t size) {
@@ -2640,7 +2716,9 @@ static VkDescriptorBufferInfo gmem_info(void) {
 //   about) is imported for the next frame, and the count is in the stats (after a chunk's first use it should stay 0).
 //   Buffer device addresses are enabled only where this mode will be used (device.c lazy_heap_predicted): on RADV
 //   they put every allocation on the driver's global BO list.
-//   Default on RADV when the dma-buf heap doesn't apply and wherever one storage buffer can't span the heap;
+//   Default on RADV when the dma-buf heap doesn't apply, wherever one storage buffer can't span the heap and where the
+//   system memory heap (or its budget) can't hold one import of it (8 GB laptops: issue #205), and where one import
+//   was tried at the start and ran out of memory (whole_import_probe_oom; LARECOMP_VK_SIM_HEAP_OOM=1 simulates it);
 //   LARECOMP_VK_GMEM_LAZY=1 anywhere (tests), =0 off.
 // LARECOMP_VK_GMEM_CHUNK_MB=<n> forces chunks of n MB (a power of two, 1 GB at most), =0 one buffer.
 #define GC_MAX GMEM_CHUNKS_MAX
@@ -2704,6 +2782,7 @@ static bool gmem_lazy(void) {
     static int lazy = -1;
     if (lazy >= 0) return lazy;
     lazy = g_vk.lazy_heap;
+    if (!lazy && g_vk.heap_probe && !getenv("LARECOMP_VK_NO_GMEM")) lazy = whole_import_probe_oom();
     if (lazy && (!g_vk.host_import || !g_vk.bda || !g_vk.ssbo_chunks)) {
         LOG("[vk] lazy heap import: not possible here (%s)\n", !g_vk.host_import ? "no host memory import" : !g_vk.bda ? "no buffer device addresses" : "no stores from fragment / vertex shaders");
         lazy = 0;
