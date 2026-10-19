@@ -1498,6 +1498,7 @@ typedef struct {
     bool vs_uses_vid;
     _Atomic int state;  // 0 building, 1 ready, 2 failed
     uint64_t prep_vh, prep_fh;  // (prepared programs: their code hashes, for LARECOMP_PREP_CHECK)
+    ShaderFp fp[2];             // (stale-program detector, shader_prep.h; compute: [0]; touched by the replay only)
 } Prog;
 
 static VkPipelineLayout make_layout(Prog *p, int nsets, VkShaderStageFlags s0, VkShaderStageFlags s1) {
@@ -1661,6 +1662,11 @@ static uint64_t prog_content_key(uint64_t vh, uint64_t fh, const ShaderKey *vkey
 #define PROG_TAB 4096
 static struct { uint64_t key; Prog *prog; } prog_tab[PROG_TAB];
 
+static void prog_fp_check(Prog *p, NvnProgram *np) {  // (the lookups below are by code address: shader_prep.h)
+    shader_fp_check(&p->fp[0], &np->stages[0], "vs");
+    shader_fp_check(&p->fp[1], &np->stages[1], "fs");
+}
+
 static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     if (!(np->stage_mask & 1) || !(np->stage_mask & 2)) return NULL;
     uint64_t h = 0xcbf29ce484222325ull;
@@ -1671,7 +1677,10 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
     if (!h) h = 1;
     uint32_t slot = (uint32_t)(h ^ (h >> 31)) & (PROG_TAB - 1);
     while (prog_tab[slot].key && prog_tab[slot].key != h) slot = (slot + 1) & (PROG_TAB - 1);
-    if (prog_tab[slot].key) return prog_tab[slot].prog;
+    if (prog_tab[slot].key) {
+        prog_fp_check(prog_tab[slot].prog, np);
+        return prog_tab[slot].prog;
+    }
     {   // prepared before the game (the same code and keys)
         uint64_t vh = shader_stage_hash(&np->stages[0]), fh = shader_stage_hash(&np->stages[1]);
         uint64_t ck = prog_content_key(vh, fh, vkey, fkey);
@@ -1679,11 +1688,13 @@ static Prog *get_program(NvnProgram *np, ShaderKey *vkey, ShaderKey *fkey) {
         if (pp) {
             prog_tab[slot].key = h;
             prog_tab[slot].prog = pp;
+            prog_fp_check(pp, np);
             return pp;
         }
         shader_first_visit("program", vh, fh, ck);
     }
     Prog *p = calloc(1, sizeof *p);
+    prog_fp_check(p, np);  // (takes the fingerprint)
     prog_tab[slot].key = h;
     prog_tab[slot].prog = p;
     for (int i = 0; i < 2; i++) {
@@ -3564,7 +3575,11 @@ static CsProg *compute_program(NvnProgram *np) {
     if (!ss->code_addr) return NULL;
     struct CsEnt *tab = g_cs_tab;
     int n = g_cs_n;
-    for (int i = 0; i < n; i++) if (tab[i].addr == ss->code_addr) return tab[i].cp;
+    for (int i = 0; i < n; i++)
+        if (tab[i].addr == ss->code_addr) {
+            shader_fp_check(&tab[i].cp->p.fp[0], ss, "cs");  // (keyed by code address: shader_prep.h)
+            return tab[i].cp;
+        }
     uint32_t local[3];
     for (int i = 0; i < 3; i++) {
         local[i] = ss->control ? *(const uint32_t *)(ss->control + 0x748 + 4 * i) : 1;
@@ -3578,10 +3593,12 @@ static CsProg *compute_program(NvnProgram *np) {
     CsProg *cp = ch && prep_cs_n ? PREP_GET(prep_cs, cs_content_key(ch, local)) : NULL;  // prepared before the game
     if (cp) {
         if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = cp; g_cs_n = n + 1; }
+        shader_fp_check(&cp->p.fp[0], ss, "cs");
         return cp;
     }
     shader_first_visit("compute", ch, 0, cs_content_key(ch, local));
     cp = calloc(1, sizeof *cp);
+    shader_fp_check(&cp->p.fp[0], ss, "cs");  // (takes the fingerprint)
     cp->code = ss->code_addr;  // (for the build logs)
     if (n < 256) { tab[n].addr = ss->code_addr; tab[n].cp = cp; g_cs_n = n + 1; }
     memcpy(cp->local, local, sizeof local);
