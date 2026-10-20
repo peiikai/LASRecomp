@@ -7,7 +7,8 @@
 
 #include "rt.h"
 
-#define GA_ADDR(name, value) .name = UINT64_C(value),
+// (the tables' Switch addresses placed at this build's guest base: runtime/guest_base.h)
+#define GA_ADDR(name, value) .name = GUEST_FROM_SWITCH(UINT64_C(value)),
 static const GameAddrs ga_v1_0_0 = {
 #include "game_addresses/patches_v1_0_0.h"
 #include "game_addresses/runtime_v1_0_0.h"

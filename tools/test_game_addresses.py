@@ -276,6 +276,8 @@ strip_c = re.compile(r'/\*.*?\*/|//[^\n]*|"(?:\\.|[^"\\])*"', re.S)
 for path in (ROOT/'runtime').rglob('*'):
     if path.suffix not in ('.c', '.h', '.m', '.mm', '.cpp') or path.parent.name == 'game_addresses':
         continue
+    if path.name == 'guest_base.h':  # the layout parameter (the Switch base it moves from), not game addresses
+        continue
     code = strip_c.sub('', path.read_text(encoding='utf-8'))
     assert not re.search(r'\bGA_(?!ADDR\b|VERSION\b|RELEASE\b|FIELD\b|AT\b)[A-Z]', code), f'{path}: use GA(NAME)'
     assert set(re.findall(r'\bGA(?:_FIELD)?\(([A-Z][A-Z0-9_]*)\)', code)) <= values.keys(), str(path)

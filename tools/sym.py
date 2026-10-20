@@ -7,7 +7,8 @@ import sys
 import capstone
 from nso import Nso
 
-MODS = [('main', 0x7000000000), ('sdk', 0x7004000000)]
+GUEST_BASE = int(__import__('os').environ.get('LARECOMP_GUEST_BASE', '0x7000000000'), 0)
+MODS = [('main', GUEST_BASE), ('sdk', GUEST_BASE + 0x0004000000)]
 _cache = {}
 
 

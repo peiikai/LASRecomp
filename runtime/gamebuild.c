@@ -403,7 +403,14 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
 
     // 1. the generator, both modules at once; their finished files are compiled while it goes on
     Gen gens[2] = {{.name = "main"}, {.name = "sdk"}};
-    static const char *const base[2] = {"0x7000000000", "0x7004000000"};
+    char base[2][24];
+    snprintf(base[0], sizeof base[0], "0x%llx", (unsigned long long)MAIN_BASE);
+    snprintf(base[1], sizeof base[1], "0x%llx", (unsigned long long)SDK_BASE);
+#ifdef _WIN32
+    _putenv_s("LARECOMP_GUEST_BASE", base[0]);  // tools/game_addresses.py places patch sites from it
+#else
+    setenv("LARECOMP_GUEST_BASE", base[0], 1);
+#endif
     bool ok = true;
     for (int i = 0; i < 2 && ok; i++) {
         Gen *g = &gens[i];
