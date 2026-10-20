@@ -2,6 +2,7 @@
 # macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
+# iOS: `make PLATFORM=ios` on a Mac (see docs/ios.md): Metal renderer, the game code linked into the app.
 UNAME := $(shell uname -s)
 comma := ,
 ifneq ($(filter MINGW% MSYS% CYGWIN% Windows_NT,$(UNAME) $(OS)),)
@@ -9,7 +10,19 @@ PLATFORM := windows
 else ifeq ($(UNAME),Linux)
 PLATFORM := linux
 else
-PLATFORM := macos
+PLATFORM ?= macos
+endif
+
+# iOS: its own generated code (another guest base, runtime/guest_base.h) and build dir; static SDL3 / FFmpeg from
+# `make deps-ios` (tools/build_deps_ios.sh); the game code is linked into the executable (one signed binary).
+IOS_MIN   ?= 16.0
+ifeq ($(PLATFORM),ios)
+IOS_SDK   := $(shell xcrun --sdk iphoneos --show-sdk-path)
+CROSS     := -target arm64-apple-ios$(IOS_MIN) -isysroot $(IOS_SDK)
+GEN       ?= generated-ios
+B         ?= build/ios
+GUEST_BASE ?= 0x800000000
+DEPS      ?= $(CURDIR)/build/deps-ios
 endif
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
@@ -32,6 +45,11 @@ endif
 B         ?= build
 MACOS_MIN ?=
 DEPS      ?=
+# GUEST_BASE: where the 12.5 GB guest window lives (runtime/guest_base.h). The default suits macOS / Windows /
+# Linux; iOS processes have no VA there and use a lower base. Part of GAMELIB_ID: the game code bakes it in.
+GUEST_BASE ?= 0x7000000000
+SDK_GEN_BASE := $(shell printf '0x%x' $$(( $(GUEST_BASE) + 0x0004000000 )))
+BASEFLAG  := $(if $(filter-out 0x7000000000,$(GUEST_BASE)),-DLARECOMP_GUEST_BASE=$(GUEST_BASE)ull)
 MINFLAG  := $(if $(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN))
 CC       := clang $(MINFLAG) $(CROSS)
 CXX      := clang++ $(MINFLAG) $(CROSS)
@@ -39,7 +57,7 @@ IMGUI    := third_party/imgui
 # -mllvm -disable-licm-promotion: LLVM's LICM pass takes minutes on the few generated files that hold one giant function (main_404 / main_406:
 # 12 and 11 minutes at -O1 on a Steam Deck, 33 and 56 s without the promotion; the rest of the files cost the same). Keep in step with GAMELIB_CFLAGS
 # in runtime/gamebuild.c (the start screen's build of the same code).
-GENFLAGS := -O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -Iruntime
+GENFLAGS := -O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -Iruntime $(BASEFLAG)
 
 # The game code (made by `make gen` from your own game files) is its own library next to the app (runtime/gamelib.h);
 # the app itself holds none of it
@@ -70,6 +88,29 @@ UIFLAGS  := -fobjc-arc
 GAMELIB  := $(B)/lasgame.dylib
 GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functions it calls: the app's own)
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
+else ifeq ($(PLATFORM),ios)
+EXE      := $(B)/lasrecomp
+# the embedded CPython (BeeWare's Python.xcframework, `make deps-ios`): the seed generator runs in-process
+PYFW     := $(DEPS)/Python.xcframework/ios-arm64
+DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python3.13
+# SDL3 static: the frameworks it uses; FFmpeg static (the LGPL subset). The game code is its own dylib, as on
+# macOS, embedded as Frameworks/LASGame.framework by tools/bundle_ios.sh (the app itself holds none of it);
+# -export_dynamic keeps the runtime functions it calls visible to dyld.
+LDFLAGS  := -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lavutil -lswscale -lbz2 -lz -liconv \
+            -F$(PYFW) -framework Python \
+            -Wl,-export_dynamic -Wl,-rpath,@executable_path/Frameworks \
+            -framework Foundation -framework UIKit -framework Metal -framework MetalFX -framework QuartzCore \
+            -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers -framework CoreMedia \
+            -framework CoreVideo -framework AVFoundation -framework AudioToolbox -framework CoreAudio \
+            -framework CoreHaptics -framework GameController -framework CoreMotion -framework CoreBluetooth \
+            -framework OpenGLES -framework Security -framework CoreText
+BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_python.m
+BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
+IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
+UIFLAGS  := -fobjc-arc
+GAMELIB  := $(B)/lasgame.dylib
+GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup -install_name @rpath/LASGame.framework/LASGame
+GAMELIB_SHARED :=  # (never built on the device)
 else ifeq ($(PLATFORM),linux)
 EXE      := $(B)/lasrecomp
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
@@ -144,8 +185,8 @@ GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELI
 RT_OBJ   := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC)))
 # no path of this machine in what ships: debug info and __FILE__ name the checkout as "." (Windows: its C:/ form too)
 PATHMAP  := -ffile-prefix-map=$(CURDIR)=. $(if $(filter windows,$(PLATFORM)),-ffile-prefix-map=$(shell cygpath -m '$(CURDIR)')=.)
-RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS) $(PATHMAP)
-CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC) $(PATHMAP)
+RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(BASEFLAG) $(DEPINC) $(OSFLAGS) $(PATHMAP)
+CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(BASEFLAG) $(DEPINC) $(PATHMAP)
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 
@@ -232,8 +273,8 @@ $(B)/imgui/imgui_impl_metal.o: $(IMGUI)/backends/imgui_impl_metal.mm
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
 gen:
-	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
+	cd tools && LARECOMP_GUEST_BASE=$(GUEST_BASE) ../$(PY) gen.py sdk ../extracted/exefs/sdk $(SDK_GEN_BASE) ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
+	cd tools && LARECOMP_GUEST_BASE=$(GUEST_BASE) ../$(PY) gen.py main ../extracted/exefs/main $(GUEST_BASE) ../$(GEN)/main $(GENSIMD)
 
 gen-objs: $(GEN_OBJ)
 
@@ -253,6 +294,13 @@ APP_MIN  := 15.0
 APP_B    := build/mac15
 deps:
 	MACOS_MIN=$(APP_MIN) tools/build_deps_macos.sh
+deps-ios:
+	IOS_MIN=$(IOS_MIN) tools/build_deps_ios.sh
+# iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-ios.ipa, signed with TEAM_ID / PROFILE
+# (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
+ipa:
+	$(MAKE) PLATFORM=ios
+	IOS_MIN=$(IOS_MIN) tools/bundle_ios.sh build/ios/lasrecomp build/ios/lasgame.dylib
 app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp

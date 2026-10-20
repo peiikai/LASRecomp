@@ -1,8 +1,13 @@
 // LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
+#include "platform.h"
+#if PLAT_IOS
+#include <SDL3/SDL_main.h>  // (iOS: main becomes SDL_main, run from SDL's UIApplication delegate)
+#endif
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -48,7 +53,7 @@ __attribute__((constructor(101))) static void reserve_guest_space(void) {
     else setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
-    if (n >= 20) {
+    if (n >= 20 || PLAT_IOS) {  // (iOS: no re-exec; the window is below everything the system maps, so this is final)
         fprintf(stderr, "FATAL: guest address range %llx-%llx is not free\n", GUEST_LO, GUEST_HI);
         exit(1);
     }
@@ -236,6 +241,32 @@ int main(int argc, char **argv) {
         menu_sfx_set_game_dir(root);
         menu_sfx_load_now();
     }
+#if PLAT_IOS
+    // no command line / environment for an installed app: a `play` file in Documents (empty or not "0") boots
+    // straight in (as --play), and an `env` file there (KEY=VALUE lines) stands in for environment variables
+    // (LARECOMP_* debugging switches)
+    {
+        FILE *f = fopen("env", "r");
+        if (f) {
+            char line[512];
+            while (fgets(line, sizeof line, f)) {
+                char *eq = strchr(line, '='), *nl = strchr(line, '\n');
+                if (nl) *nl = 0;
+                if (eq && eq > line) { *eq = 0; setenv(line, eq + 1, 1); }
+            }
+            fclose(f);
+        }
+        if ((f = fopen("play", "r"))) {
+            int c = fgetc(f);
+            skip_launcher = c != '0';
+            fclose(f);
+        }
+        if (access("pytest", F_OK) == 0) {  // the embedded Python's self-test (runtime/platform/ios_python.m)
+            extern void plat_ios_python_selftest(void);
+            plat_ios_python_selftest();
+        }
+    }
+#endif
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");
