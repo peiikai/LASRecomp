@@ -40,6 +40,8 @@ void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32
 }
 
 // The renderer found the scene composite (composite): mirror it?
+// The stamp is kept even with mirror mode off: mouse menu control (runtime/hle/input.c) treats a few frames
+// without a world composite as a menu (the pause screen's backdrop is a small blurred copy, not this draw).
 bool mirror_draw(bool composite) {
     if (composite) g_scene_frame = renderer_present_count();
     if (!g_settings.mirror_mode || !composite) return false;
