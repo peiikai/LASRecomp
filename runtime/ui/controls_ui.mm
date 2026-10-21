@@ -351,6 +351,13 @@ extern "C" void controls_tab_draw(float scale) {
     if (!g_settings.move_360) opt_disable_next();
     opt_toggle("Hookshot aims in 8 directions", &g_settings.hookshot_8way, false,
                "The hookshot fires straight along the nearest of 8 directions, even with 360-degree movement.");
+    {
+        static const char *const names[] = {"Off", "A and B", "Look"};
+        opt_choice("Mouse controls", &g_settings.mouse_controls, names, 3, MOUSE_OFF,
+                   "Off: clicks work in menus only. A and B: left click is A, right click is B. Look: he faces the "
+                   "cursor while he walks and while the shield is up. Left click holds the sword, right click holds "
+                   "the shield. WASD walks.");
+    }
 
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "Controller vibration.");

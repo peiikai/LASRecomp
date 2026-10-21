@@ -296,6 +296,8 @@ void settings_load(void) {
         else if (!strcmp(key, "background_input")) g_settings.bg_input = atoi(val) != 0;
         else if (!strcmp(key, "move_360")) g_settings.move_360 = atoi(val) != 0;
         else if (!strcmp(key, "hookshot_8way")) g_settings.hookshot_8way = atoi(val) != 0;
+        else if (!strcmp(key, "mouse_controls"))
+            g_settings.mouse_controls = !strcmp(val, "ab") ? MOUSE_AB : !strcmp(val, "look") ? MOUSE_LOOK : MOUSE_OFF;
         else if (!strcmp(key, "blur_removal")) g_settings.blur_removal = atoi(val) != 0;
         else if (!strcmp(key, "hide_hero_icon")) g_settings.hide_hero_icon = atoi(val) != 0;
         else if (!strcmp(key, "pause_unfocused")) g_settings.pause_unfocused = atoi(val) != 0;
@@ -444,6 +446,9 @@ void settings_save(void) {
     fprintf(f, "pause_unfocused = %d\nremember_window = %d\n", g_settings.pause_unfocused, g_settings.remember_window);
     if (g_settings.window_w > 0 && g_settings.window_h > 0)
         fprintf(f, "window_size = %dx%d\n", g_settings.window_w, g_settings.window_h);
+    static const char *const mouse[] = {"off", "ab", "look"};
+    fprintf(f, "mouse_controls = %s\n", mouse[g_settings.mouse_controls == MOUSE_AB || g_settings.mouse_controls == MOUSE_LOOK
+                                                  ? g_settings.mouse_controls : MOUSE_OFF]);
     static const char *const prompts[] = {"auto", "nintendo", "xbox", "playstation"};
     fprintf(f, "prompts = %s\n", prompts[g_settings.prompts & 3]);
     fprintf(f, "menu_confirm = %s\n", g_settings.menu_confirm == MENU_CONFIRM_CONTROLLER ? "controller" : "game");

@@ -184,6 +184,44 @@ void widescreen_scene_ubo(const float *u, uint64_t size) {
     g_vp_frame = f;
 }
 
+// Where the scene was last drawn in the window (pixels), and the uv crop of that image. Mouse aim
+// (runtime/hle/input.c) projects Link through g_vp into this rectangle.
+static float g_present[4], g_crop_uv[4];  // vx,vy,vw,vh and crop origin/size
+static int g_present_flip;                // framebuffer origin is lower-left (present shader flips v)
+static uint64_t g_present_frame = ~0ull;
+void widescreen_note_present(float vx, float vy, float vw, float vh, const float crop[4], int lower_left) {
+    extern uint64_t renderer_present_count(void);
+    g_present[0] = vx, g_present[1] = vy, g_present[2] = vw, g_present[3] = vh;
+    memcpy(g_crop_uv, crop, sizeof g_crop_uv);
+    g_present_flip = lower_left;
+    g_present_frame = renderer_present_count();
+}
+
+// Link's world point as a window pixel, through the scene camera and the present crop (floor cameras and
+// side-view cameras both: the view-projection already puts him on screen). false without a recent camera.
+bool widescreen_project(float x, float y, float z, float *sx, float *sy) {
+    extern uint64_t renderer_present_count(void);
+    extern bool mirror_input(void);
+    uint64_t f = renderer_present_count();
+    if (g_vp_frame == ~0ull || f > g_vp_frame + 4) return false;
+    if (g_present_frame == ~0ull || f > g_present_frame + 4) return false;
+    if (g_present[2] < 1.f || g_present[3] < 1.f || g_crop_uv[2] < 1e-4f || g_crop_uv[3] < 1e-4f) return false;
+    const float *r0 = g_vp, *r1 = g_vp + 4, *r3 = g_vp + 12;
+    float w = r3[0] * x + r3[1] * y + r3[2] * z + r3[3];
+    if (!(w > 0.01f)) return false;
+    float ndc_x = (r0[0] * x + r0[1] * y + r0[2] * z + r0[3]) / w;
+    float ndc_y = (r1[0] * x + r1[1] * y + r1[2] * z + r1[3]) / w;
+    // Scene NDC is y-up. Lower-left framebuffers store that as uv y up; top-left stores uv y down.
+    float uv_x = (ndc_x + 1.f) * 0.5f;
+    float uv_y = g_present_flip ? (ndc_y + 1.f) * 0.5f : (1.f - ndc_y) * 0.5f;
+    float u = (uv_x - g_crop_uv[0]) / g_crop_uv[2];
+    float v = g_present_flip ? 1.f - (uv_y - g_crop_uv[1]) / g_crop_uv[3] : (uv_y - g_crop_uv[1]) / g_crop_uv[3];
+    if (mirror_input()) u = 1.f - u;  // the composite is mirrored; this is where he appears
+    *sx = g_present[0] + u * g_present[2];
+    *sy = g_present[1] + v * g_present[3];
+    return true;
+}
+
 static bool heap_ptr(uint64_t p) { return p >= HEAP_BASE && p + 0x40 <= HEAP_BASE + HEAP_MAX && !(p & 7); }
 
 // The world point seen at ndc (x, y) of the scene camera (g_vp): on the floor (y 0) for top-down rooms, on the plane
