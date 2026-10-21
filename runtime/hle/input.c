@@ -177,6 +177,9 @@ static uint8_t test_keys[SDL_SCANCODE_COUNT];
 static _Atomic uint32_t test_pad;
 static _Atomic int32_t test_lx, test_ly;  // (a resting stick's drift: "lstick" in LARECOMP_HOST_INPUT)
 
+// Mouse in the game's own menus (title, file select, pause). Drained in mouse_menu_bits.
+static _Atomic int mouse_ax, mouse_ay, mouse_wheel, mouse_a_arm, mouse_b_arm;
+
 static int held_key(int sc) { return sc > 0 && sc < SDL_SCANCODE_COUNT && (keys_down[sc] || test_keys[sc]); }
 
 // Through the bindings (runtime/hle/bindings.c: g_bind_key), read on every key event, so a rebind applies at once.
@@ -432,7 +435,78 @@ void input_handle_event(const SDL_Event *e) {
         }
         recompute_pad();
         break;
+    case SDL_EVENT_MOUSE_MOTION:
+        atomic_fetch_add(&mouse_ax, (int)e->motion.xrel);
+        atomic_fetch_add(&mouse_ay, (int)e->motion.yrel);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        if (e->button.button == SDL_BUTTON_LEFT) atomic_store(&mouse_a_arm, 6);
+        else if (e->button.button == SDL_BUTTON_RIGHT) atomic_store(&mouse_b_arm, 6);
+        break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        atomic_fetch_add(&mouse_wheel, (int)e->wheel.y);
+        break;
     }
+}
+
+// Mouse in the game's own menus (title, file select, pause): the world composite is absent there
+// (runtime/hle/mirror.c). A click confirms or goes back, the wheel and a mouse stroke move the cursor.
+// Gameplay keeps the mouse out, so a click does not swing the sword.
+extern bool menu_input_captured(void);
+
+static bool mouse_menu_active(void) {
+    extern int game_in_play(void);
+    extern bool world_on_screen(void);
+    if (menu_input_captured()) return false;
+    if (!game_in_play()) return true;
+    return !world_on_screen();
+}
+
+// D-pad / A / B from the mouse, for this presented frame. Drains the event totals either way, so strokes made
+// while playing do not fire on the next menu. Called once per presented frame (the game polls several times).
+static uint64_t mouse_menu_bits(bool apply) {
+    extern uint64_t renderer_present_count(void);
+    static uint64_t frame;
+    static int hold_l, hold_r, hold_u, hold_d, hold_a, hold_b;
+    uint64_t now = renderer_present_count();
+    if (now != frame) {
+        frame = now;
+        if (hold_l) hold_l--;
+        if (hold_r) hold_r--;
+        if (hold_u) hold_u--;
+        if (hold_d) hold_d--;
+        if (hold_a) hold_a--;
+        if (hold_b) hold_b--;
+        int dx = atomic_exchange(&mouse_ax, 0), dy = atomic_exchange(&mouse_ay, 0);
+        int wheel = atomic_exchange(&mouse_wheel, 0);
+        // Click holds stay visible to input_buttons_now (opening-movie skip) for the whole press.
+        int a = atomic_load(&mouse_a_arm), b = atomic_load(&mouse_b_arm);
+        if (a > 0) atomic_fetch_sub(&mouse_a_arm, 1);
+        if (b > 0) atomic_fetch_sub(&mouse_b_arm, 1);
+        if (apply) {
+            const int step = 36;
+            if (a) hold_a = a;
+            if (b) hold_b = b;
+            if (wheel > 0) hold_u = 5;
+            else if (wheel < 0) hold_d = 5;
+            if (abs(dx) >= abs(dy) && abs(dx) >= step) {
+                if (dx > 0) hold_r = 5;
+                else hold_l = 5;
+            } else if (abs(dy) >= step) {
+                if (dy > 0) hold_d = 5;
+                else hold_u = 5;
+            }
+        }
+    }
+    if (!apply) return 0;
+    uint64_t bits = 0;
+    if (hold_a) bits |= 1ull << BTN_A;
+    if (hold_b) bits |= 1ull << BTN_B;
+    if (hold_l) bits |= 1ull << BTN_LEFT;
+    if (hold_r) bits |= 1ull << BTN_RIGHT;
+    if (hold_u) bits |= 1ull << BTN_UP;
+    if (hold_d) bits |= 1ull << BTN_DOWN;
+    return bits;
 }
 
 // Scripted input for testing: LARECOMP_INPUT="frame:BUTTON:frames,..." (BUTTON = A,B,X,Y,L,R,ZL,ZR,PLUS,
@@ -674,7 +748,14 @@ void input_frame(uint64_t frame) {
 extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or name entry up (it has the keys / pad)
 
 // Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
-uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons; }
+uint64_t input_buttons_now(void) {
+    uint64_t mouse = 0;
+    if (mouse_menu_active()) {  // opening movie skips on A / B before the pad poll (runtime/hle/movie.c)
+        if (atomic_load(&mouse_a_arm)) mouse |= 1ull << BTN_A;
+        if (atomic_load(&mouse_b_arm)) mouse |= 1ull << BTN_B;
+    }
+    return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons | mouse;
+}
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
@@ -772,6 +853,7 @@ static void fill_state(Cpu *c) {
     if (ry > 16000) b |= 1ull << 21;
     if (rx > 16000) b |= 1ull << 22;
     if (ry < -16000) b |= 1ull << 23;
+    b |= mouse_menu_bits(mouse_menu_active());  // after the stick, so a menu stroke does not walk Link
     {   // the pause menu's companion slot (runtime/hle/pets.c) takes the d-pad / sticks / A while the cursor is on it
         extern uint64_t pets_menu_input(uint64_t b, int32_t st[4]);
         int32_t st[4] = {lx, ly, rx, ry};
