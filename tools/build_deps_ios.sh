@@ -90,11 +90,12 @@ if [ ! -f "$P/lib/libkeystone.0.dylib" ]; then
 fi
 
 mkdir -p "$P/wheels"
-if ! ls "$P"/wheels/oead-1.3.0-*-iphoneos.whl >/dev/null 2>&1; then
+if ! ls "$P"/wheels/oead-1.3.0-*_iphoneos.whl >/dev/null 2>&1; then  # (…-cp313-cp313-ios_13_0_arm64_iphoneos.whl)
     unpack oead-1.3.0.tar.gz oead-ios
     (cd "$S/oead-ios" && git init -q && PATH="$SLICE/bin:$PATH" IPHONEOS_DEPLOYMENT_TARGET=$MIN \
         SETUPTOOLS_SCM_PRETEND_VERSION=1.3.0 CMAKE_GENERATOR=Ninja \
         "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
+    ls "$P"/wheels/oead-1.3.0-*_iphoneos.whl >/dev/null
 fi
 
 # quicktex (pybind11 2.x, its setup.py can't cross-build: the module straight from CMake, against the iOS Python)
@@ -114,15 +115,15 @@ if [ ! -f "$P/wheels/_quicktex.cpython-313-iphoneos.so" ]; then
     cp "$S/quicktex-ios/build/out/_quicktex.cpython-313-iphoneos.so" "$P/wheels/"
 fi
 # Pillow: BeeWare's prebuilt iOS wheel (its image codecs linked in statically)
-ls "$P"/wheels/pillow-10.4.0-*-iphoneos.whl >/dev/null 2>&1 || \
+ls "$P"/wheels/pillow-10.4.0-*_iphoneos.whl >/dev/null 2>&1 || \
     "$HOSTPY" -m pip download -q --no-deps --only-binary :all: --platform ios_13_0_arm64_iphoneos --python-version 3.13 \
         --index-url https://pypi.anaconda.org/beeware/simple --extra-index-url https://pypi.org/simple -d "$P/wheels" "Pillow~=10.4.0"
 
 SP=$P/python/site-packages
 if [ ! -f "$SP/oead.cpython-313-iphoneos.so" ]; then
     rm -rf "$SP" && mkdir -p "$SP"
-    unzip -qo "$P"/wheels/oead-1.3.0-*-iphoneos.whl -d "$SP"
-    unzip -qo "$P"/wheels/pillow-10.4.0-*-iphoneos.whl -d "$SP"
+    unzip -qo "$P"/wheels/oead-1.3.0-*_iphoneos.whl -d "$SP"
+    unzip -qo "$P"/wheels/pillow-10.4.0-*_iphoneos.whl -d "$SP"
     rm -f "$SP"/PIL/_imagingtk*.so  # (Tk: not there)
     "$HOSTPY" -m pip download -q --no-deps -d "$P/wheels" "evfl~=1.2.0" "appdirs~=1.4.4"
     for w in "$P"/wheels/evfl-*.whl "$P"/wheels/appdirs-*.whl; do unzip -qo "$w" -d "$SP"; done
