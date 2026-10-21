@@ -253,7 +253,7 @@ void plat_proc_kill(PlatProc h) {
     proc_free(p);
 }
 
-// Smoke test (a `pytest` file in Documents at startup, runtime/main.c): every native dependency of the seed
+// Smoke test (LARECOMP_PYTEST=1 at startup, runtime/main.c): every native dependency of the seed
 // generator, imported and exercised once.
 void plat_ios_python_selftest(void) {
     static const char *src =

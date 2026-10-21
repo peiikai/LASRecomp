@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- the 12.5 GB guest window (runtime/rt.h) needs the extended address space; the game's 2-3 GB footprint the
-	     raised jetsam limit. Both need a paid developer team with these capabilities on the App ID. -->
-	<key>com.apple.developer.kernel.extended-virtual-addressing</key>
-	<true/>
+	<!-- The game's 2-3 GB footprint needs the raised jetsam limit (free with any team). The 12.5 GB guest window
+	     (runtime/rt.h) fits an 8 GB device's address space as is (measured: an iPhone 15 Pro gives a process the same
+	     59 GB with or without com.apple.developer.kernel.extended-virtual-addressing); devices with less may need
+	     that entitlement (a paid team) or a smaller window. -->
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
 </dict>

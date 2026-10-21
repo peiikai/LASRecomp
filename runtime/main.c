@@ -228,9 +228,14 @@ int main(int argc, char **argv) {
     bool no_launcher = nl && *nl && strcmp(nl, "0");
     bool skip_launcher = no_launcher || getenv("LARECOMP_INPUT");  // tests boot straight in
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
-    static char arg_root[1024];
+    static char arg_root[1024], arg_skel[1024];
+    bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <skeleton> [game files]: the iOS app, then exit
+            build_ios = true;
+            if (!realpath(argv[++i], arg_skel)) snprintf(arg_skel, sizeof arg_skel, "%s", argv[i]);
+        }
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
@@ -241,30 +246,20 @@ int main(int argc, char **argv) {
         menu_sfx_set_game_dir(root);
         menu_sfx_load_now();
     }
+#if !PLAT_IOS
+    if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
+        extern bool gamebuild_ios_run_cli(const char *skeleton, const char *game_dir);
+        return gamebuild_ios_run_cli(arg_skel, root) ? 0 : 1;
+    }
+#else
+    (void)build_ios;
+#endif
 #if PLAT_IOS
-    // no command line / environment for an installed app: a `play` file in Documents (empty or not "0") boots
-    // straight in (as --play), and an `env` file there (KEY=VALUE lines) stands in for environment variables
-    // (LARECOMP_* debugging switches)
-    {
-        FILE *f = fopen("env", "r");
-        if (f) {
-            char line[512];
-            while (fgets(line, sizeof line, f)) {
-                char *eq = strchr(line, '='), *nl = strchr(line, '\n');
-                if (nl) *nl = 0;
-                if (eq && eq > line) { *eq = 0; setenv(line, eq + 1, 1); }
-            }
-            fclose(f);
-        }
-        if ((f = fopen("play", "r"))) {
-            int c = fgetc(f);
-            skip_launcher = c != '0';
-            fclose(f);
-        }
-        if (access("pytest", F_OK) == 0) {  // the embedded Python's self-test (runtime/platform/ios_python.m)
-            extern void plat_ios_python_selftest(void);
-            plat_ios_python_selftest();
-        }
+    // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
+    // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
+    if (getenv("LARECOMP_PYTEST")) {  // the embedded Python's self-test (runtime/platform/ios_python.m)
+        extern void plat_ios_python_selftest(void);
+        plat_ios_python_selftest();
     }
 #endif
     for (bool title = !skip_launcher;;) {

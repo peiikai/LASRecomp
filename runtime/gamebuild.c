@@ -3,6 +3,7 @@
 #include "gamebuild.h"
 #include "build_cache.h"
 
+#include <SDL3/SDL_cpuinfo.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include <sys/stat.h>
 #ifndef _WIN32
 #include <signal.h>
+#include <unistd.h>
 #endif
 
 #include "gamelib.h"
@@ -28,6 +30,20 @@
 #ifndef GAMELIB_BASE_ID
 #define GAMELIB_BASE_ID "dev"
 #endif
+
+// The iOS build (GAMEBUILD_IOS, any desktop): the same generated C compiled for arm64 iOS at the iOS guest base (the
+// Makefile's PLATFORM=ios values; GAMELIB_IOS_ID: that build's id, which the exported app's runtime checks).
+#ifndef GAMELIB_IOS_CFLAGS
+#define GAMELIB_IOS_CFLAGS "-O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -DLARECOMP_GUEST_BASE=0x800000000ull"
+#endif
+#ifndef GAMELIB_IOS_BASE
+#define GAMELIB_IOS_BASE 0x800000000ull
+#endif
+#ifndef GAMELIB_IOS_ID
+#define GAMELIB_IOS_ID "dev-ios"
+#endif
+#define GAMELIB_IOS_NAME "lasgame-ios.dylib"
+#define IOS_MIN "16.0"
 
 #ifdef _WIN32
 #define SEP "\\"
@@ -130,6 +146,11 @@ typedef struct {
     char implib[1100];  // the .exe's import library (the runtime functions the game code calls)
     char zig_rt[1100];  // the release's zig: its runtime built ahead of time (zig/rt, tools/zig_slim.sh), "" = none
 #endif
+    // GAMEBUILD_IOS, from the iOS skeleton folder (tools/ios_skeleton.sh): zig's Darwin libc headers (it doesn't add
+    // them for an iOS target by itself), a Mach-O linker for this machine (zig can't link for iOS: lld; or
+    // LARECOMP_IOS_LD=<path>, e.g. Apple's ld) and the libSystem stub it needs (libSystem.B.tbd)
+    bool ios, lld;
+    char zig_libc[1100], ld[1100], tbd[1100];
 } Tools;
 
 static bool file_exists(const char *p) {
@@ -177,6 +198,81 @@ bool gamebuild_available(void) {
     return find_tools(&t);
 }
 
+// this machine's folder of linkers in the skeleton (tools/ios_skeleton.sh: lld/<arch>-<os>/bin/lld)
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define LLD_ARCH "aarch64"
+#else
+#define LLD_ARCH "x86_64"
+#endif
+#if defined(__APPLE__)
+#define LLD_HOST LLD_ARCH "-macos"
+#elif defined(_WIN32)
+#define LLD_HOST LLD_ARCH "-windows"
+#else
+#define LLD_HOST LLD_ARCH "-linux"
+#endif
+
+static bool find_ios_tools(Tools *t, const char *skeleton, char *why, size_t why_size) {
+    if (!find_tools(t) || !t->zig) { snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp"); return false; }
+    t->ios = true;
+    char app[1100];
+    snprintf(app, sizeof app, "%s" SEP "LAS Recomp.app" SEP "Info.plist", skeleton);
+    snprintf(t->zig_libc, sizeof t->zig_libc, "%s" SEP "include" SEP "any-darwin-any" SEP "stdlib.h", skeleton);
+    snprintf(t->tbd, sizeof t->tbd, "%s" SEP "libSystem.B.tbd", skeleton);
+    if (!file_exists(app) || !file_exists(t->zig_libc) || !file_exists(t->tbd)) {
+        snprintf(why, why_size, "that folder isn't the unpacked iOS skeleton (LAS Recomp.app, include/, libSystem.B.tbd)");
+        return false;
+    }
+    *strrchr(t->zig_libc, SEP[0]) = 0;
+    const char *e = getenv("LARECOMP_IOS_LD");
+    if (e && *e && file_exists(e)) { snprintf(t->ld, sizeof t->ld, "%s", e); t->lld = strstr(e, "lld") != NULL; return true; }
+    // (bin/ + lib/: on Linux lld finds its libLLVM.so by RUNPATH $ORIGIN/../lib; tools/fetch_lld.sh)
+    snprintf(t->ld, sizeof t->ld, "%s" SEP "lld" SEP LLD_HOST SEP "bin" SEP "lld" PLAT_EXE_SUFFIX, skeleton);
+    if (file_exists(t->ld)) { t->lld = true; return true; }
+    snprintf(why, why_size, "the skeleton has no linker for this machine (lld/" LLD_HOST ")");
+    return false;
+}
+
+bool gamebuild_ios_available(const char *skeleton, char *why, size_t why_size) {
+    Tools t;
+    return find_ios_tools(&t, skeleton, why, why_size);
+}
+
+// The iOS build's own folder: <game_dir>/ios (its .gamebuild/ and library apart from this machine's), with a copy
+// of the game's exefs/ (27 MB; the generator reads main and sdk from there - a link would be refused by the build
+// cache's checks, and Windows has none).
+#include "romfs_build.h"
+bool gamebuild_ios_dir(const char *game_dir, char *out, size_t n) {
+    snprintf(out, n, "%s" SEP "ios", game_dir);
+    mkdir(out, 0755);
+    char from[1100], to[1100], main_nso[1100];
+    snprintf(from, sizeof from, "%s" SEP "exefs", game_dir);
+    snprintf(to, sizeof to, "%s" SEP "exefs", out);
+    snprintf(main_nso, sizeof main_nso, "%s" SEP "main", to);
+    if (!file_exists(main_nso) && !romfs_copy_tree(from, to, NULL)) return false;
+    return file_exists(main_nso);
+}
+
+static void cli_progress(double f, const char *step) {
+    static int last = -1;
+    int pct = (int)(f * 100);
+    if (pct != last) { last = pct; fprintf(stderr, "[gamebuild] %3d%% %s\n", pct, step); }
+}
+// `lasrecomp --build-ios <skeleton> <game files>` (runtime/main.c): the iOS app exported as the start screen does it
+// (runtime/iosexport.c), to ~/Downloads or LARECOMP_IOS_OUT=<path>.
+#include "iosexport.h"
+bool gamebuild_ios_run_cli(const char *skeleton, const char *game_dir) {
+    char why[512], out[1100];
+    const char *e = getenv("LARECOMP_IOS_OUT");
+    if (e && *e) snprintf(out, sizeof out, "%s", e);
+    else iosexport_default_path(out, sizeof out);
+    int cores = plat_cpu_count();  // (0 where there's no affinity mask: the machine's count)
+    if (cores < 1) cores = SDL_GetNumLogicalCPUCores();
+    IosExportOpts o = {cli_progress, NULL, cores > 1 ? cores : 1, skeleton, out};
+    if (!iosexport_run(game_dir, &o, why, sizeof why)) { fprintf(stderr, "[iosexport] %s\n", why); return false; }
+    return true;
+}
+
 // zig cc on Linux: an explicit target, so it uses its own glibc headers and stubs instead of looking for the system's
 // (SteamOS and other systems without development packages have none: "failed to find libc installation", #181)
 #if defined(__linux__) && defined(__x86_64__)
@@ -190,7 +286,8 @@ bool gamebuild_available(void) {
 static void compiler(Args *a, const Tools *t) {
     add(a, t->cc);
     if (t->zig) add(a, "cc");
-    if (t->zig && ZIG_TARGET[0]) add(a, "-target"), add(a, ZIG_TARGET);
+    if (t->ios) { add(a, "-target"), add(a, "aarch64-ios." IOS_MIN); add(a, "-isystem"), add(a, t->zig_libc); }
+    else if (t->zig && ZIG_TARGET[0]) add(a, "-target"), add(a, ZIG_TARGET);
 }
 
 // ------------------------------------------------------------------ generator progress (its log)
@@ -303,7 +400,7 @@ static void add_unit(Units *us, const char *src, const char *work, const char *s
 // names (x86_64_v3) and takes "-<feature>" off the end, so x86-64-v3 would be CPU "x86": the same CPU as -mcpu there.
 static void add_cflags(Args *a, const Tools *t) {
     char buf[1024];
-    snprintf(buf, sizeof buf, "%s", GAMELIB_CFLAGS);
+    snprintf(buf, sizeof buf, "%s", t->ios ? GAMELIB_IOS_CFLAGS : GAMELIB_CFLAGS);
     for (char *f = strtok(buf, " "); f; f = strtok(NULL, " ")) {
         if (t->zig && !strncmp(f, "-march=", 7)) {
             char cpu[128];
@@ -326,7 +423,7 @@ static PlatProc start_compile(const Tools *t, const Unit *u) {
     snprintf(inc, sizeof inc, "-I%s", t->inc);
     add(&a, inc);
     char id[GAMELIB_FULL_ID_SIZE + 32];
-    snprintf(id, sizeof id, "-DGAMELIB_ID=\"%s\"", g_full_id);
+    snprintf(id, sizeof id, "-DGAMELIB_ID=\"%s\"", g_full_id);  // (the iOS build's own id for an export)
     add(&a, id);
     add(&a, "-c");
     add(&a, u->src);
@@ -343,18 +440,21 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     static bool registered;
     if (!registered) registered = true, atexit(end_all);
     g_killed = false, g_cfg_stopped = false;
-    if (!gamelib_full_id(game_dir, g_full_id, sizeof g_full_id)) {
+    bool ios = o->target == GAMEBUILD_IOS;
+    if (!gamelib_full_id_for(ios ? GAMELIB_IOS_ID : GAMELIB_ID, game_dir, g_full_id, sizeof g_full_id)) {
         snprintf(why, why_size, LN("the game files' exefs/main is missing or unreadable"));
         return false;
     }
     Tools t;
-    if (!find_tools(&t)) {
-        snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp"));
+    if (ios ? !find_ios_tools(&t, o->ios_skeleton ? o->ios_skeleton : "", why, why_size) : !find_tools(&t)) {
+        if (!ios) snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp"));
         return false;
     }
+    const char *lib_name = ios ? GAMELIB_IOS_NAME : GAMELIB_NAME, *lib_id = ios ? GAMELIB_IOS_ID : GAMELIB_ID;
+    (void)lib_id;  // (the generation's id; the library's is g_full_id: that plus the game's build ID)
     char work[1100], tmp[1100];
     snprintf(work, sizeof work, "%s" SEP ".gamebuild", game_dir);
-    snprintf(tmp, sizeof tmp, "%s" SEP "%s.tmp", work, GAMELIB_NAME);
+    snprintf(tmp, sizeof tmp, "%s" SEP "%s.tmp", work, lib_name);
     char input_paths[6][1100], spec[4096];
     snprintf(input_paths[0], sizeof input_paths[0], "%s" SEP "exefs" SEP "main", game_dir);
     snprintf(input_paths[1], sizeof input_paths[1], "%s" SEP "exefs" SEP "sdk", game_dir);
@@ -365,8 +465,9 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     const char *inputs[] = {input_paths[2], input_paths[3], input_paths[4], input_paths[5], t.cc};
     // The compiler's contents identify it, so relocating the app does not discard reusable objects.
     snprintf(spec, sizeof spec, "LASBUILD3\n%s\n%s\n%s\nzig=%d pointer=%d%s%s\n", GAMELIB_BASE_ID,
-             GAMELIB_CFLAGS, GAMELIB_SHARED, t.zig, (int)sizeof(void *),  // (+ the Linux zig target: objects from
-             t.zig && ZIG_TARGET[0] ? " target=" : "", t.zig ? ZIG_TARGET : "");  // before it are rebuilt once)
+             ios ? GAMELIB_IOS_CFLAGS : GAMELIB_CFLAGS, ios ? "ios" : GAMELIB_SHARED, t.zig, (int)sizeof(void *),
+             ios ? " target=" : t.zig && ZIG_TARGET[0] ? " target=" : "",  // (+ the target: objects from before
+             ios ? "aarch64-ios" : t.zig ? ZIG_TARGET : "");                  // it are rebuilt once)
     if (o->progress) o->progress(0, LN("Checking completed build files..."));
     bool resuming = build_cache_resumable(game_dir);  // (a cancelled or interrupted build; read before open marks this one)
     BuildCache *cache = build_cache_open(game_dir, spec, inputs, 5, why, why_size);
@@ -382,7 +483,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     const char *gen_inputs[5] = {input_paths[0], input_paths[1], t.gen, t.hle};
     int ngen = 4;
     if (t.gen_script[0]) gen_inputs[ngen++] = t.gen_script;
-    if (!build_cache_prepare_generation(cache, GAMELIB_ID, gen_inputs, ngen, why, why_size)) {
+    if (!build_cache_prepare_generation(cache, lib_id, gen_inputs, ngen, why, why_size)) {
         build_cache_failed(cache);
         build_cache_close(cache);
         return false;
@@ -404,8 +505,9 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     // 1. the generator, both modules at once; their finished files are compiled while it goes on
     Gen gens[2] = {{.name = "main"}, {.name = "sdk"}};
     char base[2][24];
-    snprintf(base[0], sizeof base[0], "0x%llx", (unsigned long long)MAIN_BASE);
-    snprintf(base[1], sizeof base[1], "0x%llx", (unsigned long long)SDK_BASE);
+    uint64_t guest_base = ios ? (uint64_t)GAMELIB_IOS_BASE : GUEST_BASE;
+    snprintf(base[0], sizeof base[0], "0x%llx", (unsigned long long)(guest_base + (MAIN_BASE - GUEST_BASE)));
+    snprintf(base[1], sizeof base[1], "0x%llx", (unsigned long long)(guest_base + (SDK_BASE - GUEST_BASE)));
 #ifdef _WIN32
     _putenv_s("LARECOMP_GUEST_BASE", base[0]);  // tools/game_addresses.py places patch sites from it
 #else
@@ -565,6 +667,18 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         Args a = {0};
         char at[1200];
         snprintf(at, sizeof at, "@%s", rsp);
+        if (t.ios) {  // the dylib the exported app embeds as LASGame.framework (tools/bundle_ios.sh): lld / Apple's ld
+            add(&a, t.ld);
+            if (t.lld) add(&a, "-flavor"), add(&a, "darwin");
+            add(&a, "-arch"), add(&a, "arm64");
+            add(&a, "-platform_version"), add(&a, "ios"), add(&a, IOS_MIN), add(&a, IOS_MIN);
+            add(&a, "-dylib");
+            add(&a, "-undefined"), add(&a, "dynamic_lookup");  // (the runtime functions it calls: the app's own)
+            add(&a, "-install_name"), add(&a, "@rpath/LASGame.framework/LASGame");
+            add(&a, "-o"), add(&a, tmp);
+            add(&a, at);
+            add(&a, t.tbd);
+        } else
 #ifdef _WIN32
         if (t.zig_rt[0]) {  // the linker itself, with the runtime built ahead of time (its flags and libraries: link.rsp)
             char opt[1200];
@@ -611,7 +725,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
             ok = false;
         }
     }
-    if (ok) ok = build_cache_publish(cache, GAMELIB_NAME, g_full_id, why, why_size);
+    if (ok) ok = build_cache_publish(cache, lib_name, g_full_id, why, why_size);
     bool cancelled = !ok && o->cancelled && o->cancelled();
     if (!ok && !cancelled) build_cache_failed(cache);
     free(units.u);

@@ -181,6 +181,11 @@ GAMELIB_FULL_ID := $(GAMELIB_ID)-$(or $(GAMELIB_BUILD),unknown)
 GAMELIB_BASE_SRCS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/fetch_zig.sh
 GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELIB_SHARED)') | \
                      (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
+# The iOS library the macOS start screen can build (runtime/gamebuild.c GAMEBUILD_IOS): the id and flags of
+# `make PLATFORM=ios` (the same GENFLAGS at the iOS guest base), so the exported app's runtime accepts it
+IOS_GUEST_BASE := 0x800000000
+GENFLAGS_IOS := $(filter-out $(BASEFLAG),$(GENFLAGS)) -DLARECOMP_GUEST_BASE=$(IOS_GUEST_BASE)ull
+GAMELIB_IOS_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS_IOS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 
 RT_OBJ   := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC)))
 # no path of this machine in what ships: debug info and __FILE__ name the checkout as "." (Windows: its C:/ form too)
@@ -203,7 +208,9 @@ $(B)/rt/gamelib.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"'
 $(B)/rt/gamebuild.o: $(GAMELIB_SRCS) $(GAMELIB_BASE_SRCS) Makefile
 $(B)/rt/gamebuild.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"' -DGAMELIB_BASE_ID='"$(GAMELIB_BASE_ID)"' \
                                 -DGAMELIB_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS)))"' \
-                                -DGAMELIB_SHARED='"$(GAMELIB_SHARED)"'
+                                -DGAMELIB_SHARED='"$(GAMELIB_SHARED)"' \
+                                -DGAMELIB_IOS_ID='"$(GAMELIB_IOS_ID)"' -DGAMELIB_IOS_BASE=$(IOS_GUEST_BASE)ull \
+                                -DGAMELIB_IOS_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS_IOS)))"'
 
 $(B)/rt/%.o: runtime/%.c $(RT_HDRS)
 	@mkdir -p $(dir $@)
@@ -305,6 +312,15 @@ app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
 	MACOS_MIN=$(APP_MIN) tools/bundle_macos.sh $(APP_B)/lasrecomp
+# The iOS app without game code (build/ios-skeleton/LAS Recomp.app), and the release's iOS skeleton zip around it
+# (build/dist/LAS Recomp-<version>-ios-skeleton.zip: the app, a linker for each desktop, the Darwin headers), which
+# the start screen on any desktop completes with the library it builds there (runtime/iosexport.c). Needs
+# `make deps-ios`; the zip needs the four linkers (tools/fetch_lld.sh for each LLD_TARGET).
+ios-skeleton:
+	$(MAKE) PLATFORM=ios build/ios/lasrecomp
+	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) tools/bundle_ios.sh build/ios/lasrecomp
+ios-skeleton-zip: ios-skeleton
+	tools/ios_skeleton.sh
 
 # macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/LAS Recomp-<v>-macOS.dmg
 dmg: app

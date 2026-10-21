@@ -6,16 +6,23 @@
 # The data folder on the device is the app's Documents (Files app / Finder): put your extracted/ (exefs + romfs)
 # there; saves, seeds and lasrecomp.log live there too. Fonts and the icon ship in the bundle.
 #
-#   TEAM_ID=<id>          the Apple Developer team (paid: the entitlements in runtime/platform/ios.entitlements)
+#   TEAM_ID=<id>          the Apple Developer team (the entitlement in runtime/platform/ios.entitlements: any team)
 #   PROFILE=<.mobileprovision>  a development profile for BUNDLE_ID with those capabilities and this device
 #   BUNDLE_ID=...         default com.peiikai.lasrecomp.ios
 #   SIGN="Apple Development: ..."  the identity (default: the profile's certificate that is in the keychain)
 #   DEVICE=<devicectl id>  install and launch on that device
+#   SKELETON=1            no game library and no signing: the app without Frameworks/LASGame.framework, which the
+#                         iOS skeleton zip ships (tools/ios_skeleton.sh) and the start screen on any desktop
+#                         completes with the library it builds there (runtime/iosexport.c); the .ipa from that is
+#                         unsigned, for the player's own signing tool (LASRecomp.entitlements inside says what the
+#                         signature needs: one entitlement, which a free Apple ID's team grants). Symlinks in the
+#                         app become <name>.symlink files holding the target (the zip is unpacked on Windows too)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EXE=${1:-build/ios/lasrecomp}
 LIB=${2:-$(dirname "$EXE")/lasgame.dylib}
-APP="build/ios/LAS Recomp.app"
+SKELETON=${SKELETON:-}
+APP=${APP:-build/ios/LAS Recomp.app}
 BUNDLE_ID=${BUNDLE_ID:-com.peiikai.lasrecomp.ios}
 IOS_MIN=${IOS_MIN:-16.0}
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
@@ -25,21 +32,27 @@ case "$VERSION" in
     *) SHORT="0.0.1" ;;
 esac
 [ -x "$EXE" ] || { echo "no $EXE (make PLATFORM=ios)"; exit 1; }
-[ -f "$LIB" ] && [ -f "$LIB.id" ] || { echo "no $LIB (make PLATFORM=ios gen, then make PLATFORM=ios)"; exit 1; }
+if [ -z "$SKELETON" ]; then
+    [ -f "$LIB" ] && [ -f "$LIB.id" ] || { echo "no $LIB (make PLATFORM=ios gen, then make PLATFORM=ios)"; exit 1; }
+fi
 # the app must hold no game code (grep without -q: with pipefail, nm cut off early would hide a match)
 if nm "$EXE" | grep ' _f_8' >/dev/null; then echo "$EXE has game code linked in"; exit 1; fi
 
 rm -rf "$APP"
-mkdir -p "$APP"
+mkdir -p "$APP/Frameworks"
 cp "$EXE" "$APP/lasrecomp"
 strip -S "$APP/lasrecomp"
+cp runtime/platform/ios.entitlements "$APP/LASRecomp.entitlements"  # (what a signing tool must grant)
 
 # The game code: Frameworks/LASGame.framework (a flat iOS framework: the binary, Info.plist, its .id next to it).
+# The skeleton gets only its Info.plist (runtime/iosexport.c adds the library and its .id).
 FW="$APP/Frameworks/LASGame.framework"
 mkdir -p "$FW"
-cp "$LIB" "$FW/LASGame"
-strip -S -x "$FW/LASGame"
-cp "$LIB.id" "$FW/LASGame.id"
+if [ -z "$SKELETON" ]; then
+    cp "$LIB" "$FW/LASGame"
+    strip -S -x "$FW/LASGame"
+    cp "$LIB.id" "$FW/LASGame.id"
+fi
 cat > "$FW/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -179,10 +192,17 @@ if [ -f "$PYSLICE/Python.framework/Python" ]; then
 EOF
         case "$so" in
             *.so) echo "Frameworks/$mod.framework/$mod" > "${so%.so}.fwork" ;;  # (the importer follows it)
-            *.dylib) ln -s "../../../Frameworks/$mod.framework/$mod" "$so" ;;  # (keystone.py dlopens by path)
+            *.dylib)  # (keystone.py dlopens by path)
+                if [ -n "$SKELETON" ]; then printf '%s' "../../../Frameworks/$mod.framework/$mod" > "$so.symlink"
+                else ln -s "../../../Frameworks/$mod.framework/$mod" "$so"; fi ;;
         esac
     done < <(find "$APP/python" \( -name "*.so" -o -name "*.dylib" \) -type f)
     echo "python: $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages"
+fi
+
+if [ -n "$SKELETON" ]; then
+    echo "$APP (skeleton): $(du -sh "$APP" | cut -f1), $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks"
+    exit 0
 fi
 
 # ---- signing: the profile (its entitlements must allow ours), then codesign with the team's identity
