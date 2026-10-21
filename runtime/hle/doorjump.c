@@ -8,6 +8,12 @@
 // Optional (Chaos dungeon room shuffle): target cell and target side - Link comes out of that room's doorway on that
 // side (any room of the level); without them, the neighbour across the edge, facing side.
 //
+// Labyrinth (tools/rando/labyrinth.py): rando/<seed>/labyrinth_links.tsv has the doorways leading into ANOTHER level
+// (another wing), same columns + the target level. Walking into one loads that level at the start point the seed
+// put just inside the partner doorway ('LabIn_<cell><side><centre>', at the row's landing depth and height; into
+// Eagle's Tower: its entrance start) - a level load can't be seamless. Eagle's Tower's own way out (08B south) is its
+// AreaLevelOpen, retargeted in the seed: its row is left to the game.
+//
 // Link's position: the "PlayerCollision" component (vtable main+0x1c501f0, name inline at +0x18), vec3 at +0x80
 // (a second copy at +0xb0); writing it moves Link, every other copy follows (found 2026-10-08 with
 // LARECOMP_ADDF_MATCH bisection, notes/PLAN.md). It's re-found by a heap scan after each level load.
@@ -25,35 +31,50 @@
 
 
 typedef struct { char level[40]; int col, row; char side; int own, partner, still; int tcol, trow; char tside; float depth;
-                 int pair; float height; } Jump;  // height: floor where Link lands (Chaos; <-90 = keep his)  // pair: Chaos doorway pair (both directions share it), -1 = a neighbour jump
+                 int pair; float height; char tlevel[40]; } Jump;  // tlevel: Labyrinth, another level ("" = this one)  // height: floor where Link lands (Chaos; <-90 = keep his)  // pair: Chaos doorway pair (both directions share it), -1 = a neighbour jump
 // Chaos dungeon map letters (runtime/ui/chaos_overlay.mm): a pair's letter shows once Link has walked through either
 // end - remembered in event flag CHAOS_FLAG_BASE + pair (extended flags, runtime/hle/flags_ext.c: saved per slot)
 #define CHAOS_FLAG_BASE 3800
-typedef struct { char level[40]; int col[2], row[2]; char side[2]; int slot[2]; bool two; } ChaosPair;  // two: both ways
+typedef struct { char level[40]; int col[2], row[2]; char side[2]; int slot[2]; bool two; char level2[40]; } ChaosPair;  // two: both ways; level2: end 1's level (Labyrinth: another wing)
 // (Madness: rows are one-way, each unmatched row is its own pair; 3800-4095 = at most 296 pairs per seed)
 static ChaosPair g_pairs[296];
 static int g_npairs;
+static int g_pair_cap = 296;  // (Labyrinth: 284 - its flags 4084-4095 hold the shared keys found and the last door)
 static Jump *g_jumps;
 static int g_njumps = -1;
 
+static void load_file(const char *path, bool cross, int *cap);
 static void load(void) {
     g_njumps = 0;
     const char *dir = rando_seed_dir();
     if (!dir) return;
+    extern bool labyrinth_on(void);
+    if (labyrinth_on()) g_pair_cap = 284;
     char path[512];
+    int cap = 0;
     snprintf(path, sizeof path, "%s/door_jumps.tsv", dir);
+    load_file(path, false, &cap);
+    snprintf(path, sizeof path, "%s/labyrinth_links.tsv", dir);
+    load_file(path, true, &cap);
+}
+
+static void load_file(const char *path, bool cross, int *capp) {
     FILE *f = fopen(path, "r");
     if (!f) return;
     char line[256];
-    int cap = 0;
+    int cap = *capp, before = g_njumps;
     while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#') continue;
         Jump j;
         char cell[8], side[4], tcell[8], tside[4];
         j.depth = 0.9f;  // how far past the target edge Link lands (Chaos: further when the target has its own door)
         j.height = -100.0f;
-        int n = sscanf(line, "%39s %7s %3s %d %d %7s %3s %f %f", j.level, cell, side, &j.own, &j.partner, tcell, tside,
-                       &j.depth, &j.height);
-        if (n != 5 && n != 7 && n != 8 && n != 9) continue;
+        j.tlevel[0] = 0;
+        int n = sscanf(line, "%39s %7s %3s %d %d %7s %3s %f %f %39s", j.level, cell, side, &j.own, &j.partner, tcell,
+                       tside, &j.depth, &j.height, j.tlevel);
+        if (cross ? n != 10 : n != 5 && n != 7 && n != 8 && n != 9) continue;
+        if (!strcmp(j.tlevel, j.level)) j.tlevel[0] = 0;
+        const char *lv2 = j.tlevel[0] ? j.tlevel : j.level;
         j.row = atoi(cell);  // "08C" -> row 8, column C
         j.col = cell[2] - 'A';
         j.side = side[0];
@@ -63,14 +84,16 @@ static void load(void) {
             // its pair: the reverse row's, if seen already
             for (int k = 0; k < g_npairs && j.pair < 0; k++) {
                 const ChaosPair *q = &g_pairs[k];
-                if (!strcmp(q->level, j.level) && q->col[1] == j.col && q->row[1] == j.row && q->side[1] == j.side &&
-                    q->slot[1] == j.own && q->col[0] == j.tcol && q->row[0] == j.trow && q->side[0] == j.tside)
+                if (!strcmp(q->level, lv2) && !strcmp(q->level2, j.level) && q->col[1] == j.col && q->row[1] == j.row &&
+                    q->side[1] == j.side && q->slot[1] == j.own && q->col[0] == j.tcol && q->row[0] == j.trow &&
+                    q->side[0] == j.tside)
                     j.pair = k, g_pairs[k].two = true;
             }
-            bool self = j.trow == j.row && j.tcol == j.col && j.tside == j.side && j.partner == j.own;
-            if (j.pair < 0 && g_npairs < 296 && !self) {  // (a doorway leading back into itself is a wall: no letter)
+            bool self = j.trow == j.row && j.tcol == j.col && j.tside == j.side && j.partner == j.own && !j.tlevel[0];
+            if (j.pair < 0 && g_npairs < g_pair_cap && !self) {  // (a doorway leading back into itself is a wall: no letter)
                 ChaosPair *q = &g_pairs[g_npairs];
                 strlcpy(q->level, j.level, sizeof q->level);
+                strlcpy(q->level2, lv2, sizeof q->level2);
                 q->col[0] = j.col, q->row[0] = j.row, q->side[0] = j.side, q->slot[0] = j.own;
                 q->col[1] = j.tcol, q->row[1] = j.trow, q->side[1] = j.tside, q->slot[1] = j.partner;
                 q->two = false;
@@ -86,7 +109,9 @@ static void load(void) {
         g_jumps[g_njumps++] = j;
     }
     fclose(f);
-    LOG("[doorjump] %d mismatched doorways from %s\n", g_njumps, path);
+    *capp = cap;
+    LOG("[doorjump] %d %s from %s\n", g_njumps - before, cross ? "doorways into another level" : "mismatched doorways",
+        path);
 }
 
 static uint64_t g_player;          // find_player: the PlayerCollision component found last
@@ -111,6 +136,7 @@ RT_ON_RESET(doorjump_reset) {
     g_player_actor = 0;
     g_hold_until = 0;
     g_stick_freeze_until = 0;
+    g_pair_cap = 296;
 }
 
 static int is_player_collision(uint64_t p) {
@@ -188,6 +214,7 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
     static int want = -1;  // the doorway's centre (-1: the side's first row)
     static float floor_y = -100.0f;  // the doorway's floor height (<-90: unknown)
     static int er = -1, ec = -1;  // expected cell (the tested jump's target)
+    static char elv[40];          // ...and level (Labyrinth: another wing's)
     static float px0, pz0;        // where Link was placed
     static int tries;
     static uint64_t in_level_since;
@@ -199,6 +226,9 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
         if (e && sscanf(e, "%ld:%7[^:]:%1s:%d:%f", &at, cell, sd, &want, &floor_y) >= 3) side = sd[0]; else at = -1;
     }
     if (at < 0 || !pc) return;
+    static char lastlv[40];  // (the level, and since when: a jump into another wing loads one)
+    static uint64_t lv_since;
+    if (strcmp(lastlv, lv)) strlcpy(lastlv, lv, sizeof lastlv), lv_since = frame;
     // wait until the warp into the dungeon has finished: in a level with jumps, settled for 60 frames
     int in = 0;
     for (int i = 0; i < g_njumps && !in; i++) in = !strcmp(g_jumps[i].level, lv);
@@ -260,6 +290,7 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
             }
             px0 = x, pz0 = z;
             er = j->trow, ec = j->tcol;
+            strlcpy(elv, j->tlevel[0] ? j->tlevel : lv, sizeof elv);
             g_test_lx = side == 'W' ? -32767 : side == 'E' ? 32767 : 0;  // walk out
             g_test_ly = side == 'N' ? 32767 : side == 'S' ? -32767 : 0;
             g_test_stick_until = frame + 180;  // cut to 40 frames after the jump (doorjump_tick)
@@ -273,11 +304,14 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
         LOG("[doorjump-test] f%llu placement overwritten (Link at %.2f, %.2f): again\n", (unsigned long long)frame, pos[0], pos[2]);
         placed = -1;
         tries++;
-    } else if (placed >= 0 && (long)frame == placed + 300) {
+    } else if (placed >= 0 && (long)frame >= placed + 300 &&
+               ((!strcmp(elv, lv) && frame - lv_since >= 120) || (long)frame >= placed + 1500)) {
+        // (into another level: once it has loaded and settled - the result then, else after 25 s)
         float x = pos[0], z = pos[2];
         int c = (int)floorf(x / 15.0f), r = (int)floorf(z / 12.0f) + 1;
-        LOG("[doorjump-test] %s %c -> now in %02d%c (%.2f, %.2f), expected %02d%c: %s (%d jumps fired)\n", cell, side, r,
-            'A' + c, x, z, er, 'A' + ec, (r == er && c == ec) ? "PASS" : g_jumps_fired ? "FAIL-after-jump" : "FAIL",
+        bool ok = r == er && c == ec && !strcmp(elv, lv);
+        LOG("[doorjump-test] %s %c -> now in %s %02d%c (%.2f, %.2f), expected %s %02d%c: %s (%d jumps fired)\n", cell,
+            side, lv, r, 'A' + c, x, z, elv, er, 'A' + ec, ok ? "PASS" : g_jumps_fired ? "FAIL-after-jump" : "FAIL",
             g_jumps_fired);
         at = -1;
     }
@@ -416,6 +450,7 @@ void doorjump_tick(uint64_t frame) {
     for (int i = 0; i < g_njumps; i++) {
         Jump *j = &g_jumps[i];
         if (j->col != col || j->row != row || strcmp(j->level, lv)) continue;
+        if (j->tlevel[0] && !strcmp(j->level, "Lv07EagleTower")) continue;  // (its way out: the tower's own door)
         float depth, lateral, out;  // distance to the edge, position along it, movement towards it
         switch (j->side) {
         case 'W': depth = lx; lateral = lz; out = -dx; break;
@@ -448,6 +483,25 @@ void doorjump_tick(uint64_t frame) {
         // ...but not once he's deep in a fall: the game's fall-out (and its respawn) is under way and undoes every
         // position write - jumping each frame only fires the jump (and its map letter) over and over
         if (pos[1] < -3.0f) { j->still = 0; continue; }
+        if (j->tlevel[0]) {  // Labyrinth: into another wing - load its level at the partner doorway's start
+            extern int warp_busy(void);
+            extern void warp_request(const char *level, const char *locator);
+            static uint64_t cross_until;  // (one load per walk-in: the warp waits for the game to take it)
+            if (frame < cross_until || warp_busy()) { g_stick_freeze_until = frame + 3; continue; }
+            if (!falling && j->still < 6) continue;  // (a few frames at rest in the doorway, as above)
+            j->still = 0;
+            char start[48];
+            if (!strcmp(j->tlevel, "Lv07EagleTower")) strlcpy(start, "Lv07EagleTower_08B_b", sizeof start);
+            else snprintf(start, sizeof start, "LabIn_%02d%c%c%d", j->trow, 'A' + j->tcol, j->tside, j->partner);
+            LOG("[labyrinth] %s %02d%c %c%d -> %s / %s\n", lv, row, 'A' + col, j->side, j->own, j->tlevel, start);
+            warp_request(j->tlevel, start);
+            cross_until = frame + 240;
+            g_stick_freeze_until = frame + 90;  // (Link stays in the doorway until the load takes him)
+            g_jumps_fired++;
+            if (j->pair >= 0) { extern void flags_ext_set(int idx); flags_ext_set(CHAOS_FLAG_BASE + j->pair); }
+            if (g_test_stick_until > frame) g_test_stick_until = frame;
+            break;
+        }
         if (!falling && (j->still < rest || (fabsf(out) > 0.02f && j->still < rest + 8))) continue;
         j->still = 0;
         float nx = x, nz = z, across = j->depth;  // just past the edge, in front of the partner doorway
@@ -480,7 +534,25 @@ int doorjump_chaos_pairs(const char *level, int *ids, int max) {
     if (g_njumps < 0) load();
     int n = 0;
     for (int k = 0; k < g_npairs && n < max; k++)
-        if (!strcmp(g_pairs[k].level, level)) ids[n++] = k;
+        if (!strcmp(g_pairs[k].level, level) && !strcmp(g_pairs[k].level2, level)) ids[n++] = k;
+    return n;
+}
+// Labyrinth: this level's doorways into another wing (dungeon map: the wing's number at the doorway). Each: col, row,
+// side, slot, the other end's level, the pair (its flag: walked through), two-way. -> count
+int doorjump_cross_doors(const char *level, int *col, int *row, char *side, int *slot, const char **other, int *pair,
+                         int max) {
+    if (g_njumps < 0) load();
+    int n = 0;
+    for (int k = 0; k < g_npairs && n < max; k++) {
+        const ChaosPair *q = &g_pairs[k];
+        if (!strcmp(q->level, q->level2)) continue;
+        for (int e = 0; e < 2 && n < max; e++) {  // (one-way, Madness: only the end that leads somewhere)
+            if (strcmp(e ? q->level2 : q->level, level) || (e && !q->two)) continue;
+            col[n] = q->col[e], row[n] = q->row[e], side[n] = q->side[e], slot[n] = q->slot[e];
+            other[n] = e ? q->level : q->level2;
+            pair[n++] = k;
+        }
+    }
     return n;
 }
 void doorjump_chaos_pair(int id, int *col, int *row, char *side, int *slot) {

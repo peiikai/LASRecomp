@@ -132,6 +132,7 @@ struct GenOpts {
     bool digs = false;        // digsanity: every diggable overworld tile is a check (tools/rando/digs.py)
     bool shellsanity = false; // every Secret Seashell spot is a check (tools/rando/seashell_spots.py); off: vanilla
     int room_shuffle = 0;     // dungeon-room-shuffle: 0 off / 2 coupled / 3 decoupled (1: retired Coherent; dungeon_gen.py)
+    bool labyrinth = false;   // dungeon-labyrinth: with room shuffle, every dungeon a wing of one (tools/rando/labyrinth.py)
     bool pet_rooster = false, pet_ghost = false;  // pets in the pool (tools/rando/pets.py)
     bool pet_marin = false;   // Marin in the pool, the desert closed until she wakes the Walrus (open-desert off)
     int shopsanity = 0;       // off / vanilla prices / random prices (tools/rando/shopsanity.py)
@@ -202,7 +203,7 @@ static bool *opt_flags(GenOpts &o, int i) {  // the yes/no options, in ID order 
                  &o.boss_cutscenes, &o.spoiler, &o.decoupled, &o.pots, &o.no_buffs, &o.bushes,
                  &o.pet_rooster, &o.pet_ghost, &o.pet_marin, &o.trendsanity, &o.boss_souls, &o.hookshot_any,
                  &o.digs, &o.miniboss_souls, &o.no_start_sword, &o.no_start_shield, &o.no_start_ocarina,
-                 &o.tunic_upgrades, &o.shellsanity, &o.race, &o.random_cosmetics};
+                 &o.tunic_upgrades, &o.shellsanity, &o.race, &o.random_cosmetics, &o.labyrinth};
     return i < (int)(sizeof f / sizeof *f) ? f[i] : NULL;
 }
 
@@ -411,7 +412,8 @@ static void start_generation(void) {
     fprintf(f, "{\"seed\": \"%s\", \"logic\": \"basic\", \"dungeon-items\": \"%s\", \"traps\": \"%s\",\n", id,
             ditems[g_opts.dungeon_items], traps[g_opts.traps]);
     fprintf(f, " \"shuffle-instruments\": %s, \"shuffle-dungeons\": %s, \"randomize-enemies\": %s, \"randomize-music\": %s,\n",
-            g_opts.shuffle_instruments ? "true" : "false", g_opts.shuffle_dungeons ? "true" : "false",
+            g_opts.shuffle_instruments ? "true" : "false",
+            g_opts.shuffle_dungeons && !(g_opts.room_shuffle && g_opts.labyrinth) ? "true" : "false",
             g_opts.randomize_enemies ? "true" : "false", g_opts.randomize_music ? "true" : "false");
     fprintf(f, " \"open-mabe\": %s, \"fast-songs\": %s, \"OHKO\": %s, \"boss-cutscenes\": %s, \"create-spoiler\": %s,\n",
             g_opts.open_mabe ? "true" : "false", g_opts.fast_songs ? "true" : "false", g_opts.ohko ? "true" : "false",
@@ -445,6 +447,7 @@ static void start_generation(void) {
     fprintf(f, " \"keysanity\": \"%s\",\n", ks[g_opts.keysanity]);
     static const char *rs[] = {"off", "coupled", "coupled", "decoupled"};  // (1: retired Coherent, never written)
     fprintf(f, " \"dungeon-room-shuffle\": \"%s\",\n", rs[g_opts.room_shuffle]);
+    fprintf(f, " \"dungeon-labyrinth\": %s,\n", g_opts.room_shuffle && g_opts.labyrinth ? "true" : "false");
     static const char *shop[] = {"off", "vanilla", "random"};
     fprintf(f, " \"shopsanity\": \"%s\", \"trendsanity\": %s,\n", shop[g_opts.shopsanity], g_opts.trendsanity ? "true" : "false");
     fprintf(f, " \"stealing\": \"%s\",\n", g_opts.shopsanity && g_opts.no_stealing ? "never"
@@ -851,13 +854,18 @@ extern "C" void rando_tab_draw(float scale) {
        // interiors + connector caves, tools/rando/las_headless.py), decoupled with them. (Tier 1, the old "dungeons only"
        // level, reads as the dungeon lever.)
         if (g_opts.entrances == 1) g_opts.shuffle_dungeons = true, g_opts.entrances = 0;
-        bool dungeons = g_opts.shuffle_dungeons, houses = g_opts.entrances >= 2, on = dungeons || houses;
-        if (opt_toggle("Entrance randomizer", &on, false, "Shuffles where entrances lead, with logic."))
-            g_opts.shuffle_dungeons = on, g_opts.entrances = 0;  // (on: dungeon entrances, the usual choice)
+        // (the Labyrinth decides where each dungeon door leads: dungeon entrances are off with it, greyed out)
+        bool lab = g_opts.room_shuffle && g_opts.labyrinth;
+        bool dungeons = g_opts.shuffle_dungeons && !lab, houses = g_opts.entrances >= 2, on = dungeons || houses;
+        if (opt_toggle("Entrance randomizer", &on, false, "Shuffles where entrances lead, with logic.")) {
+            if (lab) g_opts.entrances = on ? 2 : 0;  // (on: houses & caves, the dungeons' kind being taken)
+            else g_opts.shuffle_dungeons = on, g_opts.entrances = 0;  // (on: dungeon entrances, the usual choice)
+        }
         bool last = false;  // (an attempt to turn off the last kind)
         opt_indent(1);
-        if (!on) opt_disable_next();
-        if (opt_toggle("Dungeon entrances", &dungeons, false, "Dungeon entrances lead into other dungeons.")) {
+        if (!on || lab) opt_disable_next();
+        if (opt_toggle("Dungeon entrances", &dungeons, false, lab ? "Off with Labyrinth: it decides where dungeon doors lead."
+                                                                  : "Dungeon entrances lead into other dungeons.")) {
             if (!dungeons && !houses) last = true;
             else g_opts.shuffle_dungeons = dungeons;
         }
@@ -893,6 +901,10 @@ extern "C" void rando_tab_draw(float scale) {
                        "stairs and other key rooms stay put. Any doorway can lead to any doorway of its dungeon. Coupled: "
                        "going back through a door takes you back. Decoupled: it takes you somewhere else."))
             g_opts.room_shuffle = ids[i];
+        opt_indent(1);
+        if (!g_opts.room_shuffle) opt_disable_next();  // (either mode: it links the dungeons, the mode keeps its rules)
+        opt_toggle("Labyrinth", &g_opts.labyrinth, false, "All dungeons become wings of one big dungeon.");
+        opt_indent(-1);
     }
     {  // its doorway letters on the dungeon map (runtime/ui/chaos_overlay.mm; a player setting, not part of the seed):
        // on = as you explore, every pair once you have the map (CHAOS_LETTERS_MAP); off = none

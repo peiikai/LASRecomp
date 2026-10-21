@@ -2,6 +2,7 @@
 // somewhere else (rando/<seed>/door_jumps.tsv rows with a target, runtime/hle/doorjump.c) gets a letter, A-A, B-B...
 // drawn at both doorways. A pair shows once Link has walked through either end, or all of them with the dungeon's
 // Map (Randomizer tab: off / as explored / as explored + all with the Map; larecomp.ini chaos_letters).
+// Labyrinth: a doorway into another wing (labyrinth_links.tsv) shows that wing's number instead, in a blue disc.
 //
 // Placement: the dungeon map page (main+0xe78740 runs once per frame while it's shown; tools/patches.py
 // DGN_MAP_SITE) holds its layout panes at page+0x8 -> +0x10: N_Map_00 (+0x70: zoom / scroll), N_MapPosition_00
@@ -26,6 +27,8 @@ int doorjump_chaos_pairs(const char *level, int *ids, int max);
 void doorjump_chaos_pair(int id, int *col, int *row, char *side, int *slot);
 bool doorjump_chaos_seen(int id);
 bool doorjump_chaos_twoway(int id);
+int doorjump_cross_doors(const char *level, int *col, int *row, char *side, int *slot, const char **other, int *pair,
+                         int max);
 }
 
 // GA_PLAYER_STATUS_PTR: PlayerStatus*: current level name at +0
@@ -93,8 +96,15 @@ static uint64_t pane(uint64_t p, const char *name) {  // the pane at p if it has
 extern "C" bool chaos_overlay_wanted(void) {
     if (g_settings.chaos_letters == CHAOS_LETTERS_OFF) return false;
     if (!rando_seed_dir() || !chaos_dgnmap_shown()) return false;
-    int ids[4];
-    return doorjump_chaos_pairs(current_level(), ids, 4) > 0;
+    int ids[4], c[4], r[4], sl[4], pr[4];
+    char sd[4];
+    const char *o[4];
+    return doorjump_chaos_pairs(current_level(), ids, 4) > 0 || doorjump_cross_doors(current_level(), c, r, sd, sl, o, pr, 4) > 0;
+}
+
+static int wing_of(const char *lv) {  // Lv01..Lv08 -> 1..8, Lv10 (Color Dungeon) -> 0
+    int n = (lv[2] - '0') * 10 + (lv[3] - '0');
+    return n == 10 ? 0 : n;
 }
 
 // rando/<seed>/dungeon_map.tsv (tools/rando/dungeon_gen.py): level, cell, x, y - the map page shift of the floor each
@@ -133,7 +143,7 @@ static bool cell_shift(const char *lv, int col, int row, float *x, float *y) {
 }
 
 namespace {
-struct Door { int col, row, slot; char side; int label; int to; bool shown; };  // to: label it leads to (one-way), -1
+struct Door { int col, row, slot; char side; int label; int to; bool shown; int wing; };  // to: label it leads to (one-way), -1; wing: Labyrinth, the other wing (-1: none)
 }
 
 static void label_text(int i, char *out) {  // A..Z, then AA, AB...
@@ -210,7 +220,7 @@ extern "C" void chaos_overlay_draw(ImVec2 display, ImFont *font) {
         for (int k = 0; k < nd; k++)
             if (doors[k].col == col && doors[k].row == row && doors[k].side == side && doors[k].slot == slot) return k;
         if (nd == 600) return -1;
-        doors[nd] = Door{col, row, slot, side, -1, -1, false};
+        doors[nd] = Door{col, row, slot, side, -1, -1, false, -1};
         return nd++;
     };
     for (int i = 0; i < n; i++) {
@@ -228,6 +238,18 @@ extern "C" void chaos_overlay_draw(ImVec2 display, ImFont *font) {
             if (shown) doors[a].to = doors[b].label;
         }
         if (shown) doors[a].shown = doors[b].shown = true;
+    }
+    {  // Labyrinth: doorways into another wing
+        int cc[296], rr[296], sl[296], pr[296];
+        char sd[296];
+        const char *other[296];
+        int m = doorjump_cross_doors(lv, cc, rr, sd, sl, other, pr, 296);
+        for (int i = 0; i < m; i++) {
+            int a = door(cc[i], rr[i], sd[i], sl[i]);
+            if (a < 0) continue;
+            doors[a].wing = wing_of(other[i]);
+            doors[a].shown = all || doorjump_chaos_seen(pr[i]);
+        }
     }
     ImDrawList *dl = ImGui::GetForegroundDrawList();
     // only inside the map window (zoomed in, the map runs under the page's header and footer)
@@ -251,9 +273,10 @@ extern "C" void chaos_overlay_draw(ImVec2 display, ImFont *font) {
         }
         ImVec2 p = to_screen(lx, ly);
         char label[4];
-        label_text(d.label, label);
+        if (d.wing >= 0) snprintf(label, sizeof label, "%d", d.wing);
+        else label_text(d.label, label);
         float r = fs * 0.62f;
-        dl->AddCircleFilled(p, r, IM_COL32(40, 22, 10, 220));
+        dl->AddCircleFilled(p, r, d.wing >= 0 ? IM_COL32(16, 44, 86, 230) : IM_COL32(40, 22, 10, 220));
         dl->AddCircle(p, r, IM_COL32(250, 215, 120, 255), 0, 1.5f * u);
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, label);
         dl->AddText(font, fs, ImVec2(p.x - ts.x * 0.5f, p.y - ts.y * 0.5f), IM_COL32(255, 240, 200, 255), label);

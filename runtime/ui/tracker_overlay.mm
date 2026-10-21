@@ -43,6 +43,7 @@ uint64_t renderer_present_count(void);
 int kernel_data_regions(uint64_t *addr, uint64_t *size, int max);
 const char *souls_at(int i, int *kind, bool *owned);  // runtime/hle/souls.c
 bool triforce_counts(int *have, int *needed);         // runtime/hle/triforce.c
+void labyrinth_keys(int *held, int *found);           // runtime/hle/labyrinth.c
 }
 
 #define SAVE GA_LIVE_SAVE
@@ -162,6 +163,7 @@ static std::unordered_map<std::string, int> g_flag_idx;  // flags.tsv (trade fla
 static int g_loaded = 0;
 static std::string g_room_shuffle;  // tracker.tsv O dungeon-room-shuffle: off / coupled / decoupled (older seeds' chaos /
                                     // madness read as those; coherent stays: a retired mode, no doorway letters)
+static bool g_labyrinth;            // tracker.tsv O labyrinth: dungeons are wings (D-key n = wing n), keys shared
 static bool g_kind_present[K_N];
 
 static int tok(const std::string &s) {
@@ -225,6 +227,7 @@ static void load(void) {
         else if (c[0][0] == 'F' && c.size() >= 2) g_seed_off.push_back(tok(c[1]));
         else if (c[0][0] == 'O' && c.size() >= 3 && !strcmp(c[1], "dungeon-room-shuffle"))
             g_room_shuffle = !strcmp(c[2], "chaos") ? "coupled" : !strcmp(c[2], "madness") ? "decoupled" : c[2];
+        else if (c[0][0] == 'O' && c.size() >= 3 && !strcmp(c[1], "labyrinth")) g_labyrinth = atoi(c[2]) != 0;
         else if (c[0][0] == 'N' && c.size() >= 7) {
             static const char *types[] = {"region", "item", "room", "interaction", "enemy", "trick", "follower"};
             Node n;
@@ -285,6 +288,7 @@ static void index_reset(void);
 RT_ON_RESET(tracker_reset) {  // (reboot: the next seed's tracker.tsv; the map page object was guest memory)
     g_tok.clear(), g_tok_names.clear(), g_nodes.clear(), g_checks.clear(), g_groups.clear(), g_rooms.clear();
     g_seed_settings.clear(), g_seed_off.clear(), g_flag_idx.clear(), g_acc.clear(), g_acc_trick.clear(), g_room_shuffle.clear();
+    g_labyrinth = false;
     memset(g_kind_present, 0, sizeof g_kind_present);
     g_loaded = 0;
     g_map_frame = g_map_opened = g_map_obj = g_draw_frame = g_panes_for = 0;
@@ -374,12 +378,14 @@ static void inventory(void) {
         give(t, owned);
     }
     static const char *dn[] = {"D1", "D2", "D3", "D4", "D5", "D6", "D7", "D8"};
+    int lab_found = -1;  // Labyrinth: the logic's key-D1 counts the shared keys found, not held (runtime/hle/labyrinth.c)
+    if (g_labyrinth) { int held; labyrinth_keys(&held, &lab_found); }
     for (int d = 0; d < 9; d++) {  // dungeon records: dungeon n = record 2(n-1), Color Dungeon = 18
         int rec = d < 8 ? 2 * d : 18;
         uint64_t p = SAVE + 0xE0 + 0x10ull * rec;
         char name[32];
         snprintf(name, sizeof name, "key-%s", d < 8 ? dn[d] : "D0");
-        give(name, LD8(p));
+        give(name, lab_found >= 0 ? (d == 0 ? lab_found : 0) : LD8(p));
         snprintf(name, sizeof name, "nightmare-key-%s", d < 8 ? dn[d] : "D0");
         give(name, (LD8(p + 1) >> 3) & 1);
     }
@@ -609,12 +615,16 @@ static std::string area_name(const std::string &a) {
         {"catfish-maw", "Catfish's Maw"}, {"face-shrine", "Face Shrine"}, {"eagle-tower", "Eagle's Tower"},
         {"turtle-rock", "Turtle Rock"}, {"color-dungeon", "Color Dungeon"}};
     for (auto &x : names) if (a == x.tok) return x.name;
+    if (!a.compare(0, 15, "labyrinth-wing-")) return "Wing " + a.substr(15);  // (Labyrinth regions)
     return pretty(a);
 }
 static const char *dungeon_name(const std::string &label) {
     static const char *const n[] = {"Color Dungeon", "Tail Cave", "Bottle Grotto", "Key Cavern", "Angler's Tunnel",
                                     "Catfish's Maw", "Face Shrine", "Eagle's Tower", "Turtle Rock"};
-    if (label.size() == 2 && label[0] == 'D' && label[1] >= '0' && label[1] <= '8') return n[label[1] - '0'];
+    static const char *const w[] = {"Wing 0", "Wing 1", "Wing 2", "Wing 3", "Wing 4", "Wing 5", "Wing 6", "Wing 7",
+                                    "Wing 8"};  // (Labyrinth: the dungeons are its wings)
+    if (label.size() == 2 && label[0] == 'D' && label[1] >= '0' && label[1] <= '8')
+        return (g_labyrinth ? w : n)[label[1] - '0'];
     return label.c_str();
 }
 
@@ -1318,7 +1328,11 @@ static std::vector<std::string> dungeon_pills(const std::string &dk) {
     for (auto &n : g_nodes)
         for (int32_t o : n.cond) if (o >= 0 && (o & 0xFFFFF) == key) most = std::max(most, o >> 20);
     char b[64];
-    if (most) snprintf(b, sizeof b, "Small keys %d / %d", held, most), p.push_back(b);
+    if (g_labyrinth) {  // (one count for every wing: runtime/hle/labyrinth.c)
+        int found;
+        labyrinth_keys(&held, &found);
+        snprintf(b, sizeof b, "Shared small keys %d", held), p.push_back(b);
+    } else if (most) snprintf(b, sizeof b, "Small keys %d / %d", held, most), p.push_back(b);
     p.push_back((LD8(r + 1) >> 3) & 1 ? "Nightmare Key: found" : "Nightmare Key: not found");
     int s = souls_owned(d);
     if (s >= 0) p.push_back(s ? "Boss soul: found" : "Boss soul: needed");
@@ -1471,6 +1485,7 @@ extern "C" void tracker_overlay_draw(ImVec2 display, ImFont *font) {
     };
     auto title_of = [&](int type, int id) -> std::string {
         if (type == 0) return id >= 0 && id < 21 ? kLabel[id] : "";
+        if (g_labyrinth) return dungeon_name(g_groups[id].label);
         return std::string(dungeon_name(g_groups[id].label)) + " (" + g_groups[id].label + ")";
     };
     auto open_panel = [&](int type, int id) {

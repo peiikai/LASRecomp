@@ -120,8 +120,10 @@ static const char *seed_settings(void) {
 }
 
 // The dungeon keys panel: on with keysanity (the seed's settings.json "keysanity" isn't "off"; keys can be anywhere,
-// so the Items screen shows what each dungeon's are).
+// so the Items screen shows what each dungeon's are), and in a Labyrinth (one shared key count, each wing's items).
+extern "C" bool labyrinth_on(void);  // runtime/hle/labyrinth.c
 static bool keys_shown(void) {
+    if (labyrinth_on()) return true;
     const char *s = seed_settings();
     const char *k = s ? strstr(s, "\"keysanity\":") : NULL;
     static const char off[] = "\"keysanity\": \"off\"";
@@ -482,29 +484,37 @@ extern "C" void inventory_overlay_draw(ImVec2 display, ImFont *font) {
     if (!keys) p0.y = trade_y - 8 * u, p1.y = trade_y + 34 * u;
     dl->AddRectFilled(p0, p1, IM_COL32(52, 38, 20, 205), 14 * u);
     dl->AddRect(p0, p1, IM_COL32(214, 176, 92, 230), 14 * u, 0, 2.5f * u);
-    int n = keys ? (int)(sizeof kDungeons / sizeof kDungeons[0]) : 0;
-    float cw = (p1.x - p0.x) / n;
+    // Labyrinth: the wings W0-W8 (Color Dungeon = wing 0) after one column of the shared small keys
+    bool lab = labyrinth_on();
+    int n = keys ? (int)(sizeof kDungeons / sizeof kDungeons[0]) + lab : 0;
+    float cw = (p1.x - p0.x) / (n ? n : 1);
     float fs = 30 * u;
-    for (int k = 0; k < n; k++) {
+    for (int c = 0; c < n; c++) {
+        int k = lab ? (c == 0 ? 0 : c == 1 ? 8 : c - 2) : c;  // (Labyrinth: keys, W0, W1..W8)
         int keys = 0, bits = 0;
         bool ok = record(kDungeons[k].index, &keys, &bits);
-        float cx = p0.x + cw * (k + 0.5f);
+        float cx = p0.x + cw * (c + 0.5f);
         ImU32 gold = IM_COL32(240, 206, 110, 255), dim = IM_COL32(150, 128, 90, 255);
-        const char *lbl = kDungeons[k].label;
+        char wl[4] = {'W', kDungeons[k].label[1], 0};
+        const char *lbl = !lab ? kDungeons[k].label : c == 0 ? "Keys" : wl;
         ImVec2 ts = font->CalcTextSizeA(fs, FLT_MAX, 0, lbl);
         dl->AddText(font, fs, ImVec2(cx - ts.x * 0.5f, p0.y + 4 * u), IM_COL32(255, 245, 225, 255), lbl);
-        // small keys
-        key_icon(dl, ImVec2(cx - 16 * u, p0.y + 50 * u), 26 * u, ok && keys ? gold : dim);
-        char cnt[8];
-        snprintf(cnt, sizeof cnt, "%d", ok ? keys : 0);
-        dl->AddText(font, fs * 0.95f, ImVec2(cx - 2 * u, p0.y + 36 * u), ok && keys ? gold : dim, cnt);
+        // small keys (Labyrinth: once, shared by every wing)
+        if (!lab || c == 0) {
+            key_icon(dl, ImVec2(cx - 16 * u, p0.y + 50 * u), 26 * u, ok && keys ? gold : dim);
+            char cnt[8];
+            snprintf(cnt, sizeof cnt, "%d", ok ? keys : 0);
+            dl->AddText(font, fs * 0.95f, ImVec2(cx - 2 * u, p0.y + 36 * u), ok && keys ? gold : dim, cnt);
+        }
+        if (lab && c == 0) continue;
         // Nightmare Key (bit3), map (bit1), compass (bit0), stone beak (bit2): little pips
         static const struct { int bit; ImU32 col; } pips[] = {{3, IM_COL32(230, 80, 70, 255)}, {1, IM_COL32(120, 190, 240, 255)},
                                                               {0, IM_COL32(150, 230, 140, 255)}, {2, IM_COL32(230, 230, 230, 255)}};
         for (int q = 0; q < 4; q++) {
-            ImVec2 pc(cx + (q - 1.5f) * 12 * u + 24 * u, p0.y + 64 * u);
-            if (ok && (bits >> pips[q].bit) & 1) dl->AddCircleFilled(pc, 4.5f * u, pips[q].col);
-            else dl->AddCircle(pc, 4.5f * u, IM_COL32(120, 100, 70, 200), 12, 1.2f * u);
+            float pr = lab ? 6 * u : 4.5f * u;  // (Labyrinth: no key count beside them - centred, larger)
+            ImVec2 pc = lab ? ImVec2(cx + (q - 1.5f) * 16 * u, p0.y + 56 * u) : ImVec2(cx + (q - 1.5f) * 12 * u + 24 * u, p0.y + 64 * u);
+            if (ok && (bits >> pips[q].bit) & 1) dl->AddCircleFilled(pc, pr, pips[q].col);
+            else dl->AddCircle(pc, pr, IM_COL32(120, 100, 70, 200), 12, 1.2f * u);
         }
     }
     // trade sequence: items Link has lit, the one in the trade slot outlined, traded-away ones dark with a tick

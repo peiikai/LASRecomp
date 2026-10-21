@@ -9,11 +9,14 @@ the logic thinks is open too early - the circular dig-spot gates of #81 / #144. 
 runtime/ui/rando_tab.mm (seed_id_encode, request.json in start_generation): keep the two in step.
 
 usage: seed_sweep.py <romfs> [-n seeds] [-j jobs] [--id SEED-ID ...] [--keep dir] [--stealing M] [--shopsanity N]
-                     [--souls] [--rooms N ...] [--triforce N] [--miniboss-freq F] [--entrances T] [--full]
+                     [--souls] [--rooms N ...] [--triforce N] [--miniboss-freq F] [--entrances T] [--full] [--labyrinth]
        (default: the fixed seed IDs below + 40 random option mixes with digsanity on, every logic level)
 --miniboss-freq F: every random mix randomizes enemies with mini-boss frequency F (0 - 3: Normal, 2x, 3x, All), enemy
 mode Seeded or Random; --full: each seed is also generated in full (game files, enemies and all) and must finish -
 including its room-link check (room_links.py: every actor link within each room sound, else the game crashes there).
+--labyrinth: every random mix is a Labyrinth (tools/rando/labyrinth.py): room shuffle cycled Coupled / Decoupled
+(unless --rooms), keysanity off / on alternating; its statistics (cross-wing links, wings only another wing leads to,
+planning time) and a key-count sanity check are printed per seed.
 Exit status 1 if any seed fails either check. Run it with the LAS venv's Python (third_party/LAS-Randomizer/venv).
 """
 import argparse
@@ -43,7 +46,7 @@ FLAGS = ['bomb_bag', 'powder_bag', 'environments', 'pets_in_dungeons', 'skip_sto
          'randomize_enemies', 'randomize_music', 'open_mabe', 'fast_songs', 'boss_cutscenes', 'spoiler', 'decoupled',
          'pots', 'no_buffs', 'bushes', 'pet_rooster', 'pet_ghost', 'pet_marin', 'trendsanity', 'boss_souls',
          'hookshot_any', 'digs', 'miniboss_souls', 'no_start_sword', 'no_start_shield', 'no_start_ocarina',
-         'tunic_upgrades', 'shellsanity']
+         'tunic_upgrades', 'shellsanity', 'race', 'random_cosmetics', 'labyrinth']
 ROOM_IDS = {'off': 0, 'coupled': 2, 'decoupled': 3}  # room_shuffle in the ID (1: the retired Coherent)
 BITS = 150  # (v5: 30 characters; v4 IDs had 125 - decode reads both)
 TIMEOUT = 900  # (seconds per seed)
@@ -117,7 +120,8 @@ def request(sid, o, logic='basic'):
     return {
         'seed': sid, 'logic': logic, 'dungeon-items': ['none', 'stone-beak', 'mc', 'mcb'][o['dungeon_items']],
         'traps': ['none', 'few', 'several', 'many', 'trapsanity'][o['traps']],
-        'shuffle-instruments': o['shuffle_instruments'], 'shuffle-dungeons': o['shuffle_dungeons'],
+        'shuffle-instruments': o['shuffle_instruments'],
+        'shuffle-dungeons': o['shuffle_dungeons'] and not (o.get('labyrinth') and o['room_shuffle']),
         'randomize-enemies': o['randomize_enemies'], 'randomize-music': o['randomize_music'],
         'open-mabe': o['open_mabe'], 'fast-songs': o['fast_songs'], 'OHKO': False,
         'boss-cutscenes': o['boss_cutscenes'], 'create-spoiler': o['spoiler'], 'starting-rupees': o['start_rupees'],
@@ -132,6 +136,7 @@ def request(sid, o, logic='basic'):
         'enemy-mode': 'random' if o['randomize_enemies'] and o['enemy_mode'] else 'seeded',
         'keysanity': ['off', 'keys', 'keys+nk', 'all'][o['keysanity']],
         'dungeon-room-shuffle': ['off', 'coupled', 'coupled', 'decoupled'][o['room_shuffle']],  # (1: retired Coherent)
+        'dungeon-labyrinth': bool(o.get('labyrinth')) and o['room_shuffle'] != 0,
         'shopsanity': ['off', 'vanilla', 'random'][o['shopsanity']], 'trendsanity': o['trendsanity'],
         'stealing': stealing(o),
         'boss-souls': o['boss_souls'], 'miniboss-souls': o['miniboss_souls'], 'hookshot-anything': o['hookshot_any'],
@@ -225,6 +230,80 @@ def check_seed(out_dir, level, walk, needed=0):
     return own, strict, [(k, p['placements'][k], extra[k]) for k in lost]
 
 
+def labyrinth_check(out_dir):
+    """A Labyrinth seed's statistics + key-count sanity: every small key is the shared kind, as many as the
+    labyrinth's locks; with keysanity off all of them in its checks; each wing's map / compass / Nightmare Key / beak
+    in that wing (unless shuffled anywhere). -> (stats dict, [problems])"""
+    p = os.path.join(out_dir, 'labyrinth.json')
+    if not os.path.exists(p):
+        return None, []
+    info = json.load(open(p))
+    pl = json.load(open(os.path.join(out_dir, 'placements.json')))['placements']
+    logic = json.load(open(os.path.join(out_dir, 'logic.json')))
+    probs = []
+    keys = [(k, v) for k, v in pl.items() if re.match(r'key-D\d', v)]
+    kinds = {v for _, v in keys}
+    if kinds - {'key-D1'}:
+        probs.append(f'small keys of another kind: {sorted(kinds)}')
+    total = info.get('small-keys')
+    if total is not None and len(keys) != total:
+        probs.append(f'{len(keys)} small keys placed, {total} locks')
+    if info.get('keysanity') == 'off':
+        outside = [k for k, _ in keys if not re.match(r'D\d-', k) and not str(logic.get(k, {}).get('region', '')).startswith(
+            ('labyrinth-wing-', 'eagle-tower'))]
+        if outside:
+            probs.append(f'small keys outside the labyrinth: {outside[:4]}')
+    own = {'off': ('nightmare-key-', 'map-', 'compass-', 'stone-beak-'), 'keys': ('nightmare-key-', 'map-', 'compass-',
+           'stone-beak-'), 'keys+nk': ('map-', 'compass-', 'stone-beak-')}.get(info.get('keysanity'), ())
+    free = {'mc': ('map-', 'compass-'), 'mcb': ('map-', 'compass-', 'stone-beak-'),
+            'stone-beak': ('stone-beak-',)}.get(info.get('dungeon-items'), ())
+    for k, v in pl.items():
+        if v.startswith(own) and not v.startswith(free) and re.search(r'-D\d$', v) and not k.startswith('starting-'):
+            w = v[-1]
+            region = logic.get(k, {}).get('region', '')
+            if info.get('dungeon-of', {}).get(k, k[:2]) != f'D{w}' or region not in (f'labyrinth-wing-{w}', 'labyrinth') \
+                    and not (w == '7' and region == 'eagle-tower'):
+                probs.append(f'{v} outside its wing: {k} ({region})')
+    return info, probs
+
+
+def labyrinth_census(full_dir, romfs):
+    """A full Labyrinth seed, counted from its written game files: the locks (locked doors by their 'opened' flag,
+    keyhole blocks) of every cell the wings have (dungeon_map.tsv) + Eagle's Tower's vanilla keys must be the small keys
+    placed; every row into another level must start and end at a cell that exists. -> [problems]"""
+    sys.path.insert(0, LAS)
+    from RandomizerCore.Tools import leb
+    info = json.load(open(os.path.join(full_dir, 'labyrinth.json')))
+    cells = {}
+    for ln in open(os.path.join(full_dir, 'dungeon_map.tsv')):
+        lv, cell = ln.split('\t')[:2]
+        cells.setdefault(lv, set()).add(cell)
+    locks = set()
+    for lv, cs in cells.items():
+        for cell in cs:
+            p = os.path.join(full_dir, 'romfs', 'region_common', 'level', lv, f'{lv}_{cell}.leb')
+            for a in leb.Room(open(p, 'rb').read()).actors:
+                flag = next((i for t, i in a.switches if t == 1), None)
+                if a.type == 0xED:
+                    locks.add((lv, 'door', flag))
+                elif a.type == 0x102:
+                    locks.add((lv, cell, 'block', flag))
+    probs = []
+    et = info.get('small-keys', 0) - info.get('spare-keys', 0) - len(locks)
+    if et != 3:  # (Eagle's Tower: kept whole, its 3 vanilla keys; + the spares)
+        probs.append(f'{len(locks)} locks in the wings + 3 in Eagle\'s Tower + {info.get("spare-keys", 0)} spare, '
+                     f'{info.get("small-keys")} small keys')
+    lp = os.path.join(full_dir, 'labyrinth_links.tsv')
+    for ln in open(lp) if os.path.exists(lp) else ():
+        if ln.startswith('#'):
+            continue
+        r = ln.rstrip('\n').split('\t')
+        for lv, cell in ((r[0], r[1]), (r[9], r[5])):
+            if not (lv == 'Lv07EagleTower' and cell == '08B') and cell not in cells.get(lv, ()):
+                probs.append(f'labyrinth link to a missing cell {lv} {cell}')
+    return probs
+
+
 def run_one(job):
     sid, o, level, romfs, keep, walk, full = job
     tmp = tempfile.mkdtemp(prefix='sweep-', dir=keep)
@@ -232,6 +311,8 @@ def run_one(job):
     with open(req, 'w') as f:
         json.dump(request(sid, o, level), f)
     env = dict(os.environ, PYTHONHASHSEED='0', LARECOMP_CHECK_ONLY='1')
+    import time
+    t0 = time.time()
     try:
         r = subprocess.run([sys.executable, os.path.join(HERE, 'las_headless.py'), romfs, os.path.join(tmp, 'out'), req],
                            env=env, capture_output=True, text=True, timeout=TIMEOUT)
@@ -240,7 +321,17 @@ def run_one(job):
     if r.returncode != 0:
         tail = (r.stderr.strip().splitlines() or ['?'])[-1]
         return sid, level, f'generator exit {r.returncode}: {tail}', None
+    secs = time.time() - t0
     own, strict, lost = check_seed(os.path.join(tmp, 'out'), level, walk, o.get('triforce_needed', 0))
+    lab, lab_probs = labyrinth_check(os.path.join(tmp, 'out'))
+    if lab is not None:
+        m = re.search(r'- (\d+)/(\d+) item locations reachable', r.stdout)
+        lab.update(seconds=round(secs, 1), reachable=m.group(0)[2:] if m else '?')
+        if not m or m.group(1) != m.group(2):  # (every check of the seed reachable: none left out by the links)
+            lab_probs = lab_probs + [f"unreachable checks: {lab['reachable']}"]
+        lost = (lost or []) + [('labyrinth', lab, lab_probs)]
+        if lab_probs:
+            return sid, level, f'LABYRINTH KEYS/ITEMS {lab_probs[:3]}', lost
     if full and not own and not strict:  # (the whole seed: enemies, mini-bosses, every room edit)
         env = dict(os.environ, PYTHONHASHSEED='0')
         env.pop('LARECOMP_CHECK_ONLY', None)
@@ -256,6 +347,10 @@ def run_one(job):
             problems = room_links.check(os.path.join(tmp, 'full'), leb, romfs)
             if problems:
                 return sid, level, f'room links broken in {len(problems)} place(s), first: {problems[0]}', lost
+            if os.path.exists(os.path.join(tmp, 'full', 'labyrinth.json')):
+                problems = labyrinth_census(os.path.join(tmp, 'full'), romfs)
+                if problems:
+                    return sid, level, f'LABYRINTH CENSUS {problems[:3]}', lost
         if r.returncode != 0:
             tail = (r.stderr.strip().splitlines() or ['?'])[-1]
             return sid, level, f'full generation exit {r.returncode}: {tail}', lost
@@ -301,6 +396,8 @@ def main():
     ap.add_argument('--souls', action='store_true', help='every random mix with boss and mini-boss souls on')
     ap.add_argument('--triforce', type=int, metavar='N', help='every random mix a Triforce hunt for N pieces '
                     '(extra pieces cycled: none / +25%% / +50%%)')
+    ap.add_argument('--labyrinth', action='store_true', help='every random mix a Labyrinth (room shuffle cycled, '
+                    'keysanity off / on alternating)')
     ap.add_argument('--rooms', choices=list(ROOM_IDS), action='append',
                     help='dungeon room shuffle of the random mixes (repeat: cycled)')
     args = ap.parse_args()
@@ -326,21 +423,44 @@ def main():
             o['triforce_needed'], o['triforce_extra'] = args.triforce, i % 3
         if args.rooms:
             o['room_shuffle'] = ROOM_IDS[args.rooms[(i // len(levels)) % len(args.rooms)]]  # (not in step with the levels)
+        if args.labyrinth:
+            o['labyrinth'] = True
+            if not args.rooms:
+                o['room_shuffle'] = 2 + i % 2  # (Coupled / Decoupled)
+            o['keysanity'] = 0 if (i // 2) % 2 == 0 else rng.choice([1, 2, 3])
         if args.stealing:
             o['no_stealing'], o['steal_needs_sword'] = args.stealing == 'never', args.stealing == 'normal'
             if args.stealing == 'never' and not o['shopsanity']:
                 sys.exit('--stealing never needs shopsanity (stealing off is a shopsanity sub-option)')
         jobs.append((encode(o), o, levels[i % len(levels)]))
     bad = 0
+    stats = []
     with concurrent.futures.ProcessPoolExecutor(args.j) as ex:
         for sid, level, res, lost in ex.map(run_one, [j + (romfs, args.keep, walk, args.full) for j in jobs]):
             d = decode(sid)
             print(f"{sid} {level:9} shop {['off', 'vanilla', 'random'][d['shopsanity']]:7} steal {stealing(d):6} {res}",
                   flush=True)
-            for k, item, need in (lost or [])[:8]:
+            labs = [x for x in lost or [] if x[0] == 'labyrinth']
+            for _, lab, _ in labs:
+                stats.append(lab)
+                print(f"    labyrinth {lab['mode']:8} keysanity {lab.get('keysanity'):7} cross-wing links "
+                      f"{lab['cross-links']:3}, only through another wing {lab['only-through-another']}, partly "
+                      f"{lab['partly-through-another']}, keys {lab.get('small-keys')}, plan {lab.get('plan-seconds')} s, "
+                      f"seed {lab['seconds']} s, {lab['reachable']}", flush=True)
+            for k, item, need in [x for x in lost or [] if x[0] != 'labyrinth'][:8]:
                 print(f'    {k}: {item} - walkable only from {need}')
             bad += res != 'ok'
     print(f'{len(jobs) - bad}/{len(jobs)} seeds beatable')
+    if stats:
+        for mode in ('coupled', 'decoupled'):
+            st = [x for x in stats if x['mode'] == mode]
+            if st:
+                avg = lambda k: sum(x[k] for x in st) / len(st)
+                print(f"labyrinth {mode}: {len(st)} seeds, cross-wing links avg {avg('cross-links'):.1f} "
+                      f"(min {min(x['cross-links'] for x in st)}, max {max(x['cross-links'] for x in st)}), wings only "
+                      f"through another avg {sum(len(x['only-through-another']) for x in st) / len(st):.1f}, partly "
+                      f"{sum(len(x['partly-through-another']) for x in st) / len(st):.1f}, plan {avg('plan-seconds'):.1f} s, "
+                      f"seed {avg('seconds'):.1f} s")
     sys.exit(1 if bad else 0)
 
 

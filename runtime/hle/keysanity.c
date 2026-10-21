@@ -3,7 +3,9 @@
 // keysanity give them with a dungeon index (upstream LAS dev convention: 0-7 = Tail Cave..Turtle Rock, 9 = Color
 // Dungeon): this hook
 // (tools/patches.py ADD_ITEM_SITE: the inner add main+0x8d08e0 that AddItem, chests and drops all call) applies those straight to that dungeon's save record.
-// index -1 (vanilla behaviour, the item's own dungeon) is left to the game.
+// index -1 (vanilla behaviour, the item's own dungeon) is left to the game. Labyrinth seeds give the map / compass /
+// Nightmare Key / beak their wing's index always, even inside that wing (credited here like any other), and every
+// small key goes to the shared counter (runtime/hle/labyrinth.c).
 //
 // Save record (notes/save_format.md): live save + 0xE0 + 0x10 * rec, dungeon n -> rec 2(n-1), Color Dungeon -> 18;
 // +0 small keys held, +1 bits: compass 0, map 1, beak 2, Nightmare Key 3.
@@ -79,6 +81,9 @@ int rt_add_item(Cpu *c) {
     if (index == REFILL_INDEX && (item == IT_BOMB || item == IT_POWDER || item == IT_ARROW)) return refill(c, item, count);
     extern int rt_pet_item(int n);  // pets.c: companions found as items (tools/rando/pets.py PET_INDEX 90)
     if (index >= 90 && index < 93) return rt_pet_item(index - 90);
+    // Labyrinth: every small key goes to the one shared counter, wherever it's found (runtime/hle/labyrinth.c)
+    extern int labyrinth_add_key(int count);
+    if (item == IT_SMALL_KEY && labyrinth_add_key(count)) return 1;
     if (index < 0 || index > 9 || index == 8) return 0;
     int rec = index == 9 ? 18 : 2 * index;
     uint8_t *r = (uint8_t *)(uintptr_t)(GA_LIVE_SAVE + 0xE0 + 0x10 * rec);

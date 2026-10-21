@@ -13,6 +13,9 @@ Item.bfevfl gets the Ks entries (Dialog.Show System:Ks<Item><index>), every lang
 built from that file's own get-item text and Place.msbt's dungeon name (nothing of the game's text lives here).
 English: the item sentence + " for <dungeon>!"; other languages keep their text and add a page with the dungeon name.
 Items in their own dungeon (index -1) keep the vanilla message.
+Labyrinth (tools/rando/labyrinth.py): the dungeons are its wings 0-8 (Color Dungeon 0) - a map / compass / Nightmare
+Key / stone beak names its wing ("You got the Map for Wing 2 of the labyrinth!", every language: loc_text.py), always;
+small keys are shared and keep the vanilla text.
 
     apply(out_dir, romfs, placements) -> number of messages added (0: no dungeon item outside its dungeon)
 """
@@ -106,7 +109,14 @@ def _read(out_dir, romfs, rel):
     return None
 
 
-def write_messages(out_dir, romfs, combos):
+def wing_name(idx, lang='en'):
+    """Labyrinth: the wing a dungeon index stands for, as the get text names it, in that language (loc_text.py)."""
+    import loc_text
+    return loc_text.wing_name(0 if idx == 9 else idx + 1, lang).encode()
+
+
+def write_messages(out_dir, romfs, combos, labyrinth=False):
+    import loc_text
     n = 0
     for sysp in sorted(glob.glob(os.path.join(romfs, 'region*', '*', 'message', 'System.msbt'))):
         rel = os.path.relpath(sysp, romfs)
@@ -114,7 +124,8 @@ def write_messages(out_dir, romfs, combos):
         sysm = Msbt(_read(out_dir, romfs, rel))
         place = Msbt(_read(out_dir, romfs, rel.replace('System.msbt', 'Place.msbt'))).texts
         for key, idx in sorted(combos):
-            get, name = sysm.texts.get(GET_MSG[key]), place.get(place_label(idx))
+            get = sysm.texts.get(GET_MSG[key])
+            name = wing_name(idx, loc_text.lang_of(rel)) if labyrinth else place.get(place_label(idx))
             if get is None or name is None:
                 continue
             sysm.set(entry(key, idx), compose(get, name, lang.endswith('en')))
@@ -194,7 +205,7 @@ def patch_flow(flow, combos, event_tools):
     return n
 
 
-def apply(out_dir, romfs, placements):
+def apply(out_dir, romfs, placements, labyrinth=False):
     combos = used(placements)
     if not combos:
         return 0
@@ -222,7 +233,7 @@ def apply(out_dir, romfs, placements):
             event_tools.createActionChain(flow.flowchart, entry(key, idx),
                                           [('Dialog', 'Show', {'message': f'System:{entry(key, idx)}'})])
     event_tools.writeFlow(ip, flow)
-    msgs = write_messages(out_dir, romfs, combos)
+    msgs = write_messages(out_dir, romfs, combos, labyrinth)
     print(f'keysanity text: {len(combos)} item/dungeon pairs, {changed} get events, {msgs} messages', flush=True)
     return msgs
 

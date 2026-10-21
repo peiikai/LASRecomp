@@ -287,9 +287,26 @@ def build(seed_dir, romfs):
         if lv_door and lv_in and level_cell.get(lv_door):
             door_of[dkey[lv_in]] = level_cell[lv_door]
 
+    # Labyrinth (labyrinth.json, tools/rando/labyrinth.py): the dungeons are its wings (D-key n = wing n); an overworld
+    # door leads into some room of some wing - each wing's icon sits at the first door into it, a wing no door leads
+    # into at its own old door (beside the icon already there)
+    lab = None
+    lp = os.path.join(seed_dir, 'labyrinth.json')
+    if os.path.exists(lp) and settings.get('dungeon-labyrinth'):
+        lab = json.load(open(lp))
+        door_of = {'D7': level_cell.get('Lv07EagleTower')} if level_cell.get('Lv07EagleTower') else {}
+        for region, a in sorted(lab.get('arrivals', {}).items()):
+            c = level_cell.get(ENTRANCE_KEYS.get(region))
+            if c and DUNGEONS.get(a[0]) and DUNGEONS[a[0]] not in door_of:
+                door_of[DUNGEONS[a[0]]] = c
+    taken = []
+
     def group(dk):
         if dk not in gidx:
             cell = door_of.get(dk) or level_cell.get(next(k for k, x in DUNGEONS.items() if x == dk)) or (8.0, 8.0)
+            while lab and cell in taken:  # (Labyrinth: two wings' icons at one door)
+                cell = (cell[0] + 0.7, cell[1])
+            taken.append(cell)
             gidx[dk] = len(groups)
             groups.append({'label': dk, 'x': cell[0], 'y': cell[1]})
         return gidx[dk]
@@ -485,6 +502,8 @@ def build(seed_dir, romfs):
             f.write(f'F\t{k}\n')
         rs = settings.get('dungeon-room-shuffle') or 'off'  # (las_headless.ROOM_MODES: older names read as the new)
         f.write(f"O\tdungeon-room-shuffle\t{ {'chaos': 'coupled', 'madness': 'decoupled'}.get(rs, rs)}\n")
+        if lab:  # (runtime/ui/tracker_overlay.mm: wings, one shared small-key count)
+            f.write('O\tlabyrinth\t1\n')
         for n in nodes:
             f.write(f"N\t{n['t']}\t{n['n']}\t{n['r'] or '-'}\t{n['c'] or '-'}\t{n.get('pit', '-')}\t{n.get('heavy', '-')}"
                     f"\t{n.get('trick', '-') or '-'}\n")

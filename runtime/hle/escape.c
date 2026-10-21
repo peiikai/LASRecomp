@@ -4,6 +4,7 @@
 // (tools/rando/escape_bottle.py). Equipped on X / Y and used: inside a dungeon Link warps to that dungeon's entrance
 // (the entrance room stays at its own cell in shuffled layouts: tools/rando/dungeon_gen.py ENTRANCES), anywhere else
 // to Mabe Village, walking out of Marin & Tarin's front door (Field_11C; user 2026-10-11 - was just inside it).
+// Labyrinth seeds (runtime/hle/labyrinth.c): out of the overworld door Link last came in by, once one is known.
 //
 // Why the third bottle: it is a real inventory item, so it gets an item-page slot, X / Y assignment and the game's own
 // "may Link use an item now?" rules for free: the use is caught in the game's predicate for that slot
@@ -103,6 +104,13 @@ int rt_bottle3_use(void) {
     const char *const *to = kHome;
     for (size_t i = 0; i < sizeof kEntrance / sizeof kEntrance[0]; i++)
         if (!strcmp(lv, kEntrance[i][0])) to = kEntrance[i];
+    // Labyrinth: out of the overworld door Link last came in by (a wing's entrance room may not be where he came in)
+    extern bool labyrinth_escape_target(char *level, size_t ln, char *locator, size_t lc);
+    static char lab_lv[32], lab_loc[32];
+    static const char *lab[2] = {lab_lv, lab_loc};
+    if (to != kHome && strcmp(lv, "Lv09WindFishsEgg") &&
+        labyrinth_escape_target(lab_lv, sizeof lab_lv, lab_loc, sizeof lab_loc))
+        to = lab;
     LOG("[escape] used in %s -> %s / %s\n", lv, to[0], to[1]);
     warp_request(to[0], to[1]);
     return 1;
