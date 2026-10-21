@@ -14,9 +14,12 @@
 #include <unistd.h>
 #endif
 
+#include <SDL3/SDL_cpuinfo.h>
+
 #include "gamebuild.h"
 #include "paths.h"
 #include "platform.h"
+#include "romfs_build.h"
 #include "rt.h"
 
 const char *larecomp_version(void);  // runtime/ui/launcher.mm
@@ -35,6 +38,39 @@ static bool exists(const char *p) {
 bool iosexport_available(const char *skeleton, char *why, size_t why_size) {
     if (!skeleton || !*skeleton) { snprintf(why, why_size, "choose the unpacked iOS skeleton folder"); return false; }
     return gamebuild_ios_available(skeleton, why, why_size);
+}
+
+// The iOS build's own folder: <game_dir>/ios (its .gamebuild/ and library apart from this machine's), with a copy
+// of the game's exefs/ (27 MB; the generator reads main and sdk from there - a link would be refused by the build
+// cache's checks, and Windows has none).
+static bool ios_dir(const char *game_dir, char *out, size_t n) {
+    snprintf(out, n, "%s" SEP "ios", game_dir);
+    mkdir(out, 0755);
+    char from[1100], to[1100], main_nso[1100];
+    snprintf(from, sizeof from, "%s" SEP "exefs", game_dir);
+    snprintf(to, sizeof to, "%s" SEP "exefs", out);
+    snprintf(main_nso, sizeof main_nso, "%s" SEP "main", to);
+    if (!exists(main_nso) && !romfs_copy_tree(from, to, NULL)) return false;
+    return exists(main_nso);
+}
+
+static void cli_progress(double f, const char *step) {
+    static int last = -1;
+    int pct = (int)(f * 100);
+    if (pct != last) { last = pct; fprintf(stderr, "[gamebuild] %3d%% %s\n", pct, step); }
+}
+// `lasrecomp --build-ios <skeleton> [game files]` (runtime/main.c): the export as the start screen does it, to
+// ~/Downloads or LARECOMP_IOS_OUT=<path>.
+bool iosexport_run_cli(const char *skeleton, const char *game_dir) {
+    char why[512], out[1100];
+    const char *e = getenv("LARECOMP_IOS_OUT");
+    if (e && *e) snprintf(out, sizeof out, "%s", e);
+    else iosexport_default_path(out, sizeof out);
+    int cores = plat_cpu_count();  // (0 where there's no affinity mask: the machine's count)
+    if (cores < 1) cores = SDL_GetNumLogicalCPUCores();
+    IosExportOpts o = {cli_progress, NULL, cores > 1 ? cores : 1, skeleton, out};
+    if (!iosexport_run(game_dir, &o, why, sizeof why)) { fprintf(stderr, "[iosexport] %s\n", why); return false; }
+    return true;
 }
 
 void iosexport_default_path(char *out, size_t n) {
@@ -234,19 +270,19 @@ bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size
     if (!exists(main_nso)) { snprintf(why, why_size, "the game files folder has no exefs/main"); return false; }
 
     // 1. the game code library for iOS (<game_dir>/ios/lasgame-ios.dylib; its own build cache)
-    char ios_dir[1100];
-    if (!gamebuild_ios_dir(game_dir, ios_dir, sizeof ios_dir)) {
+    char dir[1100];
+    if (!ios_dir(game_dir, dir, sizeof dir)) {
         snprintf(why, why_size, "can't create the iOS build folder in the game files");
         return false;
     }
     GameBuildOpts b = {o->progress, o->jobs, o->cancelled, GAMEBUILD_IOS, o->skeleton};
-    if (!gamebuild_run(ios_dir, &b, why, why_size)) return false;
+    if (!gamebuild_run(dir, &b, why, why_size)) return false;
 
     // 2. the .ipa: Payload/LAS Recomp.app/ = the skeleton + Frameworks/LASGame.framework/{LASGame,LASGame.id}
     if (o->progress) o->progress(0.97, "Writing the .ipa...");
     char tmp[1200], lib[1100], id[1100];
     snprintf(tmp, sizeof tmp, "%s.tmp", o->out_ipa);
-    snprintf(lib, sizeof lib, "%s" SEP "lasgame-ios.dylib", ios_dir);
+    snprintf(lib, sizeof lib, "%s" SEP "lasgame-ios.dylib", dir);
     snprintf(id, sizeof id, "%s.id", lib);
     crc_init();
     Zip z = {0};

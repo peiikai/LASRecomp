@@ -248,8 +248,8 @@ int main(int argc, char **argv) {
     }
 #if !PLAT_IOS
     if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
-        extern bool gamebuild_ios_run_cli(const char *skeleton, const char *game_dir);
-        return gamebuild_ios_run_cli(arg_skel, root) ? 0 : 1;
+        extern bool iosexport_run_cli(const char *skeleton, const char *game_dir);
+        return iosexport_run_cli(arg_skel, root) ? 0 : 1;
     }
 #else
     (void)build_ios;

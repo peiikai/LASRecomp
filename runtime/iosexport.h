@@ -28,6 +28,9 @@ bool iosexport_available(const char *skeleton, char *why, size_t why_size);
 bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size_t why_size);
 // Where the start screen suggests saving it (~/Downloads/LAS Recomp-<version>-ios.ipa)
 void iosexport_default_path(char *out, size_t n);
+// `lasrecomp --build-ios <skeleton> [game files]` (runtime/main.c): the export without the start screen, progress on
+// stderr, to iosexport_default_path or LARECOMP_IOS_OUT=<path>
+bool iosexport_run_cli(const char *skeleton, const char *game_dir);
 
 #ifdef __cplusplus
 }

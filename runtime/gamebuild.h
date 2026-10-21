@@ -35,8 +35,6 @@ bool gamebuild_available(void);
 // The iOS build's tools: the bundled zig, and in the skeleton folder its Darwin headers, a linker for this machine
 // and the libSystem stub. false: why says what's missing, for the player.
 bool gamebuild_ios_available(const char *skeleton, char *why, size_t why_size);
-// The iOS build's folder under game_dir (<game_dir>/ios, exefs linked in), created; false if that failed.
-bool gamebuild_ios_dir(const char *game_dir, char *out, size_t n);
 
 #ifdef __cplusplus
 }
