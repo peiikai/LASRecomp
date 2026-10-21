@@ -451,7 +451,7 @@ void input_handle_event(const SDL_Event *e) {
 
 // Mouse in the game's own menus (title, file select, pause): the world composite is absent there
 // (runtime/hle/mirror.c). A click confirms or goes back, the wheel and a mouse stroke move the cursor.
-// Gameplay keeps the mouse out, so a click does not swing the sword.
+// In gameplay, Mouse controls (Gameplay tab) chooses A/B clicks or sword / shield. Off leaves gameplay alone.
 extern bool menu_input_captured(void);
 
 static bool mouse_menu_active(void) {
@@ -462,12 +462,21 @@ static bool mouse_menu_active(void) {
     return !world_on_screen();
 }
 
-// D-pad / A / B from the mouse, for this presented frame. Drains the event totals either way, so strokes made
+// MOUSE_AB or MOUSE_LOOK while the world is up and the overlay is closed; otherwise Off.
+static int mouse_game_mode(void) {
+    if (mouse_menu_active() || menu_input_captured()) return MOUSE_OFF;
+    int m = g_settings.mouse_controls;
+    return m == MOUSE_AB || m == MOUSE_LOOK ? m : MOUSE_OFF;
+}
+
+// Buttons from the mouse, for this presented frame. Drains the event totals either way, so strokes made
 // while playing do not fire on the next menu. Called once per presented frame (the game polls several times).
-static uint64_t mouse_menu_bits(bool apply) {
+// menu: title / file select / pause (A, B, and the cursor). Otherwise the Gameplay setting.
+static uint64_t mouse_menu_bits(bool menu) {
     extern uint64_t renderer_present_count(void);
     static uint64_t frame;
     static int hold_l, hold_r, hold_u, hold_d, hold_a, hold_b;
+    int game = menu ? MOUSE_OFF : mouse_game_mode();
     uint64_t now = renderer_present_count();
     if (now != frame) {
         frame = now;
@@ -483,7 +492,7 @@ static uint64_t mouse_menu_bits(bool apply) {
         int a = atomic_load(&mouse_a_arm), b = atomic_load(&mouse_b_arm);
         if (a > 0) atomic_fetch_sub(&mouse_a_arm, 1);
         if (b > 0) atomic_fetch_sub(&mouse_b_arm, 1);
-        if (apply) {
+        if (menu) {
             const int step = 36;
             if (a) hold_a = a;
             if (b) hold_b = b;
@@ -496,17 +505,80 @@ static uint64_t mouse_menu_bits(bool apply) {
                 if (dy > 0) hold_d = 5;
                 else hold_u = 5;
             }
+        } else if (game) {
+            if (a) hold_a = a;
+            if (b) hold_b = b;
         }
     }
-    if (!apply) return 0;
+    if (menu) {
+        uint64_t bits = 0;
+        if (hold_a) bits |= 1ull << BTN_A;
+        if (hold_b) bits |= 1ull << BTN_B;
+        if (hold_l) bits |= 1ull << BTN_LEFT;
+        if (hold_r) bits |= 1ull << BTN_RIGHT;
+        if (hold_u) bits |= 1ull << BTN_UP;
+        if (hold_d) bits |= 1ull << BTN_DOWN;
+        return bits;
+    }
+    if (!game) return 0;
     uint64_t bits = 0;
-    if (hold_a) bits |= 1ull << BTN_A;
-    if (hold_b) bits |= 1ull << BTN_B;
-    if (hold_l) bits |= 1ull << BTN_LEFT;
-    if (hold_r) bits |= 1ull << BTN_RIGHT;
-    if (hold_u) bits |= 1ull << BTN_UP;
-    if (hold_d) bits |= 1ull << BTN_DOWN;
+    if (game == MOUSE_AB) {
+        if (hold_a) bits |= 1ull << BTN_A;
+        if (hold_b) bits |= 1ull << BTN_B;
+    } else {  // Look: left click is the sword (B), right click is the shield (R)
+        if (hold_a) bits |= 1ull << BTN_B;
+        if (hold_b) bits |= 1ull << BTN_R;
+    }
     return bits;
+}
+
+// Left / right click as buttons right now (movies poll this before the pad). Menus are always A and B.
+static uint64_t mouse_click_bits(void) {
+    int a = atomic_load(&mouse_a_arm), b = atomic_load(&mouse_b_arm);
+    if (!a && !b) return 0;
+    if (mouse_menu_active())
+        return (a ? 1ull << BTN_A : 0) | (b ? 1ull << BTN_B : 0);
+    int game = mouse_game_mode();
+    if (game == MOUSE_AB) return (a ? 1ull << BTN_A : 0) | (b ? 1ull << BTN_B : 0);
+    if (game == MOUSE_LOOK) return (a ? 1ull << BTN_B : 0) | (b ? 1ull << BTN_R : 0);
+    return 0;
+}
+
+// Stick angle toward the cursor (runtime/hle/qol.c rt_snap_dir: full turn = 2^32, 0 = down, 2^30 = right).
+// The stick's angle is screen-space, so this is the direction from Link's projected pixel to the cursor,
+// through the same view-projection the picture used (floor cameras and side-view cameras). 0 when Look is off,
+// the stick should keep its own direction, or Link / the camera isn't available.
+int mouse_look_angle(uint32_t *out) {
+    if (g_settings.mouse_controls != MOUSE_LOOK || mouse_menu_active() || menu_input_captured()) return 0;
+    extern uint64_t doorjump_player(uint64_t frame);
+    extern uint64_t renderer_present_count(void);
+    extern bool widescreen_project(float x, float y, float z, float *sx, float *sy);
+    extern bool mirror_input(void);
+    uint64_t pc = doorjump_player(renderer_present_count());
+    if (!pc) return 0;
+    float wx = *(float *)(uintptr_t)(pc + 0x80);
+    float wy = *(float *)(uintptr_t)(pc + 0x84);
+    float wz = *(float *)(uintptr_t)(pc + 0x88);
+    float sx, sy;
+    if (!widescreen_project(wx, wy, wz, &sx, &sy)) return 0;
+    SDL_Window *win = SDL_GetMouseFocus();
+    if (!win) win = SDL_GetKeyboardFocus();
+    if (!win) return 0;
+    float mx, my;
+    SDL_GetMouseState(&mx, &my);
+    int lw = 0, lh = 0, pw = 0, ph = 0;
+    SDL_GetWindowSize(win, &lw, &lh);
+    SDL_GetWindowSizeInPixels(win, &pw, &ph);
+    if (lw > 0 && lh > 0 && pw > 0 && ph > 0) {
+        mx *= (float)pw / (float)lw;
+        my *= (float)ph / (float)lh;
+    }
+    float dx = mx - sx, dy = sy - my;  // window y grows downward; stick y grows up
+    if (mirror_input()) dx = -dx;      // a game-right facing shows as screen-left while mirrored
+    if (dx * dx + dy * dy < 16.f) return 0;
+    double turns = atan2f(dy, dx) / (2 * (float)M_PI) + 0.25;
+    *out = (uint32_t)(int64_t)llround(turns * 4294967296.0);
+    return 1;
 }
 
 // Scripted input for testing: LARECOMP_INPUT="frame:BUTTON:frames,..." (BUTTON = A,B,X,Y,L,R,ZL,ZR,PLUS,
@@ -749,11 +821,8 @@ extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or n
 
 // Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
 uint64_t input_buttons_now(void) {
-    uint64_t mouse = 0;
-    if (mouse_menu_active()) {  // opening movie skips on A / B before the pad poll (runtime/hle/movie.c)
-        if (atomic_load(&mouse_a_arm)) mouse |= 1ull << BTN_A;
-        if (atomic_load(&mouse_b_arm)) mouse |= 1ull << BTN_B;
-    }
+    // opening movie skips on A / B before the pad poll (runtime/hle/movie.c); gameplay clicks follow Mouse controls
+    uint64_t mouse = mouse_click_bits();
     return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons | mouse;
 }
 

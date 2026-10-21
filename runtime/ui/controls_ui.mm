@@ -267,6 +267,13 @@ extern "C" void controls_tab_draw(float scale) {
     opt_toggle("D-pad moves Link", &g_settings.dpad_move, false, "The d-pad moves Link like the control stick.");
     opt_toggle("360-degree movement", &g_settings.move_360, false,
                "Link walks in the exact direction of the stick instead of snapping to 8 directions.");
+    {
+        static const char *const names[] = {"Off", "A and B", "Look"};
+        opt_choice("Mouse controls", &g_settings.mouse_controls, names, 3, MOUSE_OFF,
+                   "Off: clicks work in menus only. A and B: left click is A, right click is B. Look: he faces the "
+                   "cursor while he walks and while the shield is up. Left click holds the sword, right click holds "
+                   "the shield. WASD walks.");
+    }
 
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "Controller vibration.");
