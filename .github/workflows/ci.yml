@@ -4,8 +4,8 @@
 # SPIRV-Tools (tools/test_translate.sh, Windows), its instruction semantics on the CPU (tools/test_translate_ops.sh,
 # Linux / macOS), the same programs' Vulkan GLSL through spirv-val (tools/test_spirv_val.sh, Linux), the iOS
 # game-code build each desktop can do (tools/test_gamebuild_ios.py: the player's zig and the iOS skeleton's lld on a
-# fixture) and, on macOS, the iOS app and its skeleton (make ios-skeleton). Nothing is published. Feature tests that
-# need no game files go in as steps here, not as workflows of their own.
+# fixture) and, its own job on a Mac, the iOS app and its skeleton (make ios-skeleton). Nothing is published.
+# Feature tests that need no game files go in as steps here, not as workflows of their own.
 name: CI
 on:
   pull_request:
@@ -311,29 +311,35 @@ jobs:
           tools/fetch_zig.sh
           tools/fetch_lld.sh
           python3 tools/test_gamebuild_ios.py
-      # the iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton
-      # app the iOS skeleton zip ships (tools/bundle_ios.sh SKELETON=1). Its static SDL3 / FFmpeg / CPython and the
-      # generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that script's hash.
-      - name: iOS deps cache
-        id: deps-ios
+
+  # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
+  # the iOS skeleton zip ships (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
+  # SDL3 / FFmpeg / CPython and the generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that
+  # script's hash.
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: brew install ninja python@3.13
+      - name: Deps cache
+        id: deps
         uses: actions/cache/restore@v4
         with:
           path: |
             build/deps-ios
             !build/deps-ios/pyvenv
           key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh') }}
-      - name: iOS deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
-        run: |
-          brew install ninja python@3.13
-          make deps-ios
+      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+        run: make deps-ios
       - uses: actions/cache/save@v4
-        if: steps.deps-ios.outputs.cache-hit != 'true'
+        if: steps.deps.outputs.cache-hit != 'true'
         with:
           path: |
             build/deps-ios
             !build/deps-ios/pyvenv
-          key: ${{ steps.deps-ios.outputs.cache-primary-key }}
-      - name: iOS app and skeleton build
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: App and skeleton build
         run: make -j"$(sysctl -n hw.ncpu)" ios-skeleton
       - name: Skeleton holds no game code, no symlinks
         run: |
