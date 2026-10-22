@@ -58,6 +58,9 @@ bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back a step in the right column
 bool save_editor_took_back(void);  // save_editor.mm (the same)
 bool warp_tab_took_back(void);  // warp_tab.mm (the same)
+int mouse_cursor_show(void);
+void mouse_cursor_sample(void);
+int mouse_cursor_pos(float *x, float *y);
 #include "../input_bind.h"
 #include "../livesplit.h"
 #include "../paths.h"
@@ -435,6 +438,14 @@ void menu_apply_window_requests(void *win) {
         SDL_SetWindowSize(w, (int)(r >> 16), (int)(r & 0xffff));
     if (uint64_t m = __atomic_exchange_n(&g_window_move_request, 0ull, __ATOMIC_RELAXED))
         SDL_SetWindowPosition(w, (int)((m >> 16) & 0xffff) - 32768, (int)(m & 0xffff) - 32768);
+    static int os_hidden = -1;
+    int show = mouse_cursor_show();
+    if (show != os_hidden) {
+        if (show) SDL_HideCursor();
+        else SDL_ShowCursor();
+        os_hidden = show;
+    }
+    if (show) mouse_cursor_sample();
 }
 
 // ------------------------------------------------------------------ render thread
@@ -1627,7 +1638,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     // (on-screen controls: mobile/touch_controls.mm; also under the live preview of their own settings)
     bool touch = (!open && !kbd && touch_visible()) || (PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
+    bool cursor = mouse_cursor_show();  // the drawn pointer, when a game menu or Mouse controls is up
+    if (!cursor && !render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -1870,6 +1882,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (kbd) keyboard_draw(io, scale);
     plastic_widgets(false);
     ImGui::GetStyle() = ov_style;
+    {   // the system cursor is hidden on the window thread; this draws the pointer on the game picture
+        float x, y;
+        if (cursor && mouse_cursor_pos(&x, &y)) {
+            io.MousePos = ImVec2(x, y);
+            io.MouseDrawCursor = true;
+            ImGui::GetStyle().MouseCursorScale = fmaxf(1.25f, (float)th / 720.f);
+        } else io.MouseDrawCursor = false;
+    }
     ImGui::Render();
     g_text_busy = open && ui_text_busy();
     g_text_typed = open && ui_text_typed_into();
