@@ -40,6 +40,9 @@ extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
 bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back from the Triforce hunt's count
+int mouse_cursor_show(void);
+void mouse_cursor_sample(void);
+int mouse_cursor_pos(float *x, float *y);
 #include "../input_bind.h"
 #include "../paths.h"
 }
@@ -257,6 +260,14 @@ void menu_apply_window_requests(void *win) {
     }
     if (uint32_t r = __atomic_exchange_n(&g_window_resize_request, 0u, __ATOMIC_RELAXED))
         SDL_SetWindowSize(w, (int)(r >> 16), (int)(r & 0xffff));
+    static int os_hidden = -1;
+    int show = mouse_cursor_show();
+    if (show != os_hidden) {
+        if (show) SDL_HideCursor();
+        else SDL_ShowCursor();
+        os_hidden = show;
+    }
+    if (show) mouse_cursor_sample();
 }
 
 // ------------------------------------------------------------------ render thread
@@ -889,7 +900,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool kbd = g_kbd.load() == 1;
     bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
     bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
+    bool cursor = mouse_cursor_show();  // the drawn pointer, when a game menu or Mouse controls is up
+    if (!cursor && !render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -1035,6 +1047,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     }
 
     if (kbd) keyboard_draw(io, scale);
+    {   // the system cursor is hidden on the window thread; this draws the pointer on the game picture
+        float x, y;
+        if (cursor && mouse_cursor_pos(&x, &y)) {
+            io.MousePos = ImVec2(x, y);
+            io.MouseDrawCursor = true;
+            ImGui::GetStyle().MouseCursorScale = fmaxf(1.25f, (float)th / 720.f);
+        } else io.MouseDrawCursor = false;
+    }
     ImGui::Render();
     g_text_busy = open && ui_text_busy();
 #ifdef __APPLE__
