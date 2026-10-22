@@ -36,7 +36,7 @@
 // The iOS build (GAMEBUILD_IOS, any desktop): the same generated C compiled for arm64 iOS at the iOS guest base (the
 // Makefile's PLATFORM=ios values; GAMELIB_IOS_ID: that build's id, which the exported app's runtime checks).
 #ifndef GAMELIB_IOS_CFLAGS
-#define GAMELIB_IOS_CFLAGS "-O1 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -DLARECOMP_GUEST_BASE=0x800000000ull"
+#define GAMELIB_IOS_CFLAGS "-O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -DLARECOMP_GUEST_BASE=0x800000000ull"
 #endif
 #ifndef GAMELIB_IOS_BASE
 #define GAMELIB_IOS_BASE 0x800000000ull
@@ -517,6 +517,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         add(&a, base[i]);
         add(&a, g->out);
         if (i == 1) { add(&a, "--hle"); add(&a, t.hle); }
+        if (ios) add(&a, "--simd"), add(&a, "asm");  // (AArch64 inline asm, whatever this desktop is)
         g->p = spawn_proc(a.v, g->log, true);
         args_free(&a);
         if (!g->p) { snprintf(why, why_size, LN("the game code builder didn't start")); ok = false; }
