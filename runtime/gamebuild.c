@@ -13,6 +13,9 @@
 #include <signal.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <sys/xattr.h>
+#endif
 
 #include "gamelib.h"
 #include "paths.h"
@@ -227,7 +230,16 @@ static bool find_ios_tools(Tools *t, const char *skeleton, char *why, size_t why
     if (e && *e && file_exists(e)) { snprintf(t->ld, sizeof t->ld, "%s", e); t->lld = strstr(e, "lld") != NULL; return true; }
     // (bin/ + lib/: on Linux lld finds its libLLVM.so by RUNPATH $ORIGIN/../lib; tools/fetch_lld.sh)
     snprintf(t->ld, sizeof t->ld, "%s" SEP "lld" SEP LLD_HOST SEP "bin" SEP "lld" PLAT_EXE_SUFFIX, skeleton);
-    if (file_exists(t->ld)) { t->lld = true; return true; }
+    if (file_exists(t->ld)) {
+#ifdef __APPLE__
+        // The skeleton zip came through a browser: its files carry the quarantine attribute, and Gatekeeper kills
+        // an ad-hoc signed executable with it (rust-lld is one) the moment it starts. The player picked this
+        // folder on purpose and the linker runs only on their own files: the attribute goes, as `xattr -d` would.
+        if (removexattr(t->ld, "com.apple.quarantine", 0) == 0) LOG("[gamebuild] quarantine lifted from %s\n", t->ld);
+#endif
+        t->lld = true;
+        return true;
+    }
     snprintf(why, why_size, "the skeleton has no linker for this machine (lld/" LLD_HOST ")");
     return false;
 }
@@ -313,6 +325,13 @@ static void helper_failed(const char *what, int r, const char *log, char *why, s
         if (sig == SIGKILL) {
             snprintf(how, sizeof how, "killed by signal %d (SIGKILL: likely out of memory)", sig);
             snprintf(why, why_size, LN("A build helper was killed by the system, likely out of memory."));
+#ifdef __APPLE__
+            if (!strcmp(what, "linking") && !last[0]) {  // (an unsigned helper under quarantine ends the same way)
+                snprintf(how, sizeof how, "killed by signal %d (SIGKILL: out of memory, or Gatekeeper on a quarantined helper)", sig);
+                snprintf(why, why_size, LN("A build helper was killed by the system: out of memory, or macOS refused to run it "
+                                           "(a downloaded tool under quarantine)."));
+            }
+#endif
         } else {
             snprintf(how, sizeof how, "killed by signal %d (%s)", sig, strsignal(sig));
             snprintf(why, why_size, LN("A build helper crashed (signal %d)."), sig);

@@ -43,9 +43,10 @@ LAS Recomp $VERSION - iOS skeleton
 
 Not an app you can install: the iOS app without the game code. LAS Recomp on your Mac, Linux or Windows machine
 (the start screen's "Recomp for iOS") builds the game code from your own game files with the tools in here and
-saves an unsigned .ipa. Sign and install that with your own tool and Apple ID: the app needs one entitlement
-(LAS Recomp.app/LASRecomp.entitlements), which a free developer account grants. On the device, put your extracted/
-folder (exefs and romfs) in the app's Documents through the Files app or Finder.
+saves an .ipa for your own sideloading tool and Apple ID (Impactor, SideStore, AltStore...). The app needs one
+entitlement, com.apple.developer.kernel.increased-memory-limit, which a free developer account grants; it is in the
+executable's signature, where those tools read it. On the device, put your extracted/ folder (exefs and romfs) in
+the app's Documents through the Files app or Finder.
 
 Contents: LAS Recomp.app (the app), lld/ (the linker for each desktop OS, from Rust's rust-lld: Apache-2.0 with LLVM
 exception), include/ (zig's Darwin C headers: MIT / Apple's APSL), libSystem.B.tbd (the link stub).

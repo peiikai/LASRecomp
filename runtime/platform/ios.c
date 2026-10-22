@@ -71,10 +71,28 @@ void plat_init(void) {
 }
 
 // The window is below the process's VA limit (runtime/guest_base.h: iOS builds use a low GUEST_BASE); pages are
-// backed as touched.
+// backed as touched. The limit depends on the signature: without com.apple.developer.kernel.increased-memory-limit
+// the kernel gives the process a smaller address space and the 12.5 GB window doesn't fit (measured on an iPhone
+// 15 Pro: the same app starts with the entitlement and fails here without it), so a failure says what the process
+// got, for the log of a sideloaded build whose signing tool dropped the entitlement.
 bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     vm_address_t a = (vm_address_t)lo;
-    return vm_allocate(mach_task_self(), &a, (vm_size_t)(hi - lo), VM_FLAGS_FIXED) == KERN_SUCCESS;
+    kern_return_t kr = vm_allocate(mach_task_self(), &a, (vm_size_t)(hi - lo), VM_FLAGS_FIXED);
+    if (kr == KERN_SUCCESS) return true;
+    fprintf(stderr, "[vm] vm_allocate(%llx..%llx, FIXED) = %d%s\n", (unsigned long long)lo, (unsigned long long)hi, kr,
+            kr == KERN_NO_SPACE ? " (KERN_NO_SPACE)" : kr == KERN_INVALID_ADDRESS ? " (KERN_INVALID_ADDRESS)" : "");
+    for (uint64_t want = 64ull << 30; want >= 1ull << 30; want >>= 1) {  // (the largest free run, 64 GB down to 1 GB)
+        vm_address_t any = 0;
+        if (vm_allocate(mach_task_self(), &any, (vm_size_t)want, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
+            fprintf(stderr, "[vm] largest free run: %llu GB at %llx; the window needs %llu GB at %llx. Is the app signed "
+                            "with com.apple.developer.kernel.increased-memory-limit (runtime/platform/ios.entitlements)?\n",
+                    (unsigned long long)(want >> 30), (unsigned long long)any, (unsigned long long)((hi - lo) >> 30),
+                    (unsigned long long)lo);
+            vm_deallocate(mach_task_self(), any, (vm_size_t)want);
+            break;
+        }
+    }
+    return false;
 }
 
 bool plat_reset_guest(uint64_t lo, uint64_t hi) {

@@ -14,9 +14,10 @@
 #   SKELETON=1            no game library and no signing: the app without Frameworks/LASGame.framework, which the
 #                         iOS skeleton zip ships (tools/ios_skeleton.sh) and the start screen on any desktop
 #                         completes with the library it builds there (runtime/iosexport.c); the .ipa from that is
-#                         unsigned, for the player's own signing tool (LASRecomp.entitlements inside says what the
-#                         signature needs: one entitlement, which a free Apple ID's team grants). Symlinks in the
-#                         app become <name>.symlink files holding the target (the zip is unpacked on Windows too)
+#                         for the player's own sideloading tool: the executable carries an ad-hoc signature with
+#                         runtime/platform/ios.entitlements (one entitlement, which a free Apple ID's team grants),
+#                         where such tools read what to ask Apple for. Symlinks in the app become <name>.symlink
+#                         files holding the target (the zip is unpacked on Windows too)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EXE=${1:-build/ios/lasrecomp}
@@ -42,7 +43,6 @@ rm -rf "$APP"
 mkdir -p "$APP/Frameworks"
 cp "$EXE" "$APP/lasrecomp"
 strip -S "$APP/lasrecomp"
-cp runtime/platform/ios.entitlements "$APP/LASRecomp.entitlements"  # (what a signing tool must grant)
 
 # The game code: Frameworks/LASGame.framework (a flat iOS framework: the binary, Info.plist, its .id next to it).
 # The skeleton gets only its Info.plist (runtime/iosexport.c adds the library and its .id).
@@ -201,7 +201,12 @@ EOF
 fi
 
 if [ -n "$SKELETON" ]; then
-    echo "$APP (skeleton): $(du -sh "$APP" | cut -f1), $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks"
+    # Sideloading tools (Impactor, SideStore, AltStore) take the entitlements to ask Apple for from the executable's
+    # own code signature: an ad-hoc signature carrying ours (they re-sign over it). The frameworks stay unsigned
+    # (their signature has to be the tool's anyway).
+    codesign --force --sign - --entitlements runtime/platform/ios.entitlements --timestamp=none "$APP/lasrecomp"
+    codesign -d --entitlements :- "$APP/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "entitlements not in the signature"; exit 1; }
+    echo "$APP (skeleton): $(du -sh "$APP" | cut -f1), $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks, ad-hoc signed with the entitlements"
     exit 0
 fi
 

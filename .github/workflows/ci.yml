@@ -348,7 +348,7 @@ jobs:
           if nm "$A/lasrecomp" | grep ' _f_8' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
           links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the skeleton: $links"; exit 1; }
           [ -f "$A/python/site-packages/keystone/libkeystone.dylib.symlink" ] || { echo "::error::keystone's .symlink missing"; exit 1; }
-          [ -f "$A/LASRecomp.entitlements" ] && grep -q increased-memory-limit "$A/LASRecomp.entitlements"
+          codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
           du -sh "$A"
 
       - name: macOS launch smoke-test regressions

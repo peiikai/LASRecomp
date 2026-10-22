@@ -2,8 +2,8 @@
 // (tools/ios_skeleton.sh: the app without game code, the linkers, the compiler's Darwin headers) and picks that
 // folder and their game files folder; the game code library is built here from those files (runtime/gamebuild.c
 // GAMEBUILD_IOS), put in as Frameworks/LASGame.framework, and the whole thing zipped as an unsigned .ipa - the
-// player signs it with their own tool and Apple ID (the one entitlement it needs is in LASRecomp.entitlements inside
-// the app; a free team grants it). The game files go to the app's Documents on the device (Files / Finder).
+// player signs it with their own tool and Apple ID (the one entitlement it needs is in the executable's ad-hoc
+// signature, where such tools read it; a free team grants it). The game files go to the app's Documents on the device (Files / Finder).
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>

@@ -130,7 +130,7 @@ void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
     bool can = possible();
     std::string d = "Builds the game code for iPhone / iPad and saves an unsigned iOS app (.ipa) where you choose. "
                     "Sign and install it with your own tool and Apple ID (a free developer account is enough: the app "
-                    "needs the increased-memory-limit entitlement, LASRecomp.entitlements inside the app). On the "
+                    "needs the increased-memory-limit entitlement, which your tool reads from the app). On the "
                     "device, put your extracted/ folder (exefs and romfs) in the app's Documents through the Files "
                     "app or Finder.";
     bool have_src = !src.empty() || ready;
