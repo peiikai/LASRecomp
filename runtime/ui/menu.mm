@@ -20,6 +20,7 @@
 #include "osk.h"
 #include "pad_nav.h"
 #include "plastic.h"
+#include "touch_ui.h"
 #ifdef __APPLE__
 #include "imgui_impl_metal.h"
 #else
@@ -64,7 +65,8 @@ static std::atomic<bool> g_text_busy{false};  // a text field / the on-screen ke
 static std::atomic<bool> g_want_fullscreen_apply{false};
 
 struct QEvent {
-    enum { KEY, ANALOG, MOUSE_POS, MOUSE_BUTTON, WHEEL, TEXT } kind;
+    enum { KEY, ANALOG, MOUSE_POS, MOUSE_BUTTON, WHEEL, FINGER, TEXT } kind;
+    SDL_Event finger;  // (FINGER: the event itself - touch_ui.h runs on the render thread)
     ImGuiKey key;
     bool down;
     float value, x, y;
@@ -74,6 +76,14 @@ struct QEvent {
 static pthread_mutex_t q_lock = PTHREAD_MUTEX_INITIALIZER;
 static std::vector<QEvent> q_events;
 static float g_pixel_density = 1;
+static int g_win_px_w = 1, g_win_px_h = 1;  // (touch positions come normalized)
+static std::atomic<int> g_safe_l{0}, g_safe_t{0}, g_safe_r{0}, g_safe_b{0};  // insets, pixels (phones: notch, home bar)
+// Phones: the menu a third larger than on a 1080-line monitor (a 6.5" screen held at arm's length: rows to touch)
+#if PLAT_IOS
+static const float kUi = 1.35f;
+#else
+static const float kUi = 1.0f;
+#endif
 
 static void push(const QEvent &e) {
     pthread_mutex_lock(&q_lock);
@@ -261,10 +271,12 @@ bool menu_handle_event(const SDL_Event *e) {
     }
     case SDL_EVENT_MOUSE_MOTION:
         if (!capturing()) return false;
+        if (PLAT_IOS && e->motion.which == SDL_TOUCH_MOUSEID) return true;  // (the finger itself: FINGER below)
         { QEvent q = {}; q.kind = QEvent::MOUSE_POS; q.x = e->motion.x * g_pixel_density; q.y = e->motion.y * g_pixel_density; push(q); }
         return true;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
         if (!capturing()) return false;
+        if (PLAT_IOS && e->button.which == SDL_TOUCH_MOUSEID) return true;
         {
             QEvent q = {};
             q.kind = QEvent::MOUSE_BUTTON;
@@ -275,8 +287,19 @@ bool menu_handle_event(const SDL_Event *e) {
         return true;
     case SDL_EVENT_MOUSE_WHEEL:
         if (!capturing()) return false;
+        if (PLAT_IOS && e->wheel.which == SDL_TOUCH_MOUSEID) return true;
         { QEvent q = {}; q.kind = QEvent::WHEEL; q.x = e->wheel.x; q.y = e->wheel.y; push(q); }
         return true;
+#if PLAT_IOS
+    case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_CANCELED:
+        if (!capturing()) return false;
+        {   // touch screens (touch_ui.h, on the render thread: drain_events)
+            QEvent q = {};
+            q.kind = QEvent::FINGER, q.finger = *e;
+            push(q);
+        }
+        return true;
+#endif
     default:
         return false;
     }
@@ -308,8 +331,23 @@ extern "C" uint32_t g_window_resize_request;  // (test scripts: runtime/hle/inpu
 void menu_apply_window_requests(void *win) {
     SDL_Window *w = (SDL_Window *)win;
     g_pixel_density = SDL_GetWindowPixelDensity(w);
-    static bool text_input;
+    SDL_GetWindowSizeInPixels(w, &g_win_px_w, &g_win_px_h);
+#if PLAT_IOS
+    {   // the safe area (points -> pixels): the menu keeps out of the notch and the home indicator
+        SDL_Rect sa;
+        int ww, wh;
+        if (SDL_GetWindowSafeArea(w, &sa) && SDL_GetWindowSize(w, &ww, &wh) && ww > 0 && wh > 0) {
+            g_safe_l = (int)(sa.x * g_pixel_density), g_safe_t = (int)(sa.y * g_pixel_density);
+            g_safe_r = (int)((ww - sa.x - sa.w) * g_pixel_density), g_safe_b = (int)((wh - sa.y - sa.h) * g_pixel_density);
+        }
+    }
+    // phones: text input shows the system keyboard - only while a text field has the focus, not the whole time the
+    // menu is open
+    bool want_text = capturing() && g_text_busy.load();
+#else
     bool want_text = capturing();
+#endif
+    static bool text_input;
     if (want_text != text_input) {
         if (want_text) SDL_StartTextInput(w);
         else SDL_StopTextInput(w);
@@ -487,6 +525,7 @@ static void init(void) {
     g_inited = true;
 }
 
+static TouchUi g_touch;  // (render thread)
 static void drain_events(ImGuiIO &io) {
     pthread_mutex_lock(&q_lock);
     std::vector<QEvent> ev;
@@ -499,6 +538,11 @@ static void drain_events(ImGuiIO &io) {
         case QEvent::MOUSE_POS: io.AddMousePosEvent(q.x, q.y); break;
         case QEvent::MOUSE_BUTTON: io.AddMouseButtonEvent(q.button, q.down); break;
         case QEvent::WHEEL: io.AddMouseWheelEvent(q.x, q.y); break;
+        case QEvent::FINGER:
+            io.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+            g_touch.event(&q.finger, (float)g_win_px_w, (float)g_win_px_h, [&](float x, float y) { io.AddMousePosEvent(x, y); },
+                          [&](bool down) { io.AddMouseButtonEvent(0, down); });
+            break;
         case QEvent::TEXT: io.AddInputCharactersUTF8(q.text); break;
         }
     }
@@ -1242,10 +1286,12 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         else { memcpy(g_ov_key, key, sizeof key); g_ov_same = key[0] ? 1 : 0; }
     }
     drain_events(io);
-    // fonts are built at 34/56 px for a ~1080 px tall output; scale to the window
-    float scale = (float)(th / 1080.0);
+    // fonts are built at 34/56 px for a ~1080 px tall output; scale to the window (phones: kUi larger)
+    float scale = (float)(th / 1080.0) * kUi;
     if (scale < 0.45f) scale = 0.45f;
     io.FontGlobalScale = scale;
+    // a drag / flick: this frame's scroll, applied after NewFrame (touch_scroll_apply)
+    float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); });
 
 #ifdef __APPLE__
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
@@ -1282,6 +1328,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     ImGui_ImplVulkan_NewFrame();
 #endif
     ImGui::NewFrame();
+    g_touch.scroll_apply(touch_px);
 
     if (g_settings.show_fps) {
         int c = g_settings.show_fps;
@@ -1318,7 +1365,16 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
                                                       IM_COL32(0, 0, 0, (int)(plastic_theme().dim * 255)));
         float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;  // (all the height: a slim margin)
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
+#if PLAT_IOS
+        {   // phones: the whole safe area (the notch and the home indicator left out), centred on the screen: the
+            // wider side inset on both sides (the notch is on one side only in landscape)
+            float sx = fmaxf(g_safe_l, g_safe_r), sy = fmaxf(g_safe_t, g_safe_b);
+            w = io.DisplaySize.x - 2 * sx - 2 * 12 * scale;
+            h = io.DisplaySize.y - 2 * sy - 2 * 12 * scale;
+        }
+#endif
+        ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
         ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
         ImGui::Begin("##menu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
         ImFont *keep_big = g_font_big;  // (the window in the menu's font; header() uses g_font_big)

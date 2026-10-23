@@ -29,6 +29,8 @@
 #include "pad_nav.h"
 #include "plastic.h"
 #include "ios_export_ui.h"
+#include "touch_ui.h"
+static TouchUi g_touch;  // (touch screens: the start screen's pages)
 #ifdef __APPLE__
 #include "imgui_impl_metal.h"
 #else
@@ -1147,6 +1149,26 @@ static void reveal_folder(const std::string &dir) {
 
 static SDL_Window *g_launcher_win;
 
+// The Settings / Game files window: its scale (1 at 1080 lines) and size, centred in the screen; phones: a third
+// larger (as the in-game menu there: runtime/ui/menu.mm kUi) and the whole safe area (the notch, the home indicator).
+static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centre) {
+    *sc = ds.y / 1080.0f, *w = fminf(ds.x * 0.9f, 1500 * *sc), *h = ds.y - 2 * 18 * *sc;  // (all the height: a slim margin)
+    *centre = ImVec2(ds.x * 0.5f, ds.y * 0.5f);
+#if PLAT_IOS
+    // (the start screen's DisplaySize is in points, as SDL's safe area)
+    SDL_Rect sa;
+    int ww, wh;
+    float sl = 0, st = 0, sr = 0, sb = 0;
+    if (SDL_GetWindowSafeArea(g_launcher_win, &sa) && SDL_GetWindowSize(g_launcher_win, &ww, &wh) && ww > 0)
+        sl = sa.x, st = sa.y, sr = ww - sa.x - sa.w, sb = wh - sa.y - sa.h;
+    *sc *= 1.35f;
+    ImGui::GetIO().FontGlobalScale *= 1.35f;
+    // (centred on the screen: the wider side inset on both sides - the notch is on one side only in landscape)
+    float sx = fmaxf(sl, sr), sy = fmaxf(st, sb);
+    *w = ds.x - 2 * sx - 2 * 12 * *sc, *h = ds.y - 2 * sy - 2 * 12 * *sc;
+#endif
+}
+
 // ------------------------------------------------------------------ iOS export (runtime/ui/ios_export_ui.mm)
 // Its page shares the setup's busy state, job line and progress bar through these hooks.
 #if !PLAT_IOS
@@ -1706,6 +1728,22 @@ extern "C" void launcher_run(const char *root) {
         while (SDL_PollEvent(&e)) {
             input_cursor_event(&e);  // (pad / key: the cursor hides; ImGui's backend leaves it so, below)
             if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
+#if PLAT_IOS
+            // touch screens: the finger events go through touch_ui.h (taps click, drags scroll); the mouse events SDL
+            // makes from the same touches (SDL_TOUCH_MOUSEID) would press on touch-down - dropped
+            if (((e.type == SDL_EVENT_MOUSE_MOTION) && e.motion.which == SDL_TOUCH_MOUSEID) ||
+                ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) && e.button.which == SDL_TOUCH_MOUSEID) ||
+                (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.which == SDL_TOUCH_MOUSEID))
+                continue;
+            if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_MOTION ||
+                e.type == SDL_EVENT_FINGER_CANCELED) {
+                ImGuiIO &tio = ImGui::GetIO();
+                tio.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
+                g_touch.event(&e, tio.DisplaySize.x, tio.DisplaySize.y, [&](float x, float y) { tio.AddMousePosEvent(x, y); },
+                              [&](bool down) { tio.AddMouseButtonEvent(0, down); });
+                continue;
+            }
+#endif
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) exit(0);
         }
@@ -1768,7 +1806,10 @@ extern "C" void launcher_run(const char *root) {
             // controller presses launcher_pad_event fed in and turns gamepad navigation off: set it again while a
             // controller is connected
             if (SDL_HasGamepad()) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+            // a drag / flick (touch_ui.h): this frame's scroll, onto the page under the finger
+            float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); });
             ImGui::NewFrame();
+            g_touch.scroll_apply(touch_px);
             const Page frame_page = page;  // (menu_sfx_frame: B on the main page does nothing)
 
             ImVec2 ds = io.DisplaySize;
@@ -1934,12 +1975,14 @@ extern "C" void launcher_run(const char *root) {
             } else if (page == SETTINGS) {
                 // the in-game menu's tabs (runtime/ui/menu.mm), in a window like the in-game one; tabs that need a
                 // loaded game say so
-                float sc = ds.y / 1080.0f, w = fminf(ds.x * 0.9f, 1500 * sc), h = ds.y - 2 * 18 * sc;  // (all the height: a slim margin)
+                float sc, w, h;
+                ImVec2 centre;
+                panel_layout(ds, &sc, &w, &h, &centre);
                 ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ds.x,
                                                           ImGui::GetWindowPos().y + ds.y),
                                                           IM_COL32(0, 0, 0, (int)(plastic_theme().dim * 255)));
                 ImVec2 wp = ImGui::GetWindowPos();
-                ImVec2 pa(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f);
+                ImVec2 pa(wp.x + centre.x - w * 0.5f, wp.y + centre.y - h * 0.5f);
                 pieces = true;
                 plastic_panel(ImGui::GetWindowDrawList(), pa, ImVec2(pa.x + w, pa.y + h), sc);  // (the paper panel, framed)
                 ImGui::SetCursorScreenPos(pa);
@@ -1997,12 +2040,14 @@ extern "C" void launcher_run(const char *root) {
                 // folder with the game files, set up; once set up, delete. Each row's explanation on the right.
                 // IOS: the same window with the export rows (ios_export_rows).
                 bool ios_page = page == IOS;
-                float sc = ds.y / 1080.0f, w = fminf(ds.x * 0.9f, 1500 * sc), h = ds.y - 2 * 18 * sc;
+                float sc, w, h;
+                ImVec2 centre;
+                panel_layout(ds, &sc, &w, &h, &centre);
                 ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetWindowPos(), ImVec2(ImGui::GetWindowPos().x + ds.x,
                                                           ImGui::GetWindowPos().y + ds.y),
                                                           IM_COL32(0, 0, 0, (int)(plastic_theme().dim * 255)));
                 ImVec2 wp = ImGui::GetWindowPos();
-                ImVec2 pa(wp.x + (ds.x - w) * 0.5f, wp.y + (ds.y - h) * 0.5f);
+                ImVec2 pa(wp.x + centre.x - w * 0.5f, wp.y + centre.y - h * 0.5f);
                 pieces = true;
                 plastic_panel(ImGui::GetWindowDrawList(), pa, ImVec2(pa.x + w, pa.y + h), sc);
                 ImGui::SetCursorScreenPos(pa);
