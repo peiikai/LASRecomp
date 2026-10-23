@@ -23,7 +23,7 @@ enum { MENU_CONFIRM_GAME = 0, MENU_CONFIRM_CONTROLLER = 1 };
 enum { DPAD_NOTHING = 0, DPAD_ITEMS = 1, DPAD_MOVE = 2 };
 enum { TIMER_POS_LEFT = 0, TIMER_POS_RIGHT = 1 };  // the run timer's corner (bottom left / right)
 enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
-enum { MOUSE_OFF = 0, MOUSE_AB = 1, MOUSE_LOOK = 2 };  // Gameplay tab "Mouse controls"
+enum { MOUSE_OFF = 0, MOUSE_AB = 1, MOUSE_LOOK = 2 };  // Controls tab "Mouse controls"
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting, and the menus follow it
 // too (runtime/ui/i18n.mm). LANG_AUTO follows the host's language (macOS / Windows: the user's preferred languages;
@@ -66,8 +66,12 @@ typedef struct {
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)
     bool bg_input;       // controllers keep working while the window isn't in front (SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS)
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
+<<<<<<< HEAD
     bool hookshot_8way;  // the hookshot fires along the nearest of 8 directions (for 360-degree movement): runtime/hle/hookshot.c
     int mouse_controls;  // MOUSE_*: Off, A and B clicks, or Look (cursor aims him): runtime/hle/input.c, qol.c
+=======
+    int mouse_controls;  // MOUSE_*: Off, A and B clicks, or Look (faces the cursor while walking and with the shield up)
+>>>>>>> 27a57a0 (Put Look's yaw sites in the versioned address tables.)
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
     bool hide_hero_icon; // no Hero Mode icon on the HUD
     bool pause_unfocused; // the game stops while its window isn't in front (runtime/hle/vi.c)
