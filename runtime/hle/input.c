@@ -320,7 +320,11 @@ bool input_user_blocked(const SDL_Event *e) {
 // game's ui_run and the start screen).
 static bool cursor_hidden;  // (the start screen keeps ImGui's backend from showing it again meanwhile)
 bool input_cursor_hidden(void) { return cursor_hidden; }
+int mouse_cursor_show(void);
 void input_cursor_event(const SDL_Event *e) {
+    // Gameplay and the game's menus draw their own pointer. A key would hide the OS cursor and the next
+    // mouse move would show it again, so both pointers sit on the picture.
+    if (mouse_cursor_show()) return;
     static float moved;  // (points the mouse moved since the cursor was hidden)
     bool hide = false, show = false;
     switch (e->type) {
@@ -733,8 +737,9 @@ int mouse_look_angle(uint32_t *out) {
 
 // The stick snap (GA(SNAP_DIR_SITE)) is shared by walking and by facing. These return addresses are the callers
 // that turn the angle into Link's yaw and then store it themselves (runtime/game_addresses). Other callers steer,
-// so Look leaves them on the stick: WASD still chooses where he moves. Shield and mount poses call snap while the
-// stick is at rest; that path is handled in rt_snap_dir. Standing still never calls snap (its dead zone skips it).
+// so Look leaves them on the stick: WASD chooses where he moves. The shield walk's snap is one of those: its
+// angle is the step as well as the facing, and it is not asked while he stands still. Standing still writes the
+// cursor onto the model directly (look_face_idle).
 static int facing_snap_site(uint64_t lr) {
     const uint64_t sites[] = {
         GA(MOUSE_YAW_SNAP_0), GA(MOUSE_YAW_SNAP_1), GA(MOUSE_YAW_SNAP_2), GA(MOUSE_YAW_SNAP_3), GA(MOUSE_YAW_SNAP_4),
@@ -750,6 +755,34 @@ int mouse_look_snap(Cpu *c) {
     if (!mouse_look_angle(&ang)) return 0;
     c->x[0] = ang;
     return 1;
+}
+
+// Standing still never asks the stick snap, so the cursor has nowhere to land. The model yaw lives on the
+// transform hanging off Link (actor+0x2d8, quaternion at +0x90). While the stick is at rest, write that.
+// A pushed stick leaves it alone: the step, and the facing that step stores, stay WASD.
+static void look_face_idle(int32_t lx, int32_t ly) {
+    if (g_settings.mouse_controls != MOUSE_LOOK || mouse_menu_active() || menu_input_captured()) return;
+    if ((int64_t)lx * lx + (int64_t)ly * ly > 4000ll * 4000) return;
+    extern uint64_t renderer_present_count(void);
+    static uint64_t done;
+    uint64_t f = renderer_present_count();
+    if (f == done) return;
+    uint32_t ang = 0;
+    if (!mouse_look_angle(&ang)) return;
+    uint64_t gm = LD64(GA(GAME_MGR));
+    uint64_t actor = gm ? LD64(gm + 0x4b8) : 0;
+    if (actor < HEAP_BASE || actor + 0x2e0 >= HEAP_BASE + HEAP_MAX) return;
+    uint64_t node = LD64(actor + 0x2d8);
+    if (node < HEAP_BASE || node + 0xa0 >= HEAP_BASE + HEAP_MAX) return;
+    float *q = (float *)(uintptr_t)(node + 0x90);
+    float mag = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    if (!(mag > 0.5f && mag < 1.5f)) return;
+    float yaw = (float)ang * (2.f * (float)M_PI / 4294967296.f);
+    q[0] = 0;
+    q[1] = sinf(yaw * 0.5f);
+    q[2] = 0;
+    q[3] = cosf(yaw * 0.5f);
+    done = f;
 }
 
 // Scripted input for testing: LARECOMP_INPUT="frame:BUTTON:frames,..." (BUTTON = A,B,X,Y,L,R,ZL,ZR,PLUS,
@@ -1104,6 +1137,7 @@ static void fill_state(Cpu *c) {
         b = tracker_map_input(b, st);
         lx = st[0], ly = st[1], rx = st[2], ry = st[3];
     }
+    look_face_idle(lx, ly);
     *(uint64_t *)(s + 8) = b;
     static uint64_t last_b;
     if (b != last_b && getenv("LARECOMP_INPUT")) LOG("[input] id %#x buttons %#llx (sampling %lld, lr %llx)\n", id, (unsigned long long)b, (long long)sampling, c->x[30]);

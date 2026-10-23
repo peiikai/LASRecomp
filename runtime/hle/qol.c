@@ -26,7 +26,8 @@ int rt_snap_dir(Cpu *c) {
     static bool inner;
     if (inner) return 0;
     {   // Yaw callers face the cursor even while WASD is held (he still moves along the stick). Any other
-        // caller, only while that vector is at rest: shield and mount poses ask then, walking does not.
+        // caller keeps the stick, including the shield walk: that one angle is also the step, so Look must
+        // not replace it. Shield and mount poses that ask while the stick is at rest still face the cursor.
         extern int mouse_look_snap(Cpu *);
         if (mouse_look_snap(c)) return 1;
         float mag = hypotf(x, y);

@@ -262,12 +262,15 @@ void menu_apply_window_requests(void *win) {
         SDL_SetWindowSize(w, (int)(r >> 16), (int)(r & 0xffff));
     static int os_hidden = -1;
     int show = mouse_cursor_show();
-    if (show != os_hidden) {
-        if (show) SDL_HideCursor();
-        else SDL_ShowCursor();
-        os_hidden = show;
+    if (show) {
+        // Hide whenever the OS pointer is up, not only on the change: a key hides it and a mouse move shows it again.
+        if (SDL_CursorVisible()) SDL_HideCursor();
+        os_hidden = 1;
+        mouse_cursor_sample();
+    } else if (os_hidden == 1) {
+        if (!SDL_CursorVisible()) SDL_ShowCursor();
+        os_hidden = 0;
     }
-    if (show) mouse_cursor_sample();
 }
 
 // ------------------------------------------------------------------ render thread
