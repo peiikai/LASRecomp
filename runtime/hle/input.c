@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../game_addresses.h"
 #include "../hle.h"
 #include "../nvn/nvn.h"
 #include "../nvn/renderer.h"
@@ -730,18 +731,17 @@ int mouse_look_angle(uint32_t *out) {
     return 1;
 }
 
-// The stick snap (main+0xded9f0) is shared by walking and by facing. These return addresses are the callers
-// that turn the angle into Link's yaw and then store it themselves. Other callers steer, so Look leaves them
-// on the stick: WASD still chooses where he moves. Shield and mount poses call snap while the stick is at
-// rest; that path is handled in rt_snap_dir. Standing still never calls snap (its dead zone skips it).
+// The stick snap (GA(SNAP_DIR_SITE)) is shared by walking and by facing. These return addresses are the callers
+// that turn the angle into Link's yaw and then store it themselves (runtime/game_addresses). Other callers steer,
+// so Look leaves them on the stick: WASD still chooses where he moves. Shield and mount poses call snap while the
+// stick is at rest; that path is handled in rt_snap_dir. Standing still never calls snap (its dead zone skips it).
 static int facing_snap_site(uint64_t lr) {
-    static const uint32_t sites[] = {
-        0xd94214, 0xd98ce8, 0xd99a40, 0xd9c7c4, 0xd9d840,
-        0xdc0970, 0xdd2a00, 0xdd3bc4, 0xddacb4, 0xde1e30,
+    const uint64_t sites[] = {
+        GA(MOUSE_YAW_SNAP_0), GA(MOUSE_YAW_SNAP_1), GA(MOUSE_YAW_SNAP_2), GA(MOUSE_YAW_SNAP_3), GA(MOUSE_YAW_SNAP_4),
+        GA(MOUSE_YAW_SNAP_5), GA(MOUSE_YAW_SNAP_6), GA(MOUSE_YAW_SNAP_7), GA(MOUSE_YAW_SNAP_8), GA(MOUSE_YAW_SNAP_9),
     };
-    uint64_t off = lr - MAIN_BASE;
     for (size_t i = 0; i < sizeof sites / sizeof sites[0]; i++)
-        if (off == sites[i]) return 1;
+        if (lr == sites[i]) return 1;
     return 0;
 }
 int mouse_look_snap(Cpu *c) {
@@ -750,34 +750,6 @@ int mouse_look_snap(Cpu *c) {
     if (!mouse_look_angle(&ang)) return 0;
     c->x[0] = ang;
     return 1;
-}
-// Standing still never reaches the snap above, so the yaw quaternion already on his facing nodes is turned
-// toward the cursor here. Only a node that already holds a rotation is touched, and nothing in the game is called.
-static int in_heap(uint64_t o, uint64_t n) {
-    return o >= HEAP_BASE && o + n >= o && o + n <= HEAP_BASE + HEAP_MAX && (o & 7) == 0;
-}
-static int unit_quat(uint64_t o) {
-    if (!in_heap(o, 0xa0)) return 0;
-    float q[4];
-    memcpy(q, (const void *)(uintptr_t)(o + 0x90), 16);
-    float n = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
-    return n > 0.5f && n < 1.5f;
-}
-static void mouse_face_quat(void) {
-    if (g_settings.mouse_controls != MOUSE_LOOK || mouse_menu_active() || menu_input_captured()) return;
-    uint32_t ang = 0;
-    if (!mouse_look_angle(&ang)) return;
-    uint64_t gm = LD64(MAIN_BASE + 0x1c97188);  // -> +0x4b8 Player* (runtime/hle/pets.c)
-    uint64_t player = gm ? LD64(gm + 0x4b8) : 0;
-    if (!in_heap(player, 0x1600)) return;
-    float half = (float)((double)ang / 4294967296.0 * M_PI);
-    float q[4] = {0.f, sinf(half), 0.f, cosf(half)};
-    uint64_t nodes[2] = {LD64(player + 0x80), LD64(player + 0x2d8)};
-    for (int i = 0; i < 2; i++) {
-        if (!unit_quat(nodes[i])) continue;
-        if (i && nodes[i] == nodes[0]) continue;
-        memcpy((void *)(uintptr_t)(nodes[i] + 0x90), q, 16);
-    }
 }
 
 // Scripted input for testing: LARECOMP_INPUT="frame:BUTTON:frames,..." (BUTTON = A,B,X,Y,L,R,ZL,ZR,PLUS,
@@ -1142,7 +1114,6 @@ static void fill_state(Cpu *c) {
     *(int32_t *)(s + 24) = rx;
     *(int32_t *)(s + 28) = ry;
     *(uint32_t *)(s + 32) = 1;  // IsConnected
-    mouse_face_quat();
 }
 
 HLE_FUNC("_ZN2nn3hid12GetNpadStateEPNS0_16NpadFullKeyStateERKj", hid_state_fullkey) { fill_state(c); }

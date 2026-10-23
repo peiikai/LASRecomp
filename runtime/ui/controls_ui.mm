@@ -272,7 +272,7 @@ extern "C" void controls_tab_draw(float scale) {
         opt_choice("Mouse controls", &g_settings.mouse_controls, names, 3, MOUSE_OFF,
                    "Off: clicks work in menus only. A and B: left click is A, right click is B. Look: he faces the "
                    "cursor while he walks and while the shield is up. Left click holds the sword, right click holds "
-                   "the shield. WASD walks.");
+                   "the shield. WASD walks. In menus the highlight follows the pointer.");
     }
 
     opt_section("Controller");
