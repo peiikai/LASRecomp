@@ -1662,7 +1662,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (g_ov_cache < 0) g_ov_cache = !getenv("LARECOMP_OVERLAY_CACHE") || atoi(getenv("LARECOMP_OVERLAY_CACHE")) != 0;
     char key[sizeof g_ov_key];
     key[0] = 0;
-    if (g_ov_cache) {
+    // The drawn pointer is part of this picture. Reusing a frame would leave it where the mouse was.
+    if (g_ov_cache && !cursor) {
         fps_note(now, io.DeltaTime);
         char rk[64], dk[160] = "";
         // (only the FPS counter, the run timer and the d-pad cross; input only reaches ImGui while the menu or the name
