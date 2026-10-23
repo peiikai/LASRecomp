@@ -93,6 +93,7 @@ static void push(const QEvent &e) {
 
 bool menu_is_open(void) { return g_open.load(); }
 static void set_open(bool open);
+extern "C" void menu_toggle(void) { set_open(!g_open.load()); }  // (the touch controls' menu button)
 static int g_tab = -1000, g_tab_request = -2;  // (-2: no request; -1 is the Prelaunch tab; -1000: the first tab)
 extern "C" void menu_test_open(void) {
     set_open(true);
@@ -105,11 +106,21 @@ extern "C" void menu_test_open(void) {
 }
 
 void menu_tabs_focus(bool first_tab);
+#if PLAT_IOS
+extern "C" void touch_reset(void);  // touch_controls.mm (on-screen controls)
+extern "C" bool touch_visible(void);
+extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font);
+#else
+static void touch_reset(void) {}
+static bool touch_visible(void) { return false; }
+static void touch_draw(ImDrawList *, float, float, ImFont *) {}
+#endif
 static void set_open(bool open) {
     if (open == g_open.load()) return;
     g_open.store(open);
     menu_sfx_play(open ? MENU_SFX_OPEN : MENU_SFX_CLOSE);
     input_reset();  // nothing held while the menu had focus leaks into the game
+    touch_reset();  // (nor touches: the menu takes them, their lifts included)
     bind_capture_cancel();
     if (open) {
         save_editor_on_open();
@@ -1203,9 +1214,10 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
 }
 
 // Whether menu_render draws anything: the menu, the keyboard, an overlay (FPS, inventory, tracker, chaos, race, a
-// pickup card).
-static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin, bool dpad) {
-    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin || dpad;
+// pickup card, the d-pad cross, the touch controls).
+static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin, bool dpad,
+                          bool touch) {
+    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin || dpad || touch;
 }
 
 #ifdef __APPLE__
@@ -1229,7 +1241,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #else
     plastic_perf_note_vk(open);
 #endif
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad)) {
+    bool touch = !open && !kbd && touch_visible();  // (on-screen controls: touch_controls.mm)
+    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -1255,7 +1268,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         char rk[64], dk[160] = "";
         // (only the FPS counter, the run timer and the d-pad cross; input only reaches ImGui while the menu or the name
         // entry is up)
-        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && race_overlay_key(rk, sizeof rk)) {
+        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !touch && race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
@@ -1352,6 +1365,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (inv) {
         inventory_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());
     }
+    if (touch) touch_draw(ImGui::GetBackgroundDrawList(), io.DisplaySize.x, io.DisplaySize.y, g_font_big ? g_font_big : ImGui::GetFont());
 
     if (open || kbd) {  // (the menu's colours; its windows, popups and buttons as plastic pieces)
         ImGui::GetStyle() = menu_style;
