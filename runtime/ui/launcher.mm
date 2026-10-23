@@ -208,20 +208,23 @@ static void set_job(const std::string &s, bool failed = false, const std::string
 }
 
 // Setup failures: a short headline and what to do next (also LARECOMP_LAUNCHER_SHOT=<f>:fail<1-6>, screenshots)
-enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD };
+enum { FAIL_NOT_FOUND = 1, FAIL_UNUSABLE, FAIL_COPY, FAIL_VERSION, FAIL_MISSING, FAIL_BUILD, FAIL_ARCHIVE };
 static void set_failure(int k) {
     static const char *const head[] = {"", "No game files found in that folder", "Those files can't be used",
                                        "Setup didn't finish", "Wrong version of the game", "Game files incomplete",
-                                       "The game code didn't build"};
+                                       "The game code didn't build", "The archive couldn't be extracted"};
     static const char *const hint[] = {
         "",
-        "Choose the folder that holds the game files.",
-        "Choose the folder that holds the game files.",
+        "Choose the folder (or the .zip) that holds the exefs and romfs folders.",
+        "Game packages (NSP, XCI, NCA, NSZ) can't be used: LAS Recomp needs the extracted exefs and romfs folders.",
         "Make sure there's about 12 GB free and try again.",
-        "LAS Recomp needs version 1.0.0 of the game, without updates.",
+        "LAS Recomp needs version 1.0.0 of the game, without updates. If your folder holds both the base game and an "
+        "update, choose the base game's files.",
         "Some files are missing. Choose the folder again; if it happens again, copy your extracted game files again.",
-        "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub."};
-    if (k >= 1 && k <= 6) set_job(head[k], true, hint[k]);
+        "Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub.",
+        "Make sure there's room for the extracted files (about twice the archive's size) and that the archive isn't "
+        "damaged or password-protected, or extract it yourself and choose the folder."};
+    if (k >= 1 && k <= 7) set_job(head[k], true, hint[k]);
 }
 
 static bool is_dir(const std::string &p) {
@@ -229,12 +232,27 @@ static bool is_dir(const std::string &p) {
     return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-// exefs: the folder with main and main.npdm; romfs: the folder with region_common (the game's data root). Found
-// in the picked folder or a few levels below it (some folder layouts nest them).
-static void find_game(const std::string &dir, int depth, std::string &exefs, std::string &romfs, bool &unusable) {
-    if (depth > 4 || (!exefs.empty() && !romfs.empty())) return;
-    if (exefs.empty() && file_exists(dir + "/main") && file_exists(dir + "/main.npdm")) exefs = dir;
-    if (romfs.empty() && is_dir(dir + "/region_common")) romfs = dir;
+static bool read_build_id(const std::string &main_path, uint8_t id[8]) {
+    FILE *f = fopen(main_path.c_str(), "rb");
+    if (!f) return false;
+    fseek(f, 0x40, SEEK_SET);
+    size_t n = fread(id, 1, 8, f);
+    fclose(f);
+    return n == 8;
+}
+
+static bool build_id_ok(const std::string &main_path) {
+    uint8_t id[8] = {0};
+    return read_build_id(main_path, id) && !memcmp(id, BUILD_ID, 8);
+}
+
+// exefs: a folder with main and main.npdm; romfs: a folder with region_common (the game's data root). Every one in
+// the picked folder or a few levels below it (layouts nest them: <title id>/exefs, an update next to the base game).
+static void find_all(const std::string &dir, int depth, std::vector<std::string> &exefs, std::vector<std::string> &romfs,
+                     bool &unusable) {
+    if (depth > 6) return;
+    if (file_exists(dir + "/main") && file_exists(dir + "/main.npdm")) exefs.push_back(dir);
+    if (is_dir(dir + "/region_common")) romfs.push_back(dir);
     DIR *d = opendir(dir.c_str());
     if (!d) return;
     std::vector<std::string> sub;
@@ -248,17 +266,103 @@ static void find_game(const std::string &dir, int depth, std::string &exefs, std
     }
     closedir(d);
     std::sort(sub.begin(), sub.end());
-    for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, unusable);
+    for (auto &s : sub) find_all(s, depth + 1, exefs, romfs, unusable);
 }
 
-static bool build_id_ok(const std::string &main_path) {
-    FILE *f = fopen(main_path.c_str(), "rb");
-    if (!f) return false;
-    uint8_t id[8] = {0};
-    fseek(f, 0x40, SEEK_SET);
-    size_t n = fread(id, 1, 8, f);
-    fclose(f);
-    return n == 8 && !memcmp(id, BUILD_ID, 8);
+// The game: the v1.0.0 exefs if there is one (else the first, so the version check says what's wrong), and the
+// romfs next to it (an update's romfs holds only the files it changed), else the first romfs.
+static void find_game(const std::string &dir, std::string &exefs, std::string &romfs, bool &unusable) {
+    std::vector<std::string> ex, ro;
+    find_all(dir, 0, ex, ro, unusable);
+    exefs.clear(), romfs.clear();
+    for (auto &e : ex)
+        if (build_id_ok(e + "/main")) { exefs = e; break; }
+    if (exefs.empty() && !ex.empty()) {
+        exefs = ex[0];
+        uint8_t id[8] = {0};
+        read_build_id(exefs + "/main", id);
+        fprintf(stderr, "[launcher] %s/main: build id %02x%02x%02x%02x%02x%02x%02x%02x, not v1.0.0's\n", exefs.c_str(),
+                id[0], id[1], id[2], id[3], id[4], id[5], id[6], id[7]);
+    }
+    if (!exefs.empty()) {
+        std::string parent = exefs.substr(0, exefs.find_last_of("/\\"));
+        for (auto &r : ro)
+            if (r.substr(0, r.find_last_of("/\\")) == parent) { romfs = r; break; }
+    }
+    if (romfs.empty() && !ro.empty()) romfs = ro[0];
+    if (ex.size() > 1 || ro.size() > 1)
+        fprintf(stderr, "[launcher] %zu exefs / %zu romfs found, using %s and %s\n", ex.size(), ro.size(), exefs.c_str(),
+                romfs.c_str());
+}
+
+// ------------------------------------------------------------------ archives (.zip, also .7z / .rar where supported)
+// A .zip of the game files (picked itself, or the archive in the picked folder) is extracted into <game_dir>/.unzip
+// with the system's own extractor - Windows 10+: tar.exe (libarchive), macOS: bsdtar, Linux: bsdtar, 7z, unzip or
+// Python - then set up from there and deleted.
+static bool is_archive(const std::string &n) {
+    std::string l = n;
+    for (auto &ch : l) ch = (char)tolower((unsigned char)ch);
+    for (const char *x : {".zip", ".7z", ".rar"})
+        if (l.size() > strlen(x) && l.compare(l.size() - strlen(x), strlen(x), x) == 0) return true;
+    return false;
+}
+
+// src itself when it's an archive, else the largest archive directly in the folder src ("" = none)
+static std::string archive_in(const std::string &src) {
+    struct stat st;
+    if (stat(src.c_str(), &st) == 0 && !S_ISDIR(st.st_mode)) return is_archive(src) ? src : "";
+    DIR *d = opendir(src.c_str());
+    if (!d) return "";
+    std::string best;
+    long long best_size = -1;
+    while (struct dirent *e = readdir(d)) {
+        std::string p = src + "/" + e->d_name;
+        if (e->d_name[0] == '.' || !is_archive(e->d_name) || stat(p.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) continue;
+        if ((long long)st.st_size > best_size) best = p, best_size = (long long)st.st_size;
+    }
+    closedir(d);
+    return best;
+}
+
+static bool extract_archive(const std::string &archive, const std::string &dst) {
+    std::string lower = archive;
+    for (auto &ch : lower) ch = (char)tolower((unsigned char)ch);
+    bool zip = lower.size() > 4 && lower.compare(lower.size() - 4, 4, ".zip") == 0;
+    std::vector<std::vector<std::string>> tries;
+#ifdef _WIN32
+    const char *sr = getenv("SystemRoot");
+    std::string tar = std::string(sr && *sr ? sr : "C:\\Windows") + "\\System32\\tar.exe";
+    tries.push_back({tar, "-xf", archive, "-C", dst});
+#else
+    for (const char *t : {"/usr/bin/bsdtar", "/usr/local/bin/bsdtar", "/opt/homebrew/bin/bsdtar"})
+        if (file_exists(t)) tries.push_back({t, "-xf", archive, "-C", dst});
+#ifdef __APPLE__
+    tries.push_back({"/usr/bin/tar", "-xf", archive, "-C", dst});  // (macOS tar is bsdtar)
+#endif
+    for (const char *t : {"/usr/bin/7z", "/usr/bin/7zz", "/usr/bin/7za"})
+        if (file_exists(t)) tries.push_back({t, "x", "-y", "-o" + dst, archive});
+    if (zip && file_exists("/usr/bin/unzip")) tries.push_back({"/usr/bin/unzip", "-q", "-o", archive, "-d", dst});
+    if (zip && file_exists("/usr/bin/python3")) tries.push_back({"/usr/bin/python3", "-m", "zipfile", "-e", archive, dst});
+#endif
+    std::string log = dst + ".log";
+    for (auto &t : tries) {
+        std::vector<const char *> argv;
+        for (auto &a : t) argv.push_back(a.c_str());
+        argv.push_back(NULL);
+        fprintf(stderr, "[launcher] extracting %s with %s\n", archive.c_str(), t[0].c_str());
+        PlatProc p = plat_spawn(argv.data(), log.c_str(), false);
+        int r = p ? plat_proc_wait(p, true) : -1;
+        if (r == 0) { remove(log.c_str()); return true; }
+        char line[512] = "";
+        if (FILE *f = fopen(log.c_str(), "rb")) {
+            while (fgets(line, sizeof line, f)) {}
+            fclose(f);
+        }
+        fprintf(stderr, "[launcher] extraction failed (%d): %s\n", r, line);
+    }
+    remove(log.c_str());
+    if (tries.empty()) fprintf(stderr, "[launcher] no archive extractor found (bsdtar, 7z, unzip or python3)\n");
+    return false;
 }
 
 // progress (the overlay's bar): the romfs copy, then the image build - each about the size of romfs/
@@ -299,7 +403,7 @@ static void *extract_thread(void *) {
     src = g_src;
     pthread_mutex_unlock(&g_lock);
     g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = -1, g_copy_skipped = false;
-    std::string exefs, romfs;
+    std::string exefs, romfs, staging;  // staging: an extracted archive (<game_dir>/.unzip), deleted at the end
     bool unusable = false;  // (game packages rather than its files)
     if (src.empty() && check_copied_files(g_root).empty()) {  // copied already (an update needs new game code)
         g_copy_skipped = true;
@@ -307,20 +411,37 @@ static void *extract_thread(void *) {
         goto check;
     }
     set_job("Looking for the game files...");
-    find_game(src, 0, exefs, romfs, unusable);
+    find_game(src, exefs, romfs, unusable);
+    if (exefs.empty() || romfs.empty()) {  // a .zip of them (picked, or in the picked folder)?
+        std::string archive = archive_in(src);
+        if (!archive.empty()) {
+            mkdir(g_root.c_str(), 0755);
+            rt_remove_game_files(g_root.c_str());  // (an earlier setup's, and an interrupted extraction's)
+            mkdir(g_root.c_str(), 0755);
+            staging = g_root + "/.unzip";
+            mkdir(staging.c_str(), 0755);
+            set_job("Extracting the archive (this can take several minutes)...");
+            if (!extract_archive(archive, staging)) { set_failure(FAIL_ARCHIVE); goto done; }
+            set_job("Looking for the game files...");
+            unusable = false;
+            find_game(staging, exefs, romfs, unusable);
+        }
+    }
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!build_id_ok(exefs + "/main")) { set_failure(FAIL_VERSION); goto done; }
     {
-        // (the picked folder can't be LAS Recomp's own copy: setting up again deletes that first)
-        char a[4096], b[4096];
-        mkdir(g_root.c_str(), 0755);
-        if (realpath(exefs.c_str(), a) && realpath(g_root.c_str(), b) && !strncmp(a, b, strlen(b)) &&
-            (a[strlen(b)] == '/' || a[strlen(b)] == '\\' || !a[strlen(b)])) {
-            set_failure(FAIL_NOT_FOUND);
-            goto done;
+        if (staging.empty()) {
+            // (the picked folder can't be LAS Recomp's own copy: setting up again deletes that first)
+            char a[4096], b[4096];
+            mkdir(g_root.c_str(), 0755);
+            if (realpath(exefs.c_str(), a) && realpath(g_root.c_str(), b) && !strncmp(a, b, strlen(b)) &&
+                (a[strlen(b)] == '/' || a[strlen(b)] == '\\' || !a[strlen(b)])) {
+                set_failure(FAIL_NOT_FOUND);
+                goto done;
+            }
+            rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's; removes the folder too)
+            mkdir(g_root.c_str(), 0755);
         }
-        rt_remove_game_files(g_root.c_str());  // (an earlier or interrupted setup's; removes the folder too)
-        mkdir(g_root.c_str(), 0755);
         unsigned long long rbytes = romfs_dir_bytes(romfs.c_str());
         g_total = 2 * rbytes;
         set_job("Copying the game files...");
@@ -329,6 +450,7 @@ static void *extract_thread(void *) {
             set_failure(FAIL_COPY);
             goto done;
         }
+        if (!staging.empty()) rt_remove_game_file(g_root.c_str(), ".unzip"), staging.clear();  // (copied: room back)
         g_phase_base = rbytes, g_done = rbytes;
         set_job("Building the game data image...");
         char why[256] = "";
@@ -346,6 +468,7 @@ check:
         else set_failure(why.find("version") != std::string::npos ? FAIL_VERSION : FAIL_MISSING);
     }
 done:
+    if (!staging.empty()) rt_remove_game_file(g_root.c_str(), ".unzip");
     pthread_mutex_lock(&g_lock);
     g_busy = false;
     pthread_mutex_unlock(&g_lock);
@@ -1284,7 +1407,8 @@ extern "C" void launcher_run(const char *root) {
                     dl->AddLine(ImVec2(x + u * 0.35f, cy + u * 0.35f), ImVec2(x + u, cy - u * 0.4f), g, fs * 0.11f);
                 };
                 std::string src_d = "The folder with your own game folders (exefs/romfs) of The Legend of Zelda: Link's "
-                                    "Awakening for Nintendo Switch, version 1.0.0. The game isn't included with LAS Recomp.";
+                                    "Awakening for Nintendo Switch, version 1.0.0 - found even a few folders down, or in a "
+                                    ".zip there. The game isn't included with LAS Recomp.";
                 if (!src.empty()) src_d += "\n\nChosen: " + src;
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
@@ -1307,6 +1431,12 @@ extern "C" void launcher_run(const char *root) {
                         SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
                     check_left_of_value(src_v);
                     first_row();
+                    static const SDL_DialogFileFilter zip_f[] = {{"Archive with exefs and romfs", "zip;7z;rar"}};
+                    if (busy) opt_disable_next();
+                    if (opt_action("Or a .zip of them", "Choose...",
+                                   "A .zip holding the exefs and romfs folders (7z / rar too where the system's extractor "
+                                   "reads them). It's extracted during setup; the archive itself isn't changed.", true))
+                        SDL_ShowOpenFileDialog(picked, NULL, win, zip_f, 1, NULL, false);
                     opt_section("Set up");
                     if (busy || (src.empty() && !check_copied_files(g_root).empty())) opt_disable_next();
                     if (opt_action("Set up game files", busy ? "Working..." : "", ex_d.c_str(), true)) {

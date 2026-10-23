@@ -138,14 +138,24 @@ static void log_to_file_without_console(void) {
     _putenv("LASRECOMP_LOG_APPEND=1");
 }
 
-// The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
-// with an illegal instruction on an older CPU.
+// A game code library built by `make` uses GENARCH (-> GENCPU): when that asks for more than SSE2, say so instead of
+// crashing with an illegal instruction. The start screen's build targets this machine's own CPU (gamelib_cpu).
 static void require_cpu(void) {
+#if defined(LAS_GENCPU_V3)
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    MessageBoxA(NULL, "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
+    MessageBoxA(NULL, "This build of LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen "
+                      "or newer). Use the SSE2 build for an older CPU.",
                 "LAS Recomp", MB_ICONERROR | MB_OK);
     ExitProcess(1);
+#elif defined(LAS_GENCPU_V2)
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("sse4.2") && __builtin_cpu_supports("popcnt")) return;
+    MessageBoxA(NULL, "This build of LAS Recomp needs a CPU with SSE4.2 (Intel Nehalem / 2008 or newer, AMD Bulldozer or "
+                      "newer). Use the SSE2 build for an older CPU.",
+                "LAS Recomp", MB_ICONERROR | MB_OK);
+    ExitProcess(1);
+#endif
 }
 
 // Fatal error (rt_fatal_trace): the last FATAL / exception line of the log in a message box, when there is no console.

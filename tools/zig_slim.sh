@@ -35,11 +35,13 @@ cp $Z/zig.exe $Z/LICENSE $O/
 cp $Z/lib/std/std.zig $O/lib/std/
 
 # 2. the runtime: a probe DLL importing from the exe, linked the way the full zig does it (-v: its lld-link line)
+# (-mcpu=x86_64: the runtime libraries built here are linked into every player's game code, whatever their CPU; zig's
+# default would be this build machine's own CPU, e.g. AVX2 / AVX-512 instructions that crash older CPUs)
 printf 'LIBRARY lasrecomp.exe\nEXPORTS\nprobe_host\n' > $W/host.def
 printf 'void probe_host(void);\n__declspec(dllexport) void probe(void) { probe_host(); }\n' > $W/dll.c
 ZA=$PWD/$Z/zig.exe
-(cd $W && $ZA dlltool -d host.def -l host.a -m i386:x86-64 && $ZA cc "${flags[@]}" -c dll.c -o dll.o &&
-    $ZA cc -shared -o probe.dll dll.o host.a -v 2> link.log) || { echo "tools/zig_slim.sh: probe link failed ($W/link.log)"; exit 1; }
+(cd $W && $ZA dlltool -d host.def -l host.a -m i386:x86-64 && $ZA cc -mcpu=x86_64 -c dll.c -o dll.o &&
+    $ZA cc -mcpu=x86_64 -shared -o probe.dll dll.o host.a -v 2> link.log) || { echo "tools/zig_slim.sh: probe link failed ($W/link.log)"; exit 1; }
 line=$(grep '^lld-link ' $W/link.log | tail -1 | tr -d '\r')
 [ -n "$line" ] || { echo "tools/zig_slim.sh: no lld-link line in $W/link.log"; exit 1; }
 : > $O/rt/link.rsp

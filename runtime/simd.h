@@ -5,7 +5,7 @@
 // for arithmetic / conversions / FRINTX/I, saturating FP->int conversions, fused multiply-add, ARM estimate
 // tables. Not modelled: FPSR cumulative exception bits and QC, FPCR trap enables, FP16 arithmetic (ARMv8.2).
 // FPCR.AHP is honoured by the half-precision conversions. Host assumptions: IEEE binary32/64, MXCSR (or the
-// host FPU) in round-to-nearest with denormals enabled; fma must be correctly rounded (build x86 with -mfma).
+// host FPU) in round-to-nearest with denormals enabled; fma: SIMD_FMA (the instruction, or an exact emulation).
 #pragma once
 #include <fenv.h>
 #include <math.h>
@@ -208,6 +208,65 @@ SI int simd_fe_mode(uint64_t fpcr) {
     static const int m[4] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
     return m[(fpcr >> 22) & 3];
 }
+
+// ---- fused multiply-add. With the FMA instruction (x86 -mfma, AArch64) it is one instruction. Without it (x86 CPUs
+// older than Haswell / Piledriver) a single-precision fma is still exact and fast: the product of two floats is exact
+// in double, so a*b + c rounded once to double and then to float is the correctly rounded result, except when the
+// double lands exactly on a float rounding midpoint (double rounding: low 29 bits 1000...0) or in the float subnormal
+// range: those rare lanes take simd_fmaf_exact. Doubles take libm's fma. Directed rounding modes compose exactly
+// (round twice toward the same side = round once), so the FPCR RMode slow paths stay correct too.
+#if (defined(__x86_64__) || defined(__i386__)) && !defined(__FMA__)
+typedef double simd_vd4 __attribute__((vector_size(32)));
+typedef int64_t simd_vs4 __attribute__((vector_size(32)));
+SI int simd_fmaf_hard(double s) {  // s needs the exact path (midpoint, or a nonzero float-subnormal result)
+    uint64_t u;
+    memcpy(&u, &s, sizeof u);
+    uint64_t m = u & 0x7fffffffffffffffull;
+    return (u & 0x1fffffffull) == 0x10000000ull || (m - 1 < 0x3810000000000000ull - 1);  // 0 < |s| < 2^-126
+}
+// The rare lanes, still without libm (it may not honour MXCSR's FTZ / DAZ the way the instruction does): in a directed
+// rounding mode the double result already rounds correctly; in round-to-nearest it's made round-to-odd first (TwoSum
+// gives the exact error), which then rounds to float correctly at any precision, subnormals included.
+SN float simd_fmaf_exact(float a, float b, float c) {
+    double p = (double)a * (double)b, z = (double)c, s = p + z;
+    if ((__builtin_ia32_stmxcsr() >> 13 & 3) != 0 || s != s || s - s != 0) return (float)s;
+    double t = s - p, e = (p - (s - t)) + (z - t);  // s + e == a*b + c exactly
+    uint64_t u;
+    memcpy(&u, &s, sizeof u);
+    if (e != 0 && !(u & 1)) u += (e > 0) == (s > 0) ? 1 : (uint64_t)-1;
+    memcpy(&s, &u, sizeof s);
+    return (float)s;
+}
+SI float simd_fmaf(float a, float b, float c) {
+    double s = (double)a * (double)b + (double)c;
+    if (__builtin_expect(simd_fmaf_hard(s), 0)) return simd_fmaf_exact(a, b, c);
+    return (float)s;
+}
+SN vf32 simd_vfmaf_exact(vf32 a, vf32 b, vf32 c, vf32 r, vs32 bad) {
+    for (int i = 0; i < 4; i++)
+        if (bad[i]) r[i] = simd_fmaf_exact(a[i], b[i], c[i]);
+    return r;
+}
+SI vf32 simd_vfmaf(vf32 a, vf32 b, vf32 c) {
+    simd_vd4 s = __builtin_convertvector(a, simd_vd4) * __builtin_convertvector(b, simd_vd4) +
+                 __builtin_convertvector(c, simd_vd4);
+    simd_vd4 m = __builtin_elementwise_abs(s);
+    simd_vs4 tiny = (m < 0x1p-126) & (m > 0);  // (vector compares)
+    typedef uint32_t vu32x8 __attribute__((vector_size(32)));
+    vu32x8 h;
+    memcpy(&h, &s, sizeof h);
+    vu32 lo = __builtin_shufflevector(h, h, 0, 2, 4, 6);  // each lane's low 32 bits
+    vs32 bad = (vs32)((lo & 0x1fffffffu) == 0x10000000u) | __builtin_convertvector(tiny, vs32);
+    vf32 r = __builtin_convertvector(s, vf32);
+    if (__builtin_expect(__builtin_reduce_or(bad) != 0, 0)) r = simd_vfmaf_exact(a, b, c, r, bad);
+    return r;
+}
+SI vf64 simd_vfmad(vf64 a, vf64 b, vf64 c) { return (vf64){fma(a[0], b[0], c[0]), fma(a[1], b[1], c[1])}; }
+#define SIMD_FMA(a, b, c)                                                                                            \
+    _Generic((a), float: simd_fmaf, vf32: simd_vfmaf, double: fma, vf64: simd_vfmad)(a, b, c)
+#else
+#define SIMD_FMA(a, b, c) __builtin_elementwise_fma(a, b, c)
+#endif
 
 #define F s
 #define T float

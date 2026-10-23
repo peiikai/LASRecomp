@@ -1,4 +1,70 @@
-# LAS Recomp
+# LAS Recomp — No-AVX2 Edition
+
+An **unofficial fork** of [LAS Recomp](https://github.com/peiikai/LASRecomp) by [@peiikai](https://github.com/peiikai)
+that runs on **CPUs without AVX2**, such as Intel Ivy Bridge and Sandy Bridge (Core i7-3770, i5-3470, Xeon E5-2690 v2
+and similar). Everything else is the upstream project.
+
+### ⬇️ Download (Windows)
+
+**[Download the latest release](https://github.com/guisaifora-lab/LASRecomp/releases/latest)** → `LAS.Recomp-…-windows.zip`
+
+### What's different in this fork
+
+| | Upstream | This fork |
+|---|---|---|
+| CPU | Needs AVX2 (Haswell / 2013 or newer) | **Any x86-64 CPU**; with AVX2 it's the same as upstream |
+| How the game code is compiled | Always for AVX2 + FMA | **For your own CPU**, detected at setup (e.g. Ivy Bridge → SSE4.2 + AVX + F16C) |
+| Without the FMA instruction | — | **Exact, fast** replacement (~140× faster than the standard library fallback) |
+| Game files | A folder with `exefs` and `romfs` | Also accepts a **`.zip`** of those folders; finds v1.0.0 even next to an update |
+
+Accuracy was checked with the project's own test suite (compared against an emulated ARM CPU), running on an
+**emulated Ivy Bridge CPU**: zero differences.
+
+### How to play
+
+1. Download the `.zip` above and extract it to a folder of your own (e.g. `C:\Games\`), **not** under Program Files.
+2. Open `lasrecomp.exe`. If Windows shows "Windows protected your PC": **More info → Run anyway** (the app isn't
+   digitally signed).
+3. Under **Game files folder**, choose the folder with `exefs` and `romfs` of *Link's Awakening* **version 1.0.0,
+   without updates** (or use **Or a .zip of them**).
+4. Click **Set up game files** and wait a few minutes (needs about 12 GB free). The game is recompiled for your CPU.
+5. Play! **F1** (or Minus + Plus on a controller) opens the options menu.
+
+**Requirements:** Windows 10 or 11 (64-bit), any x86-64 CPU and a **GPU with Vulkan 1.3**.
+
+> [!WARNING]
+> **No game files are included.** You need your own legally obtained copy, already extracted (`exefs` and `romfs`
+> folders). **NSP, XCI, NCA and NSZ files are not accepted**, and this fork does **not** decrypt games or use
+> `prod.keys`, just like upstream.
+
+### Problems?
+
+Open an [issue on this fork](https://github.com/guisaifora-lab/LASRecomp/issues) and attach `lasrecomp.log` (it's in
+the game folder). Problems that also happen with upstream belong to the original project:
+[LAS Recomp issues](https://github.com/peiikai/LASRecomp/issues).
+
+<details>
+<summary><b>Technical details</b></summary>
+
+- **Runs on any x86-64 CPU.** At setup, the game code is compiled for the player's own CPU: x86-64-v3 (AVX2 + FMA)
+  where available, exactly as upstream; otherwise the best of SSE4.2 / AVX / F16C / FMA the CPU has (Ivy Bridge:
+  `x86-64-v2+avx+f16c`), down to plain SSE2. The library id carries the level, so a game folder moved to another
+  CPU is rebuilt instead of crashing (`runtime/gamelib.c` `gamelib_cpu`).
+- **Exact fast FMA emulation** without the FMA instruction (`runtime/simd.h` `SIMD_FMA`): the product of two floats is
+  exact in double, so one double rounding gives the correctly rounded result except on float rounding midpoints and
+  float subnormals, which are made round-to-odd with TwoSum first (no libm). Verified with `tools/test_simd.py`
+  against Unicorn (also under `qemu-x86_64 -cpu IvyBridge-v1` via `LAS_TEST_WRAP`), `tools/test_fma_emu.c` (16M
+  cases, all rounding modes) and `tools/test_fma_hw.c` (bit-identical to the FMA instruction, FTZ/DAZ on and off).
+- **Setup accepts a `.zip`** of `exefs/` + `romfs/` (system extractor: Windows `tar.exe`, bsdtar, 7z, unzip, Python),
+  and prefers the v1.0.0 `exefs` when an update sits next to the base game. No NSP/XCI support, no decryption.
+- The prebuilt zig runtime in the Windows release targets baseline x86-64 (`tools/zig_slim.sh`).
+- **Windows release builds** come from the "Windows build" workflow (Actions tab).
+
+</details>
+
+---
+
+*Below: the upstream README.*
 
 > [!IMPORTANT]
 > **This project was made almost exclusively with AI.** Nearly all of the code, tooling, reverse engineering and
@@ -131,7 +197,7 @@ Python 3.12.
 
 ### Windows
 
-Requirements: Windows 10+ x86-64, a CPU with AVX2 and a GPU with Vulkan 1.3. More detail in
+Requirements: Windows 10+ x86-64 (any x86-64 CPU; AVX2 is not required) and a GPU with Vulkan 1.3. More detail in
 [docs/BUILD-windows.md](docs/BUILD-windows.md).
 
 1. One-time setup, in PowerShell from the repo root: `powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1`.
@@ -145,7 +211,7 @@ Requirements: Windows 10+ x86-64, a CPU with AVX2 and a GPU with Vulkan 1.3. Mor
 
 ### Linux
 
-Requirements: x86-64 with AVX2 (or aarch64, experimental), a GPU with Vulkan 1.3, clang, SDL 3, FFmpeg, shaderc and
+Requirements: x86-64 (any CPU; AVX2 is not required) or aarch64 (experimental), a GPU with Vulkan 1.3, clang, SDL 3, FFmpeg, shaderc and
 Vulkan Memory Allocator from your distribution, Python 3.12. Packages, cross builds and details in
 [docs/linux.md](docs/linux.md).
 

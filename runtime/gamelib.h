@@ -50,6 +50,19 @@ const GameLibTables *gamelib_tables(void);
 // True when a library usable with this build is in one of those places (without loading it).
 bool gamelib_present(const char *game_dir);
 
+// The CPU the game code is compiled for on this machine (x86-64; elsewhere "" and no flags). The start screen's build
+// detects the best instruction set this CPU has (x86-64-v3 = AVX2 + FMA where there is one; otherwise SSE4.2 / SSE2
+// plus AVX, F16C, FMA when present, e.g. "x86-64-v2+avx+f16c" on Ivy Bridge) and the id says which, so moving the
+// game folder to another CPU rebuilds it instead of crashing. march: clang flags; zig: zig cc's -mcpu flag.
+typedef struct {
+    char tag[64];     // "" or e.g. "x86-64-v2+avx+f16c"
+    char march[128];  // "" or e.g. "-march=x86-64-v2 -mavx -mf16c"
+    char zig[128];    // "" or e.g. "-mcpu=x86_64_v2+avx+f16c"
+} GameLibCpu;
+const GameLibCpu *gamelib_cpu(void);
+// GAMELIB_ID plus the CPU tag: the id of a library built here by the start screen.
+const char *gamelib_id(void);
+
 #ifdef __cplusplus
 }
 #endif

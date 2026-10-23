@@ -10,7 +10,8 @@ package the release AppImages.
     ./LAS.Recomp-beta_4-linux-x86_64.AppImage
 
 Needs: a distribution with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36, Arch, ...), a Vulkan 1.3 driver
-(Mesa RADV / ANV / NVK / Turnip / Asahi Honeykrisp, or NVIDIA's), and on x86-64 a CPU with AVX2 (2013 or newer).
+(Mesa RADV / ANV / NVK / Turnip / Asahi Honeykrisp, or NVIDIA's), and any x86-64 CPU (the game code is compiled
+for your CPU at setup: AVX2 where available, otherwise SSE4.2 / AVX or SSE2).
 The start screen asks for the folder with your own game files and sets them up.
 
 Everything the app writes lives in `~/.local/share/lasrecomp` (`$XDG_DATA_HOME/lasrecomp`): game files (`extracted/`),
@@ -45,7 +46,8 @@ Run `./build/lasrecomp` from the repo root: with `extracted/` in the starting fo
 everything (dev mode) instead of `~/.local/share/lasrecomp`.
 
 `ARCH` picks the target, separately from the OS: the generated code differs per arch (aarch64 runs the guest's
-FP/SIMD as inline asm, like Apple Silicon; x86-64 lowers it to C with `-march=x86-64-v3`, like Windows). `make gen`
+FP/SIMD as inline asm, like Apple Silicon; x86-64 lowers it to C, like Windows: `make`'s
+own build with `GENARCH` (default `-march=x86-64`), the start screen's for the player's CPU). `make gen`
 passes the matching `--simd`. A cross build (`ARCH=aarch64` on an x86-64 machine, `SYSROOT=<arm64 root filesystem>`)
 keeps its own `generated-aarch64/` and `build/aarch64/`. Distributions that name shaderc's library
 `libshaderc_shared.so` need `SHADERC=-lshaderc_shared`.

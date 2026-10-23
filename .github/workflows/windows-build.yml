@@ -1,0 +1,73 @@
+# Windows release build (the same steps as docs/BUILD-windows.md "Package", on a GitHub runner): produces
+# "LAS Recomp-<version>-windows.zip" as a workflow artifact, and as a GitHub release asset when run on a tag (v*) or
+# with "publish" ticked. No game code is inside; the start screen compiles it on the player's machine for that
+# machine's CPU (runtime/gamelib.c gamelib_cpu: AVX2 where there is one, SSE4.2 + AVX on Ivy Bridge, ...).
+name: Windows build
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Also publish it as a GitHub release
+        type: boolean
+        default: true
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings (the bash tools break with CRLF)
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          path-type: inherit
+          install: >-
+            make zip unzip
+            mingw-w64-ucrt-x86_64-clang mingw-w64-ucrt-x86_64-lld mingw-w64-ucrt-x86_64-sdl3
+            mingw-w64-ucrt-x86_64-ffmpeg mingw-w64-ucrt-x86_64-vulkan-devel mingw-w64-ucrt-x86_64-shaderc
+            mingw-w64-ucrt-x86_64-spirv-tools mingw-w64-ucrt-x86_64-pkgconf
+            mingw-w64-ucrt-x86_64-vulkan-memory-allocator mingw-w64-ucrt-x86_64-nasm
+      - name: LGPL FFmpeg (make deps-windows)
+        run: make deps-windows
+      - name: Seed generator and game code generator (PyInstaller)
+        run: |
+          PY="$(cygpath -u "$pythonLocation")/python.exe"
+          make rando-helper RANDO_PY="$PY"
+          make gen-helper RANDO_PY="$PY"
+      - name: Compiler for the start screen (zig)
+        run: tools/fetch_zig.sh
+      - name: Package (make dist)
+        run: |
+          make -j"$(nproc)" dist
+          ls -la build/dist
+          echo "ZIP=$(cd build/dist && ls *.zip | head -1)" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LAS-Recomp-windows
+          path: build/dist/*.zip
+          if-no-files-found: error
+      - name: GitHub release
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') { $env:GITHUB_REF_NAME } else { "build-$env:GITHUB_RUN_NUMBER" }
+          gh release create $tag "build/dist/$env:ZIP" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA `
+            --title "LAS Recomp (any x86-64 CPU) $tag" `
+            --notes "Windows build of the $env:GITHUB_REF_NAME branch. The game code is compiled at setup for your own CPU: AVX2 is no longer required (Ivy Bridge / Sandy Bridge / older CPUs get SSE4.2 + AVX or SSE2 code with an exact fast FMA emulation)."

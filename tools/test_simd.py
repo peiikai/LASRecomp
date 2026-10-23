@@ -293,7 +293,7 @@ def compile_tests(work, bodies, jobs, cflags):
         if p.wait():
             raise SystemExit('compile failed')
     exe = os.path.join(work, 'harness.exe' if os.name == 'nt' else 'harness')
-    subprocess.check_call([cc, '-o', exe] + objs)
+    subprocess.check_call([cc, '-o', exe] + objs + ['-lm'])
     return exe
 
 
@@ -414,7 +414,7 @@ def main():
             f.write(struct.pack('<QQ', int(st), 0))
     outp = os.path.join(work, 'out.bin')
     t3 = time.time()
-    p = subprocess.run([exe] + [os.path.join(work, n) for n in ('code.bin', 'buf.bin', 'cases.bin')] + [outp],
+    p = subprocess.run(os.environ.get('LAS_TEST_WRAP', '').split() + [exe] + [os.path.join(work, n) for n in ('code.bin', 'buf.bin', 'cases.bin')] + [outp],
                        capture_output=True)
     if p.returncode:
         print('harness failed', p.returncode, p.stderr.decode()[-2000:])

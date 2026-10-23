@@ -58,9 +58,9 @@ SN T FN(nan3)(Cpu *c, T a, T b, T d) {
    : (op) == FOP_MUL || (op) == FOP_MULX ? (a) * (b) : (op) == FOP_NMUL ? -((a) * (b))              \
    : (op) == FOP_DIV ? (a) / (b) : (op) == FOP_ABD ? __builtin_elementwise_abs((a) - (b))          \
    : (op) == FOP_SQRT ? __builtin_elementwise_sqrt(a)                                              \
-   : (op) == FOP_MADD ? __builtin_elementwise_fma(b, d, a)                                         \
-   : (op) == FOP_RECPS ? __builtin_elementwise_fma(a, b, KK(2))                                    \
-   : (op) == FOP_RSQRTS ? __builtin_elementwise_fma(a, b, KK(3)) * KK(0.5) : (a))
+   : (op) == FOP_MADD ? SIMD_FMA(b, d, a)                                         \
+   : (op) == FOP_RECPS ? SIMD_FMA(a, b, KK(2))                                    \
+   : (op) == FOP_RSQRTS ? SIMD_FMA(a, b, KK(3)) * KK(0.5) : (a))
 
 // Lanes whose fast result needs fixing: NaN results (NaN operand or invalid op), RSQRTS overflow.
 #define FBAD(op, r) ((op) == FOP_RSQRTS ? ((r) != (r)) | (__builtin_elementwise_abs(r) == K(INFINITY)) : (r) != (r))
@@ -68,9 +68,9 @@ SN T FN(nan3)(Cpu *c, T a, T b, T d) {
 // (3 + a*b) / 2 with one rounding (a already negated): halve a normal operand first, so a product beyond
 // the format's range (which the fast path rounds to inf, or to the largest normal when rounding down) is exact.
 SN T FN(rsqrts)(T a, T b) {
-    if (__builtin_elementwise_abs(a) >= FN(fv)(2 * MINN)) return __builtin_elementwise_fma(a * K(0.5), b, K(1.5));
-    if (__builtin_elementwise_abs(b) >= FN(fv)(2 * MINN)) return __builtin_elementwise_fma(a, b * K(0.5), K(1.5));
-    return __builtin_elementwise_fma(a, b, K(3)) * K(0.5);
+    if (__builtin_elementwise_abs(a) >= FN(fv)(2 * MINN)) return SIMD_FMA(a * K(0.5), b, K(1.5));
+    if (__builtin_elementwise_abs(b) >= FN(fv)(2 * MINN)) return SIMD_FMA(a, b * K(0.5), K(1.5));
+    return SIMD_FMA(a, b, K(3)) * K(0.5);
 }
 
 // ARM result for a lane flagged by FBAD (operands already flushed).
