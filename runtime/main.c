@@ -254,14 +254,6 @@ int main(int argc, char **argv) {
 #else
     (void)build_ios;
 #endif
-#if PLAT_IOS
-    // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
-    // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
-    if (getenv("LARECOMP_PYTEST")) {  // the embedded Python's self-test (runtime/platform/ios_python.m)
-        extern void plat_ios_python_selftest(void);
-        plat_ios_python_selftest();
-    }
-#endif
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");

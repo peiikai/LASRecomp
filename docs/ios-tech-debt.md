@@ -41,7 +41,7 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   `Py_Initialize` per run would be cleaner if it works with pybind11 modules.
 - **Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`. Not yet verified
   that one seed ID gives byte-identical output on Mac and iOS (`flags.tsv`, `logic.json`, the romfs files).
-- **The self-test (`LARECOMP_PYTEST=1`, [runtime/main.c](../runtime/main.c)) has no automated run.** Fix: an iOS
+- **The self-test (`LARECOMP_IOS_PYTEST=1`, [runtime/platform/ios.c](../runtime/platform/ios.c) `plat_init`) has no automated run.** Fix: an iOS
   Simulator build in CI (the `ios` job on `macos-15`, arm64, so `arm64-apple-ios-simulator` runs natively): the
   start screen and the embedded Python, launched with `simctl` and the variable, `lasrecomp.log` from the app's
   data container checked for `[py] selftest ok` and `generator exit 0`, a `simctl io screenshot` of the start
@@ -122,13 +122,8 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   common one.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
-- **`LARECOMP_PYTEST` is read in `main()`** ([runtime/main.c](../runtime/main.c)) under `#if PLAT_IOS`, the only
-  platform switch there. Rename it `LARECOMP_IOS_PYTEST` (it is iOS-only) and move the check into `plat_init()`
-  ([runtime/platform/ios.c](../runtime/platform/ios.c)), where the iOS-only start-up already lives.
 - **The guest base differs from the Android port's `GUEST_SHIFT`.** Two mechanisms for one problem; one has to go
   before both merge (below).
-- **Background / foreground isn't handled**: the game keeps running (and rendering into a drawable it may not have)
-  when the app is backgrounded.
 - **Untested on iPad and on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number.
 - **The 12.5 GB guest window is the desktop layout, not what the game needs.** It fits because an 8 GB iPhone gives a
   process ~59 GB of address space with or without `com.apple.developer.kernel.extended-virtual-addressing` (measured

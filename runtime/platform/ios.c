@@ -63,11 +63,17 @@ bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
 // stdout / stderr -> lasrecomp.log in Documents (five backups, posix_log.h), unless LARECOMP_LOG_STDERR is set
 // (Xcode / devicectl console runs).
 void plat_init(void) {
-    if (getenv("LARECOMP_LOG_STDERR")) return;
     const char *dir = plat_ios_documents();
-    if (!dir || !*dir) return;
-    mkdir(dir, 0755);
-    session_log_open(dir, g_log_path, sizeof g_log_path);
+    if (!getenv("LARECOMP_LOG_STDERR") && dir && *dir) {
+        mkdir(dir, 0755);
+        session_log_open(dir, g_log_path, sizeof g_log_path);
+    }
+    // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
+    // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
+    if (getenv("LARECOMP_IOS_PYTEST")) {  // the embedded Python's self-test (ios_python.m): its log lines, then on
+        extern void plat_ios_python_selftest(void);
+        plat_ios_python_selftest();
+    }
 }
 
 // The window is below the process's VA limit (runtime/guest_base.h: iOS builds use a low GUEST_BASE); pages are
