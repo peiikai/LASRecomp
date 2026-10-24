@@ -90,7 +90,7 @@ bool ui_input_text(const char *label, char *buf, size_t size, ImGuiInputTextFlag
     return r;
 }
 
-int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale, ImFont *big, bool upper_first) {
+int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale, ImFont *big, bool upper_first, bool touch) {
     static bool upper = true;
     if (appearing) upper = upper_first;
     ImGuiIO &io = ImGui::GetIO();
@@ -121,16 +121,38 @@ int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale,
     static const char *rows_l[] = {"abcdefghij", "klmnopqrst", "uvwxyz-.'!", "0123456789"};
     const char **rows = upper ? rows_u : rows_l;
     float k = 70 * scale;
+    if (touch) {  // (ten keys and their gaps across the window: as big as fits, for fingers; five rows fit the height)
+        float sp = ImGui::GetStyle().ItemSpacing.x, avail = ImGui::GetContentRegionAvail().x;
+        k = fmaxf(k, (avail - 9 * sp) / 10);
+        float tall = (ImGui::GetIO().DisplaySize.y * 0.62f - 4 * ImGui::GetStyle().ItemSpacing.y) / 5;
+        if (k > tall) k = tall;
+    }
     for (int row = 0; row < 4; row++) {
         for (int i = 0; rows[row][i]; i++) {
             if (i) ImGui::SameLine();
             char lbl[8] = {rows[row][i], 0};
-            if (appearing && row == 0 && i == 0) {  // (cursor shown: else the first A only reveals it)
+            if (appearing && row == 0 && i == 0 && !touch) {  // (cursor shown: else the first A only reveals it)
                 ImGui::SetKeyboardFocusHere();
                 ImGui::SetNavCursorVisible(true);
             }
             if (ImGui::Button(lbl, ImVec2(k, k))) add(rows[row][i]);
         }
+    }
+    if (touch) {  // (the bottom row as wide as the letters: 2 + 2 + 2 + 2 + 2 keys)
+        float sp = ImGui::GetStyle().ItemSpacing.x, w2 = k * 2 + sp;
+        if (ImGui::Button(upper ? "abc" : "ABC", ImVec2(w2, k))) upper = !upper;
+        ImGui::SameLine();
+        if (ImGui::Button("Space", ImVec2(w2, k)) && len > 0) add(' ');
+        ImGui::SameLine();
+        if (ImGui::Button("Delete", ImVec2(w2, k))) del();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(w2, k))) r = -1;
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.60f, 0.15f, 0.85f));
+        if (ImGui::Button("OK", ImVec2(w2, k))) r = 1;
+        ImGui::PopStyleColor();
+        ImGui::TextDisabled("Tap the letters, then OK      (%d / %d)", len, max_chars);
+        return r;
     }
     if (ImGui::Button(upper ? "abc" : "ABC", ImVec2(k * 2, k))) upper = !upper;
     ImGui::SameLine();

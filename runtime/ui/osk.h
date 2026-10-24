@@ -24,4 +24,6 @@ bool ui_text_busy(void);
 // The typed text (big font) and the key grid, drawn into the current window: d-pad / stick move, A types, B deletes,
 // Start / + OK; typed keys work too (Enter OK, Esc cancel). text: ASCII, at most max_chars. Returns 1 OK, -1 cancel,
 // 0 still typing.
-int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale, ImFont *big, bool upper_first = true);
+// touch: keys sized to the window's width for fingers, no controller cursor, a tap-oriented hint.
+int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale, ImFont *big, bool upper_first = true,
+             bool touch = false);

@@ -918,7 +918,12 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
     static bool was_open, was_pad;
     bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
     was_open = true, was_pad = pad;
-    if (!pad) {  // keyboard: type straight into the field
+    if (PLAT_IOS && !pad) {
+        // a phone without a controller: big keys on the screen to tap (the system keyboard over the game was easy to
+        // miss and had no way to confirm); a hardware keyboard still types into them
+        int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big, true, true);
+        if (r) g_kbd = r > 0 ? 2 : 3;
+    } else if (!pad) {  // keyboard: type straight into the field
         if (appearing) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(-1);
         ImGui::PushFont(g_font_big);
