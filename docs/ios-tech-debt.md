@@ -120,9 +120,6 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   seconds, no second copy), a real 5.8 GB copy from iCloud Drive / another file provider. Reading the picked folder
   in place (a security-scoped bookmark kept across launches) would avoid that; not done since the clone case is the
   common one.
-- **The app icon is the macOS one**: `docs/icon/icon_1024.png` has macOS's rounded-square padding and a white
-  background, so on the home screen it shows as a smaller icon inside a white tile. Needs an iOS master (full-bleed
-  1024x1024, no padding, opaque; iOS rounds the corners itself) in `tools/bundle_ios.sh`'s asset catalog.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
 - **`LARECOMP_PYTEST` is read in `main()`** ([runtime/main.c](../runtime/main.c)) under `#if PLAT_IOS`, the only

@@ -70,7 +70,7 @@ cat > "$FW/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
-cp docs/icon/icon_1024.png "$APP/icon.png"
+cp docs/icon/icon_ios_1024.png "$APP/icon.png"
 cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$APP/"
 cp third_party/fonts/Baloo2/OFL.txt "$APP/Baloo2-OFL.txt"
 # the game text's fonts (runtime/hle/pl.c: no readable system fonts on iOS, so BIZ UDPGothic serves first) and the
@@ -82,9 +82,10 @@ cp third_party/fonts/DejaVu/LICENSE "$APP/DejaVu-LICENSE.txt"
 
 # App icon: the asset catalog compiled from the 1024 png (Assets.car + CFBundleIcons); skipped without actool.
 if command -v xcrun >/dev/null && xcrun --find actool >/dev/null 2>&1; then
+    # (docs/icon/icon_ios_1024.png: the art full-bleed and opaque - iOS rounds the corners itself; from icon_ios.svg)
     ICONSET=build/ios/AppIcon.xcassets/AppIcon.appiconset
     rm -rf build/ios/AppIcon.xcassets && mkdir -p "$ICONSET"
-    cp docs/icon/icon_1024.png "$ICONSET/icon.png"
+    cp docs/icon/icon_ios_1024.png "$ICONSET/icon.png"
     cat > "$ICONSET/Contents.json" <<'EOF'
 { "images": [ { "filename": "icon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ],
   "info": { "author": "xcode", "version": 1 } }
