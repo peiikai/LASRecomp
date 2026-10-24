@@ -977,14 +977,18 @@ void kernel_dump_threads(const char *prefix) {
 // thread with its kernel wait and guest frames, and the kernel trace. At most 6 dumps per run.
 static bool (*hang_check_fn)(uint64_t limit_ns, char *why, size_t n);
 static void (*hang_state_fn)(const char *prefix);
+static bool (*hang_paused_fn)(void);  // the game deliberately stopped (iOS: the app in the background): no dump
 void kernel_hang_hooks(bool (*check)(uint64_t limit_ns, char *why, size_t n), void (*state)(const char *prefix)) {
     __atomic_store_n(&hang_state_fn, state, __ATOMIC_RELEASE);
     __atomic_store_n(&hang_check_fn, check, __ATOMIC_RELEASE);
 }
+void kernel_hang_paused_hook(bool (*paused)(void)) { __atomic_store_n(&hang_paused_fn, paused, __ATOMIC_RELEASE); }
 static void *hang_watch(void *arg) {
     uint64_t s = (uint64_t)(uintptr_t)arg, dumped_since = 0;
     for (int dumps = 0; dumps < 6;) {
         sleep(1);
+        bool (*paused)(void) = __atomic_load_n(&hang_paused_fn, __ATOMIC_ACQUIRE);
+        if (paused && paused()) continue;  // (every wait is long then: not a hang)
         char why[256];
         int n = 0;
         pthread_mutex_lock(&g_klock);

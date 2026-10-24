@@ -1250,6 +1250,43 @@ void renderer_save_game_texture(NvnTexture *t, id<MTLTexture> tex, const char *p
 static double last_fps_time;
 
 void backend_present(NvnTexture *t);
+
+#if TARGET_OS_IPHONE
+// ---- the app in the background (iOS): no drawing (a Metal drawable there is a crash), and the game waits in its next
+// present - it pauses where it is, no CPU, no battery - until the app is in front again. The settings are saved on
+// the way out: iOS ends backgrounded apps without exit(), so the exit handlers never run.
+// (SDL 3 never queues these events: they reach an event watcher only, on the main thread as UIKit posts them)
+static atomic_bool g_background;
+static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
+    (void)ud;
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND || e->type == SDL_EVENT_DID_ENTER_BACKGROUND) {
+        if (!atomic_exchange(&g_background, true)) {
+            LOG("[metal] in the background: game paused\n");
+            input_rumble_stop();
+            settings_save();
+        }
+    } else if ((e->type == SDL_EVENT_WILL_ENTER_FOREGROUND || e->type == SDL_EVENT_DID_ENTER_FOREGROUND) && atomic_load(&g_background)) {
+        atomic_store(&g_background, false);
+        LOG("[metal] in the foreground: game resumed\n");
+    }
+    return true;
+}
+// the start screen's own loop (runtime/ui/launcher.mm): no drawing in the background
+bool ui_in_background(void) { return atomic_load(&g_background); }
+static void background_watch_install(void) {
+    SDL_AddEventWatch(background_watch, NULL);
+    extern void kernel_hang_paused_hook(bool (*)(void));
+    kernel_hang_paused_hook(ui_in_background);  // (the kernel's hang watchdog: a backgrounded game isn't hung)
+}
+static void wait_foreground(void) {  // (the presenting thread)
+    while (atomic_load(&g_background)) SDL_Delay(50);
+}
+#else
+static void background_watch_install(void) {}
+static void wait_foreground(void) {}
+bool ui_in_background(void) { return false; }
+#endif
+
 // Present the last frame again (the game thread waits in a host dialog, e.g. the software keyboard): the overlay
 // keeps drawing and taking input.
 void backend_represent(void) {
@@ -1263,6 +1300,7 @@ void backend_represent(void) {
 static int g_presents_inflight;  // present command buffers committed and not yet completed (each holds a drawable)
 void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (rq_stopping()) return;  // quitting: no drawable after the window closed (#40, as Vulkan)
+    wait_foreground();  // (iOS: the app in the background - the game pauses here)
     extern void renderer_submit(void);
     extern void renderer_texture_will_read(NvnTexture *t);
     renderer_texture_will_read(t);  // (a recorded clear of the image becomes its pass first)
@@ -1599,6 +1637,7 @@ void ui_window_init(void) {
     if (getenv("LARECOMP_HIDDEN")) wflags |= SDL_WINDOW_HIDDEN;
     window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
+    background_watch_install();  // (iOS: the app in the background pauses the game)
     rt_window_icon(window);
     rt_window_remember(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows

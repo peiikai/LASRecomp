@@ -340,8 +340,12 @@ void settings_load(void) {
 }
 
 void settings_save(void) {
-    FILE *f = fopen(SETTINGS_FILE, "w");
-    if (!f) { LOG("[settings] cannot write %s\n", SETTINGS_FILE); return; }
+    // written beside, then renamed over: a process ended mid-write (phones end backgrounded apps without exit()) leaves
+    // the old file, not a truncated one
+    char tmp[1200];
+    snprintf(tmp, sizeof tmp, "%s.tmp", SETTINGS_FILE);
+    FILE *f = fopen(tmp, "w");
+    if (!f) { LOG("[settings] cannot write %s\n", tmp); return; }
     fprintf(f, "# LAS Recomp settings (edited from the in-game menu: F1, Esc, or Minus+Plus on a controller)\n");
     fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
@@ -425,5 +429,12 @@ void settings_save(void) {
     if (g_settings.rando_options[0]) fprintf(f, "rando_options = %s\n", g_settings.rando_options);
     for (int i = 0; i < RANDO_PRESETS_MAX; i++)
         if (g_settings.rando_presets[i][0]) fprintf(f, "rando_preset = %s\n", g_settings.rando_presets[i]);
-    fclose(f);
+    bool ok = fflush(f) == 0 && !ferror(f);
+    ok &= fclose(f) == 0;
+#ifdef _WIN32
+    ok = ok && MoveFileExA(tmp, SETTINGS_FILE, MOVEFILE_REPLACE_EXISTING);
+#else
+    ok = ok && rename(tmp, SETTINGS_FILE) == 0;
+#endif
+    if (!ok) { LOG("[settings] cannot write %s\n", SETTINGS_FILE); remove(tmp); }
 }
