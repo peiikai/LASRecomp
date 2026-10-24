@@ -116,10 +116,6 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   [runtime/platform/ios_picker.m](../runtime/platform/ios_picker.m); the file picker wasn't). Needs the same
   `UIDocumentPickerViewController` for files (`.bfttf` / `.ttf`, multiple) behind a `show_file_dialog` in
   `launcher.mm`, and the row should say the fonts can also be dropped into the app's `fonts/` folder in Files.
-- **The romfs is copied into Documents/extracted, not read in place.** Fine on the device's own volume (APFS clones:
-  seconds, no second copy), a real 5.8 GB copy from iCloud Drive / another file provider. Reading the picked folder
-  in place (a security-scoped bookmark kept across launches) would avoid that; not done since the clone case is the
-  common one.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
 - **The guest base differs from the Android port's `GUEST_SHIFT`.** Two mechanisms for one problem; one has to go
