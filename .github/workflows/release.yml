@@ -1,8 +1,9 @@
-# LAS Recomp's release builds: the macOS arm64 .dmg (make dmg), the Windows x64 .zip (make dist) and the Linux
-# x86_64 / aarch64 AppImages (make appimage), each from the same commit, put on a DRAFT GitHub release with their
-# sha256s. It never publishes: a person reads the draft, writes the notes and publishes it. None of the files holds
-# game code or game files (the start screen builds the game code from the player's own game files); every build
-# checks that before its upload.
+# LAS Recomp's release builds: the macOS arm64 .dmg (make dmg), the Windows x64 .zip (make dist), the Linux
+# x86_64 / aarch64 AppImages (make appimage) and the iOS skeleton .zip (make ios-skeleton-zip: the iOS app without
+# game code plus the tools any of those desktops completes it with), each from the same commit, put on a DRAFT
+# GitHub release with their sha256s. It never publishes: a person reads the draft, writes the notes and publishes
+# it. None of the files holds game code or game files (the start screen builds the game code from the player's own
+# game files); every build checks that before its upload.
 # Run: gh workflow run release.yml --ref beta_5 -f tag=beta_5 -f ref=beta_5
 #   (--ref: the branch whose copy of this file runs - GitHub dispatches by name only from the default branch's copy,
 #   so until this file is on main, name a branch that has it)
@@ -202,6 +203,69 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  # The iOS skeleton zip (tools/ios_skeleton.sh): the app without game code (make ios-skeleton: Xcode's iOS SDK, so
+  # a Mac), the Mach-O linker for each desktop (tools/fetch_lld.sh, all four targets) and the compiler's Darwin
+  # headers (from the zig archive tools/fetch_zig.sh fetched: the same files for every host). The start screen on
+  # any desktop turns it into the player's .ipa (runtime/iosexport.c).
+  ios:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - name: Packages
+        run: brew install ninja python@3.13
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh') }}
+      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+        run: make deps-ios
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Toolchain cache (the zig archive, the four lld archives)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-skeleton-tools-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: Linkers for every desktop, the compiler's headers
+        run: |
+          tools/fetch_zig.sh
+          for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows; do LLD_TARGET=$t tools/fetch_lld.sh; done
+      - name: Skeleton zip
+        run: make -j"$(sysctl -n hw.ncpu)" ios-skeleton-zip
+      # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (the iOS game code is
+      # f_8..., at the iOS guest base), no game files, no symlinks (the zip is unpacked on Windows too)
+      - name: No game code
+        run: |
+          A="build/ios-skeleton/LAS Recomp.app"
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \); find "$A" -name 'lasgame*' -o -name 'LASGame' -type f)
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm +111 -o -name '*.dylib' -o -name '*.so' \) | while read -r f; do
+            if nm "$f" 2>/dev/null | grep -E ' _?f_[78]0' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+          links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the skeleton: $links"; exit 1; }
+          ls -la build/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: build/dist/*-ios-skeleton.zip
+          if-no-files-found: error
+          compression-level: 0
+
   # Each arch on a runner of its own arch: tools/linux/appimage.sh then builds everything natively in one container
   # (its cross path - the amd64 container plus the arm64 one under QEMU for the generator helpers - stays for an
   # x86-64 machine building the aarch64 AppImage).
@@ -284,7 +348,7 @@ jobs:
           gh release edit "$TAG" --notes-file new.md
 
   release:
-    needs: [check, macos, windows, linux]
+    needs: [check, macos, windows, linux, ios]
     if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -304,7 +368,7 @@ jobs:
         run: |
           cd dist
           ls -la
-          [ "$(ls | wc -l)" = 4 ] || { echo "::error::expected 4 files"; exit 1; }
+          [ "$(ls | wc -l)" = 5 ] || { echo "::error::expected 5 files"; exit 1; }
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)
             gh release view "$TAG" --json body -q .body | grep -v '^> The download files are being built' > ../body.md || true
             { cat ../body.md; echo; echo "| File | sha256 |"; echo "|---|---|"
@@ -338,7 +402,7 @@ jobs:
 
   # (a release published on GitHub whose build failed: the "being built" line says so instead)
   failed:
-    needs: [check, macos, windows, linux, release]
+    needs: [check, macos, windows, linux, ios, release]
     if: failure() && github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:

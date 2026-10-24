@@ -1,8 +1,13 @@
 // LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
+#include "platform.h"
+#if PLAT_IOS
+#include <SDL3/SDL_main.h>  // (iOS: main becomes SDL_main, run from SDL's UIApplication delegate)
+#endif
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -48,7 +53,7 @@ __attribute__((constructor(101))) static void reserve_guest_space(void) {
     else setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
-    if (n >= 20) {
+    if (n >= 20 || PLAT_IOS) {  // (iOS: no re-exec; the window is below everything the system maps, so this is final)
         fprintf(stderr, "FATAL: guest address range %llx-%llx is not free\n", GUEST_LO, GUEST_HI);
         exit(1);
     }
@@ -223,13 +228,34 @@ int main(int argc, char **argv) {
     bool no_launcher = nl && *nl && strcmp(nl, "0");
     bool skip_launcher = no_launcher || getenv("LARECOMP_INPUT");  // tests boot straight in
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
-    static char arg_root[1024];
+    static char arg_root[1024], arg_skel[1024];
+    bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <skeleton> [game files]: the iOS app, then exit
+            build_ios = true;
+            if (!realpath(argv[++i], arg_skel)) snprintf(arg_skel, sizeof arg_skel, "%s", argv[i]);
+        }
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+#if !PLAT_IOS
+    if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
+        extern bool iosexport_run_cli(const char *skeleton, const char *game_dir);
+        return iosexport_run_cli(arg_skel, root) ? 0 : 1;
+    }
+#else
+    (void)build_ios;
+#endif
+#if PLAT_IOS
+    // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
+    // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
+    if (getenv("LARECOMP_PYTEST")) {  // the embedded Python's self-test (runtime/platform/ios_python.m)
+        extern void plat_ios_python_selftest(void);
+        plat_ios_python_selftest();
+    }
+#endif
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");

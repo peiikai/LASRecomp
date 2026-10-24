@@ -33,7 +33,8 @@ if [ "$EXT" = zip ]; then unzip -q "$DL/$NAME.$EXT" -d "$DL"; else tar -xJf "$DL
 mv "$DL/$NAME" build/zig
 
 # size: only what compiling C for this same OS needs (the game code is built for the machine it runs on): its libc
-# headers and libc sources; no C++ runtimes (libcxx, libcxxabi) or sanitizers
+# headers and libc sources; no C++ runtimes (libcxx, libcxxabi) or sanitizers. (The iOS game code's Darwin headers
+# come with the iOS skeleton zip, tools/ios_skeleton.sh.)
 L=build/zig/lib
 case "${TARGET#*-}" in
     macos)   inc='darwin'; src='darwin' ;;

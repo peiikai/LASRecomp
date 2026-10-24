@@ -4,7 +4,12 @@
 #include "ui/menu.h"
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#else
 #import <AppKit/AppKit.h>
+#endif
 #import <Metal/Metal.h>
 #import <MetalFX/MetalFX.h>
 #include "output_scale.h"
@@ -1583,7 +1588,9 @@ void ui_window_init(void) {
     // The display's vsync stays on: without it frames show as soon as they're done, which tears (seen on a 5120x1440
     // display), for ~2-3 fps near the limit at most (the game paces itself to vi.c's emulated 60 Hz vsync, and the two
     // clocks drift). LARECOMP_DISPLAY_SYNC=0: off (tests).
+#if !TARGET_OS_IPHONE
     layer.displaySyncEnabled = !getenv("LARECOMP_DISPLAY_SYNC") || atoi(getenv("LARECOMP_DISPLAY_SYNC")) != 0;
+#endif  // (iOS: always synced to the display)
     layer.framebufferOnly = getenv("LARECOMP_WINDOW_SHOT") ? NO : YES;
 }
 

@@ -9,6 +9,14 @@
 #include "platform/win_compat.h"
 #elif defined(__linux__)
 #include "platform/linux_compat.h"
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+// PLAT_IOS: the iOS app (runtime/platform/ios.c): no child processes, no re-exec, no AppKit; data in Documents.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#define PLAT_IOS 1
+#else
+#define PLAT_IOS 0
 #endif
 
 #ifdef __cplusplus
