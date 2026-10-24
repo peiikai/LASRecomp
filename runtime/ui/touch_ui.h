@@ -16,6 +16,7 @@
 struct TouchUi {
     SDL_FingerID id = 0;
     bool active = false, drag = false, flinging = false;
+    int tap_step = 0;  // a tap, spread over frames: the mouse at the spot, pressed a frame later, released the next
     float x0 = 0, y0 = 0, last_x = 0, last_y = 0, pending = 0, vel = 0;  // vel: px / s (the flick)
     uint64_t last_t = 0;
     ImGuiID scroll_win = 0;  // the window under the finger when it came down: what a drag scrolls (touch_scroll_apply)
@@ -54,14 +55,15 @@ struct TouchUi {
             return;
         }
         if (e->type == SDL_EVENT_FINGER_UP && !drag) {  // a tap: a click where it lifted
+            // (the mouse there now, pressed next frame, released the one after: ImGui learns what is under the mouse
+            // while it draws a frame, so a press queued with the move - before any frame at that spot - hit nothing)
             pos(x, y);
-            button(true);
-            button(false);
+            tap_step = 3;
         }
         active = false;
         // a flick: the page keeps going
         flinging = drag && e->type == SDL_EVENT_FINGER_UP && fabsf(vel) > 300 && SDL_GetTicksNS() - last_t < 80000000ull;
-        if (!flinging) pos(-FLT_MAX, -FLT_MAX);  // (no hover left behind)
+        if (!flinging && !tap_step) pos(-FLT_MAX, -FLT_MAX);  // (no hover left behind; a tap: after its click)
     }
 
     // The scrollable window under the mouse (the finger's position at touch-down): the hovered one, or its first
@@ -72,9 +74,17 @@ struct TouchUi {
         return w && w->ScrollMax.y > 0 ? w->ID : 0;
     }
 
-    // once a frame: the scroll to apply now (pixels, + = content down), the flick carried on
-    template <typename Pos>
-    float frame(float dt, Pos pos) {
+    // once a frame: the scroll to apply now (pixels, + = content down), the flick carried on, a tap's release
+    template <typename Pos, typename Button>
+    float frame(float dt, Pos pos, Button button) {
+        if (tap_step == 3) {  // (this frame: the mouse at the spot, hovered)
+            // a controller / keyboard focus (the page's first row at start) turns ImGui's mouse hover off until the mouse
+            // moves - a finger appears without moving, so its first tap found nothing under it
+            GImGui->NavHighlightItemUnderNav = false;
+            tap_step = 2;
+        }
+        else if (tap_step == 2) { tap_step = 1; button(true); }
+        else if (tap_step == 1) { tap_step = 0; button(false); if (!active) pos(-FLT_MAX, -FLT_MAX); }
         float px = pending;
         pending = 0;
         if (flinging) {

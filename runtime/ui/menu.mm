@@ -1309,7 +1309,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (scale < 0.45f) scale = 0.45f;
     io.FontGlobalScale = scale;
     // a drag / flick: this frame's scroll, applied after NewFrame (touch_scroll_apply)
-    float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); });
+    float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); },
+                                   [&](bool down) { io.AddMouseButtonEvent(0, down); });
 
 #ifdef __APPLE__
     MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];

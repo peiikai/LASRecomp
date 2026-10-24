@@ -1839,7 +1839,8 @@ extern "C" void launcher_run(const char *root) {
             // controller is connected
             if (SDL_HasGamepad()) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
             // a drag / flick (touch_ui.h): this frame's scroll, onto the page under the finger
-            float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); });
+            float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); },
+                                           [&](bool down) { io.AddMouseButtonEvent(0, down); });
             ImGui::NewFrame();
             g_touch.scroll_apply(touch_px);
             const Page frame_page = page;  // (menu_sfx_frame: B on the main page does nothing)
