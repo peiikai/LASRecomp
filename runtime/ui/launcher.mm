@@ -1493,13 +1493,14 @@ static void prelaunch_tab(float sc) {
         ios_export_prelaunch(busy);
     }
 #endif
-    {   // where all of it is kept (as the setup window's Storage row)
+    {   // where all of it is kept (as the setup window's Storage row); iOS: the app's own, the sandbox path means
+        // nothing to a player
         const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
         std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                        rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
+                        (PLAT_IOS ? fixed : rt_data_root()) + (fixed && !PLAT_IOS ? std::string("\n\n") + fixed : "");
         opt_section("Storage");
         if (fixed) opt_disable_next();
-        if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
+        if (opt_action("Data folder", PLAT_IOS ? "" : "Change...", d.c_str(), true)) choose_data_folder();
     }
     opt_section("Game font");
     import_fonts();
