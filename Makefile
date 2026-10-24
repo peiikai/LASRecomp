@@ -106,7 +106,7 @@ LDFLAGS  := -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lavutil -lswscale -lbz2 -
             -framework CoreVideo -framework AVFoundation -framework AudioToolbox -framework CoreAudio \
             -framework CoreHaptics -framework GameController -framework CoreMotion -framework CoreBluetooth \
             -framework OpenGLES -framework Security -framework CoreText
-BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_python.m
+BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_python.m runtime/platform/ios_picker.m
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
 UIFLAGS  := -fobjc-arc
