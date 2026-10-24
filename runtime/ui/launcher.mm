@@ -1369,6 +1369,7 @@ extern "C" void launcher_run(const char *root) {
         if (pthread_create(&t, NULL, update_thread, NULL) == 0) pthread_detach(t);
     }
     ui_window_init();
+    SDL_ShowCursor();  // gameplay draws its own pointer and hides this one
     SDL_Window *win = ui_window();
     g_launcher_win = win;
 #ifdef __APPLE__

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../game_addresses.h"
 #include "../hle.h"
 #include "../nvn/nvn.h"
 #include "../nvn/renderer.h"
@@ -177,6 +178,39 @@ static uint8_t test_keys[SDL_SCANCODE_COUNT];
 static _Atomic uint32_t test_pad;
 static _Atomic int32_t test_lx, test_ly;  // (a resting stick's drift: "lstick" in LARECOMP_HOST_INPUT)
 
+// Mouse in the game's own menus (title, file select, pause). Motion is drained in mouse_menu_bits.
+// The pointer position (window pixels) is what Look aims with, and what the menu highlight follows.
+static _Atomic int mouse_ax, mouse_ay, mouse_wheel, mouse_a_arm, mouse_b_arm;
+static _Atomic int mouse_left_down, mouse_right_down;  // physical buttons, until release (the arm counters are a short click)
+static _Atomic uint32_t mouse_px_b, mouse_py_b;
+static _Atomic int mouse_pw, mouse_ph, mouse_pos_ok;
+
+static void store_f(_Atomic uint32_t *a, float f) {
+    uint32_t u;
+    memcpy(&u, &f, 4);
+    atomic_store(a, u);
+}
+static float load_f(_Atomic uint32_t *a) {
+    uint32_t u = atomic_load(a);
+    float f;
+    memcpy(&f, &u, 4);
+    return f;
+}
+static void note_mouse_xy(float x, float y, int pw, int ph) {
+    store_f(&mouse_px_b, x);
+    store_f(&mouse_py_b, y);
+    if (pw > 0 && ph > 0) atomic_store(&mouse_pw, pw), atomic_store(&mouse_ph, ph);
+    atomic_store(&mouse_pos_ok, 1);
+}
+// Window-coordinate event position -> pixels. The window loop calls this; the game thread only reads the atomics.
+static void note_mouse_window(SDL_WindowID id, float x, float y) {
+    SDL_Window *w = SDL_GetWindowFromID(id);
+    int lw = 0, lh = 0, pw = 0, ph = 0;
+    if (w) SDL_GetWindowSize(w, &lw, &lh), SDL_GetWindowSizeInPixels(w, &pw, &ph);
+    if (lw > 0 && lh > 0 && pw > 0 && ph > 0) x *= (float)pw / (float)lw, y *= (float)ph / (float)lh;
+    note_mouse_xy(x, y, pw, ph);
+}
+
 static int held_key(int sc) { return sc > 0 && sc < SDL_SCANCODE_COUNT && (keys_down[sc] || test_keys[sc]); }
 
 // Through the bindings (runtime/hle/bindings.c: g_bind_key), read on every key event, so a rebind applies at once.
@@ -286,7 +320,11 @@ bool input_user_blocked(const SDL_Event *e) {
 // game's ui_run and the start screen).
 static bool cursor_hidden;  // (the start screen keeps ImGui's backend from showing it again meanwhile)
 bool input_cursor_hidden(void) { return cursor_hidden; }
+int mouse_cursor_show(void);
 void input_cursor_event(const SDL_Event *e) {
+    // Gameplay and the game's menus draw their own pointer. A key would hide the OS cursor and the next
+    // mouse move would show it again, so both pointers sit on the picture.
+    if (mouse_cursor_show()) return;
     static float moved;  // (points the mouse moved since the cursor was hidden)
     bool hide = false, show = false;
     switch (e->type) {
@@ -432,7 +470,319 @@ void input_handle_event(const SDL_Event *e) {
         }
         recompute_pad();
         break;
+    case SDL_EVENT_MOUSE_MOTION:
+        atomic_fetch_add(&mouse_ax, (int)e->motion.xrel);
+        atomic_fetch_add(&mouse_ay, (int)e->motion.yrel);
+        note_mouse_window(e->motion.windowID, e->motion.x, e->motion.y);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+        note_mouse_window(e->button.windowID, e->button.x, e->button.y);
+        if (e->button.button == SDL_BUTTON_LEFT) atomic_store(&mouse_a_arm, 6), atomic_store(&mouse_left_down, 1);
+        else if (e->button.button == SDL_BUTTON_RIGHT) atomic_store(&mouse_b_arm, 6), atomic_store(&mouse_right_down, 1);
+        break;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (e->button.button == SDL_BUTTON_LEFT) atomic_store(&mouse_left_down, 0);
+        else if (e->button.button == SDL_BUTTON_RIGHT) atomic_store(&mouse_right_down, 0);
+        break;
+    case SDL_EVENT_WINDOW_FOCUS_LOST:
+        atomic_store(&mouse_left_down, 0);
+        atomic_store(&mouse_right_down, 0);
+        break;
+    case SDL_EVENT_MOUSE_WHEEL:
+        atomic_fetch_add(&mouse_wheel, (int)e->wheel.y);
+        break;
     }
+}
+
+// Mouse in the game's own menus (title, file select, pause): the world composite is absent there
+// (runtime/hle/mirror.c). A click confirms or goes back, the wheel steps one row, and the highlight walks
+// toward the pointer. In gameplay, Mouse controls chooses A/B clicks or sword / shield. Off leaves gameplay alone.
+extern bool menu_input_captured(void);
+
+static bool mouse_menu_active(void) {
+    extern int game_in_play(void);
+    extern bool world_on_screen(void);
+    extern int g_start_screen;  // the launcher already has its own pointer
+    if (g_start_screen || menu_input_captured()) return false;
+    if (!game_in_play()) return true;
+    return !world_on_screen();
+}
+
+// The drawn pointer (runtime/ui/menu.mm). On while a game menu is up, and in gameplay when Mouse controls is on.
+int mouse_cursor_show(void) {
+    extern int g_start_screen;
+    if (g_start_screen || menu_input_captured()) return 0;
+    if (mouse_menu_active()) return 1;
+    return g_settings.mouse_controls == MOUSE_AB || g_settings.mouse_controls == MOUSE_LOOK;
+}
+int mouse_cursor_pos(float *x, float *y) {
+    if (!atomic_load(&mouse_pos_ok)) return 0;
+    *x = load_f(&mouse_px_b);
+    *y = load_f(&mouse_py_b);
+    return 1;
+}
+// Window thread, once a frame (menu_render): a still pointer has not moved, so no motion event carries it.
+void mouse_cursor_sample(void) {
+    extern SDL_Window *ui_window(void);
+    SDL_Window *w = ui_window();
+    if (!w) return;
+    float x, y;
+    int lw = 0, lh = 0, pw = 0, ph = 0;
+    SDL_GetMouseState(&x, &y);
+    SDL_GetWindowSize(w, &lw, &lh);
+    SDL_GetWindowSizeInPixels(w, &pw, &ph);
+    if (lw > 0 && lh > 0 && pw > 0 && ph > 0) x *= (float)pw / (float)lw, y *= (float)ph / (float)lh;
+    note_mouse_xy(x, y, pw, ph);
+}
+
+// MOUSE_AB or MOUSE_LOOK while the world is up and the overlay is closed; otherwise Off.
+static int mouse_game_mode(void) {
+    if (mouse_menu_active() || menu_input_captured()) return MOUSE_OFF;
+    int m = g_settings.mouse_controls;
+    return m == MOUSE_AB || m == MOUSE_LOOK ? m : MOUSE_OFF;
+}
+
+// The game's own menu cursor panes (name inline at +0xB0, translate +0x30/+0x34 in the 1280x720 layout,
+// origin at the centre, y up; scale +0x48, size +0x50). The highlight walks one step toward the pointer.
+static int cursor_name(const char *nm) {
+    static const char *const names[] = {
+        "N_Cursor_00", "L_ListCursor_00", "L_PanelCursor_00", "L_TabCursor_00",
+        "L_Cursor_00", "W_Cursor_00", "L_MarkCursor_00",
+    };
+    for (size_t i = 0; i < sizeof names / sizeof names[0]; i++)
+        if (!strcmp(nm, names[i])) return 1;
+    return 0;
+}
+static int cursor_pane_at(uint64_t p) {
+    if (p < HEAP_BASE || p + 0x100 >= HEAP_BASE + HEAP_MAX) return 0;
+    const unsigned char *nm = (const unsigned char *)(uintptr_t)(p + 0xB0);
+    int n = 0;
+    while (n < 24 && nm[n] >= 33 && nm[n] < 127) n++;
+    if (n < 8 || nm[n] != 0 || !cursor_name((const char *)nm)) return 0;
+    const float *f = (const float *)(uintptr_t)p;
+    float sx = f[0x48 / 4], sy = f[0x4C / 4], w = f[0x50 / 4], h = f[0x54 / 4];
+    return sx > 0.2f && sy > 0.2f && w > 4.f && h > 4.f && w < 800.f && h < 800.f;
+}
+static uint64_t g_panes[8];
+static int g_npanes, g_scan_tries;
+static uint64_t g_pane_scan_frame;
+static void scan_cursor_panes(uint64_t frame) {
+    extern int kernel_data_regions(uint64_t *addr, uint64_t *size, int max);
+    uint64_t ra[64], rs[64];
+    int nr = kernel_data_regions(ra, rs, 64);
+    g_npanes = 0;
+    g_pane_scan_frame = frame;
+    for (int r = 0; r < nr && g_npanes < 8; r++) {
+        uint64_t a = ra[r], b = ra[r] + rs[r];
+        if (b <= HEAP_BASE || a >= HEAP_BASE + HEAP_MAX) continue;
+        if (a < HEAP_BASE) a = HEAP_BASE;
+        if (b > HEAP_BASE + HEAP_MAX) b = HEAP_BASE + HEAP_MAX;
+        a = (a + 15) & ~15ull;
+        for (uint64_t p = a; p + 0x100 <= b && g_npanes < 8; p += 16)
+            if (cursor_pane_at(p)) g_panes[g_npanes++] = p;
+    }
+    if (g_npanes) LOG("[input] menu cursor: %d pane%s\n", g_npanes, g_npanes == 1 ? "" : "s");
+}
+static void layout_of_mouse(float *lx, float *ly) {
+    int pw = atomic_load(&mouse_pw), ph = atomic_load(&mouse_ph);
+    float mx = load_f(&mouse_px_b), my = load_f(&mouse_py_b);
+    float bw = (float)pw < (float)ph * 16.f / 9.f ? (float)pw : (float)ph * 16.f / 9.f;
+    float u = bw / 1280.f;
+    if (!(u > 0.f)) { *lx = *ly = 0; return; }
+    float ox = ((float)pw - bw) * 0.5f, oy = ((float)ph - bw * 9.f / 16.f) * 0.5f;
+    *lx = (mx - ox) / u - 640.f;
+    *ly = 360.f - (my - oy) / u;
+}
+// One d-pad tap toward the pointer, then wait. If the game's cursor pane does not move, stop: a held
+// direction is the stick the pointer was replacing.
+static void mouse_menu_chase(int *hold_l, int *hold_r, int *hold_u, int *hold_d) {
+    extern uint64_t renderer_present_count(void);
+    uint64_t frame = renderer_present_count();
+    int live = 0;
+    for (int i = 0; i < g_npanes; i++)
+        if (cursor_pane_at(g_panes[i])) g_panes[live++] = g_panes[i];
+    g_npanes = live;
+    if (!g_npanes && g_scan_tries < 2 && frame - g_pane_scan_frame > 30) scan_cursor_panes(frame), g_scan_tries++;
+    if (!g_npanes || !atomic_load(&mouse_pos_ok)) return;
+    float mlx, mly;
+    layout_of_mouse(&mlx, &mly);
+    uint64_t best = 0;
+    float best_d = 1e30f, px = 0, py = 0;
+    for (int i = 0; i < g_npanes; i++) {
+        const float *f = (const float *)(uintptr_t)g_panes[i];
+        float x = f[0x30 / 4], y = f[0x34 / 4];
+        float d = (x - mlx) * (x - mlx) + (y - mly) * (y - mly);
+        if (d < best_d) best_d = d, best = g_panes[i], px = x, py = y;
+    }
+    if (!best) return;
+    static float last_x, last_y, give_x, give_y;
+    static int cooldown, stuck, gave_up;
+    static uint64_t last_best;
+    if (best != last_best) last_best = best, last_x = px, last_y = py, stuck = 0, gave_up = 0;
+    if (gave_up) {
+        float dx = mlx - give_x, dy = mly - give_y;
+        if (dx * dx + dy * dy < 80.f * 80.f) return;
+        gave_up = 0, stuck = 0;
+    }
+    if (fabsf(px - last_x) > 2.f || fabsf(py - last_y) > 2.f) stuck = 0, last_x = px, last_y = py;
+    float dx = mlx - px, dy = mly - py;
+    if (dx * dx + dy * dy < 48.f * 48.f) return;
+    if (stuck >= 2) { gave_up = 1, give_x = mlx, give_y = mly; return; }
+    if (cooldown > 0) { cooldown--; return; }
+    if (fabsf(dx) >= fabsf(dy)) { if (dx > 0) *hold_r = 4; else *hold_l = 4; }
+    else { if (dy > 0) *hold_u = 4; else *hold_d = 4; }
+    cooldown = 8;
+    stuck++;
+}
+
+// Buttons from the mouse, for this presented frame. Drains the event totals either way, so strokes made
+// while playing do not fire on the next menu. Called once per presented frame (the game polls several times).
+// menu: title / file select / pause (A, B, and the cursor). Otherwise the Gameplay setting.
+static uint64_t mouse_menu_bits(bool menu) {
+    extern uint64_t renderer_present_count(void);
+    static uint64_t frame;
+    static int hold_l, hold_r, hold_u, hold_d, hold_a, hold_b;
+    static int latch_l = -1, latch_r = -1;  // gameplay button latched for the whole physical press
+    int game = menu ? MOUSE_OFF : mouse_game_mode();
+    uint64_t now = renderer_present_count();
+    if (now != frame) {
+        frame = now;
+        if (hold_l) hold_l--;
+        if (hold_r) hold_r--;
+        if (hold_u) hold_u--;
+        if (hold_d) hold_d--;
+        if (hold_a) hold_a--;
+        if (hold_b) hold_b--;
+        atomic_exchange(&mouse_ax, 0);
+        atomic_exchange(&mouse_ay, 0);
+        int wheel = atomic_exchange(&mouse_wheel, 0);
+        // The arm is a short click (menus, the opening-movie skip). Gameplay keeps the button until release,
+        // the way a held key does: a six-frame shield starts the pose and then drops it.
+        int a = atomic_load(&mouse_a_arm), b = atomic_load(&mouse_b_arm);
+        if (a > 0) atomic_fetch_sub(&mouse_a_arm, 1);
+        if (b > 0) atomic_fetch_sub(&mouse_b_arm, 1);
+        int left = atomic_load(&mouse_left_down), right = atomic_load(&mouse_right_down);
+        // `a`/`b` still count down after a very short click, so that press is not missed between polls.
+        if (left || a) {
+            if (latch_l < 0 && game) latch_l = game == MOUSE_LOOK ? BTN_B : BTN_A;
+        } else latch_l = -1;
+        if (right || b) {
+            if (latch_r < 0 && game) latch_r = game == MOUSE_LOOK ? BTN_R : BTN_B;
+        } else latch_r = -1;
+        static int was_menu;
+        if (menu && !was_menu) g_npanes = 0, g_scan_tries = 0, g_pane_scan_frame = 0;
+        was_menu = menu;
+        if (menu) {
+            if (a && latch_l < 0) hold_a = a;
+            if (b && latch_r < 0) hold_b = b;
+            if (wheel > 0) hold_u = 5;
+            else if (wheel < 0) hold_d = 5;
+            else mouse_menu_chase(&hold_l, &hold_r, &hold_u, &hold_d);
+        }
+    }
+    uint64_t bits = 0;
+    if (latch_l >= 0) bits |= 1ull << latch_l;
+    if (latch_r >= 0) bits |= 1ull << latch_r;
+    if (menu) {
+        if (latch_l < 0 && hold_a) bits |= 1ull << BTN_A;
+        if (latch_r < 0 && hold_b) bits |= 1ull << BTN_B;
+        if (hold_l) bits |= 1ull << BTN_LEFT;
+        if (hold_r) bits |= 1ull << BTN_RIGHT;
+        if (hold_u) bits |= 1ull << BTN_UP;
+        if (hold_d) bits |= 1ull << BTN_DOWN;
+        return bits;
+    }
+    return bits;
+}
+
+// Left / right click as buttons right now (movies poll this before the pad). Menus are always A and B.
+static uint64_t mouse_click_bits(void) {
+    int a = atomic_load(&mouse_a_arm), b = atomic_load(&mouse_b_arm);
+    int left = atomic_load(&mouse_left_down), right = atomic_load(&mouse_right_down);
+    if (!a && !b && !left && !right) return 0;
+    if (mouse_menu_active())
+        return (a ? 1ull << BTN_A : 0) | (b ? 1ull << BTN_B : 0);
+    int game = mouse_game_mode();
+    if (game == MOUSE_AB) return ((a || left) ? 1ull << BTN_A : 0) | ((b || right) ? 1ull << BTN_B : 0);
+    if (game == MOUSE_LOOK) return ((a || left) ? 1ull << BTN_B : 0) | ((b || right) ? 1ull << BTN_R : 0);
+    return 0;
+}
+
+// Stick angle toward the cursor (runtime/hle/qol.c rt_snap_dir: full turn = 2^32, 0 = down, 2^30 = right).
+// The stick's angle is screen-space, so this is the direction from Link's projected pixel to the cursor,
+// through the same view-projection the picture used (floor cameras and side-view cameras). 0 when Look is off,
+// the stick should keep its own direction, or Link / the camera isn't available.
+int mouse_look_angle(uint32_t *out) {
+    if (g_settings.mouse_controls != MOUSE_LOOK || mouse_menu_active() || menu_input_captured()) return 0;
+    extern uint64_t doorjump_player(uint64_t frame);
+    extern uint64_t renderer_present_count(void);
+    extern bool widescreen_project(float x, float y, float z, float *sx, float *sy);
+    extern bool mirror_input(void);
+    uint64_t pc = doorjump_player(renderer_present_count());
+    if (!pc) return 0;
+    float wx = *(float *)(uintptr_t)(pc + 0x80);
+    float wy = *(float *)(uintptr_t)(pc + 0x84);
+    float wz = *(float *)(uintptr_t)(pc + 0x88);
+    float sx, sy;
+    if (!widescreen_project(wx, wy, wz, &sx, &sy)) return 0;
+    if (!atomic_load(&mouse_pos_ok)) return 0;
+    float mx = load_f(&mouse_px_b), my = load_f(&mouse_py_b);
+    float dx = mx - sx, dy = sy - my;  // window y grows downward; stick y grows up
+    if (mirror_input()) dx = -dx;      // a game-right facing shows as screen-left while mirrored
+    if (dx * dx + dy * dy < 16.f) return 0;
+    double turns = atan2f(dy, dx) / (2 * (float)M_PI) + 0.25;
+    *out = (uint32_t)(int64_t)llround(turns * 4294967296.0);
+    return 1;
+}
+
+// The stick snap (GA(SNAP_DIR_SITE)) is shared by walking and by facing. These return addresses are the callers
+// that turn the angle into Link's yaw and then store it themselves (runtime/game_addresses). Other callers steer,
+// so Look leaves them on the stick: WASD chooses where he moves. The shield walk's snap is one of those: its
+// angle is the step as well as the facing, and it is not asked while he stands still. Standing still writes the
+// cursor onto the model directly (look_face_idle).
+static int facing_snap_site(uint64_t lr) {
+    const uint64_t sites[] = {
+        GA(MOUSE_YAW_SNAP_0), GA(MOUSE_YAW_SNAP_1), GA(MOUSE_YAW_SNAP_2), GA(MOUSE_YAW_SNAP_3), GA(MOUSE_YAW_SNAP_4),
+        GA(MOUSE_YAW_SNAP_5), GA(MOUSE_YAW_SNAP_6), GA(MOUSE_YAW_SNAP_7), GA(MOUSE_YAW_SNAP_8), GA(MOUSE_YAW_SNAP_9),
+    };
+    for (size_t i = 0; i < sizeof sites / sizeof sites[0]; i++)
+        if (lr == sites[i]) return 1;
+    return 0;
+}
+int mouse_look_snap(Cpu *c) {
+    if (g_settings.mouse_controls != MOUSE_LOOK || !facing_snap_site(c->x[30])) return 0;
+    uint32_t ang = 0;
+    if (!mouse_look_angle(&ang)) return 0;
+    c->x[0] = ang;
+    return 1;
+}
+
+// Standing still never asks the stick snap, so the cursor has nowhere to land. The model yaw lives on the
+// transform hanging off Link (actor+0x2d8, quaternion at +0x90). While the stick is at rest, write that.
+// A pushed stick leaves it alone: the step, and the facing that step stores, stay WASD.
+static void look_face_idle(int32_t lx, int32_t ly) {
+    if (g_settings.mouse_controls != MOUSE_LOOK || mouse_menu_active() || menu_input_captured()) return;
+    if ((int64_t)lx * lx + (int64_t)ly * ly > 4000ll * 4000) return;
+    extern uint64_t renderer_present_count(void);
+    static uint64_t done;
+    uint64_t f = renderer_present_count();
+    if (f == done) return;
+    uint32_t ang = 0;
+    if (!mouse_look_angle(&ang)) return;
+    uint64_t gm = LD64(GA(GAME_MGR));
+    uint64_t actor = gm ? LD64(gm + 0x4b8) : 0;
+    if (actor < HEAP_BASE || actor + 0x2e0 >= HEAP_BASE + HEAP_MAX) return;
+    uint64_t node = LD64(actor + 0x2d8);
+    if (node < HEAP_BASE || node + 0xa0 >= HEAP_BASE + HEAP_MAX) return;
+    float *q = (float *)(uintptr_t)(node + 0x90);
+    float mag = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    if (!(mag > 0.5f && mag < 1.5f)) return;
+    float yaw = (float)ang * (2.f * (float)M_PI / 4294967296.f);
+    q[0] = 0;
+    q[1] = sinf(yaw * 0.5f);
+    q[2] = 0;
+    q[3] = cosf(yaw * 0.5f);
+    done = f;
 }
 
 // Scripted input for testing: LARECOMP_INPUT="frame:BUTTON:frames,..." (BUTTON = A,B,X,Y,L,R,ZL,ZR,PLUS,
@@ -674,7 +1024,11 @@ void input_frame(uint64_t frame) {
 extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or name entry up (it has the keys / pad)
 
 // Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
-uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons; }
+uint64_t input_buttons_now(void) {
+    // opening movie skips on A / B before the pad poll (runtime/hle/movie.c); gameplay clicks follow Mouse controls
+    uint64_t mouse = mouse_click_bits();
+    return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons | mouse;
+}
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
@@ -772,6 +1126,7 @@ static void fill_state(Cpu *c) {
     if (ry > 16000) b |= 1ull << 21;
     if (rx > 16000) b |= 1ull << 22;
     if (ry < -16000) b |= 1ull << 23;
+    b |= mouse_menu_bits(mouse_menu_active());  // after the stick, so a menu stroke does not walk Link
     {   // the pause menu's companion slot (runtime/hle/pets.c) takes the d-pad / sticks / A while the cursor is on it
         extern uint64_t pets_menu_input(uint64_t b, int32_t st[4]);
         int32_t st[4] = {lx, ly, rx, ry};
@@ -782,6 +1137,7 @@ static void fill_state(Cpu *c) {
         b = tracker_map_input(b, st);
         lx = st[0], ly = st[1], rx = st[2], ry = st[3];
     }
+    look_face_idle(lx, ly);
     *(uint64_t *)(s + 8) = b;
     static uint64_t last_b;
     if (b != last_b && getenv("LARECOMP_INPUT")) LOG("[input] id %#x buttons %#llx (sampling %lld, lr %llx)\n", id, (unsigned long long)b, (long long)sampling, c->x[30]);

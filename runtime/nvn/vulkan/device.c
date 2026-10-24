@@ -1023,6 +1023,8 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
         float crop[4];  // uv origin and size
         widescreen_present_crop(frame, shape, crop, &vx, &vy, &vw, &vh);
+        extern void widescreen_note_present(float, float, float, float, const float *, int);
+        widescreen_note_present((float)vx, (float)vy, (float)vw, (float)vh, crop, renderer_origin_lower_left());
         widescreen_set_factor((float)shape);
         extern void renderer_set_alloc_scale(float ax, float ay);
         renderer_set_alloc_scale((float)os.ax, (float)os.ay);

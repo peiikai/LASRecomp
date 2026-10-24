@@ -43,6 +43,9 @@ extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
 bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back from the Triforce hunt's count
+int mouse_cursor_show(void);
+void mouse_cursor_sample(void);
+int mouse_cursor_pos(float *x, float *y);
 #include "../input_bind.h"
 #include "../paths.h"
 }
@@ -260,6 +263,17 @@ void menu_apply_window_requests(void *win) {
     }
     if (uint32_t r = __atomic_exchange_n(&g_window_resize_request, 0u, __ATOMIC_RELAXED))
         SDL_SetWindowSize(w, (int)(r >> 16), (int)(r & 0xffff));
+    static int os_hidden = -1;
+    int show = mouse_cursor_show();
+    if (show) {
+        // Hide whenever the OS pointer is up, not only on the change: a key hides it and a mouse move shows it again.
+        if (SDL_CursorVisible()) SDL_HideCursor();
+        os_hidden = 1;
+        mouse_cursor_sample();
+    } else if (os_hidden == 1) {
+        if (!SDL_CursorVisible()) SDL_ShowCursor();
+        os_hidden = 0;
+    }
 }
 
 // ------------------------------------------------------------------ render thread
@@ -893,7 +907,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool kbd = g_kbd.load() == 1;
     bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
     bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
+    bool cursor = mouse_cursor_show();  // the drawn pointer, when a game menu or Mouse controls is up
+    if (!cursor && !render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -914,7 +929,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (g_ov_cache < 0) g_ov_cache = !getenv("LARECOMP_OVERLAY_CACHE") || atoi(getenv("LARECOMP_OVERLAY_CACHE")) != 0;
     char key[sizeof g_ov_key];
     key[0] = 0;
-    if (g_ov_cache) {
+    // The drawn pointer is part of this picture. Reusing a frame would leave it where the mouse was.
+    if (g_ov_cache && !cursor) {
         fps_note(now, io.DeltaTime);
         char rk[64];
         // (only the FPS counter and the run timer; input only reaches ImGui while the menu or the name entry is up)
@@ -1040,6 +1056,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     }
 
     if (kbd) keyboard_draw(io, scale);
+    {   // the system cursor is hidden on the window thread; this draws the pointer on the game picture
+        float x, y;
+        if (cursor && mouse_cursor_pos(&x, &y)) {
+            io.MousePos = ImVec2(x, y);
+            io.MouseDrawCursor = true;
+            ImGui::GetStyle().MouseCursorScale = fmaxf(1.25f, (float)th / 720.f);
+        } else io.MouseDrawCursor = false;
+    }
     ImGui::Render();
     g_text_busy = open && ui_text_busy();
 #ifdef __APPLE__
