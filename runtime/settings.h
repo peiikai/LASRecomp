@@ -18,6 +18,7 @@ enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTA
 enum { MENU_CONFIRM_GAME = 0, MENU_CONFIRM_CONTROLLER = 1 };
 enum { TIMER_POS_LEFT = 0, TIMER_POS_RIGHT = 1 };  // the run timer's corner (bottom left / right)
 enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
+enum { MOUSE_OFF = 0, MOUSE_AB = 1, MOUSE_LOOK = 2 };  // Controls tab "Mouse controls"
 // System language served to the game (runtime/services/am.c GetDesiredLanguage, services/hid_set.c GetLanguageCode):
 // the game picks its text language from it, as it would from the Switch's own system setting. LANG_AUTO follows the
 // host locale ($LC_ALL / $LC_MESSAGES / $LANG); the rest are the codes of the languages the game has text for.
@@ -43,6 +44,7 @@ typedef struct {
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)
     bool bg_input;       // controllers keep working while the window isn't in front (SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS)
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
+    int mouse_controls;  // MOUSE_*: Off, A and B clicks, or Look (faces the cursor while walking and with the shield up)
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
     bool hide_hero_icon; // no Hero Mode icon on the HUD
     bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c

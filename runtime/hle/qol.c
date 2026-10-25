@@ -25,6 +25,17 @@ int rt_snap_dir(Cpu *c) {
     bool on = env == 2 ? g_settings.move_360 : env;
     static bool inner;
     if (inner) return 0;
+    {   // Yaw callers face the cursor even while WASD is held (he still moves along the stick). Any other
+        // caller keeps the stick, including the shield walk: that one angle is also the step, so Look must
+        // not replace it. Shield and mount poses that ask while the stick is at rest still face the cursor.
+        extern int mouse_look_snap(Cpu *);
+        if (mouse_look_snap(c)) return 1;
+        float mag = hypotf(x, y);
+        bool rest = mag < 2.f ? mag < 0.20f : mag < 8000.f;
+        uint32_t ang = 0;
+        extern int mouse_look_angle(uint32_t *);
+        if (rest && mouse_look_angle(&ang)) { c->x[0] = ang; return 1; }
+    }
     double turns = atan2(y, x) / (2 * M_PI) + 0.25;  // (the mod: floor(degrees) + 90)
     uint32_t a = (uint32_t)(int64_t)llround(turns * 4294967296.0);
     if (logn >= 0 && logn++ % 30 == 0) {  // (with the game's own 8-way answer for comparison)
