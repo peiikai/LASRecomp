@@ -16,6 +16,8 @@ endif
 # iOS: its own generated code (another guest base, runtime/guest_base.h) and build dir; static SDL3 / FFmpeg from
 # `make deps-ios` (tools/build_deps_ios.sh); the game code is linked into the executable (one signed binary).
 IOS_MIN   ?= 16.0
+# the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
+PYV       ?= 3.13
 ifeq ($(PLATFORM),ios)
 IOS_SDK   := $(shell xcrun --sdk iphoneos --show-sdk-path)
 CROSS     := -target arm64-apple-ios$(IOS_MIN) -isysroot $(IOS_SDK)
@@ -94,7 +96,7 @@ else ifeq ($(PLATFORM),ios)
 EXE      := $(B)/lasrecomp
 # the embedded CPython (BeeWare's Python.xcframework, `make deps-ios`): the seed generator runs in-process
 PYFW     := $(DEPS)/Python.xcframework/ios-arm64
-DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python3.13
+DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python$(PYV) -DLARECOMP_PY_VERSION='"$(PYV)"'
 # SDL3 static: the frameworks it uses; FFmpeg static (the LGPL subset). The game code is its own dylib, as on
 # macOS, embedded as Frameworks/LASGame.framework by tools/bundle_ios.sh (the app itself holds none of it);
 # -export_dynamic keeps the runtime functions it calls visible to dyld.
@@ -305,12 +307,12 @@ APP_B    := build/mac15
 deps:
 	MACOS_MIN=$(APP_MIN) tools/build_deps_macos.sh
 deps-ios:
-	IOS_MIN=$(IOS_MIN) tools/build_deps_ios.sh
+	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
 # iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-ios.ipa, signed with TEAM_ID / PROFILE
 # (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
 ipa:
 	$(MAKE) PLATFORM=ios
-	IOS_MIN=$(IOS_MIN) tools/bundle_ios.sh build/ios/lasrecomp build/ios/lasgame.dylib
+	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp build/ios/lasgame.dylib
 app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
@@ -321,7 +323,7 @@ app:
 # `make deps-ios`; the zip needs the four linkers (tools/fetch_lld.sh for each LLD_TARGET).
 ios-skeleton:
 	$(MAKE) PLATFORM=ios build/ios/lasrecomp
-	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) tools/bundle_ios.sh build/ios/lasrecomp
+	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
 ios-skeleton-zip: ios-skeleton
 	tools/ios_skeleton.sh
 

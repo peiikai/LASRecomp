@@ -149,6 +149,7 @@ plutil -lint "$APP/Info.plist" >/dev/null
 # C extension (.so: stdlib's and site-packages') as its own Frameworks/<module>.framework, with a <module>.fwork file
 # left in its place for the importer (CPython's iOS loader) - the layout of BeeWare's testbed, build/utils.sh.
 DEPS=${DEPS:-build/deps-ios}
+PYV=${PYV:-3.13}  # (the Makefile's)
 PYSLICE=$DEPS/Python.xcframework/ios-arm64
 if [ -f "$PYSLICE/Python.framework/Python" ]; then
     cp -R "$PYSLICE/Python.framework" "$APP/Frameworks/Python.framework"
@@ -156,53 +157,18 @@ if [ -f "$PYSLICE/Python.framework/Python" ]; then
     rsync -a "$DEPS/Python.xcframework/lib/" "$APP/python/lib/"  # (the pure-Python stdlib, shared by the slices)
     rsync -a --exclude 'libpython*.dylib' "$PYSLICE/lib-arm64/" "$APP/python/lib/"  # (this slice's extensions)
     # (no tests, no idle / tkinter: size)
-    rm -rf "$APP"/python/lib/python3.13/{test,idlelib,tkinter,turtledemo,ensurepip,lib2to3,pydoc_data,__pycache__}
+    rm -rf "$APP"/python/lib/python$PYV/{test,idlelib,tkinter,turtledemo,ensurepip,lib2to3,pydoc_data,__pycache__}
     find "$APP/python/lib" -name "__pycache__" -type d -prune -exec rm -rf {} +
     find "$APP/python/lib" -name "*_test*.so" -o -name "xx*.so" | xargs rm -f  # (the test extensions)
     [ -d "$DEPS/python/site-packages" ] && cp -R "$DEPS/python/site-packages" "$APP/python/site-packages"
-    # the generator's sources
+    # the generator's sources: tools/rando as it is (less the desktop helper's venv / spec and caches), the randomizer's
+    # core and resources
     mkdir -p "$APP/rando-gen"
-    cp tools/rando/*.py tools/rando/*.json tools/rando/*.yml tools/rando/*.txt "$APP/rando-gen/"
-    cp -R third_party/LAS-Randomizer/RandomizerCore "$APP/rando-gen/RandomizerCore"
-    cp -R third_party/LAS-Randomizer/Resources "$APP/rando-gen/Resources"
-    find "$APP/rando-gen" -name "__pycache__" -type d -prune -exec rm -rf {} +
-    # every .so / .dylib under python/ -> a framework
-    while IFS= read -r so; do
-        rel=${so#"$APP/"}                                    # python/lib/python3.13/lib-dynload/_bz2.cpython-...so
-        name=$(basename "$so"); name=${name%%.*}             # _bz2 (keystone's libkeystone.dylib -> libkeystone)
-        case "$rel" in
-            python/site-packages/*) mod=$(dirname "${rel#python/site-packages/}"); [ "$mod" = . ] && mod=$name || mod="$mod/$name" ;;
-            *) mod=$(dirname "${rel#python/lib/python3.13/lib-dynload/}"); [ "$mod" = . ] && mod=$name || mod="$mod/$name" ;;
-        esac
-        mod=${mod//\//.}
-        fw="$APP/Frameworks/$mod.framework"
-        mkdir -p "$fw"
-        mv "$so" "$fw/$mod"
-        cat > "$fw/Info.plist" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleExecutable</key><string>$mod</string>
-	<key>CFBundleIdentifier</key><string>$BUNDLE_ID.${mod//_/-}</string>
-	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-	<key>CFBundleName</key><string>$mod</string>
-	<key>CFBundlePackageType</key><string>FMWK</string>
-	<key>CFBundleShortVersionString</key><string>1.0</string>
-	<key>CFBundleVersion</key><string>1</string>
-	<key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
-	<key>MinimumOSVersion</key><string>$IOS_MIN</string>
-</dict>
-</plist>
-EOF
-        case "$so" in
-            *.so) echo "Frameworks/$mod.framework/$mod" > "${so%.so}.fwork" ;;  # (the importer follows it)
-            *.dylib)  # (keystone.py dlopens by path)
-                if [ -n "$SKELETON" ]; then printf '%s' "../../../Frameworks/$mod.framework/$mod" > "$so.symlink"
-                else ln -s "../../../Frameworks/$mod.framework/$mod" "$so"; fi ;;
-        esac
-    done < <(find "$APP/python" \( -name "*.so" -o -name "*.dylib" \) -type f)
-    echo "python: $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages"
+    rsync -a --exclude '__pycache__' --exclude 'venv' --exclude '*.spec' --exclude '.*' tools/rando/ "$APP/rando-gen/"
+    rsync -a --exclude '__pycache__' third_party/LAS-Randomizer/RandomizerCore third_party/LAS-Randomizer/Resources "$APP/rando-gen/"
+    # every .so / .dylib under python/ -> a framework (tools/ios_frameworks.py)
+    n=$(python3 tools/ios_frameworks.py "$APP" "$BUNDLE_ID" "$IOS_MIN" ${SKELETON:+--skeleton})
+    echo "python: $n extension frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages, $(du -sh "$APP/rando-gen" | cut -f1) generator"
 fi
 
 if [ -n "$SKELETON" ]; then

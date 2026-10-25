@@ -4,40 +4,37 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
 
 ## Embedded Python (the seed generator on the device)
 
-- **The Python version is spelled out in several places.** `3.13` / `313` in [Makefile](../Makefile) (`DEPINC`),
-  [tools/build_deps_ios.sh](../tools/build_deps_ios.sh) (`PYV`, the `.cpython-313-iphoneos.so` names, `--python-version`),
-  [tools/bundle_ios.sh](../tools/bundle_ios.sh) (`python/lib/python3.13`, the `lib-dynload` prefix) and
-  [runtime/platform/ios_python.m](../runtime/platform/ios_python.m) (`sys.path` entries). Fix: one `PYV` in the
-  Makefile exported to both scripts and passed as `-DLARECOMP_PY_VERSION=\"3.13\"`; the extension suffix read from the
-  slice (`python3-config --extension-suffix` of the cross venv) instead of typed.
-- **The native packages aren't driven by `requirements.txt`.** `build_deps_ios.sh` pins keystone 0.9.2, oead 1.3.0,
-  PyYAML 6.0.2, quicktex 0.2.1, Pillow 10.4 by hand, and installs evfl / appdirs unpinned; the randomizer's own
-  [requirements.txt](../third_party/LAS-Randomizer/requirements.txt) is never read. A version bump there is silently
-  ignored on iOS. Fix: read the requirements file, `pip download` the sdists it names, and build from those; or at
-  least a check in the script that the versions it pins satisfy the file's specifiers.
-- **oead's checksum is fetched from PyPI at build time** (`curl … /pypi/oead/1.3.0/json`), unlike every other source,
-  which is pinned in the script. Pin it.
-- **keystone is built with CMake directly and patched with `sed`.** Its Python binding can't build the library for
-  another target (its `setup.py` runs `make-share.sh` for the host and copies the result), so the library is built
-  the way `tools/build_deps_macos.sh` builds it, plus two iOS patches: the ELF-only `-Wl,-z,defs` taken out of
-  `HandleLLVMOptions.cmake` (keystone's LLVM 3.x knows Darwin and Windows, not iOS), and
-  `PYTHON_EXECUTABLE` / `PYTHON_VERSION_STRING` / `PYTHONINTERP_FOUND` forced (with `CMAKE_SYSTEM_NAME=iOS` the
-  old `FindPythonInterp` looks for a target interpreter). Both are gaps in keystone, not shortcuts of ours; put them
-  in a `tools/patches/keystone-ios.patch` applied with `git apply` so the diff is one file, and share the `CMP0051`
-  fix with the macOS script. (quicktex, by contrast, builds as a wheel through its own `setup.py` from the cross
-  venv, as oead does - the direct-CMake path it had was a misread of `cmake` missing from PATH.)
+Done (kept here as the record of what the build now guarantees):
+- The Python version is spelled once: `PYV` in the [Makefile](../Makefile), passed to
+  [tools/build_deps_ios.sh](../tools/build_deps_ios.sh) and [tools/bundle_ios.sh](../tools/bundle_ios.sh) and to the
+  runtime as `LARECOMP_PY_VERSION` ([runtime/platform/ios_python.m](../runtime/platform/ios_python.m)'s `sys.path`).
+  The extension suffix and the wheel platform tag are read from the cross venv's `sysconfig`, and the host
+  `python$PYV` is checked to be that version (not just named so).
+- The pins in `build_deps_ios.sh` are checked against the randomizer's
+  [requirements.txt](../third_party/LAS-Randomizer/requirements.txt) (`req`: the script stops when a pin no longer
+  satisfies the file's specifier), and the pure-Python packages (evfl, appdirs) are downloaded by the file's own
+  lines. The native ones still have their own recipes with a hand-moved version: keystone, oead, quicktex, PyYAML
+  (the pure-Python copy), Pillow.
+- Every download is pinned by checksum, oead's sdist and BeeWare's Pillow wheel included.
+- keystone's two build-file fixes (CMake 4's removed `CMP0051`, the ELF-only `-Wl,-z,defs` for an iOS target) are
+  [tools/patches/keystone-0.9.2.patch](../tools/patches/keystone-0.9.2.patch), applied by the macOS and iOS deps
+  scripts alike. (The `PYTHON_EXECUTABLE` / `PYTHONINTERP_FOUND` overrides stay as `-D` options: they're inputs, not
+  source changes.)
+- The frameworks layout is [tools/ios_frameworks.py](../tools/ios_frameworks.py), tested by
+  [tools/test_ios_frameworks.py](../tools/test_ios_frameworks.py) in CI (module names, `.fwork` pointers, the
+  keystone dylib's symlink / `.symlink`, bundle ids without underscores, idempotence).
+- The generator's sources are `rsync`ed from `tools/rando/` (less the helper's venv / spec and caches), not a `cp`
+  list of extensions.
+- [tools/test_ios_python.sh](../tools/test_ios_python.sh) `<devicectl id> <udid>` runs the self-test on a device,
+  checks its log and compares the seed it generated with the same seed generated here, file by file.
+
+Still open:
 - **Pillow comes from BeeWare's package index** (`https://pypi.anaconda.org/beeware/simple`), not PyPI: a third-party
-  binary we don't build and whose availability we don't control. Fix: build it from the sdist in the cross venv
-  (its codecs static), or at least pin the wheel's checksum.
+  binary we don't build and whose availability we don't control (pinned by checksum now, so at worst the build
+  stops). Building it from the sdist in the cross venv (its codecs static) would remove the dependency.
 - **BeeWare's Python-Apple-support release is a binary dependency** (`Python-3.13-iOS-support.b16`): a prebuilt
   CPython we don't rebuild. Acceptable (it's the CPython project's own iOS support, PEP 730), but a new `b`-release
-  changes the ABI of every extension we build; note the pairing.
-- **The cross venv needs a host `python3.13`** of exactly the embedded version (`HOSTPY`), found via `command -v` and
-  not checked against `PYV` beyond the name. Mismatch -> wheels tagged for the wrong ABI.
-- **`.fwork` framework-per-extension layout is reimplemented in the bundle script** (~60 lines of shell reproducing
-  BeeWare's testbed recipe: one `Frameworks/<dotted.module>.framework` + `Info.plist` per `.so`, a pointer file in
-  place). Any mistake only shows at load time on the device. Fix: a small Python script (clearer, testable), or
-  BeeWare's own tooling if it's packaged.
+  changes the ABI of every extension we build (`PYB` in `build_deps_ios.sh`: bump it and rebuild them all).
 - **The generator's modules are reset by hand** before each run (`sys.modules` entries whose `__file__` is under
   `rando-gen/`, plus the `PySide6` stubs) because the "process" is really a thread in one interpreter. Module-level
   state in a C extension would survive between runs; a sub-interpreter (`Py_NewInterpreter`) or a fresh
@@ -49,8 +46,9 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   which names the output folder. (A first run differed in `EUes/System.msbt` because the device's romfs copy lacked
   `EUes/message/Place.msbt`: `loc_text.Names` silently falls back to English names when a language's `Place.msbt`
   is missing, so an incomplete romfs changes the output without an error.)
-- **The self-test (`LARECOMP_IOS_PYTEST=1`, [runtime/platform/ios.c](../runtime/platform/ios.c) `plat_init`) has no automated run.** Fix: an iOS
-  Simulator build in CI (the `ios` job on `macos-15`, arm64, so `arm64-apple-ios-simulator` runs natively): the
+- **The self-test (`LARECOMP_IOS_PYTEST=1`, [runtime/platform/ios.c](../runtime/platform/ios.c) `plat_init`) runs in CI
+  on no device.** `tools/test_ios_python.sh` runs it on a device by hand (and compares the seed). Fix for CI: an iOS
+  Simulator build (the `ios` job on `macos-15`, arm64, so `arm64-apple-ios-simulator` runs natively): the
   start screen and the embedded Python, launched with `simctl` and the variable, `lasrecomp.log` from the app's
   data container checked for `[py] selftest ok` and `generator exit 0`, a `simctl io screenshot` of the start
   screen as an artifact. What it takes: a Makefile `IOS_SIM=1` (`-target arm64-apple-ios16.0-simulator`,
@@ -63,8 +61,8 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   code, and the 12.5 GB window at the iOS base may not fit a simulator process (a separate base and a separate
   `generated-ios-sim/` for nothing). The simulator build is the start screen + the seed generator, no more.
 - **`make rando-helper` (PyInstaller) and the embedded interpreter are two ways to ship the same generator.** The
-  desktop helper freezes `las_headless.py`; iOS runs the sources. `tools/rando/*` and `RandomizerCore` are copied
-  flat into `rando-gen/` with a `cp` list in the bundle script - a new file type there is missed.
+  desktop helper freezes `las_headless.py`; iOS runs the sources (`tools/rando/` and `RandomizerCore` / `Resources`
+  rsynced into `rando-gen/`).
 
 ## The export from the desktop (the iOS skeleton zip)
 

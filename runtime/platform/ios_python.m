@@ -53,8 +53,8 @@ static bool init_python(void) {
         // sys.path: the stdlib, its extensions, the generator's packages and sources (set explicitly: the
         // interpreter's own computation of the stdlib path is replaced as a whole)
         char p[4][1100];
-        snprintf(p[0], sizeof p[0], "%s/python/lib/python3.13", bundle);
-        snprintf(p[1], sizeof p[1], "%s/python/lib/python3.13/lib-dynload", bundle);
+        snprintf(p[0], sizeof p[0], "%s/python/lib/python" LARECOMP_PY_VERSION, bundle);
+        snprintf(p[1], sizeof p[1], "%s/python/lib/python" LARECOMP_PY_VERSION "/lib-dynload", bundle);
         snprintf(p[2], sizeof p[2], "%s/python/site-packages", bundle);
         snprintf(p[3], sizeof p[3], "%s/rando-gen", bundle);
         for (int i = 0; i < 4 && !PyStatus_Exception(st); i++) {
@@ -287,6 +287,8 @@ void plat_ios_python_selftest(void) {
     snprintf(dir, sizeof dir, "%s/pytest-seed", plat_ios_documents());
     snprintf(req, sizeof req, "%s/request.json", dir);
     snprintf(log, sizeof log, "%s/generate.log", dir);
+    // a fresh folder, as the Rando tab's per-seed ones are: some outputs (flags_ext) are appended to
+    [[NSFileManager defaultManager] removeItemAtPath:@(dir) error:nil];
     mkdir(dir, 0755);
     FILE *f = fopen(req, "w");
     if (!f) return;
