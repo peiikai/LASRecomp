@@ -290,11 +290,17 @@ void plat_ios_python_selftest(void) {
     // and once more into pytest-seed2/: the second run goes through the same interpreter with the generator's modules
     // re-imported, and must give the same files (state left in a module or a C extension would show here)
     extern const char *plat_ios_documents(void);
+    char romfs[1100];
+    snprintf(romfs, sizeof romfs, "%s/extracted/romfs", plat_ios_documents());
+    struct stat st;
+    if (stat(romfs, &st) || !S_ISDIR(st.st_mode)) {  // (the CI simulator has no game files: the imports were the test)
+        fprintf(stderr, "[py] generator skipped: no %s\n", romfs);
+        return;
+    }
     const char *names[] = {"pytest-seed", "pytest-seed2"};
     for (int i = 0; i < 2; i++) {
-        char script[1100], romfs[1100], dir[1100], req[1100], log[1100];
+        char script[1100], dir[1100], req[1100], log[1100];
         snprintf(script, sizeof script, "%s/rando-gen/las_headless.py", plat_ios_bundle_dir());
-        snprintf(romfs, sizeof romfs, "%s/extracted/romfs", plat_ios_documents());
         snprintf(dir, sizeof dir, "%s/%s", plat_ios_documents(), names[i]);
         snprintf(req, sizeof req, "%s/request.json", dir);
         snprintf(log, sizeof log, "%s/generate.log", dir);

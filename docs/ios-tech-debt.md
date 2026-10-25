@@ -52,20 +52,22 @@ Still open:
   which names the output folder. (A first run differed in `EUes/System.msbt` because the device's romfs copy lacked
   `EUes/message/Place.msbt`: `loc_text.Names` silently falls back to English names when a language's `Place.msbt`
   is missing, so an incomplete romfs changes the output without an error.)
-- **The self-test (`LARECOMP_IOS_PYTEST=1`, [runtime/platform/ios.c](../runtime/platform/ios.c) `plat_init`) runs in CI
-  on no device.** `tools/test_ios_python.sh` runs it on a device by hand (and compares the seed). Fix for CI: an iOS
-  Simulator build (the `ios` job on `macos-15`, arm64, so `arm64-apple-ios-simulator` runs natively): the
-  start screen and the embedded Python, launched with `simctl` and the variable, `lasrecomp.log` from the app's
-  data container checked for `[py] selftest ok` and `generator exit 0`, a `simctl io screenshot` of the start
-  screen as an artifact. What it takes: a Makefile `IOS_SIM=1` (`-target arm64-apple-ios16.0-simulator`,
-  `--sdk iphonesimulator`, `build/ios-sim`, `build/deps-ios-sim`, the xcframework's
-  `ios-arm64_x86_64-simulator` slice, which BeeWare ships already); `build_deps_ios.sh SIM=1` (the same five
-  sources built against the simulator SDK: `-mios-simulator-version-min`, `.cpython-313-iphonesimulator.so`,
-  `platform-config/arm64-iphonesimulator`; Pillow's BeeWare wheel may have no simulator build - then from the
-  sdist); `bundle_ios.sh` ad-hoc signed (no profile in the simulator). **The game itself is not run in the
-  simulator**, by decision: its GPU side is the Mac's, not a phone's, the macOS build already exercises the game
-  code, and the 12.5 GB window at the iOS base may not fit a simulator process (a separate base and a separate
-  `generated-ios-sim/` for nothing). The simulator build is the start screen + the seed generator, no more.
+- ~~**The self-test (`LARECOMP_IOS_PYTEST=1`) runs in CI on no device.**~~ The `ios` job now builds the app for the
+  iOS Simulator too (`make ios-sim`: `IOS_SIM=1` in the Makefile, `SIM=1` in `build_deps_ios.sh` - the simulator
+  SDK, `-mios-simulator-version-min`, the xcframework's `ios-arm64_x86_64-simulator` slice, BeeWare's simulator
+  Pillow wheel; nothing patched) and runs the self-test in it ([tools/test_ios_sim.sh](../tools/test_ios_sim.sh):
+  `simctl` boots a simulator, installs, launches with the variable, reads `lasrecomp.log` from the data container;
+  the start screen's screenshot is an artifact). Without game files the generator step reports itself skipped and
+  the imports are the test; `SIM_ROMFS=<dir>` by hand runs the generator twice and compares, as on a device
+  (291 identical files on an iPhone 17 Pro Max simulator). What the simulator taught: it refuses an executable
+  whose ad-hoc signature carries an entitlement ("Security policy issue"), so the simulator app is signed plain;
+  its installer rejects a framework folder without its binary, so the empty `LASGame.framework` is left out;
+  `MetalFX` is not in the simulator SDK (`metal.m` compiles the scaler out under `__has_include`); and quicktex's
+  `setup.py` gives CMake no sysroot, so its module had been built with the macOS SDK and `-arch arm64` (it loaded on
+  a device by luck of the shared headers) - the cross venv's `CC` / `CXX` wrappers are now passed, for the device
+  build too. **The game itself is not run in the simulator**, by decision: its GPU side is the Mac's, not a
+  phone's, the macOS build already exercises the game code, and the 12.5 GB window at the iOS base may not fit a
+  simulator process (a separate base and a separate `generated-ios-sim/` for nothing).
 - **`make rando-helper` (PyInstaller) and the embedded interpreter are two ways to ship the same generator.** The
   desktop helper freezes `las_headless.py`; iOS runs the sources (`tools/rando/` and `RandomizerCore` / `Resources`
   rsynced into `rando-gen/`).

@@ -11,7 +11,10 @@
 #import <AppKit/AppKit.h>
 #endif
 #import <Metal/Metal.h>
+#if __has_include(<MetalFX/MetalFX.h>)  // (not in the iOS Simulator SDK)
 #import <MetalFX/MetalFX.h>
+#define HAVE_METALFX 1
+#endif
 #include "output_scale.h"
 #import <QuartzCore/CAMetalLayer.h>
 #include <SDL3/SDL.h>
@@ -937,6 +940,12 @@ static void save_png(id<MTLTexture> tex, const char *path) { renderer_save_textu
 
 // MetalFX spatial upscaling (Video tab "Upscaler" = MetalFX). metalfx_upscale() decides (and sets up the scaler for
 // this input / output size); metalfx_encode() runs it and returns the upscaled image.
+#ifndef HAVE_METALFX
+static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in, float fx, float fy, double ow_d, double oh_d) {
+    (void)cb; (void)in; (void)fx; (void)fy; (void)ow_d; (void)oh_d;
+    return nil;
+}
+#else
 static id<MTLFXSpatialScaler> g_fx;
 static id<MTLTexture> g_fx_out;
 static NSUInteger g_fx_iw, g_fx_ih, g_fx_ow, g_fx_oh;
@@ -972,6 +981,7 @@ static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in
     }
     return g_fx && g_fx_out ? g_fx_out : nil;
 }
+#endif
 // SMAA 1x (Video tab "Anti-aliasing"; third_party/smaa, MIT; as runtime/nvn/vulkan/shaders.c / exec.c): luma edges ->
 // blending weights -> neighbourhood blending, at the game image's size, before the present / MetalFX. The reference
 // SMAA.hlsl has no Metal mode: it is built through its SMAA_CUSTOM_SL porting macros, with a few textual fixes for
@@ -1124,12 +1134,17 @@ static id<MTLTexture> smaa_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in, fl
 }
 
 static id<MTLTexture> metalfx_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in, float fx, float fy) {
+#ifdef HAVE_METALFX
     g_fx.colorTexture = in;
     g_fx.inputContentWidth = (NSUInteger)lround(in.width * fx);
     g_fx.inputContentHeight = (NSUInteger)lround(in.height * fy);
     g_fx.outputTexture = g_fx_out;
     [g_fx encodeToCommandBuffer:cb];
     return g_fx_out;
+#else
+    (void)cb; (void)fx; (void)fy;
+    return in;  // (never reached: metalfx_upscale() returned nil)
+#endif
 }
 
 

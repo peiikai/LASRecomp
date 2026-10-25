@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""usage: ios_frameworks.py <app> <bundle id> <min iOS> [--skeleton]
+"""usage: ios_frameworks.py <app> <bundle id> <min iOS> [--skeleton] [--platform iPhoneOS|iPhoneSimulator]
 
 The embedded CPython's C extensions as frameworks (tools/bundle_ios.sh): iOS loads code only from the app's own
 signed binary and from Frameworks/*.framework, so every .so under <app>/python/ (the stdlib's lib-dynload and
@@ -32,7 +32,7 @@ def module_name(rel):
     return '.'.join(pkg + [name])
 
 
-def info_plist(mod, bundle_id, min_ios):
+def info_plist(mod, bundle_id, min_ios, platform='iPhoneOS'):
     return {
         'CFBundleExecutable': mod,
         'CFBundleIdentifier': f"{bundle_id}.{mod.replace('_', '-')}",  # (no underscores in a bundle id)
@@ -41,12 +41,12 @@ def info_plist(mod, bundle_id, min_ios):
         'CFBundlePackageType': 'FMWK',
         'CFBundleShortVersionString': '1.0',
         'CFBundleVersion': '1',
-        'CFBundleSupportedPlatforms': ['iPhoneOS'],
+        'CFBundleSupportedPlatforms': [platform],
         'MinimumOSVersion': min_ios,
     }
 
 
-def make_frameworks(app, bundle_id, min_ios, skeleton=False):
+def make_frameworks(app, bundle_id, min_ios, skeleton=False, platform='iPhoneOS'):
     made = {}
     for dirpath, _, files in os.walk(os.path.join(app, PY)):
         for f in sorted(files):
@@ -64,7 +64,7 @@ def make_frameworks(app, bundle_id, min_ios, skeleton=False):
             os.makedirs(fw, exist_ok=True)
             os.replace(path, os.path.join(fw, mod))
             with open(os.path.join(fw, 'Info.plist'), 'wb') as p:
-                plistlib.dump(info_plist(mod, bundle_id, min_ios), p)
+                plistlib.dump(info_plist(mod, bundle_id, min_ios, platform), p)
             target = f'Frameworks/{mod}.framework/{mod}'
             if f.endswith('.so'):
                 with open(path[:-len('.so')] + '.fwork', 'w') as w:  # (the importer follows it)
@@ -82,9 +82,14 @@ def make_frameworks(app, bundle_id, min_ios, skeleton=False):
 def main(argv):
     skeleton = '--skeleton' in argv
     args = [a for a in argv[1:] if a != '--skeleton']
-    if len(args) != 3:
+    platform = 'iPhoneOS'
+    if '--platform' in args:
+        i = args.index('--platform')
+        platform = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 3 or platform not in ('iPhoneOS', 'iPhoneSimulator'):
         sys.exit(__doc__)
-    made = make_frameworks(args[0], args[1], args[2], skeleton)
+    made = make_frameworks(args[0], args[1], args[2], skeleton, platform)
     print(len(made))
 
 

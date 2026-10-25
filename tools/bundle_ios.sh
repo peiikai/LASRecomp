@@ -18,6 +18,8 @@
 #                         runtime/platform/ios.entitlements (one entitlement, which a free Apple ID's team grants),
 #                         where such tools read what to ask Apple for. Symlinks in the app become <name>.symlink
 #                         files holding the target (the zip is unpacked on Windows too)
+#   IOS_SIM=1             with SKELETON=1: the app for the iOS Simulator (make ios-sim; the platform names in the
+#                         plists, the simulator's Python slice; symlinks stay symlinks - it isn't zipped)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EXE=${1:-build/ios/lasrecomp}
@@ -26,6 +28,13 @@ SKELETON=${SKELETON:-}
 APP=${APP:-build/ios/LAS Recomp.app}
 BUNDLE_ID=${BUNDLE_ID:-com.peiikai.lasrecomp.ios}
 IOS_MIN=${IOS_MIN:-16.0}
+if [ -n "${IOS_SIM:-}" ]; then
+    [ -n "$SKELETON" ] || { echo "IOS_SIM=1 needs SKELETON=1 (no game code in the simulator)"; exit 1; }
+    PLATFORM_NAME=iphonesimulator; PLATFORM_KEY=iPhoneSimulator; PYSLICE_NAME=ios-arm64_x86_64-simulator
+else
+    PLATFORM_NAME=iphoneos; PLATFORM_KEY=iPhoneOS; PYSLICE_NAME=ios-arm64
+fi
+WORK=$(dirname "$EXE")  # (the icon catalog and the plist scratch next to the executable)
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
 case "$VERSION" in
     beta_*) SHORT="0.9.${VERSION#beta_}" ;;
@@ -65,11 +74,12 @@ cat > "$FW/Info.plist" <<EOF
 	<key>CFBundlePackageType</key><string>FMWK</string>
 	<key>CFBundleShortVersionString</key><string>$SHORT</string>
 	<key>CFBundleVersion</key><string>1</string>
-	<key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
+	<key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM_KEY</string></array>
 	<key>MinimumOSVersion</key><string>$IOS_MIN</string>
 </dict>
 </plist>
 EOF
+[ -z "${IOS_SIM:-}" ] || rm -rf "$FW"  # (the simulator's installer rejects a framework without its binary; a device ignores it)
 cp docs/icon/icon_ios_1024.png "$APP/icon.png"
 cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$APP/"
 cp third_party/fonts/Baloo2/OFL.txt "$APP/Baloo2-OFL.txt"
@@ -83,16 +93,16 @@ cp third_party/fonts/DejaVu/LICENSE "$APP/DejaVu-LICENSE.txt"
 # App icon: the asset catalog compiled from the 1024 png (Assets.car + CFBundleIcons); skipped without actool.
 if command -v xcrun >/dev/null && xcrun --find actool >/dev/null 2>&1; then
     # (docs/icon/icon_ios_1024.png: the art full-bleed and opaque - iOS rounds the corners itself; from icon_ios.svg)
-    ICONSET=build/ios/AppIcon.xcassets/AppIcon.appiconset
-    rm -rf build/ios/AppIcon.xcassets && mkdir -p "$ICONSET"
+    ICONSET=$WORK/AppIcon.xcassets/AppIcon.appiconset
+    rm -rf "$WORK/AppIcon.xcassets" "$WORK/icon-plist.plist" && mkdir -p "$ICONSET"
     cp docs/icon/icon_ios_1024.png "$ICONSET/icon.png"
     cat > "$ICONSET/Contents.json" <<'EOF'
 { "images": [ { "filename": "icon.png", "idiom": "universal", "platform": "ios", "size": "1024x1024" } ],
   "info": { "author": "xcode", "version": 1 } }
 EOF
-    echo '{ "info": { "author": "xcode", "version": 1 } }' > build/ios/AppIcon.xcassets/Contents.json
-    xcrun actool build/ios/AppIcon.xcassets --compile "$APP" --platform iphoneos --minimum-deployment-target "$IOS_MIN" \
-        --app-icon AppIcon --output-partial-info-plist build/ios/icon-plist.plist >/dev/null
+    echo '{ "info": { "author": "xcode", "version": 1 } }' > "$WORK/AppIcon.xcassets/Contents.json"
+    xcrun actool "$WORK/AppIcon.xcassets" --compile "$APP" --platform $PLATFORM_NAME --minimum-deployment-target "$IOS_MIN" \
+        --app-icon AppIcon --output-partial-info-plist "$WORK/icon-plist.plist" >/dev/null
 fi
 
 cat > "$APP/Info.plist" <<EOF
@@ -109,9 +119,9 @@ cat > "$APP/Info.plist" <<EOF
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>$SHORT</string>
 	<key>CFBundleVersion</key><string>1</string>
-	<key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
-	<key>DTPlatformName</key><string>iphoneos</string>
-	<key>DTSDKName</key><string>iphoneos</string>
+	<key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM_KEY</string></array>
+	<key>DTPlatformName</key><string>$PLATFORM_NAME</string>
+	<key>DTSDKName</key><string>$PLATFORM_NAME</string>
 	<key>LSRequiresIPhoneOS</key><true/>
 	<key>MinimumOSVersion</key><string>$IOS_MIN</string>
 	<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
@@ -135,8 +145,8 @@ cat >> "$APP/Info.plist" <<'EOF'
 </plist>
 EOF
 # the icon catalog's keys (CFBundleIcons, CFBundleIcons~ipad), when compiled
-if [ -f build/ios/icon-plist.plist ]; then
-    python3 - "$APP/Info.plist" build/ios/icon-plist.plist <<'EOF'
+if [ -f "$WORK/icon-plist.plist" ]; then
+    python3 - "$APP/Info.plist" "$WORK/icon-plist.plist" <<'EOF'
 import plistlib, sys
 with open(sys.argv[1], 'rb') as f: info = plistlib.load(f)
 with open(sys.argv[2], 'rb') as f: info.update(plistlib.load(f))
@@ -150,7 +160,7 @@ plutil -lint "$APP/Info.plist" >/dev/null
 # left in its place for the importer (CPython's iOS loader) - the layout of BeeWare's testbed, build/utils.sh.
 DEPS=${DEPS:-build/deps-ios}
 PYV=${PYV:-3.13}  # (the Makefile's)
-PYSLICE=$DEPS/Python.xcframework/ios-arm64
+PYSLICE=$DEPS/Python.xcframework/$PYSLICE_NAME
 if [ -f "$PYSLICE/Python.framework/Python" ]; then
     cp -R "$PYSLICE/Python.framework" "$APP/Frameworks/Python.framework"
     mkdir -p "$APP/python/lib"
@@ -167,10 +177,19 @@ if [ -f "$PYSLICE/Python.framework/Python" ]; then
     rsync -a --exclude '__pycache__' --exclude 'venv' --exclude '*.spec' --exclude '.*' tools/rando/ "$APP/rando-gen/"
     rsync -a --exclude '__pycache__' third_party/LAS-Randomizer/RandomizerCore third_party/LAS-Randomizer/Resources "$APP/rando-gen/"
     # every .so / .dylib under python/ -> a framework (tools/ios_frameworks.py)
-    n=$(python3 tools/ios_frameworks.py "$APP" "$BUNDLE_ID" "$IOS_MIN" ${SKELETON:+--skeleton})
+    n=$(python3 tools/ios_frameworks.py "$APP" "$BUNDLE_ID" "$IOS_MIN" --platform $PLATFORM_KEY \
+        $([ -n "$SKELETON" ] && [ -z "${IOS_SIM:-}" ] && echo --skeleton))
     echo "python: $n extension frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages, $(du -sh "$APP/rando-gen" | cut -f1) generator"
 fi
 
+if [ -n "${IOS_SIM:-}" ]; then
+    # The simulator runs ad-hoc signed code, every binary signed, and refuses the executable with our entitlement
+    # in its signature ("Security policy issue"): plain ad-hoc signatures, inside out.
+    for f in "$APP"/Frameworks/*.framework; do codesign --force --sign - --timestamp=none "$f"; done
+    codesign --force --sign - --timestamp=none "$APP"
+    echo "$APP (simulator): $(du -sh "$APP" | cut -f1), $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks, ad-hoc signed"
+    exit 0
+fi
 if [ -n "$SKELETON" ]; then
     # Sideloading tools (Impactor, SideStore, AltStore) take the entitlements to ask Apple for from the executable's
     # own code signature: an ad-hoc signature carrying ours (they re-sign over it). The frameworks stay unsigned

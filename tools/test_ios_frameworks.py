@@ -40,10 +40,12 @@ def check(cond, what):
         sys.exit(f'FAIL: {what}')
 
 
-def run(skeleton):
+def run(skeleton, platform='iPhoneOS'):
     with tempfile.TemporaryDirectory() as root:
         app = fixture(root)
         args = [sys.executable, fw.__file__, app, 'com.example.las', '16.0'] + (['--skeleton'] if skeleton else [])
+        if platform != 'iPhoneOS':
+            args += ['--platform', platform]
         out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
         check(out.strip() == '6', f'printed {out!r}, expected 6 frameworks')
         expect = {
@@ -62,6 +64,7 @@ def run(skeleton):
             with open(os.path.join(app, 'Frameworks', mod + '.framework', 'Info.plist'), 'rb') as p:
                 info = plistlib.load(p)
             check(info['CFBundleExecutable'] == mod and info['MinimumOSVersion'] == '16.0', f'{mod}: Info.plist')
+            check(info['CFBundleSupportedPlatforms'] == [platform], f"{mod}: platforms {info['CFBundleSupportedPlatforms']}")
             check(info['CFBundleIdentifier'] == 'com.example.las.' + mod.replace('_', '-'), f"{mod}: id {info['CFBundleIdentifier']}")
             check('_' not in info['CFBundleIdentifier'], f'{mod}: underscore in the bundle id')
             src = os.path.join(app, rel)
@@ -97,4 +100,5 @@ if __name__ == '__main__':
     bad_names()
     run(skeleton=False)
     run(skeleton=True)
+    run(skeleton=False, platform='iPhoneSimulator')
     print('ok')

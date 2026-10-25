@@ -317,7 +317,9 @@ jobs:
   # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
   # the iOS skeleton zip ships (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
   # SDL3 / FFmpeg / CPython and the generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that
-  # script's hash.
+  # script's hash. Then the same app for the iOS Simulator (make ios-sim: the simulator SDK's deps, cached alike)
+  # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
+  # exercised in a real iOS process. The game is not run in the simulator (no game files; the macOS job runs it).
   ios:
     runs-on: macos-15
     steps:
@@ -352,6 +354,31 @@ jobs:
           [ -f "$A/python/site-packages/keystone/libkeystone.dylib.symlink" ] || { echo "::error::keystone's .symlink missing"; exit 1; }
           codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
           du -sh "$A"
+      - name: Simulator deps cache
+        id: deps-sim
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios-sim
+            !build/deps-ios-sim/pyvenv
+          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+      - name: Simulator deps
+        run: make deps-ios-sim
+      - uses: actions/cache/save@v4
+        if: steps.deps-sim.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios-sim
+            !build/deps-ios-sim/pyvenv
+          key: ${{ steps.deps-sim.outputs.cache-primary-key }}
+      - name: Simulator app, the embedded Python's self-test in it
+        run: make -j"$(sysctl -n hw.ncpu)" ios-sim-test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-start-screen
+          path: build/ios-sim/start-screen.png
+          if-no-files-found: ignore
 
       - name: macOS launch smoke-test regressions
         run: python3 tools/test_macos_app_smoke.py

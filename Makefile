@@ -19,12 +19,25 @@ IOS_MIN   ?= 16.0
 # the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
 PYV       ?= 3.13
 ifeq ($(PLATFORM),ios)
-IOS_SDK   := $(shell xcrun --sdk iphoneos --show-sdk-path)
-CROSS     := -target arm64-apple-ios$(IOS_MIN) -isysroot $(IOS_SDK)
-GEN       ?= generated-ios
+# IOS_SIM=1: the iOS Simulator (arm64) instead of a device - the start screen and the embedded Python for CI (the
+# game itself is not run there); `make deps-ios-sim` first. Same sources, the simulator SDK and slice.
+ifdef IOS_SIM
+IOS_SDKNAME := iphonesimulator
+IOS_TRIPLE  := arm64-apple-ios$(IOS_MIN)-simulator
+IOS_SLICE   := ios-arm64_x86_64-simulator
+B         ?= build/ios-sim
+DEPS      ?= $(CURDIR)/build/deps-ios-sim
+else
+IOS_SDKNAME := iphoneos
+IOS_TRIPLE  := arm64-apple-ios$(IOS_MIN)
+IOS_SLICE   := ios-arm64
 B         ?= build/ios
-GUEST_BASE ?= 0x800000000
 DEPS      ?= $(CURDIR)/build/deps-ios
+endif
+IOS_SDK   := $(shell xcrun --sdk $(IOS_SDKNAME) --show-sdk-path)
+CROSS     := -target $(IOS_TRIPLE) -isysroot $(IOS_SDK)
+GEN       ?= generated-ios
+GUEST_BASE ?= 0x800000000
 endif
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
@@ -95,7 +108,7 @@ GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the st
 else ifeq ($(PLATFORM),ios)
 EXE      := $(B)/lasrecomp
 # the embedded CPython (BeeWare's Python.xcframework, `make deps-ios`): the seed generator runs in-process
-PYFW     := $(DEPS)/Python.xcframework/ios-arm64
+PYFW     := $(DEPS)/Python.xcframework/$(IOS_SLICE)
 DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python$(PYV) -DLARECOMP_PY_VERSION='"$(PYV)"'
 # SDL3 static: the frameworks it uses; FFmpeg static (the LGPL subset). The game code is its own dylib, as on
 # macOS, embedded as Frameworks/LASGame.framework by tools/bundle_ios.sh (the app itself holds none of it);
@@ -103,7 +116,7 @@ DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python$(PYV) -DLARECOMP_PY_VERSI
 LDFLAGS  := -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lavutil -lswscale -lbz2 -lz -liconv \
             -F$(PYFW) -framework Python \
             -Wl,-export_dynamic -Wl,-rpath,@executable_path/Frameworks \
-            -framework Foundation -framework UIKit -framework Metal -framework MetalFX -framework QuartzCore \
+            -framework Foundation -framework UIKit -framework Metal $(if $(IOS_SIM),,-framework MetalFX) -framework QuartzCore \
             -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers -framework CoreMedia \
             -framework CoreVideo -framework AVFoundation -framework AudioToolbox -framework CoreAudio \
             -framework CoreHaptics -framework GameController -framework CoreMotion -framework CoreBluetooth \
@@ -308,6 +321,8 @@ deps:
 	MACOS_MIN=$(APP_MIN) tools/build_deps_macos.sh
 deps-ios:
 	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
+deps-ios-sim:
+	SIM=1 IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
 # iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-ios.ipa, signed with TEAM_ID / PROFILE
 # (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
 ipa:
@@ -326,6 +341,13 @@ ios-skeleton:
 	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
 ios-skeleton-zip: ios-skeleton
 	tools/ios_skeleton.sh
+# The simulator app (build/ios-sim/LAS Recomp.app, no game code, ad-hoc signed) and its run of the embedded
+# Python's self-test (tools/test_ios_sim.sh): what CI does on a Mac runner. Needs `make deps-ios-sim`.
+ios-sim:
+	$(MAKE) PLATFORM=ios IOS_SIM=1 build/ios-sim/lasrecomp
+	SKELETON=1 IOS_SIM=1 APP="build/ios-sim/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) DEPS=build/deps-ios-sim tools/bundle_ios.sh build/ios-sim/lasrecomp
+ios-sim-test: ios-sim
+	tools/test_ios_sim.sh "build/ios-sim/LAS Recomp.app"
 
 # macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/LAS Recomp-<v>-macOS.dmg
 dmg: app
