@@ -133,11 +133,18 @@ static const char *RUNNER =
     "    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC), 0o644)\n"
     "    out = _FdOut(fd)\n"
     "    saved = (sys.argv, sys.stdout, sys.stderr, os.getcwd())\n"
-    "    # a fresh import of the generator's own modules, as a new process would have\n"
-    "    for name, m in list(sys.modules.items()):\n"
-    "        f = getattr(m, '__file__', None) or ''\n"
-    "        if f.startswith(gen_dir) or name in ('PySide6', 'PySide6.QtCore'):\n"
-    "            del sys.modules[name]\n"
+    "    # a fresh import of the generator's own modules, as a new process would have (by real path: the bundle is\n"
+    "    # /var/containers/... to NSBundle and /private/var/containers/... to the importer). Namespace packages\n"
+    "    # (RandomizerCore.Tools has no __init__.py) have no __file__, only __path__; left in place one would hand\n"
+    "    # out its old submodules as attributes - with event_tools' AutoEvent counter where the last run left it.\n"
+    "    gen_dir = os.path.realpath(gen_dir) + os.sep\n"
+    "    def under(m):\n"
+    "        paths = [getattr(m, '__file__', None)] + list(getattr(m, '__path__', None) or [])\n"
+    "        return any(p and os.path.realpath(p).startswith(gen_dir) for p in paths)\n"
+    "    # (chosen first, removed after: a namespace __path__ recomputes itself through its parent in sys.modules)\n"
+    "    drop = [name for name, m in list(sys.modules.items()) if under(m) or name in ('PySide6', 'PySide6.QtCore')]\n"
+    "    for name in drop: del sys.modules[name]\n"
+    "    if drop: out.write('(%d of the generator\\'s modules re-imported)\\n' % len(drop))\n"
     "    sys.argv, sys.stdout, sys.stderr = list(argv), out, out\n"
     "    code = 0\n"
     "    try:\n"
@@ -279,24 +286,52 @@ void plat_ios_python_selftest(void) {
         "print('[py] selftest ok in %.0f ms' % ((time.time() - t0) * 1000))\n";
     char err[512];
     if (plat_ios_python_run(src, err, sizeof err)) { fprintf(stderr, "[py] selftest FAILED: %s\n", err); return; }
-    // then the generator itself as a "process", on a default seed, like the Rando tab does (Documents/pytest-seed/)
-    char script[1100], romfs[1100], dir[1100], req[1100], log[1100];
+    // then the generator itself as a "process", on a default seed, like the Rando tab does (Documents/pytest-seed/),
+    // and once more into pytest-seed2/: the second run goes through the same interpreter with the generator's modules
+    // re-imported, and must give the same files (state left in a module or a C extension would show here)
     extern const char *plat_ios_documents(void);
-    snprintf(script, sizeof script, "%s/rando-gen/las_headless.py", plat_ios_bundle_dir());
-    snprintf(romfs, sizeof romfs, "%s/extracted/romfs", plat_ios_documents());
-    snprintf(dir, sizeof dir, "%s/pytest-seed", plat_ios_documents());
-    snprintf(req, sizeof req, "%s/request.json", dir);
-    snprintf(log, sizeof log, "%s/generate.log", dir);
-    // a fresh folder, as the Rando tab's per-seed ones are: some outputs (flags_ext) are appended to
-    [[NSFileManager defaultManager] removeItemAtPath:@(dir) error:nil];
-    mkdir(dir, 0755);
-    FILE *f = fopen(req, "w");
-    if (!f) return;
-    fputs("{\"seed\": \"pytest\", \"create-spoiler\": true}\n", f);  // (the rest: the generator's defaults)
-    fclose(f);
-    const char *argv[] = {script, romfs, dir, req, NULL};
-    uint64_t t0 = plat_now_ns();
-    PlatProc p = plat_spawn(argv, log, false);
-    int rc = p ? plat_proc_wait(p, true) : 255;
-    fprintf(stderr, "[py] generator exit %d in %llu ms (log: %s)\n", rc, (unsigned long long)((plat_now_ns() - t0) / 1000000), log);
+    const char *names[] = {"pytest-seed", "pytest-seed2"};
+    for (int i = 0; i < 2; i++) {
+        char script[1100], romfs[1100], dir[1100], req[1100], log[1100];
+        snprintf(script, sizeof script, "%s/rando-gen/las_headless.py", plat_ios_bundle_dir());
+        snprintf(romfs, sizeof romfs, "%s/extracted/romfs", plat_ios_documents());
+        snprintf(dir, sizeof dir, "%s/%s", plat_ios_documents(), names[i]);
+        snprintf(req, sizeof req, "%s/request.json", dir);
+        snprintf(log, sizeof log, "%s/generate.log", dir);
+        // a fresh folder, as the Rando tab's per-seed ones are: some outputs (flags_ext) are appended to
+        [[NSFileManager defaultManager] removeItemAtPath:@(dir) error:nil];
+        mkdir(dir, 0755);
+        FILE *f = fopen(req, "w");
+        if (!f) return;
+        fputs("{\"seed\": \"pytest\", \"create-spoiler\": true}\n", f);  // (the rest: the generator's defaults)
+        fclose(f);
+        const char *argv[] = {script, romfs, dir, req, NULL};
+        uint64_t t0 = plat_now_ns();
+        PlatProc p = plat_spawn(argv, log, false);
+        int rc = p ? plat_proc_wait(p, true) : 255;
+        fprintf(stderr, "[py] generator exit %d in %llu ms (log: %s)\n", rc, (unsigned long long)((plat_now_ns() - t0) / 1000000), log);
+        if (rc) return;
+    }
+    static const char *cmp =
+        "import hashlib, os\n"
+        "def tree(root):\n"
+        "    d = {}\n"
+        "    for dp, _, fs in os.walk(root):\n"
+        "        for f in fs:\n"
+        "            rel = os.path.relpath(os.path.join(dp, f), root)\n"
+        "            if rel in ('generate.log', 'request.json'): continue\n"
+        "            data = open(os.path.join(dp, f), 'rb').read()\n"
+        "            if rel == 'spoiler_view.txt': data = data.split(b'\\n', 1)[1]  # (its first line names the folder)\n"
+        "            d[rel] = hashlib.sha256(data).hexdigest()\n"
+        "    return d\n"
+        "a, b = tree(DOCS + '/pytest-seed'), tree(DOCS + '/pytest-seed2')\n"
+        "diff = sorted(set(a) ^ set(b) | {k for k in a if k in b and a[k] != b[k]})\n"
+        "print('[py] second run:', len(a), 'files,', 'identical' if not diff else 'DIFFERENT: ' + ' '.join(diff[:10]))\n";
+    char pre[1300];
+    snprintf(pre, sizeof pre, "DOCS = r'''%s'''\n", plat_ios_documents());
+    char *src2 = malloc(strlen(pre) + strlen(cmp) + 1);
+    strcpy(src2, pre);
+    strcat(src2, cmp);
+    if (plat_ios_python_run(src2, err, sizeof err)) fprintf(stderr, "[py] second-run compare FAILED: %s\n", err);
+    free(src2);
 }

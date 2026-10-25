@@ -2,8 +2,9 @@
 # The embedded Python on an iOS device: tools/test_ios_python.sh <devicectl id> <udid> [app]
 # Launches the installed app with LARECOMP_IOS_PYTEST=1 (runtime/platform/ios.c plat_init: the self-test in
 # ios_python.m imports every package and runs the seed generator on Documents/pytest-seed with
-# {"seed": "pytest", "create-spoiler": true}), pulls Documents/lasrecomp.log and checks for `[py] selftest ok` and
-# `generator exit 0`; then generates the same seed here (third_party/LAS-Randomizer/venv, PYTHONHASHSEED=0 as the
+# {"seed": "pytest", "create-spoiler": true}, then once more into pytest-seed2 and compares the two), pulls
+# Documents/lasrecomp.log and checks for `[py] selftest ok`, two `generator exit 0` and `second run: … identical`;
+# then generates the same seed here (third_party/LAS-Randomizer/venv, PYTHONHASHSEED=0 as the
 # runtime sets it) and compares the two outputs byte for byte - the seed must not depend on the platform.
 # The device's Documents/extracted/romfs must be the same romfs as extracted/romfs here (a missing file changes the
 # output without an error: loc_text.Names falls back to English names when a language's Place.msbt is absent).
@@ -25,12 +26,13 @@ for i in $(seq 1 60); do
     sleep 2
     rm -rf "$W/log"; ios fsync --udid="$UDID" --app="$BUNDLE_ID" pull --srcPath=Documents/lasrecomp.log --dstPath="$W/log" >/dev/null 2>&1 || true
     LOG=$(find "$W/log" -name lasrecomp.log 2>/dev/null | head -1)
-    [ -n "$LOG" ] && grep -q "^\[py\] generator exit\|^\[py\] selftest FAILED" "$LOG" && break
+    [ -n "$LOG" ] && grep -q "^\[py\] second run\|^\[py\] generator exit [1-9]\|^\[py\] selftest FAILED\|^\[py\] second-run compare FAILED" "$LOG" && break
 done
 [ -n "${LOG:-}" ] || { echo "no Documents/lasrecomp.log on the device"; exit 1; }
 grep "^\[py\]" "$LOG"
 grep -q "^\[py\] selftest ok" "$LOG" || { echo "FAIL: self-test"; exit 1; }
-grep -q "^\[py\] generator exit 0" "$LOG" || { echo "FAIL: generator"; exit 1; }
+[ "$(grep -c "^\[py\] generator exit 0" "$LOG")" = 2 ] || { echo "FAIL: generator"; exit 1; }
+grep -q "^\[py\] second run: .* identical" "$LOG" || { echo "FAIL: the second run in one interpreter differs"; exit 1; }
 
 # the device's seed (go-ios pulls one file at a time, into <dst>/<name>)
 ios fsync --udid="$UDID" --app="$BUNDLE_ID" tree --path=Documents/pytest-seed --nojson 2>/dev/null \

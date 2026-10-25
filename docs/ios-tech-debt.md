@@ -35,10 +35,16 @@ Still open:
 - **BeeWare's Python-Apple-support release is a binary dependency** (`Python-3.13-iOS-support.b16`): a prebuilt
   CPython we don't rebuild. Acceptable (it's the CPython project's own iOS support, PEP 730), but a new `b`-release
   changes the ABI of every extension we build (`PYB` in `build_deps_ios.sh`: bump it and rebuild them all).
-- **The generator's modules are reset by hand** before each run (`sys.modules` entries whose `__file__` is under
-  `rando-gen/`, plus the `PySide6` stubs) because the "process" is really a thread in one interpreter. Module-level
-  state in a C extension would survive between runs; a sub-interpreter (`Py_NewInterpreter`) or a fresh
-  `Py_Initialize` per run would be cleaner if it works with pybind11 modules.
+- **The generator's modules are reset by hand** before each run (`sys.modules` entries whose `__file__` or
+  `__path__` is under `rando-gen/`, plus the `PySide6` stubs) because the "process" is really a thread in one
+  interpreter. Verified by the self-test, which now generates the seed twice in one interpreter and compares: 291
+  identical files. The check found two bugs in the reset on its first run - the bundle path differs between
+  `NSBundle` (`/var/containers/…`) and the importer (`/private/var/containers/…`), so no module matched and
+  nothing was reset; and `RandomizerCore.Tools` is a namespace package (no `__init__.py`, so no `__file__`) that
+  survived and handed out the old `event_tools` with its `AutoEvent` counter - a second seed in one session got
+  different event files than the desktop gives for the same seed string. Module-level state in a C extension
+  (oead, quicktex, keystone) would still survive, none is known; a sub-interpreter (`Py_NewInterpreter`) or a fresh
+  `Py_Initialize` per run would make it impossible if pybind11 modules allow it.
 - ~~**Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`.~~ Verified: seed
   `pytest` (`{"seed": "pytest", "create-spoiler": true}`) generated on the Mac (`PYTHONHASHSEED=0`, the randomizer's
   venv, Python 3.13.7) and on an iPhone17,1 (embedded Python 3.13.16) gives 290 byte-identical files (`flags.tsv`,
