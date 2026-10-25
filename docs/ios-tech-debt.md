@@ -42,8 +42,13 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   `rando-gen/`, plus the `PySide6` stubs) because the "process" is really a thread in one interpreter. Module-level
   state in a C extension would survive between runs; a sub-interpreter (`Py_NewInterpreter`) or a fresh
   `Py_Initialize` per run would be cleaner if it works with pybind11 modules.
-- **Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`. Not yet verified
-  that one seed ID gives byte-identical output on Mac and iOS (`flags.tsv`, `logic.json`, the romfs files).
+- ~~**Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`.~~ Verified: seed
+  `pytest` (`{"seed": "pytest", "create-spoiler": true}`) generated on the Mac (`PYTHONHASHSEED=0`, the randomizer's
+  venv, Python 3.13.7) and on an iPhone17,1 (embedded Python 3.13.16) gives 290 byte-identical files (`flags.tsv`,
+  `logic.json`, `hints.*`, both `.pchtxt`, every romfs file); the only difference is `spoiler_view.txt`'s first line,
+  which names the output folder. (A first run differed in `EUes/System.msbt` because the device's romfs copy lacked
+  `EUes/message/Place.msbt`: `loc_text.Names` silently falls back to English names when a language's `Place.msbt`
+  is missing, so an incomplete romfs changes the output without an error.)
 - **The self-test (`LARECOMP_IOS_PYTEST=1`, [runtime/platform/ios.c](../runtime/platform/ios.c) `plat_init`) has no automated run.** Fix: an iOS
   Simulator build in CI (the `ios` job on `macos-15`, arm64, so `arm64-apple-ios-simulator` runs natively): the
   start screen and the embedded Python, launched with `simctl` and the variable, `lasrecomp.log` from the app's
