@@ -376,6 +376,7 @@ static void create_device(void) {
     if (eds3_ext) have_eds3.pNext = have.pNext, have.pNext = &have_eds3;
 #endif
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
+    VkDriverId driver_id = 0;  // (from the block below: the dynamic vertex input rules)
     {   // what the driver offers for building pipelines (one line, for #92 reports)
         VkPhysicalDeviceDriverProperties drv = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
         VkPhysicalDeviceProperties2 pr = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &drv};
@@ -391,6 +392,7 @@ static void create_device(void) {
         snprintf(eds3, sizeof eds3, "not in this build's headers");
 #endif
         vkGetPhysicalDeviceProperties2(g_vk.phys, &pr);
+        driver_id = drv.driverID;
 #ifdef VK_EXT_graphics_pipeline_library
         if (gpl_ext)
             snprintf(gpl, sizeof gpl, "%s (fast linking %s, independent interpolation decoration %s)",
@@ -418,11 +420,18 @@ static void create_device(void) {
 #ifdef _WIN32
         intel_legacy = g_vk.props.vendorID == 0x8086 && g_vk.props.apiVersion <= VK_MAKE_API_VERSION(0, 1, 3, 215);
 #endif
-        if (intel_legacy && !(e && *e)) off = true;
+        // AMD's Windows driver (26.10 on a Z1 Extreme) loses the device at the first grass cut with it (#388:
+        // "address read invalid"; fine with the layout in each pipeline); LARECOMP_VK_DYN_VERTEX=1 still turns it on there
+        bool amd_win = g_vk.props.vendorID == 0x1002 && driver_id == VK_DRIVER_ID_AMD_PROPRIETARY;
+#ifndef _WIN32
+        amd_win = false;  // (Linux: RADV, not affected)
+#endif
+        if ((intel_legacy || amd_win) && !(e && *e)) off = true;
         g_vk.vids = vids_ext && have_vids.vertexInputDynamicState && !off;
         if (g_vk.vids) ext[n_ext++] = VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME;
         else LOG("[vk] vertex input: in each pipeline (%s)\n",
                  intel_legacy && !(e && *e) ? "Intel's older Windows driver: drew nothing with it" :
+                 amd_win && !(e && *e) ? "AMD's Windows driver: lost the device with it" :
                  off ? "LARECOMP_VK_DYN_VERTEX=0" :
                  !vids_ext ? "no VK_EXT_vertex_input_dynamic_state" : "vertexInputDynamicState not supported");
     }
