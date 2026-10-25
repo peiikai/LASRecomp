@@ -132,6 +132,19 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   [kernel.h](../runtime/kernel.h) with the regions packed (alias 512 MB, stacks 256 MB, modules + HLE 512 MB) to ~4.5 GB,
   and the probe (`tools/ios_probe`, out of tree) run on a 6 GB device to see the real limit; as a fallback the
   entitlement back on for those devices. `GetInfo` 2/3/12-15 report whatever the layout says, so the game follows.
+- **The fixed base `0x8_0000_0000` doesn't fit every device: the game does not start on an iPhone17,1.** Measured on
+  a virtual iPhone 17 Pro (vphone "Lime", arm64e, iOS 26.6, 16 GB given to it): the same 58 GB address space as the
+  15 Pro (`0x1_0000_0000..0xF_C000_0000`, so RAM isn't it), but libmalloc's and the system's reserved regions lie in
+  the middle of it there - `0x4_5800_0000..0xB_4400_0000` and `0xD_C400_0000..0xF_C000_0000` are taken (user tags 31 /
+  0, no protection: reservations), leaving `0x3_0000_0000..0x4_5800_0000` (5.5 GB) and `0xC_7000_0000..0xE_F000_0000`
+  (10 GB) free. On the 15 Pro everything above `0x3_0000_0000` was free. A newer SoC / OS lays the process out
+  differently, and a real iPhone 17 will behave as the virtual one. The 12.5 GB window fits neither gap; the packed
+  ~5.5 GB layout above fits both, at `0xC_8000_0000` (free on both devices measured) - so the packed layout is
+  what makes iOS work beyond the 15 Pro, not just a saving. `plat_reserve_guest`'s failure now logs the process's
+  address-space limit, its free gaps of 256 MB or more and its large regions with their tags
+  ([runtime/platform/ios.c](../runtime/platform/ios.c)), so the next device reports its own map. A base chosen at
+  run time would be the general answer, but the generated code bakes the base into its literals (`f_8…`, `adrp`
+  results), as the Android port's `GUEST_SHIFT` does: moving it means regenerating, not relocating.
 - **Fitting weaker devices (4-6 GB of RAM) is unexplored.** The 15 Pro's 2.3 GB footprint in the overworld is
   against an 8 GB phone's ~5.5 GB ceiling; a 6 GB iPhone (13 / 14, SE) has ~3-3.5 GB for a foreground app and a
   4 GB one less, with no swap. Where the footprint goes: the guest heap the game actually touches (`SetHeapSize`

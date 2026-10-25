@@ -98,6 +98,33 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
             break;
         }
     }
+    // the process's address space: its limit and the gaps of 256 MB or more (where a smaller window could go)
+    task_vm_info_data_t vi;
+    mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS)
+        fprintf(stderr, "[vm] address space %llx..%llx (%llu GB)\n", (unsigned long long)vi.min_address,
+                (unsigned long long)vi.max_address, (unsigned long long)((vi.max_address - vi.min_address) >> 30));
+    vm_address_t addr = 0;
+    uint64_t prev_end = 0;
+    for (int n = 0; n < 4096; n++) {
+        vm_size_t size;
+        natural_t depth = 0;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t icnt = VM_REGION_SUBMAP_INFO_COUNT_64;
+        if (vm_region_recurse_64(mach_task_self(), &addr, &size, &depth, (vm_region_recurse_info_t)&info, &icnt) != KERN_SUCCESS) break;
+        if (addr > prev_end && addr - prev_end >= 256ull << 20)
+            fprintf(stderr, "[vm]   free %llx..%llx (%llu MB)\n", prev_end, (unsigned long long)addr,
+                    (unsigned long long)((addr - prev_end) >> 20));
+        if (size >= 1ull << 30)  // (what holds the big ones: user tag, protection, share mode)
+            fprintf(stderr, "[vm]   used %llx..%llx (%llu MB) tag %u prot %x share %u\n", (unsigned long long)addr,
+                    (unsigned long long)(addr + size), (unsigned long long)(size >> 20), info.user_tag, info.protection,
+                    info.share_mode);
+        prev_end = addr + size;
+        addr = prev_end;
+    }
+    if (cnt && vi.max_address > prev_end)
+        fprintf(stderr, "[vm]   free %llx..%llx (%llu MB, to the limit)\n", prev_end, (unsigned long long)vi.max_address,
+                (unsigned long long)((vi.max_address - prev_end) >> 20));
     return false;
 }
 
