@@ -17,12 +17,15 @@ Known shortcuts in the iOS port, with where they live and what the fix is. Add t
   least a check in the script that the versions it pins satisfy the file's specifiers.
 - **oead's checksum is fetched from PyPI at build time** (`curl … /pypi/oead/1.3.0/json`), unlike every other source,
   which is pinned in the script. Pin it.
-- **quicktex is built outside its own build system** (its `setup.py` can't cross-compile: CMake invoked directly with
-  the iOS Python's include / library paths, `QUICKTEX_MODULE_ONLY`). Tracks quicktex's CMakeLists, not its packaging;
-  breaks silently if upstream restructures. Also `_quicktex` lands in `site-packages` as a top-level module, by hand.
-- **keystone is patched with `sed`** (`cmake_policy(CMP0051)`, the ELF-only `-Wl,-z,defs`) and
-  `PYTHON_EXECUTABLE` / `PYTHON_VERSION_STRING` / `PYTHONINTERP_FOUND` are forced because its `FindPythonInterp`
-  fails under CMake 4. Fragile against both keystone and CMake updates.
+- **keystone is built with CMake directly and patched with `sed`.** Its Python binding can't build the library for
+  another target (its `setup.py` runs `make-share.sh` for the host and copies the result), so the library is built
+  the way `tools/build_deps_macos.sh` builds it, plus two iOS patches: the ELF-only `-Wl,-z,defs` taken out of
+  `HandleLLVMOptions.cmake` (keystone's LLVM 3.x knows Darwin and Windows, not iOS), and
+  `PYTHON_EXECUTABLE` / `PYTHON_VERSION_STRING` / `PYTHONINTERP_FOUND` forced (with `CMAKE_SYSTEM_NAME=iOS` the
+  old `FindPythonInterp` looks for a target interpreter). Both are gaps in keystone, not shortcuts of ours; put them
+  in a `tools/patches/keystone-ios.patch` applied with `git apply` so the diff is one file, and share the `CMP0051`
+  fix with the macOS script. (quicktex, by contrast, builds as a wheel through its own `setup.py` from the cross
+  venv, as oead does - the direct-CMake path it had was a misread of `cmake` missing from PATH.)
 - **Pillow comes from BeeWare's package index** (`https://pypi.anaconda.org/beeware/simple`), not PyPI: a third-party
   binary we don't build and whose availability we don't control. Fix: build it from the sdist in the cross venv
   (its codecs static), or at least pin the wheel's checksum.
