@@ -2,7 +2,7 @@
 # make deps-ios: SDL3 and FFmpeg (the same LGPL subset as macOS: the game's movies) as static libraries for iOS
 # (arm64, IOS_MIN = 16.0 by default), from the sources pinned in tools/build_deps_macos.sh, into build/deps-ios.
 # Static: an .ipa then needs no embedded frameworks to sign. Each step is skipped when its output exists.
-# Needs: Xcode (iOS SDK), cmake, ninja.
+# Needs: Xcode (iOS SDK), cmake and ninja (brew), a host python of the embedded version (brew python@3.13).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MIN=${IOS_MIN:-16.0}
@@ -98,21 +98,16 @@ if ! ls "$P"/wheels/oead-1.3.0-*_iphoneos.whl >/dev/null 2>&1; then  # (…-cp31
     ls "$P"/wheels/oead-1.3.0-*_iphoneos.whl >/dev/null
 fi
 
-# quicktex (pybind11 2.x, its setup.py can't cross-build: the module straight from CMake, against the iOS Python)
-if [ ! -f "$P/wheels/_quicktex.cpython-313-iphoneos.so" ]; then
+# quicktex (pybind11 2.x): its own setup.py drives CMake and takes the cross venv's Python, as oead's does; it runs
+# `cmake` by name, so cmake's folder goes on PATH (the cross venv's PATH is the slice's bin + the system's)
+if ! ls "$P"/wheels/quicktex-0.2.1-*_iphoneos.whl >/dev/null 2>&1; then
     "$HOSTPY" -m pip download -q --no-deps --no-binary :all: -d "$P/wheels" "quicktex~=0.2.1"
     rm -rf "$S/quicktex-ios" && mkdir -p "$S/quicktex-ios"
     tar -xf "$P"/wheels/quicktex-0.2.1.tar.gz -C "$S/quicktex-ios" --strip-components 1
-    PB=$("$P/pyvenv/bin/python" -c "import pybind11; print(pybind11.get_cmake_dir())")
-    cmake -S "$S/quicktex-ios" -B "$S/quicktex-ios/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
-          -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphoneos -DCMAKE_OSX_ARCHITECTURES=arm64 \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN" -Dpybind11_DIR="$PB" -DPYBIND11_FINDPYTHON=OFF \
-          -DPYTHON_EXECUTABLE="$P/pyvenv/bin/python" -DPYTHON_INCLUDE_DIR="$SLICE/include/python3.13" \
-          -DPYTHON_LIBRARY="$SLICE/Python.framework/Python" -DPYTHON_MODULE_EXTENSION=.cpython-313-iphoneos.so \
-          -DQUICKTEX_MODULE_ONLY=TRUE -DQUICKTEX_VERSION_INFO=0.2.1 -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$S/quicktex-ios/build/out" \
-          "-DCMAKE_MODULE_LINKER_FLAGS=-undefined dynamic_lookup"  # (the Python symbols: the app's framework at run time)
-    cmake --build "$S/quicktex-ios/build" -j"$JOBS"
-    cp "$S/quicktex-ios/build/out/_quicktex.cpython-313-iphoneos.so" "$P/wheels/"
+    (cd "$S/quicktex-ios" && PATH="$SLICE/bin:$(dirname "$(command -v cmake)"):$(dirname "$(command -v ninja)"):$PATH" \
+        IPHONEOS_DEPLOYMENT_TARGET=$MIN SETUPTOOLS_SCM_PRETEND_VERSION=0.2.1 CMAKE_GENERATOR=Ninja \
+        "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
+    ls "$P"/wheels/quicktex-0.2.1-*_iphoneos.whl >/dev/null
 fi
 # Pillow: BeeWare's prebuilt iOS wheel (its image codecs linked in statically)
 ls "$P"/wheels/pillow-10.4.0-*_iphoneos.whl >/dev/null 2>&1 || \
@@ -130,8 +125,7 @@ if [ ! -f "$SP/oead.cpython-313-iphoneos.so" ]; then
     unpack pyyaml-6.0.2.tar.gz pyyaml && cp -R "$S/pyyaml/lib/yaml" "$SP/yaml"
     unpack keystone-0.9.2.tar.gz keystone-py && cp -R "$S/keystone-py/bindings/python/keystone" "$SP/keystone"
     cp "$P/lib/libkeystone.0.dylib" "$SP/keystone/libkeystone.dylib"  # (keystone.py loads it from its own folder)
-    cp -R "$S/quicktex-ios/quicktex" "$SP/quicktex" && rm -rf "$SP/quicktex/cli"
-    cp "$P/wheels/_quicktex.cpython-313-iphoneos.so" "$SP/"  # (a top-level module, as its setup.py installs it)
+    unzip -qo "$P"/wheels/quicktex-0.2.1-*_iphoneos.whl -d "$SP" && rm -rf "$SP/quicktex/cli"  # (_quicktex: a top-level module)
     rm -rf "$SP"/*.dist-info "$SP"/oead-stubs
 fi
 

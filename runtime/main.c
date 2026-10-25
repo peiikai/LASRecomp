@@ -45,15 +45,17 @@ static void rtld_init_main(Cpu *c) { module_init(c, &g_modules[0]); }
 // LARECOMP_REEXEC_FORCE=1 (test): the first process skips the reservation once and starts again, as when the range is
 // taken (the new process has LARECOMP_REEXEC set and reserves normally).
 #define REEXEC_FORCED "forced by LARECOMP_REEXEC_FORCE"
+static bool g_guest_reserved;  // (iOS: a failure is final, but only the game needs the window - boot() reports it)
 __attribute__((constructor(101))) static void reserve_guest_space(void) {
     const char *force = getenv("LARECOMP_REEXEC_FORCE");
     bool forced = force && *force && strcmp(force, "0") && !getenv("LARECOMP_REEXEC");
     if (forced) setenv("LARECOMP_REEXEC_WHY", REEXEC_FORCED, 1);
-    else if (plat_reserve_guest(GUEST_LO, GUEST_HI)) return;
+    else if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { g_guest_reserved = true; return; }
     else setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
+    if (PLAT_IOS) return;  // (no re-exec there: the start screen and the seed generator still run; the game can't)
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
-    if (n >= 20 || PLAT_IOS) {  // (iOS: no re-exec; the window is below everything the system maps, so this is final)
+    if (n >= 20) {
         fprintf(stderr, "FATAL: guest address range %llx-%llx is not free\n", GUEST_LO, GUEST_HI);
         exit(1);
     }
@@ -138,6 +140,9 @@ static void teardown(void) {
 }
 
 static void boot(const char *root) {
+    if (!g_guest_reserved)
+        FATAL("guest address range %llx-%llx is not free: this device lays its address space out differently (the [vm] lines above)\n",
+              GUEST_LO, GUEST_HI);
     char exefs[1024], romfs[1024], npdm_path[1024];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
