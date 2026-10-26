@@ -88,7 +88,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 #endif
 
 // The release tag this build is (also names the release files; Makefile / tools/bundle_macos.sh / make_dmg.sh read
-// it): beta_<n> until 1.0, then v<major>.<minor>.<patch>; a beta's hotfix is beta_<n>.<m> ("Beta <n> Hotfix <m>"). A
+// it): beta_<n> until 1.0, then v<major>.<minor>.<patch>; a beta's hotfix is beta_<n>.<m> ("Beta <n>.<m>"). A
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
@@ -116,13 +116,13 @@ static long long tag_rank(const std::string &t) {
     return -1;
 }
 
-// "Beta 2" / "Beta 5 Hotfix 1" / "1.0.0" (with_word: "Version 1.0.0")
+// "Beta 2" / "Beta 5.1" / "1.0.0" (with_word: "Version 1.0.0")
 static std::string tag_label(const std::string &t, bool with_word) {
     int n, m;
     char end;
     if (sscanf(t.c_str(), "beta_%d%c", &n, &end) == 1) return "Beta " + std::to_string(n);
     if (sscanf(t.c_str(), "beta_%d.%d%c", &n, &m, &end) == 2 && m > 0)
-        return "Beta " + std::to_string(n) + " Hotfix " + std::to_string(m);
+        return "Beta " + std::to_string(n) + "." + std::to_string(m);
     if (!t.compare(0, 5, "test-")) return "Test build " + t.substr(5);
     std::string v = t.size() > 1 && t[0] == 'v' ? t.substr(1) : t;
     return with_word ? "Version " + v : v;
