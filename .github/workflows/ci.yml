@@ -350,7 +350,8 @@ jobs:
           A="build/ios-skeleton/LAS Recomp.app"
           [ ! -e "$A/Frameworks/LASGame.framework/LASGame" ] || { echo "::error::game library in the skeleton"; exit 1; }
           if nm "$A/lasrecomp" | grep ' _f_8' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
-          [ -L "$A/python/site-packages/keystone/libkeystone.dylib" ] || { echo "::error::keystone's dylib isn't a symlink"; exit 1; }
+          links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the app (an iOS install drops them): $links"; exit 1; }
+          [ -f "$A/Frameworks/keystone.libkeystone.framework/keystone.libkeystone" ] || { echo "::error::keystone's framework missing"; exit 1; }
           codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
           du -sh "$A"
       - name: Simulator deps cache

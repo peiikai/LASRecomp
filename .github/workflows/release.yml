@@ -271,7 +271,7 @@ jobs:
         run: make -j"$(sysctl -n hw.ncpu)" ios-kit
       # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (the iOS game code is
       # f_8..., at the iOS guest base), no game files; and the kit as the runtime reads it: the app under Payload/,
-      # keystone's dylib a symlink entry (zipinfo's 'l'), every host's linker in it
+      # no symlink entries in it (an iOS install drops them; zipinfo's 'l'), every host's linker in it
       - name: No game code; the kit's layout
         run: |
           A="build/ios-skeleton/LAS Recomp.app"
@@ -282,7 +282,8 @@ jobs:
           done
           K=$(ls build/dist/*-iOS.laskit)
           zipinfo -1 "$K" | grep -q '^Payload/LAS Recomp.app/Info.plist$' || { echo "::error::no Payload/LAS Recomp.app in the kit"; exit 1; }
-          zipinfo "$K" | grep -q '^l.* Payload/LAS Recomp.app/python/site-packages/keystone/libkeystone.dylib$' || { echo "::error::keystone's symlink isn't a link entry"; exit 1; }
+          links=$(zipinfo "$K" | grep '^l.* Payload/' || true); [ -z "$links" ] || { echo "::error::symlink entries in the kit's app: $links"; exit 1; }
+          zipinfo -1 "$K" | grep -q '^Payload/LAS Recomp.app/Frameworks/keystone.libkeystone.framework/keystone.libkeystone$' || { echo "::error::keystone's framework missing from the kit"; exit 1; }
           for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows; do
             zipinfo -1 "$K" | grep -q "^lld/$t/bin/lld" || { echo "::error::no linker for $t in the kit"; exit 1; }
           done

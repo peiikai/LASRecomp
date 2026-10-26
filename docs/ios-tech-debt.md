@@ -21,8 +21,15 @@ Done (kept here as the record of what the build now guarantees):
   scripts alike. (The `PYTHON_EXECUTABLE` / `PYTHONINTERP_FOUND` overrides stay as `-D` options: they're inputs, not
   source changes.)
 - The frameworks layout is [tools/ios_frameworks.py](../tools/ios_frameworks.py), tested by
-  [tools/test_ios_frameworks.py](../tools/test_ios_frameworks.py) in CI (module names, `.fwork` pointers, the
-  keystone dylib's symlink / `.symlink`, bundle ids without underscores, idempotence).
+  [tools/test_ios_frameworks.py](../tools/test_ios_frameworks.py) in CI (module names, `.fwork` pointers, no symlink
+  anywhere in the app, bundle ids without underscores, idempotence). keystone's library (not a Python extension:
+  `keystone.py` asks ctypes for `libkeystone.dylib` by name) is a framework like the others, and the runtime
+  `dlopen`s it before Python starts ([runtime/platform/ios_python.m](../runtime/platform/ios_python.m)) so ctypes
+  gets the loaded image back by its install name's leaf. It used to be a relative symlink in
+  `site-packages/keystone/`, kept as a symlink entry through the kit and the .ipa - and dropped by the sideloading
+  tool's install (an .ipa exported on Linux, installed with SideStore: `ModuleNotFoundError: distutils` from
+  keystone.py's last-resort path, i.e. the dylib not found). Nothing in the app depends on a symlink now, and the
+  kit script refuses one.
 - The generator's sources are `rsync`ed from `tools/rando/` (less the helper's venv / spec and caches), not a `cp`
   list of extensions.
 - [tools/test_ios_python.sh](../tools/test_ios_python.sh) `<devicectl id> <udid>` runs the self-test on a device,
@@ -78,8 +85,9 @@ Closed (the `.laskit` kit, miniz fetched by tools/fetch_miniz.sh): the player no
 (tools/ios_kit.sh) the runtime reads in place (runtime/zipfile.h over miniz): this host's linker, the headers and
 the link stub come out once into `<data root>/cache/ios-kit/<kit id>/` (sha256 of the file; older kits' folders are
 sweeps), the app ships as `Payload/LAS Recomp.app/` entries and the export clones them into the .ipa - data,
-name and central-directory record, so modes and symlinks come along without recompressing - and appends the library
-(deflated: ~50 MB instead of 170). Symlinks are zip symlink entries on every host (no more `.symlink` files). A
+name and central-directory record, so modes come along without recompressing - and appends the library
+(deflated: ~50 MB instead of 170). The app holds no symlinks (an iOS install drops them; the `.symlink` files and
+the symlink entries that replaced them are both gone - keystone's library is preloaded as a framework). A
 folder picked instead of the file gets a message saying so. Files the runtime writes itself carry no quarantine
 attribute, so the `removexattr` on the linker is gone too.
 
@@ -94,8 +102,8 @@ attribute, so the `removexattr` on the linker is gone too.
 - **The picked kit and game files folder aren't remembered across runs** (deliberate: settings.h has no string
   slots, and the kit is picked once per release anyway).
 - **Windows extraction turns a symlink into a copy of its target** (runtime/zipfile.c `zip_extract`: an unprivileged
-  Windows user can't make symlinks). Nothing under `lld/<host>/` or `include/` is a symlink today, so this is a
-  fallback nobody hits; a link whose target isn't in the archive fails the unpack.
+  Windows user can't make symlinks). Nothing in the kit is a symlink today, so this is a fallback nobody hits; a
+  link whose target isn't in the archive fails the unpack.
 - **The two files the export adds carry no Unix mode** (stock miniz writes none; `LASGame` and `LASGame.id` come
   out `-rw-r--r--`-less, mode 0). dyld maps a library without an executable bit, so the app runs; anything added
   later that must be executable (none today) would need a way to set the mode - a 12-line addition to miniz, kept
@@ -120,7 +128,7 @@ attribute, so the `removexattr` on the linker is gone too.
     Linux and Windows Makefile branches against `GAMELIB_ID` of `PLATFORM=ios` (a Linux export was rejected as
     "built for another version": host `-march` / `-fPIC` leaked into the id), and the generator gets `--simd asm`
     for iOS whatever the host (tools/test_gamebuild_ios.py can assert both from `launched`);
-  - the kit itself: release.yml checks its layout (Payload/, the keystone symlink entry, four linkers, headers,
+  - the kit itself: release.yml checks its layout (Payload/, no symlink entries, keystone's framework, four linkers, headers,
     stub); still unchecked: the executable's ad-hoc signature carries `increased-memory-limit` (ci.yml checks the
     .app, not the kit) and `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction
     (tools/test_gamebuild_ios.py links with it, which covers the host CI runs on);

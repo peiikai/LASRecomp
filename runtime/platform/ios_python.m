@@ -11,6 +11,7 @@
 // rando-gen/) are dropped from sys.modules first; the C extensions stay loaded (they keep no state).
 #import <Foundation/Foundation.h>
 #include <Python.h>
+#include <dlfcn.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -68,6 +69,13 @@ static bool init_python(void) {
     if (!PyStatus_Exception(st)) st = Py_InitializeFromConfig(&cfg);
     PyConfig_Clear(&cfg);
     if (PyStatus_Exception(st)) { snprintf(g_error, sizeof g_error, "init: %s", st.err_msg); return false; }
+    // keystone's library is not a Python extension: keystone.py loads it with ctypes by name, from its own folder
+    // first. A symlink there to the framework doesn't survive an iOS install (sideloading tools drop symlinks from
+    // the .ipa), so the framework is loaded here and dyld then answers `libkeystone.dylib` with this image (its
+    // install name's leaf) - no file in site-packages/keystone needed.
+    char ks[1200];
+    snprintf(ks, sizeof ks, "%s/Frameworks/keystone.libkeystone.framework/keystone.libkeystone", bundle);
+    if (!dlopen(ks, RTLD_NOW | RTLD_GLOBAL)) fprintf(stderr, "[py] keystone: %s\n", dlerror());
     // Python's stdout / stderr by default: our stderr, the log (its own are the process's original fds, which the
     // session log replaced with freopen - a different FILE). A script run as a "process" gets its own log file.
     PyRun_SimpleString("import sys, os\n"

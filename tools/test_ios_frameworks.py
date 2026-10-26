@@ -72,10 +72,10 @@ def run(platform='iPhoneOS'):
                 check(not os.path.exists(src), f'{rel} still there')
                 pointer = src[:-len('.so')] + '.fwork'
                 check(open(pointer).read().strip() == f'Frameworks/{mod}.framework/{mod}', f'{pointer}: content')
-            else:
-                check(os.path.islink(src), f'{rel}: not a symlink')
-                check(os.path.realpath(src) == os.path.realpath(binary), f'{rel}: link target {os.readlink(src)}')
-        # a second run finds nothing left to move (the .fwork / symlink are not extensions)
+            else:  # (the dylib: nothing left in its place - the runtime preloads the framework)
+                check(not os.path.lexists(src), f'{rel} still there')
+        check(not any(os.path.islink(os.path.join(dp, f)) for dp, _, fs in os.walk(app) for f in fs), 'a symlink in the app')
+        # a second run finds nothing left to move (the .fwork files are not extensions)
         out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
         check(out.strip() == '0', f'second run moved {out.strip()} files')
         for keep in ('python/site-packages/keystone/keystone.py', 'python/lib/python3.13/os.py'):
