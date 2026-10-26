@@ -150,35 +150,28 @@ attribute, so the `removexattr` on the linker is gone too.
 - **The guest base differs from the Android port's `GUEST_SHIFT`.** Two mechanisms for one problem; one has to go
   before both merge (below).
 - **Untested on iPad and on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number.
-- **The 12.5 GB guest window is the desktop layout, not what the game needs.** It fits because an 8 GB iPhone gives a
-  process ~59 GB of address space with or without `com.apple.developer.kernel.extended-virtual-addressing` (measured
-  on a 15 Pro: identical VA range, the same 12.5 GB window at `0x8_0000_0000`, the same 48 GB single allocation), so
-  that paid entitlement was dropped from [runtime/platform/ios.entitlements](../runtime/platform/ios.entitlements) and a
-  free personal team signs the app. Devices with less memory are likely to have a smaller VA limit, where the window
-  won't fit. The game uses about 4.5 GB of it: `HEAP_MAX` 3.25 GB (`SetHeapSize` asks for ~3 GB), the modules
-  (45 MB in a 2 GB slot), HLE / TLS / HLE heap (~230 MB in 1.8 GB), 48 thread stacks (in a 1 GB `STACK_SIZE`), a few
-  `svcMapMemory` copies (in a 4 GB `ALIAS_SIZE`). Fix: a `PLAT_IOS` layout in [runtime/rt.h](../runtime/rt.h) /
-  [kernel.h](../runtime/kernel.h) with the regions packed (alias 512 MB, stacks 256 MB, modules + HLE 512 MB) to ~4.5 GB,
-  and the probe (`tools/ios_probe`, out of tree) run on a 6 GB device to see the real limit; as a fallback the
-  entitlement back on for those devices. `GetInfo` 2/3/12-15 report whatever the layout says, so the game follows.
-- **The fixed base `0x8_0000_0000` doesn't fit every device: the game does not start on an iPhone17,1.** Measured on
-  a virtual iPhone 17 Pro (vphone "Lime", arm64e, iOS 26.6, 16 GB given to it): the same 58 GB address space as the
-  15 Pro (`0x1_0000_0000..0xF_C000_0000`, so RAM isn't it), but libmalloc's and the system's reserved regions lie in
-  the middle of it there - `0x4_5800_0000..0xB_4400_0000` and `0xD_C400_0000..0xF_C000_0000` are taken (user tags 31 /
-  0, no protection: reservations), leaving `0x3_0000_0000..0x4_5800_0000` (5.5 GB) and `0xC_7000_0000..0xE_F000_0000`
-  (10 GB) free. On the 15 Pro everything above `0x3_0000_0000` was free. A newer SoC / OS lays the process out
-  differently, and a real iPhone 17 will behave as the virtual one. The 12.5 GB window fits neither gap; the packed
-  ~5.5 GB layout above fits both, at `0xC_8000_0000` (free on both devices measured) - so the packed layout is
-  what makes iOS work beyond the 15 Pro, not just a saving. `plat_reserve_guest`'s failure now logs the process's
-  address-space limit, its free gaps of 256 MB or more and its large regions with their tags
-  ([runtime/platform/ios.c](../runtime/platform/ios.c)), so the next device reports its own map. A base chosen at
-  run time would be the general answer, but the generated code bakes the base into its literals (`f_8…`, `adrp`
-  results), as the Android port's `GUEST_SHIFT` does: moving it means regenerating, not relocating.
+  Run so far on an iPhone 15 Pro and a virtual iPhone 17 Pro (vphone "Lime", iOS 26.6), both at 60 fps.
+- **The base and the layout are fixed numbers that happened to fit the devices measured.** iOS gives a process 58 GB
+  of address space (the same on an 8 GB iPhone 15 Pro and a 16 GB iPhone 17 Pro, with or without
+  `com.apple.developer.kernel.extended-virtual-addressing` - so that paid entitlement is not in
+  [runtime/platform/ios.entitlements](../runtime/platform/ios.entitlements) and a free personal team signs the app),
+  but the kernel's own reserves (user tags 31 / 0, no protection) sit in the middle of it and leave only a few free
+  gaps a few GB wide, in places that differ by device and move with every launch (ASLR). The 12.5 GB desktop window
+  at `0x8_0000_0000` fit the 15 Pro and not an iPhone17,1; iOS now builds at `0x3_0000_0000` - free on every launch
+  seen on both - with the regions packed into 5.25 GB in [runtime/rt.h](../runtime/rt.h) (heap 3.25 GB, modules and
+  HLE memory, 1 GB of thread stacks, 512 MB alias). `GetInfo` 2/3/12-15 report whatever the layout says, so the game
+  follows, and only `GUEST_BASE` reaches the generated code. What's left: nothing guarantees the gap on an untested
+  device (iPad, a 4-6 GB iPhone, a future iOS), and the base can't be chosen at run time because the generated code
+  bakes it into its literals (`f_3…`, `adrp` results) - as the Android port's `GUEST_SHIFT` does, moving it means
+  regenerating, not relocating. `plat_reserve_guest`'s failure logs the address-space limit, the free gaps of 256 MB
+  or more and the large regions with their tags ([runtime/platform/ios.c](../runtime/platform/ios.c)), so the next
+  device that fails reports its own map.
 - **Fitting weaker devices (4-6 GB of RAM) is unexplored.** The 15 Pro's 2.3 GB footprint in the overworld is
   against an 8 GB phone's ~5.5 GB ceiling; a 6 GB iPhone (13 / 14, SE) has ~3-3.5 GB for a foreground app and a
   4 GB one less, with no swap. Where the footprint goes: the guest heap the game actually touches (`SetHeapSize`
   ~3 GB asked, how much is dirtied?), the renderer's second copy of every texture as `MTLTexture` (~850 MB graphics
-  on the 15 Pro), the shader caches, 256 MB thread stacks (VA only, but each touched page stays). To study:
+  on the 15 Pro), the shader caches, the per-thread host stacks (16 MB on iOS, VA only, but each touched page
+  stays - the desktops' 256 MB each is what stopped fitting beside the packed window, see above). To study:
   footprint by region over a play session (`footprint`-style breakdown from `task_vm_info` / `vm_region_recurse`
   in the probe), the texture copy made purgeable or streamed, a smaller `HEAP_MAX` the game accepts, and the
   `increased-memory-limit` entitlement's effect on those devices. For the measurements without many phones:
