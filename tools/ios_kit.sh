@@ -3,7 +3,7 @@
 # any desktop (the start screen's "Recomp for iOS", runtime/iosexport.c) turns their own game files into the iOS app.
 # It is a zip (read in place by the runtime, never unpacked by the player) holding:
 #   Payload/LAS Recomp.app/  the app without game code (tools/bundle_ios.sh SKELETON=1); the .ipa is these entries
-#                            copied as they are plus Frameworks/LASGame.framework - symlinks stay symlink entries
+#                            copied as they are plus Frameworks/LASGame.framework
 #   lld/<arch>-<os>/         the Mach-O linker for each desktop (tools/fetch_lld.sh: rust-lld, bin/ + lib/); the
 #                            runtime extracts its host's set once (<data>/ios-kit/<kit id>/)
 #   include/any-darwin-any/  zig's Darwin libc headers (the bundled zig compiles for iOS with these; its own copy
@@ -55,7 +55,8 @@ EOT
 mkdir -p build/dist
 OUT="build/dist/LAS Recomp-$VERSION-iOS.laskit"
 rm -f "$OUT"
-# -y keeps symlinks as symlink entries (keystone's dylib in the app); -X no extra fields beyond the Unix modes
+# (no symlinks in the app: an iOS install drops them; -y would keep any as entries) -X: no extra fields beyond the modes
+[ -z "$(find "$STAGE/Payload" -type l)" ] || { echo "symlinks in the app: $(find "$STAGE/Payload" -type l)"; exit 1; }
 (cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt)
 rm -rf "$STAGE"
 echo "$OUT ($(du -h "$OUT" | cut -f1))"

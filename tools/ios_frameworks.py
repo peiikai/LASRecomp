@@ -6,8 +6,10 @@ signed binary and from Frameworks/*.framework, so every .so under <app>/python/ 
 site-packages) is moved to Frameworks/<dotted.module>.framework/<dotted.module> with an Info.plist, and a
 <module>.fwork file holding the framework-relative path is left in its place for CPython's iOS importer - the
 layout of BeeWare's testbed (Python-Apple-support, build/utils.sh). A .dylib under python/ (keystone's, which
-keystone.py dlopens by path) gets the same framework and a relative symlink in its place (the iOS kit zip keeps it
-as a symlink entry, tools/ios_kit.sh). Prints the number of frameworks made.
+keystone.py loads with ctypes) gets the same framework and nothing in its place: no symlink survives an iOS
+install (a sideloading tool drops it from the .ipa), so the runtime dlopens the framework before Python starts
+(runtime/platform/ios_python.m) and keystone.py's `cdll.LoadLibrary('libkeystone.dylib')` finds the loaded image
+by its install name's leaf. Prints the number of frameworks made.
 """
 import os
 import plistlib
@@ -52,8 +54,6 @@ def make_frameworks(app, bundle_id, min_ios, platform='iPhoneOS'):
             if not (f.endswith('.so') or f.endswith('.dylib')):
                 continue
             path = os.path.join(dirpath, f)
-            if os.path.islink(path):
-                continue
             rel = os.path.relpath(path, app)
             mod = module_name(rel)
             if mod in made:
@@ -64,12 +64,9 @@ def make_frameworks(app, bundle_id, min_ios, platform='iPhoneOS'):
             os.replace(path, os.path.join(fw, mod))
             with open(os.path.join(fw, 'Info.plist'), 'wb') as p:
                 plistlib.dump(info_plist(mod, bundle_id, min_ios, platform), p)
-            target = f'Frameworks/{mod}.framework/{mod}'
             if f.endswith('.so'):
                 with open(path[:-len('.so')] + '.fwork', 'w') as w:  # (the importer follows it)
-                    w.write(target + '\n')
-            else:
-                os.symlink(os.path.relpath(os.path.join(app, target), dirpath), path)
+                    w.write(f'Frameworks/{mod}.framework/{mod}\n')
     return made
 
 

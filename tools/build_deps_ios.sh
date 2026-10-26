@@ -173,7 +173,11 @@ if [ ! -f "$SP/oead$EXT" ]; then
     for w in "$P"/wheels/evfl-*.whl "$P"/wheels/appdirs-*.whl; do unzip -qo "$w" -d "$SP"; done
     unpack pyyaml-6.0.2.tar.gz pyyaml && cp -R "$S/pyyaml/lib/yaml" "$SP/yaml"
     unpack keystone-0.9.2.tar.gz keystone-py && cp -R "$S/keystone-py/bindings/python/keystone" "$SP/keystone"
-    cp "$P/lib/libkeystone.0.dylib" "$SP/keystone/libkeystone.dylib"  # (keystone.py loads it from its own folder)
+    # keystone.py asks ctypes for 'libkeystone.dylib': the runtime loads the framework first (ios_python.m), and
+    # dyld matches that name against the loaded image's install name, so the leaf must be exactly that
+    cp "$P/lib/libkeystone.0.dylib" "$SP/keystone/libkeystone.dylib"
+    install_name_tool -id @rpath/libkeystone.dylib "$SP/keystone/libkeystone.dylib" 2>/dev/null
+    codesign --force --sign - "$SP/keystone/libkeystone.dylib" 2>/dev/null
     unzip -qo "$P/wheels/$QUICKTEX_WHL" -d "$SP" && rm -rf "$SP/quicktex/cli"  # (_quicktex: a top-level module)
     rm -rf "$SP"/*.dist-info "$SP"/oead-stubs
 fi
