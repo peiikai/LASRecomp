@@ -23,11 +23,15 @@ typedef struct {
 // The export can run: the bundled compiler, and in the kit the app, headers and a linker for this machine. false:
 // why (a folder picked instead of the file, a kit without this machine's linker...).
 bool iosexport_available(const char *kit, char *why, size_t why_size);
-// Exports it (minutes: the game code build) from game_dir (exefs/ inside; the build's files go to <game_dir>/ios).
+// Exports it (minutes: the game code build) from game_dir: any folder setup would accept (exefs/ and romfs/ in it,
+// or their contents, or nested). The build's files go to <data root>/cache/ios-build; game_dir isn't written to.
 // false: why says what went wrong (details in the log).
 bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size_t why_size);
 // Where the start screen suggests saving it (~/Downloads/LAS Recomp-<version>-iOS.ipa)
 void iosexport_default_path(char *out, size_t n);
+// The iOS build's folder in the data root (its exefs copy, .gamebuild/, library): what "Clear build cache" removes
+// along with the desktop's.
+void iosexport_build_dir(char *out, size_t n);
 // `lasrecomp --build-ios <kit.laskit> [game files]` (runtime/main.c): the export without the start screen, progress
 // on stderr, to iosexport_default_path or LARECOMP_IOS_OUT=<path>
 bool iosexport_run_cli(const char *kit, const char *game_dir);

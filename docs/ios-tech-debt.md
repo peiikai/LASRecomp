@@ -86,6 +86,11 @@ attribute, so the `removexattr` on the linker is gone too.
 - **The kit is 209 MB (658 MB unpacked), most of it four linkers** (rust-lld for macOS arm64, Linux x64 / arm64,
   Windows x64 - 8-122 MB compressed each; the app itself is 65 MB). One file for every desktop keeps the release
   page simple and was chosen deliberately; a per-host kit would be a quarter of the size.
+- **The export's game files folder is found the way setup finds it** (runtime/romfs_build.h `romfs_find_game`:
+  exefs/ and romfs/ inside, their contents in one folder, or nested), and only the exefs files are staged into
+  `<data root>/cache/ios-build/` by name - nothing is written into the player's folder; "Clear build cache" removes
+  that staging folder too. One build folder for whatever game folder was picked last: picking another version's
+  files replaces the exefs copy and the build cache rebuilds (its inputs changed), as it should.
 - **The picked kit and game files folder aren't remembered across runs** (deliberate: settings.h has no string
   slots, and the kit is picked once per release anyway).
 - **Windows extraction turns a symlink into a copy of its target** (runtime/zipfile.c `zip_extract`: an unprivileged

@@ -48,6 +48,7 @@ extern "C" {
 #include "build_cache.h"
 #include "game_addresses.h"
 #include "gamelib.h"
+#include "iosexport.h"
 #include "romfs_build.h"
 #include "settings.h"
 #include "input_bind.h"
@@ -366,31 +367,12 @@ static void set_failure(int k, int have = -1, const char *reason = NULL) {
     set_job(head[k], true, reason ? std::string(reason) + " " + hint[k] : hint[k]);
 }
 
-static bool is_dir(const std::string &p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-// exefs: the folder with main and main.npdm; romfs: the folder with region_common (the game's data root). Found
-// in the picked folder or a few levels below it (some folder layouts nest them).
-static void find_game(const std::string &dir, int depth, std::string &exefs, std::string &romfs, bool &unusable) {
-    if (depth > 4 || (!exefs.empty() && !romfs.empty())) return;
-    if (exefs.empty() && file_exists(dir + "/main") && file_exists(dir + "/main.npdm")) exefs = dir;
-    if (romfs.empty() && is_dir(dir + "/region_common")) romfs = dir;
-    DIR *d = opendir(dir.c_str());
-    if (!d) return;
-    std::vector<std::string> sub;
-    while (struct dirent *e = readdir(d)) {
-        std::string n = e->d_name;
-        if (n[0] == '.') continue;
-        std::string ext = n.size() > 4 ? n.substr(n.size() - 4) : "";
-        for (auto &ch : ext) ch = (char)tolower((unsigned char)ch);
-        if (ext == ".xci" || ext == ".nsp" || ext == ".nca" || ext == ".nsz" || ext == ".xcz") unusable = true;
-        if (n != "region_common" && is_dir(dir + "/" + n)) sub.push_back(dir + "/" + n);
-    }
-    closedir(d);
-    std::sort(sub.begin(), sub.end());
-    for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, unusable);
+// exefs: the folder with main and main.npdm; romfs: the folder with region_common (runtime/romfs_build.h: the
+// picked folder or a few levels below it)
+static void find_game(const std::string &dir, std::string &exefs, std::string &romfs, bool &unusable) {
+    char e[2200], r[2200];
+    romfs_find_game(dir.c_str(), e, sizeof e, r, sizeof r, &unusable);
+    exefs = e, romfs = r;
 }
 
 // A supported game version (runtime/game_addresses/versions.h)? Logs which one.
@@ -489,7 +471,7 @@ static void *extract_thread(void *) {
         goto check;
     }
     set_job(LN("Looking for the game files..."));
-    find_game(src, 0, exefs, romfs, unusable);
+    find_game(src, exefs, romfs, unusable);
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!build_id_ok(exefs)) { set_failure(FAIL_VERSION); goto done; }
     if (int have = count_files(romfs); have < ROMFS_FILES) {  // (an incomplete copy: refused before copying it)
@@ -607,7 +589,7 @@ static void *onedrive_size_thread(void *arg) {
     else {
         std::string exefs, romfs;
         bool unusable = false;
-        if (*src != "\x01") find_game(*src, 0, exefs, romfs, unusable);
+        if (*src != "\x01") find_game(*src, exefs, romfs, unusable);
         gb = (exefs.empty() || romfs.empty() ? GAME_FILES_GB : (rt_tree_size(exefs.c_str()) + rt_tree_size(romfs.c_str())) / 1e9)
              + SETUP_ADDS_GB;
     }
@@ -2219,9 +2201,11 @@ extern "C" void launcher_run(const char *root) {
                 if (!ios_page && !PLAT_IOS && !busy && has_build_cache()) {
                     opt_section("Build cache");
                     if (opt_action("Clear build cache", "", "Deletes the built game code. It gets rebuilt the next time you "
-                                   "set up.", true)) {
-                        char why[512] = "";
+                                   "set up.", true)) {  // (the iOS export's build too)
+                        char why[512] = "", ios_build[1100];
                         g_build_cache_changed = true;
+                        iosexport_build_dir(ios_build, sizeof ios_build);
+                        plat_remove_tree(ios_build);
                         if (build_cache_clear(g_root.c_str(), why, sizeof why)) set_job(LN("Build cache cleared."));
                         else set_job(LN("Couldn't clear the build cache."), true, why);
                     }
