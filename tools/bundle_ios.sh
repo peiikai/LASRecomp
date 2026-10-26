@@ -1,5 +1,5 @@
 #!/bin/bash
-# make ipa: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-ios.ipa from build/ios/lasrecomp and
+# make ipa: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-iOS.ipa from build/ios/lasrecomp and
 # build/ios/lasgame.dylib. The app is laid out as on macOS: the executable holds no game code; the game code library
 # (built from your own game files) is the embedded Frameworks/LASGame.framework, signed with the app - iOS runs only
 # code signed inside the bundle, so the .ipa holds the game's code: for your own devices, never shared.
@@ -12,14 +12,13 @@
 #   SIGN="Apple Development: ..."  the identity (default: the profile's certificate that is in the keychain)
 #   DEVICE=<devicectl id>  install and launch on that device
 #   SKELETON=1            no game library and no signing: the app without Frameworks/LASGame.framework, which the
-#                         iOS skeleton zip ships (tools/ios_skeleton.sh) and the start screen on any desktop
-#                         completes with the library it builds there (runtime/iosexport.c); the .ipa from that is
-#                         for the player's own sideloading tool: the executable carries an ad-hoc signature with
+#                         iOS kit ships (tools/ios_kit.sh) and the start screen on any desktop completes with the
+#                         library it builds there (runtime/iosexport.c); the .ipa from that is for the player's own
+#                         sideloading tool: the executable carries an ad-hoc signature with
 #                         runtime/platform/ios.entitlements (one entitlement, which a free Apple ID's team grants),
-#                         where such tools read what to ask Apple for. Symlinks in the app become <name>.symlink
-#                         files holding the target (the zip is unpacked on Windows too)
+#                         where such tools read what to ask Apple for
 #   IOS_SIM=1             with SKELETON=1: the app for the iOS Simulator (make ios-sim; the platform names in the
-#                         plists, the simulator's Python slice; symlinks stay symlinks - it isn't zipped)
+#                         plists, the simulator's Python slice)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EXE=${1:-build/ios/lasrecomp}
@@ -177,8 +176,7 @@ if [ -f "$PYSLICE/Python.framework/Python" ]; then
     rsync -a --exclude '__pycache__' --exclude 'venv' --exclude '*.spec' --exclude '.*' tools/rando/ "$APP/rando-gen/"
     rsync -a --exclude '__pycache__' third_party/LAS-Randomizer/RandomizerCore third_party/LAS-Randomizer/Resources "$APP/rando-gen/"
     # every .so / .dylib under python/ -> a framework (tools/ios_frameworks.py)
-    n=$(python3 tools/ios_frameworks.py "$APP" "$BUNDLE_ID" "$IOS_MIN" --platform $PLATFORM_KEY \
-        $([ -n "$SKELETON" ] && [ -z "${IOS_SIM:-}" ] && echo --skeleton))
+    n=$(python3 tools/ios_frameworks.py "$APP" "$BUNDLE_ID" "$IOS_MIN" --platform $PLATFORM_KEY)
     echo "python: $n extension frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages, $(du -sh "$APP/rando-gen" | cut -f1) generator"
 fi
 
@@ -241,7 +239,7 @@ fi
 
 mkdir -p build/dist && rm -rf build/ios/Payload && mkdir build/ios/Payload
 cp -R "$APP" build/ios/Payload/
-IPA="build/dist/LAS Recomp-$VERSION-ios.ipa"
+IPA="build/dist/LAS Recomp-$VERSION-iOS.ipa"
 rm -f "$IPA"
 (cd build/ios && zip -qr "../../$IPA" Payload)
 rm -rf build/ios/Payload

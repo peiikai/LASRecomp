@@ -3,6 +3,7 @@
 #include "gamebuild.h"
 #include "build_cache.h"
 
+#include <dirent.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -13,14 +14,12 @@
 #include <signal.h>
 #include <unistd.h>
 #endif
-#ifdef __APPLE__
-#include <sys/xattr.h>
-#endif
 
 #include "gamelib.h"
 #include "paths.h"
 #include "platform.h"
 #include "rt.h"
+#include "zipfile.h"
 
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
 #ifndef GAMELIB_CFLAGS
@@ -148,8 +147,8 @@ typedef struct {
     char implib[1100];  // the .exe's import library (the runtime functions the game code calls)
     char zig_rt[1100];  // the release's zig: its runtime built ahead of time (zig/rt, tools/zig_slim.sh), "" = none
 #endif
-    // GAMEBUILD_IOS, from the iOS skeleton folder (tools/ios_skeleton.sh): zig's Darwin libc headers (it doesn't add
-    // them for an iOS target by itself), a Mach-O linker for this machine (zig can't link for iOS: lld; or
+    // GAMEBUILD_IOS, unpacked from the iOS kit (tools/ios_kit.sh): zig's Darwin libc headers (it doesn't add them
+    // for an iOS target by itself), a Mach-O linker for this machine (zig can't link for iOS: lld; or
     // LARECOMP_IOS_LD=<path>, e.g. Apple's ld) and the libSystem stub it needs (libSystem.B.tbd)
     bool ios, lld;
     char zig_libc[1100], ld[1100], tbd[1100];
@@ -200,7 +199,7 @@ bool gamebuild_available(void) {
     return find_tools(&t);
 }
 
-// this machine's folder of linkers in the skeleton (tools/ios_skeleton.sh: lld/<arch>-<os>/bin/lld)
+// this machine's folder of linkers in the kit (tools/ios_kit.sh: lld/<arch>-<os>/bin/lld)
 #if defined(__aarch64__) || defined(_M_ARM64)
 #define LLD_ARCH "aarch64"
 #else
@@ -214,39 +213,129 @@ bool gamebuild_available(void) {
 #define LLD_HOST LLD_ARCH "-linux"
 #endif
 
-static bool find_ios_tools(Tools *t, const char *skeleton, char *why, size_t why_size) {
+#define KIT_APP "Payload/LAS Recomp.app"
+#define KIT_LLD "lld/" LLD_HOST
+#define KIT_LD KIT_LLD "/bin/lld" PLAT_EXE_SUFFIX
+
+// The kit (tools/ios_kit.sh, a zip) opened and looked over: the app, the headers, the link stub, a linker for this
+// machine. NULL: why, for the player.
+static ZipReader *open_kit(const char *kit, char *why, size_t why_size) {
+    if (!kit || !*kit) { snprintf(why, why_size, "choose the iOS kit (.laskit) of this release"); return NULL; }
+    struct stat st;
+    if (stat(kit, &st) != 0) { snprintf(why, why_size, "the iOS kit isn't there any more: %s", kit); return NULL; }
+    if (S_ISDIR(st.st_mode)) {
+        snprintf(why, why_size, "choose the .laskit file itself, not an unpacked folder - it is used as it is");
+        return NULL;
+    }
+    char zwhy[256];
+    ZipReader *z = zip_open(kit, zwhy, sizeof zwhy);
+    if (!z) { snprintf(why, why_size, "that isn't an iOS kit (.laskit): %s", zwhy); return NULL; }
+    if (zip_find(z, KIT_APP "/Info.plist") < 0 || zip_find(z, "include/any-darwin-any/stdlib.h") < 0 ||
+        zip_find(z, "libSystem.B.tbd") < 0) {
+        snprintf(why, why_size, "that isn't an iOS kit (.laskit): no " KIT_APP ", include/ or libSystem.B.tbd in it");
+        zip_close(z);
+        return NULL;
+    }
+    const char *e = getenv("LARECOMP_IOS_LD");
+    if (!(e && *e && file_exists(e)) && zip_find(z, KIT_LD) < 0) {
+        snprintf(why, why_size, "the iOS kit has no linker for this machine (" KIT_LLD ")");
+        zip_close(z);
+        return NULL;
+    }
+    return z;
+}
+
+// The kit's tools for this machine, unpacked once per kit into <data root>/cache/ios-kit/<kit id>/ (lld/<host>/,
+// include/, libSystem.B.tbd: the layout of the kit itself; .complete marks a finished unpack). Earlier kits' folders
+// go. Files the app writes itself carry no quarantine attribute, so the linker runs on macOS as it is.
+static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size, void (*progress)(double, const char *),
+                       char *why, size_t why_size) {
+    char id[17];
+    if (!zip_file_id(kit, id)) { snprintf(why, why_size, "can't read the iOS kit"); return false; }
+    char kits[1100], mark[1200], tmp[1200];
+    snprintf(kits, sizeof kits, "%s" SEP "cache" SEP "ios-kit", rt_data_root());
+    snprintf(dir, dir_size, "%s" SEP "%s", kits, id);
+    snprintf(mark, sizeof mark, "%s" SEP ".complete", dir);
+    if (file_exists(mark)) return true;
+    if (progress) progress(0, "Unpacking the iOS tools...");
+    snprintf(tmp, sizeof tmp, "%s.tmp", dir);
+    plat_remove_tree(tmp);
+    char parent[1100];
+    snprintf(parent, sizeof parent, "%s" SEP "cache", rt_data_root());
+    mkdir(parent, 0755);
+    mkdir(kits, 0755);
+    mkdir(tmp, 0755);
+    char sub[1300], zwhy[256];
+    const char *parts[] = {KIT_LLD, "include"};
+    for (int i = 0; i < 2; i++) {
+        snprintf(sub, sizeof sub, "%s" SEP "%s", tmp, parts[i]);
+        for (char *c = sub + strlen(tmp) + 1; *c; c++) if (*c == '/') *c = SEP[0];
+        if (!zip_extract(z, parts[i], sub, zwhy, sizeof zwhy, NULL)) {
+            snprintf(why, why_size, "couldn't unpack the iOS kit's %s: %s", parts[i], zwhy);
+            plat_remove_tree(tmp);
+            return false;
+        }
+    }
+    size_t n;
+    void *tbd = zip_read(z, zip_find(z, "libSystem.B.tbd"), &n);
+    snprintf(sub, sizeof sub, "%s" SEP "libSystem.B.tbd", tmp);
+    FILE *f = tbd ? fopen(sub, "wb") : NULL;
+    bool ok = f && fwrite(tbd, 1, n, f) == n;
+    if (f) fclose(f);
+    free(tbd);
+    if (!ok) { snprintf(why, why_size, "couldn't unpack the iOS kit's libSystem.B.tbd"); plat_remove_tree(tmp); return false; }
+    snprintf(sub, sizeof sub, "%s" SEP ".complete", tmp);
+    f = fopen(sub, "wb");
+    if (f) fclose(f);
+    plat_remove_tree(dir);
+    if (rename(tmp, dir) != 0) { snprintf(why, why_size, "couldn't unpack the iOS kit into %s", dir); plat_remove_tree(tmp); return false; }
+    // the other kits' folders (a release or two back) go
+    DIR *d = opendir(kits);
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            if (e->d_name[0] == '.' || !strcmp(e->d_name, id)) continue;
+            char old[1300];
+            snprintf(old, sizeof old, "%s" SEP "%s", kits, e->d_name);
+            plat_remove_tree(old);
+        }
+        closedir(d);
+    }
+    LOG("[gamebuild] iOS kit %s unpacked to %s\n", id, dir);
+    return true;
+}
+
+// unpack: the tools taken out of the kit (the build); else only looked for (the start screen's check)
+static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progress)(double, const char *), char *why,
+                           size_t why_size) {
     if (!find_tools(t) || !t->zig) { snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp"); return false; }
     t->ios = true;
-    char app[1100];
-    snprintf(app, sizeof app, "%s" SEP "LAS Recomp.app" SEP "Info.plist", skeleton);
-    snprintf(t->zig_libc, sizeof t->zig_libc, "%s" SEP "include" SEP "any-darwin-any" SEP "stdlib.h", skeleton);
-    snprintf(t->tbd, sizeof t->tbd, "%s" SEP "libSystem.B.tbd", skeleton);
-    if (!file_exists(app) || !file_exists(t->zig_libc) || !file_exists(t->tbd)) {
-        snprintf(why, why_size, "that folder isn't the unpacked iOS skeleton (LAS Recomp.app, include/, libSystem.B.tbd)");
-        return false;
-    }
-    *strrchr(t->zig_libc, SEP[0]) = 0;
+    ZipReader *z = open_kit(kit, why, why_size);
+    if (!z) return false;
+    if (!unpack) { zip_close(z); return true; }
+    char dir[1100];
+    bool ok = unpack_kit(z, kit, dir, sizeof dir, progress, why, why_size);
+    zip_close(z);
+    if (!ok) return false;
+    snprintf(t->zig_libc, sizeof t->zig_libc, "%s" SEP "include" SEP "any-darwin-any", dir);
+    snprintf(t->tbd, sizeof t->tbd, "%s" SEP "libSystem.B.tbd", dir);
     const char *e = getenv("LARECOMP_IOS_LD");
     if (e && *e && file_exists(e)) { snprintf(t->ld, sizeof t->ld, "%s", e); t->lld = strstr(e, "lld") != NULL; return true; }
     // (bin/ + lib/: on Linux lld finds its libLLVM.so by RUNPATH $ORIGIN/../lib; tools/fetch_lld.sh)
-    snprintf(t->ld, sizeof t->ld, "%s" SEP "lld" SEP LLD_HOST SEP "bin" SEP "lld" PLAT_EXE_SUFFIX, skeleton);
-    if (file_exists(t->ld)) {
-#ifdef __APPLE__
-        // The skeleton zip came through a browser: its files carry the quarantine attribute, and Gatekeeper kills
-        // an ad-hoc signed executable with it (rust-lld is one) the moment it starts. The player picked this
-        // folder on purpose and the linker runs only on their own files: the attribute goes, as `xattr -d` would.
-        if (removexattr(t->ld, "com.apple.quarantine", 0) == 0) LOG("[gamebuild] quarantine lifted from %s\n", t->ld);
-#endif
-        t->lld = true;
-        return true;
+    snprintf(t->ld, sizeof t->ld, "%s" SEP "lld" SEP LLD_HOST SEP "bin" SEP "lld" PLAT_EXE_SUFFIX, dir);
+    t->lld = true;
+    char stdlib_h[1200];
+    snprintf(stdlib_h, sizeof stdlib_h, "%s" SEP "stdlib.h", t->zig_libc);
+    if (!file_exists(t->ld) || !file_exists(stdlib_h) || !file_exists(t->tbd)) {
+        snprintf(why, why_size, "the unpacked iOS tools are incomplete (%s)", dir);
+        return false;
     }
-    snprintf(why, why_size, "the skeleton has no linker for this machine (lld/" LLD_HOST ")");
-    return false;
+    return true;
 }
 
-bool gamebuild_ios_available(const char *skeleton, char *why, size_t why_size) {
+bool gamebuild_ios_available(const char *kit, char *why, size_t why_size) {
     Tools t;
-    return find_ios_tools(&t, skeleton, why, why_size);
+    return find_ios_tools(&t, kit, false, NULL, why, why_size);
 }
 
 // zig cc on Linux: an explicit target, so it uses its own glibc headers and stubs instead of looking for the system's
@@ -429,7 +518,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         return false;
     }
     Tools t;
-    if (ios ? !find_ios_tools(&t, o->ios_skeleton ? o->ios_skeleton : "", why, why_size) : !find_tools(&t)) {
+    if (ios ? !find_ios_tools(&t, o->ios_kit, true, o->progress, why, why_size) : !find_tools(&t)) {
         if (!ios) snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp"));
         return false;
     }

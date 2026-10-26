@@ -36,7 +36,7 @@ mv "$DL/$NAME" build/zig
 
 # size: only what compiling C for this same OS needs (the game code is built for the machine it runs on): its libc
 # headers and libc sources; no C++ runtimes (libcxx, libcxxabi) or sanitizers. (The iOS game code's Darwin headers
-# come with the iOS skeleton zip, tools/ios_skeleton.sh.)
+# come with the iOS kit, tools/ios_kit.sh.)
 L=build/zig/lib
 case "${TARGET#*-}" in
     macos)   inc='darwin'; src='darwin' ;;

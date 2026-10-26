@@ -72,28 +72,29 @@ Still open:
   desktop helper freezes `las_headless.py`; iOS runs the sources (`tools/rando/` and `RandomizerCore` / `Resources`
   rsynced into `rando-gen/`).
 
-## The export from the desktop (the iOS skeleton zip)
+## The export from the desktop (the iOS kit)
 
-- **The skeleton zip is 208 MB (652 MB unpacked), most of it four linkers** (tools/ios_skeleton.sh: rust-lld for
-  macOS arm64, Linux x64 / arm64, Windows x64 - 112-195 MB each; the app itself is 59 MB). One zip for every desktop
-  keeps the release page simple; a per-host zip would be a quarter of the size.
-- **The player unpacks the zip and picks the folder** (the start screen reads it in place: no unzip in the runtime).
-  The picked folders aren't remembered across runs (settings.h has no string slots for them).
-- **The keystone symlink travels as a `.symlink` file** (tools/bundle_ios.sh SKELETON=1; runtime/iosexport.c turns it
-  back into a symlink entry in the .ipa) because a zip unpacked on Windows keeps no links. Any other symlink added to
-  the app later needs the same.
-- **The .ipa is written uncompressed** (runtime/iosexport.c: its own zip writer, store only - the runtime doesn't
-  link zlib on every platform: no `-lz` on macOS / Linux / Windows, no `zlib.h` in runtime/; only the iOS build has
-  it, through the static FFmpeg). 170 MB instead of ~50; fine for a file that's installed and deleted, but deflate
-  would be nicer once zlib is a dependency anyway. Adding it is one `-lz` on macOS and Linux (`zlib1g-dev` in the
-  AppImage container) but a new MSYS2 package plus `zlib1.dll` in the Windows zip - or miniz in third_party/ with
-  no new dependency at all.
-  Beyond size, a zip the runtime can *read* as well as write would remove the `.symlink` workaround above: the
-  skeleton could ship the app as a ready `.ipa` (a zip keeps symlink entries on every host, Windows included) and
-  the export would copy its entries through and append `Frameworks/LASGame.framework/{LASGame,LASGame.id}` -
-  instead of walking an unpacked `.app` folder and rebuilding what Windows lost. Stored entries can be copied
-  without inflating, so even the store-only writer could do it given a zip reader; deflate makes the shipped
-  skeleton smaller too.
+Closed (the `.laskit` kit, miniz fetched by tools/fetch_miniz.sh): the player no longer unpacks anything - the kit is one zip
+(tools/ios_kit.sh) the runtime reads in place (runtime/zipfile.h over miniz): this host's linker, the headers and
+the link stub come out once into `<data root>/cache/ios-kit/<kit id>/` (sha256 of the file; older kits' folders are
+sweeps), the app ships as `Payload/LAS Recomp.app/` entries and the export clones them into the .ipa - data,
+name and central-directory record, so modes and symlinks come along without recompressing - and appends the library
+(deflated: ~50 MB instead of 170). Symlinks are zip symlink entries on every host (no more `.symlink` files). A
+folder picked instead of the file gets a message saying so. Files the runtime writes itself carry no quarantine
+attribute, so the `removexattr` on the linker is gone too.
+
+- **The kit is 209 MB (658 MB unpacked), most of it four linkers** (rust-lld for macOS arm64, Linux x64 / arm64,
+  Windows x64 - 8-122 MB compressed each; the app itself is 65 MB). One file for every desktop keeps the release
+  page simple and was chosen deliberately; a per-host kit would be a quarter of the size.
+- **The picked kit and game files folder aren't remembered across runs** (deliberate: settings.h has no string
+  slots, and the kit is picked once per release anyway).
+- **Windows extraction turns a symlink into a copy of its target** (runtime/zipfile.c `zip_extract`: an unprivileged
+  Windows user can't make symlinks). Nothing under `lld/<host>/` or `include/` is a symlink today, so this is a
+  fallback nobody hits; a link whose target isn't in the archive fails the unpack.
+- **The two files the export adds carry no Unix mode** (stock miniz writes none; `LASGame` and `LASGame.id` come
+  out `-rw-r--r--`-less, mode 0). dyld maps a library without an executable bit, so the app runs; anything added
+  later that must be executable (none today) would need a way to set the mode - a 12-line addition to miniz, kept
+  out so the release is used unmodified (the build fetches it like zig: network once, `build/miniz-dl` caches it).
 - **ld64.lld is Rust's `rust-lld`** (tools/fetch_lld.sh: the 60-70 MB `rustc` component of a pinned Rust release,
   sha256 published next to it, for all four hosts). Chosen over the LLVM release archives (1.4-2 GB, and their Linux
   lld needs the host's libxml2 and Ubuntu 22.04's exact ICU soname): rust-lld needs only libc / libz, plus on Linux
@@ -102,21 +103,22 @@ Still open:
   as the macOS toolchain (only LINKEDIT differs: STABS paths, hence the UUID). The lld version follows Rust's
   (21.1.2 for Rust 1.91), which is fine but is not something we pick.
 - **rust-lld isn't in the README's "License" section.** It lists the Zig compiler's LLVM / Clang / LLD (Apache 2.0
-  with LLVM exceptions), but the skeleton zip ships a second linker: LLD built by the Rust project (Apache 2.0 with
-  LLVM exceptions as well, plus on Linux `libLLVM.so` under the same), fetched from Rust's release archives. Add it to
+  with LLVM exceptions), but the kit ships a second linker: LLD built by the Rust project (Apache 2.0 with LLVM
+  exceptions as well, plus on Linux `libLLVM.so` under the same), fetched from Rust's release archives. Add it to
   the list (with the Rust release it comes from, as the Zig entry names its version), and ship LLVM's `LICENSE.TXT`
-  next to the linker in the skeleton (`lld/<host>/`) the way `tools/zig_slim.sh` copies zig's `LICENSE`.
+  next to the linker in the kit (`lld/<host>/`) the way `tools/zig_slim.sh` copies zig's `LICENSE`. miniz (MIT,
+  build/miniz/LICENSE after tools/fetch_miniz.sh) belongs in that section too.
 - **zig can't link for iOS** (0.13-0.17: segfaults or a broken libubsan sub-build for the ios target). If a later
   zig can, lld and the tbd stub go away.
 - **Tests to add for what already broke once**, each found by hand on a device or a Linux box rather than by CI:
-  - the exported library's id equals the skeleton executable's on every desktop: `GAMELIB_IOS_ID` from the macOS,
+  - the exported library's id equals the kit executable's on every desktop: `GAMELIB_IOS_ID` from the macOS,
     Linux and Windows Makefile branches against `GAMELIB_ID` of `PLATFORM=ios` (a Linux export was rejected as
     "built for another version": host `-march` / `-fPIC` leaked into the id), and the generator gets `--simd asm`
     for iOS whatever the host (tools/test_gamebuild_ios.py can assert both from `launched`);
-  - the skeleton zip itself (tools/ios_skeleton.sh): unpacks with no symlinks, the executable's ad-hoc signature
-    carries `increased-memory-limit`, `lld/<host>/bin/lld -flavor darwin --version` runs on each host, `include/`
-    has `any-darwin-any/stdlib.h`;
-  - a quarantined linker on macOS (`xattr -w com.apple.quarantine`) still links (runtime/gamebuild.c lifts it);
+  - the kit itself: release.yml checks its layout (Payload/, the keystone symlink entry, four linkers, headers,
+    stub); still unchecked: the executable's ad-hoc signature carries `increased-memory-limit` (ci.yml checks the
+    .app, not the kit) and `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction
+    (tools/test_gamebuild_ios.py links with it, which covers the host CI runs on);
   - `plat_reserve_guest` on iOS without the entitlement fails with the `[vm]` diagnostics (needs a device: a
     manual checklist in docs/ios.md at least);
   - `build_deps_ios.sh` on a clean machine (the `_iphoneos.whl` glob broke only there); CI covers this now.
