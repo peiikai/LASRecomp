@@ -14,7 +14,11 @@ PLATFORM ?= macos
 endif
 
 # iOS: its own generated code (another guest base, runtime/guest_base.h) and build dir; static SDL3 / FFmpeg from
-# `make deps-ios` (tools/build_deps_ios.sh); the game code is linked into the executable (one signed binary).
+# `make deps-ios` (tools/build_deps_ios.sh); the game code is its own framework in the app.
+# IOS_GUEST_BASE: an iOS process has 58 GB of address space, but the kernel's reserves cut it into a few free gaps
+# and move with every launch (ASLR); 0x3_0000_0000 is the one gap free on every device and launch seen so far
+# (iPhone 15 Pro, iPhone 17 Pro / iOS 26.6), and the packed 5.25 GB layout of runtime/rt.h fits it.
+IOS_GUEST_BASE := 0x300000000
 IOS_MIN   ?= 16.0
 # the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
 PYV       ?= 3.13
@@ -37,7 +41,7 @@ endif
 IOS_SDK   := $(shell xcrun --sdk $(IOS_SDKNAME) --show-sdk-path)
 CROSS     := -target $(IOS_TRIPLE) -isysroot $(IOS_SDK)
 GEN       ?= generated-ios
-GUEST_BASE ?= 0x800000000
+GUEST_BASE ?= $(IOS_GUEST_BASE)
 endif
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
@@ -205,7 +209,6 @@ GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELI
 # The iOS library the start screen can build on any desktop (runtime/gamebuild.c GAMEBUILD_IOS): the id and flags of
 # `make PLATFORM=ios` - the base GENFLAGS at the iOS guest base, none of this host's additions (-march, -fPIC,
 # _FILE_OFFSET_BITS) - so the exported app's runtime accepts it whichever desktop built it
-IOS_GUEST_BASE := 0x800000000
 GENFLAGS_IOS := $(GENFLAGS_BASE) -DLARECOMP_GUEST_BASE=$(IOS_GUEST_BASE)ull
 GAMELIB_IOS_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS_IOS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 

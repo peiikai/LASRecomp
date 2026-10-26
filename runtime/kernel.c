@@ -225,18 +225,28 @@ static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int
     return t;
 }
 
+// Guest recursion runs on the host stack, so give every guest thread a lot of it. The game runs ~40 threads at once;
+// on iOS that much address space doesn't fit next to the guest window (the kernel's own reserves leave only a few
+// gaps, see runtime/rt.h), and pthread_create starts failing with EAGAIN. 16 MB is far more than the game ever uses.
+#if PLAT_IOS
+#define GUEST_HOST_STACK (16ull << 20)
+#else
+#define GUEST_HOST_STACK (256ull << 20)
+#endif
+
 static void thread_start(KThread *t) {
 #ifdef _WIN32
-    t->host = guest_thread_create(thread_main, t, 256u << 20);
+    t->host = guest_thread_create(thread_main, t, (unsigned)GUEST_HOST_STACK);
     if (!t->host) FATAL("Could not create a game thread.\n");
     t->started = true;
 #else
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 256ull << 20);  // guest recursion runs on the host stack
+    pthread_attr_setstacksize(&attr, GUEST_HOST_STACK);
     t->started = true;
-    pthread_create(&t->host, &attr, thread_main, t);
+    int err = pthread_create(&t->host, &attr, thread_main, t);
     pthread_attr_destroy(&attr);
+    if (err) FATAL("Could not create a game thread (%s).\n", strerror(err));
 #endif
 }
 
