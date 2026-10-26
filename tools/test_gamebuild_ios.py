@@ -1,9 +1,10 @@
 """The iOS game-code build (runtime/gamebuild.c GAMEBUILD_IOS) on this desktop, with tiny generated programs.
 
-The real builder, the bundled zig (build/zig: tools/fetch_zig.sh) and the Mach-O linker of the iOS skeleton
-(build/lld/<arch>-<os>: tools/fetch_lld.sh) compile the fixture for arm64 iOS and link lasgame-ios.dylib; the
-result must be an arm64 Mach-O dylib with the install name the exported app loads it by. Only process launching
-and resource lookup are bridged to Python, as tools/test_gamebuild_resume.py does. No game files, no device.
+The real builder, the bundled zig (build/zig: tools/fetch_zig.sh) and the Mach-O linker of the iOS kit
+(build/lld/<arch>-<os>: tools/fetch_lld.sh), packed into a fixture .laskit as tools/ios_kit.sh lays it out, compile
+the fixture for arm64 iOS and link lasgame-ios.dylib; the result must be an arm64 Mach-O dylib with the install name
+the exported app loads it by. The kit's tools must land in <data root>/cache/ios-kit/<kit id>/ once. Only process
+launching and resource lookup are bridged to Python, as tools/test_gamebuild_resume.py does. No game files, no device.
 """
 import ctypes as ct
 import os
@@ -15,6 +16,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
 EXE = '.exe' if os.name == 'nt' else ''
@@ -22,8 +24,11 @@ HOST = ('aarch64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x8
        ('-macos' if sys.platform == 'darwin' else '-windows' if os.name == 'nt' else '-linux')
 ZIG = ROOT/'build/zig'/('zig'+EXE)
 LLD = ROOT/'build/lld'/HOST/'bin'/('lld'+EXE)
+MINIZ = ROOT/'build/miniz'
 for p, how in ((ZIG, 'tools/fetch_zig.sh'), (LLD, f'LLD_TARGET={HOST} tools/fetch_lld.sh')):
     assert p.exists(), f'{p} missing ({how})'
+if not (MINIZ/'.fetched').exists():
+    subprocess.run(['bash', str(ROOT/'tools/fetch_miniz.sh')], check=True)
 # (the bridge and the generator of tools/test_gamebuild_resume.py)
 BRIDGE = r'''
 #include "platform.h"
@@ -32,12 +37,14 @@ BRIDGE = r'''
 #include <filesystem>
 #include <string>
 #include <cstdio>
-static std::string root;
+static std::string root, data;
 static intptr_t (*start_cb)(const char *const *, const char *, bool);
 static int (*wait_cb)(intptr_t, bool);
 static void (*kill_cb)(intptr_t);
 extern "C" void test_init(const char *r, intptr_t (*s)(const char *const *,const char *,bool),
-                          int (*w)(intptr_t,bool), void (*k)(intptr_t)) { root=r;start_cb=s;wait_cb=w;kill_cb=k; }
+                          int (*w)(intptr_t,bool), void (*k)(intptr_t)) { root=r;data=root+"/data";start_cb=s;wait_cb=w;kill_cb=k; }
+extern "C" const char *rt_data_root() { return data.c_str(); }
+extern "C" bool plat_remove_tree(const char *d) { std::error_code ec; std::filesystem::remove_all(std::filesystem::u8path(d), ec); return !ec; }
 extern "C" bool rt_resource(const char *name,const char *dev,char *out,size_t n) {  // (shipped names: <root>/res/)
     for (std::string p : {name ? root+"/res/"+name : std::string(), dev ? root+"/"+dev : std::string()})
         if(!p.empty() && std::filesystem::exists(std::filesystem::u8path(p))) return snprintf(out,n,"%s",p.c_str())<(int)n;
@@ -65,6 +72,7 @@ with tempfile.TemporaryDirectory() as temporary:
     resources, game, skeleton = tmp/'resources', tmp/'game', tmp/'skeleton'
     (resources/'runtime/hle').mkdir(parents=True)
     (resources/'tools').mkdir()
+    (resources/'data').mkdir()  # (the bridge's data root: the kit's tools go to data/cache/ios-kit/<id>/)
     (game/'exefs').mkdir(parents=True)
     for name in ('cpu.h', 'simd.h', 'simd_fp.h', 'gamelib.h'):
         (resources/'runtime'/name).write_text('/* fixture header */\n')
@@ -78,11 +86,11 @@ with tempfile.TemporaryDirectory() as temporary:
     (resources/'res').mkdir()
     if os.name == 'nt': shutil.copytree(ZIG.parent, resources/'res/zig')
     else: os.symlink(ZIG.parent, resources/'res/zig')
-    # the skeleton: the app's marker, the Darwin headers (any-darwin-any from the zig archive is what the real zip
-    # holds; the headers zig keeps for a macOS host are the same set, a Linux / Windows host's zig has none, so the
-    # archive is read), the linker, the tbd
-    (skeleton/'LAS Recomp.app').mkdir(parents=True)
-    (skeleton/'LAS Recomp.app/Info.plist').write_text('<plist/>\n')
+    # the kit's contents (tools/ios_kit.sh): the app's marker, the Darwin headers (any-darwin-any from the zig archive
+    # is what the real kit holds; the headers zig keeps for a macOS host are the same set, a Linux / Windows host's
+    # zig has none, so the archive is read), the linker, the tbd
+    (skeleton/'Payload/LAS Recomp.app').mkdir(parents=True)
+    (skeleton/'Payload/LAS Recomp.app/Info.plist').write_text('<plist/>\n')
     darwin = ZIG.parent/'lib/libc/include/any-darwin-any'
     if not darwin.exists():
         archive = next(p for p in (ROOT/'build/zig-dl').iterdir() if p.name.startswith('zig-') and p.suffix in ('.xz', '.zip'))
@@ -102,6 +110,20 @@ with tempfile.TemporaryDirectory() as temporary:
     shutil.copytree(LLD.parent.parent, skeleton/'lld'/HOST)
     shutil.copy(ROOT/'runtime/platform/ios-sdk/libSystem.B.tbd', skeleton/'libSystem.B.tbd')
     assert (skeleton/'include/any-darwin-any/stdlib.h').exists()
+    # zipped as the kit (Unix modes kept: the linker must come out executable; symlinks as symlink entries)
+    kit = tmp/'fixture-ios.laskit'
+    with zipfile.ZipFile(kit, 'w', zipfile.ZIP_DEFLATED) as z:
+        for p in sorted(skeleton.rglob('*')):
+            rel = p.relative_to(skeleton).as_posix()
+            if p.is_symlink():
+                info = zipfile.ZipInfo(rel); info.create_system = 3; info.external_attr = 0o120755 << 16
+                z.writestr(info, os.readlink(p))
+            elif p.is_dir():
+                info = zipfile.ZipInfo(rel + '/'); info.create_system = 3; info.external_attr = (0o40755 << 16) | 0x10
+                z.writestr(info, b'')
+            else:
+                info = zipfile.ZipInfo.from_file(p, rel); info.create_system = 3; info.compress_type = zipfile.ZIP_DEFLATED
+                with open(p, 'rb') as f: z.writestr(info, f.read())
 
     generator = tmp/'generator.py'; generator.write_text(GENERATOR)
     os.environ['LARECOMP_GEN'] = str(generator)
@@ -117,10 +139,13 @@ with tempfile.TemporaryDirectory() as temporary:
     subprocess.run(cc+['-std=gnu11', '-fPIC', '-Iruntime', '-DGAMELIB_ID="fixture"', '-DGAMELIB_IOS_ID="fixture-ios"',
                        '-DGAMELIB_CFLAGS="-O0"', '-DGAMELIB_SHARED="-shared"',
                        '-c', 'runtime/gamebuild.c', '-o', str(obj)], cwd=ROOT, check=True)
+    zipobj, miniz = tmp/'zipfile.o', tmp/'miniz.o'
+    subprocess.run(cc+['-std=gnu11', '-fPIC', '-Iruntime', '-I'+str(MINIZ), '-c', 'runtime/zipfile.c', '-o', str(zipobj)], cwd=ROOT, check=True)
+    subprocess.run(cc+['-fPIC', '-w', '-c', str(MINIZ/'miniz.c'), '-o', str(miniz)], cwd=ROOT, check=True)
     bridge = tmp/'bridge.cpp'; bridge.write_text(BRIDGE)
     libfile = tmp/('scheduler.dll' if os.name == 'nt' else 'scheduler.so')
     subprocess.run(cxx+['-shared', '-fPIC', '-pthread', '-std=c++17', '-Iruntime', '-x', 'c++', str(bridge),
-                        'runtime/build_cache.cpp', '-x', 'none', str(obj), '-o', str(libfile)] +
+                        'runtime/build_cache.cpp', '-x', 'none', str(obj), str(zipobj), str(miniz), '-o', str(libfile)] +
                    (['-Wl,--export-all-symbols'] if os.name == 'nt' else []), cwd=ROOT, check=True)
     library = ct.CDLL(str(libfile))
     processes = {}
@@ -138,7 +163,7 @@ with tempfile.TemporaryDirectory() as temporary:
     CANCEL = ct.CFUNCTYPE(ct.c_bool)
     class Options(ct.Structure):
         _fields_ = [('progress', PROGRESS), ('jobs', ct.c_int), ('cancelled', CANCEL),
-                    ('target', ct.c_int), ('ios_skeleton', ct.c_char_p)]
+                    ('target', ct.c_int), ('ios_kit', ct.c_char_p)]
     launched = []; next_id = 0
     @SPAWN
     def spawn(args, log, append):
@@ -173,21 +198,35 @@ with tempfile.TemporaryDirectory() as temporary:
     library.gamebuild_run.argtypes = [ct.c_char_p, ct.POINTER(Options), ct.c_void_p, ct.c_size_t]
     library.gamebuild_run.restype = ct.c_bool
     why = ct.create_string_buffer(1024)
-    options = Options(progress, 2, cancelled, 1, str(skeleton).encode())
+    options = Options(progress, 2, cancelled, 1, str(kit).encode())
     try:
-        assert not library.gamebuild_ios_available(str(tmp/'nowhere').encode(), why, len(why)) and b'skeleton' in why.value, why.value
-        assert library.gamebuild_ios_available(str(skeleton).encode(), why, len(why)), why.value
+        assert not library.gamebuild_ios_available(str(tmp/'nowhere').encode(), why, len(why)) and b'kit' in why.value, why.value
+        # an unpacked folder is refused with a hint, a zip that isn't a kit too
+        assert not library.gamebuild_ios_available(str(skeleton).encode(), why, len(why)) and b'not an unpacked folder' in why.value, why.value
+        other = tmp/'other.zip'
+        with zipfile.ZipFile(other, 'w') as z: z.writestr('hello.txt', 'hi')
+        assert not library.gamebuild_ios_available(str(other).encode(), why, len(why)) and b"isn't an iOS kit" in why.value, why.value
+        assert library.gamebuild_ios_available(str(kit).encode(), why, len(why)), why.value
+        assert not list((resources/'data').iterdir()), 'the availability check unpacked something'
         assert library.gamebuild_run(str(game).encode(), ct.byref(options), why, len(why)), (why.value, [p.read_text() for p in (game/'.gamebuild').glob('*.log')])
+        kits = list((resources/'data/cache/ios-kit').iterdir())
+        assert len(kits) == 1 and (kits[0]/'.complete').exists() and (kits[0]/'libSystem.B.tbd').exists(), kits
+        kit_id = kits[0].name  # (the runtime's paths use the host's separators: compare with '/' throughout)
+        def joined(a): return ' '.join(a).replace('\\', '/')
         compiles = [a for a in launched if '-c' in a]
-        assert compiles and all('aarch64-ios' in ' '.join(a) and 'any-darwin-any' in ' '.join(a) for a in compiles), compiles[0]
+        assert compiles and all('aarch64-ios' in joined(a) and f'ios-kit/{kit_id}/include' in joined(a) for a in compiles), compiles[0]
         link = next(a for a in launched if a[0].endswith('lld'+EXE))
-        assert link[1:3] == ['-flavor', 'darwin'] and '@rpath/LASGame.framework/LASGame' in link, link
+        assert f'ios-kit/{kit_id}/lld' in joined(link[:1]) and link[1:3] == ['-flavor', 'darwin'] and '@rpath/LASGame.framework/LASGame' in link, link
         out = game/'lasgame-ios.dylib'
         head = out.read_bytes()[:8]
         magic, cputype = struct.unpack('<II', head)
         assert magic == 0xFEEDFACF and cputype == 0x0100000C, f'not an arm64 Mach-O: {head.hex()}'  # (CPU_TYPE_ARM64)
         assert (game/'lasgame-ios.dylib.id').read_text().strip() == 'fixture-ios-0123456789ABCDEF'
-        print(f'iOS game-code build on {HOST}: compile for arm64 iOS with the skeleton\'s headers, link with its lld, '
+        # a second build finds the tools unpacked already: nothing is unpacked twice
+        marker = kits[0]/'.complete'; before = marker.stat().st_mtime_ns
+        assert library.gamebuild_run(str(game).encode(), ct.byref(options), why, len(why)), why.value
+        assert marker.stat().st_mtime_ns == before, 'the kit was unpacked again'
+        print(f'iOS game-code build on {HOST}: compile for arm64 iOS with the kit\'s headers, link with its lld, '
               f'{out.stat().st_size} byte dylib passed')
     finally:
         unload()

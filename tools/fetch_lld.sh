@@ -3,7 +3,7 @@
 # GAMEBUILD_IOS): LLVM's ld64.lld (Apache-2.0 with LLVM exception), as `rust-lld` from the pinned Rust release for
 # this OS / CPU (or LLD_TARGET=<arch>-<os>) into build/lld/<arch>-<os>/. The bundled zig compiles for iOS but can't
 # link for it, and Apple's ld needs Xcode or the Command Line Tools; with this, exporting the iOS app needs neither
-# (and works from Linux / Windows). Shipped in the iOS skeleton zip, for every desktop (tools/ios_skeleton.sh).
+# (and works from Linux / Windows). Shipped in the iOS kit, for every desktop (tools/ios_kit.sh).
 # Rust's rustc component (60-70 MB, a .sha256 next to each) rather than an LLVM release (1-2 GB, and its Linux lld
 # needs the host's libxml2 / ICU): rust-lld depends only on libc, libz (and on Linux its own lib/libLLVM.so, found by
 # RUNPATH $ORIGIN/../lib - so the bin/ + lib/ layout is kept). Each archive is fetched once (build/lld-dl/).

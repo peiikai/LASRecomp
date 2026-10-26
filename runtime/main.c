@@ -233,13 +233,13 @@ int main(int argc, char **argv) {
     bool no_launcher = nl && *nl && strcmp(nl, "0");
     bool skip_launcher = no_launcher || getenv("LARECOMP_INPUT");  // tests boot straight in
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
-    static char arg_root[1024], arg_skel[1024];
+    static char arg_root[1024], arg_kit[1024];
     bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
-        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <skeleton> [game files]: the iOS app, then exit
+        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <kit.laskit> [game files]: the iOS app, then exit
             build_ios = true;
-            if (!realpath(argv[++i], arg_skel)) snprintf(arg_skel, sizeof arg_skel, "%s", argv[i]);
+            if (!realpath(argv[++i], arg_kit)) snprintf(arg_kit, sizeof arg_kit, "%s", argv[i]);
         }
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
@@ -253,8 +253,8 @@ int main(int argc, char **argv) {
     }
 #if !PLAT_IOS
     if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
-        extern bool iosexport_run_cli(const char *skeleton, const char *game_dir);
-        return iosexport_run_cli(arg_skel, root) ? 0 : 1;
+        extern bool iosexport_run_cli(const char *kit, const char *game_dir);
+        return iosexport_run_cli(arg_kit, root) ? 0 : 1;
     }
 #else
     (void)build_ios;

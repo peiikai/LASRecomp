@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""usage: ios_frameworks.py <app> <bundle id> <min iOS> [--skeleton] [--platform iPhoneOS|iPhoneSimulator]
+"""usage: ios_frameworks.py <app> <bundle id> <min iOS> [--platform iPhoneOS|iPhoneSimulator]
 
 The embedded CPython's C extensions as frameworks (tools/bundle_ios.sh): iOS loads code only from the app's own
 signed binary and from Frameworks/*.framework, so every .so under <app>/python/ (the stdlib's lib-dynload and
 site-packages) is moved to Frameworks/<dotted.module>.framework/<dotted.module> with an Info.plist, and a
 <module>.fwork file holding the framework-relative path is left in its place for CPython's iOS importer - the
 layout of BeeWare's testbed (Python-Apple-support, build/utils.sh). A .dylib under python/ (keystone's, which
-keystone.py dlopens by path) gets the same framework and a relative symlink in its place; with --skeleton (a zip
-unpacked on Windows keeps no links) a <name>.symlink file with the target instead, which runtime/iosexport.c
-turns back into a link entry in the .ipa. Prints the number of frameworks made.
+keystone.py dlopens by path) gets the same framework and a relative symlink in its place (the iOS kit zip keeps it
+as a symlink entry, tools/ios_kit.sh). Prints the number of frameworks made.
 """
 import os
 import plistlib
@@ -46,7 +45,7 @@ def info_plist(mod, bundle_id, min_ios, platform='iPhoneOS'):
     }
 
 
-def make_frameworks(app, bundle_id, min_ios, skeleton=False, platform='iPhoneOS'):
+def make_frameworks(app, bundle_id, min_ios, platform='iPhoneOS'):
     made = {}
     for dirpath, _, files in os.walk(os.path.join(app, PY)):
         for f in sorted(files):
@@ -70,18 +69,12 @@ def make_frameworks(app, bundle_id, min_ios, skeleton=False, platform='iPhoneOS'
                 with open(path[:-len('.so')] + '.fwork', 'w') as w:  # (the importer follows it)
                     w.write(target + '\n')
             else:
-                link = os.path.relpath(os.path.join(app, target), dirpath)
-                if skeleton:
-                    with open(path + '.symlink', 'w') as w:
-                        w.write(link)
-                else:
-                    os.symlink(link, path)
+                os.symlink(os.path.relpath(os.path.join(app, target), dirpath), path)
     return made
 
 
 def main(argv):
-    skeleton = '--skeleton' in argv
-    args = [a for a in argv[1:] if a != '--skeleton']
+    args = argv[1:]
     platform = 'iPhoneOS'
     if '--platform' in args:
         i = args.index('--platform')
@@ -89,7 +82,7 @@ def main(argv):
         del args[i:i + 2]
     if len(args) != 3 or platform not in ('iPhoneOS', 'iPhoneSimulator'):
         sys.exit(__doc__)
-    made = make_frameworks(args[0], args[1], args[2], skeleton, platform)
+    made = make_frameworks(args[0], args[1], args[2], platform)
     print(len(made))
 
 

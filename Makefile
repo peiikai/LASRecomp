@@ -90,6 +90,10 @@ UI_SRC   := $(wildcard runtime/ui/*.mm)
 UI_OBJ   := $(patsubst runtime/%.mm,$(B)/rt/%.o,$(UI_SRC))
 IMGUI_OBJ := $(B)/imgui/imgui.o $(B)/imgui/imgui_draw.o $(B)/imgui/imgui_tables.o $(B)/imgui/imgui_widgets.o \
              $(B)/imgui/imgui_impl_sdl3.o
+# miniz (MIT; build/miniz, fetched by tools/fetch_miniz.sh): deflate and zip archives for runtime/zipfile.c (the iOS
+# kit and the .ipa it makes)
+MINIZ    := build/miniz
+MINIZ_OBJ := $(B)/third_party/miniz.o
 
 ifeq ($(PLATFORM),macos)
 SDL      := $(or $(DEPS),/opt/homebrew/opt/sdl3)
@@ -267,7 +271,7 @@ $(B)/rt/%.o: runtime/%.m $(RT_HDRS)
 # linked to a temp file, then renamed over: a copy of the game still running keeps its (old) file - relinking in
 # place gets running copies killed by macOS (code signature of the changed pages). The temp file keeps the real name
 # (in a folder of its own): on Windows the import library records the name the game code library loads it by.
-$(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ)
+$(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ) $(MINIZ_OBJ)
 	@mkdir -p $(dir $@)link
 	$(CXX) -o $(dir $@)link/$(notdir $@) $^ $(LDFLAGS)
 	mv -f $(dir $@)link/$(notdir $@) $@
@@ -293,6 +297,16 @@ $(B)/imgui/imgui_impl_%.o: $(IMGUI)/backends/imgui_impl_%.cpp
 $(B)/imgui/imgui_impl_metal.o: $(IMGUI)/backends/imgui_impl_metal.mm
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -fobjc-arc -c $< -o $@
+
+# (one recipe for both files: a rule with two targets runs it once per target under -j, and the script empties the
+# folder first - zipfile.o then compiled against a miniz.h that was being replaced)
+$(MINIZ)/.fetched: tools/fetch_miniz.sh
+	tools/fetch_miniz.sh
+$(B)/third_party/miniz.o: $(MINIZ)/.fetched
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -fno-strict-aliasing -Wno-everything $(OSFLAGS) -c $(MINIZ)/miniz.c -o $@
+$(B)/rt/zipfile.o: $(MINIZ)/.fetched
+$(B)/rt/zipfile.o: RTFLAGS += -I$(MINIZ)
 
 # Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
@@ -323,7 +337,7 @@ deps-ios:
 	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
 deps-ios-sim:
 	SIM=1 IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
-# iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-ios.ipa, signed with TEAM_ID / PROFILE
+# iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-iOS.ipa, signed with TEAM_ID / PROFILE
 # (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
 ipa:
 	$(MAKE) PLATFORM=ios
@@ -332,15 +346,15 @@ app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
 	MACOS_MIN=$(APP_MIN) tools/bundle_macos.sh $(APP_B)/lasrecomp
-# The iOS app without game code (build/ios-skeleton/LAS Recomp.app), and the release's iOS skeleton zip around it
-# (build/dist/LAS Recomp-<version>-ios-skeleton.zip: the app, a linker for each desktop, the Darwin headers), which
-# the start screen on any desktop completes with the library it builds there (runtime/iosexport.c). Needs
-# `make deps-ios`; the zip needs the four linkers (tools/fetch_lld.sh for each LLD_TARGET).
+# The iOS app without game code (build/ios-skeleton/LAS Recomp.app), and the release's iOS kit around it
+# (build/dist/LAS Recomp-<version>-iOS.laskit: a zip with the app as Payload/, a linker for each desktop, the Darwin
+# headers), which the start screen on any desktop completes with the library it builds there (runtime/iosexport.c).
+# Needs `make deps-ios`; the kit needs the four linkers (tools/fetch_lld.sh for each LLD_TARGET).
 ios-skeleton:
 	$(MAKE) PLATFORM=ios build/ios/lasrecomp
 	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
-ios-skeleton-zip: ios-skeleton
-	tools/ios_skeleton.sh
+ios-kit: ios-skeleton
+	tools/ios_kit.sh
 # The simulator app (build/ios-sim/LAS Recomp.app, no game code, ad-hoc signed) and its run of the embedded
 # Python's self-test (tools/test_ios_sim.sh): what CI does on a Mac runner. Needs `make deps-ios-sim`.
 ios-sim:

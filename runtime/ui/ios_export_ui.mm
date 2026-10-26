@@ -16,32 +16,32 @@ extern "C" {
 extern "C" const char *larecomp_version(void);  // ui/launcher.mm
 
 static IosExportHost g_host;
-// the picked folders, the .ipa being written, where the last export went (under the host's lock)
-static std::string g_skel, g_src, g_save, g_out;
+// the picked kit and game files folder, the .ipa being written, where the last export went (under the host's lock)
+static std::string g_kit, g_src, g_save, g_out;
 static bool g_page_request;
-static std::string g_why, g_why_for;  // why the picked skeleton can't be used (checked once per pick)
+static std::string g_why, g_why_for;  // why the picked kit can't be used (checked once per pick)
 static bool g_can;
 
 void ios_export_ui_init(const IosExportHost &host) { g_host = host; }
 
 static bool possible(void) {
     g_host.lock();
-    std::string skel = g_skel;
+    std::string kit = g_kit;
     g_host.unlock();
-    if (g_why_for != skel || skel.empty()) {
+    if (g_why_for != kit || kit.empty()) {
         char why[512] = "";
-        g_can = iosexport_available(skel.c_str(), why, sizeof why);
+        g_can = iosexport_available(kit.c_str(), why, sizeof why);
         g_why = why;
-        g_why_for = skel;
+        g_why_for = kit;
     }
     return g_can;
 }
 
-// the folder dialogs' answers (SDL calls back on any thread)
-static void SDLCALL picked_skel(void *, const char *const *files, int) {
+// the dialogs' answers (SDL calls back on any thread)
+static void SDLCALL picked_kit(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
     g_host.lock();
-    g_skel = files[0];
+    g_kit = files[0];
     g_host.unlock();
 }
 static void SDLCALL picked_src(void *, const char *const *files, int) {
@@ -55,10 +55,10 @@ static void *export_thread(void *) {
     g_host.begin_background_work();
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
     g_host.lock();
-    std::string skel = g_skel, src = g_src.empty() ? *g_host.game_root : g_src, out = g_save;
+    std::string kit = g_kit, src = g_src.empty() ? *g_host.game_root : g_src, out = g_save;
     g_host.unlock();
     IosExportOpts o = {g_host.progress, g_host.cancelled, cores < ram_gb - 2 ? cores : ram_gb - 2 > 1 ? ram_gb - 2 : 1,
-                       skel.c_str(), out.c_str()};
+                       kit.c_str(), out.c_str()};
     char why[512] = "";
     bool ok = iosexport_run(src.c_str(), &o, why, sizeof why);
     if (ok) {
@@ -109,16 +109,18 @@ static std::string folder_of(const std::string &path) {
 
 void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
     g_host.lock();
-    std::string skel = g_skel, src = g_src, out = g_out;
+    std::string kit = g_kit, src = g_src, out = g_out;
     g_host.unlock();
-    opt_section("Folders");
-    std::string skel_d = std::string("The iOS skeleton of this release, unpacked: LAS Recomp-") + larecomp_version() +
-                         "-ios-skeleton.zip from the release page (the app without game code, and the tools that "
-                         "build it on this machine).";
-    if (!skel.empty()) skel_d += "\n\nChosen: " + skel;
+    opt_section("Files");
+    std::string kit_d = std::string("The iOS kit of this release: LAS Recomp-") + larecomp_version() +
+                        "-iOS.laskit from the release page (the app without game code, and the tools that build it on "
+                        "this machine). Used as it is: don't unpack it.";
+    if (!kit.empty()) kit_d += "\n\nChosen: " + kit;
     if (busy) opt_disable_next();
-    if (opt_action("iOS skeleton folder", skel.empty() ? "Choose..." : "Selected", skel_d.c_str(), true))
-        SDL_ShowOpenFolderDialog(picked_skel, NULL, win, NULL, false);
+    if (opt_action("iOS kit", kit.empty() ? "Choose..." : "Selected", kit_d.c_str(), true)) {
+        static const SDL_DialogFileFilter kit_filters[] = {{"iOS kit", "laskit"}};
+        SDL_ShowOpenFileDialog(picked_kit, NULL, win, kit_filters, 1, NULL, false);
+    }
     std::string src_d = "The folder with the game's exefs/ (and romfs/): the game files set up here, or your own copy "
                         "of the game. The iOS build's files go to an ios/ folder inside it.";
     if (!src.empty()) src_d += "\n\nChosen: " + src;
@@ -134,7 +136,7 @@ void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
                     "device, put your extracted/ folder (exefs and romfs) in the app's Documents through the Files "
                     "app or Finder.";
     bool have_src = !src.empty() || ready;
-    if (skel.empty()) d += "\n\nChoose the iOS skeleton folder first.";
+    if (kit.empty()) d += "\n\nChoose the iOS kit first.";
     else if (!can) d += "\n\nNot available: " + g_why + ".";
     else if (!have_src) d += "\n\nChoose the game files folder first.";
     if (busy || !can || !have_src) opt_disable_next();
@@ -164,7 +166,7 @@ void ios_export_prelaunch(bool busy) {
         if (ImGui::Button(SHOW_IN "##ios")) g_host.reveal(folder_of(out));
     }
     ImGui::PushTextWrapPos(0);
-    ImGui::TextDisabled("Builds the game code for iPhone / iPad with the release's iOS skeleton and saves an "
+    ImGui::TextDisabled("Builds the game code for iPhone / iPad with the release's iOS kit and saves an "
                         "unsigned .ipa for your own signing tool and Apple ID.");
     ImGui::PopTextWrapPos();
 }

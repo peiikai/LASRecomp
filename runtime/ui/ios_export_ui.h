@@ -1,6 +1,6 @@
 // The start screen's "Recomp for iOS" page (runtime/ui/ios_export_ui.mm): the iOS app exported with the game code
-// built here (runtime/iosexport.h) from two folders the player picks - the unpacked iOS skeleton of the release and
-// game files - saved as an unsigned .ipa where they choose. Reached from Settings > Prelaunch; shares the launcher's
+// built here (runtime/iosexport.h) from what the player picks - the iOS kit (.laskit) of the release and a game files
+// folder - saved as an unsigned .ipa where they choose. Reached from Settings > Prelaunch; shares the launcher's
 // busy state, job line and progress bar (the launcher's hooks below).
 #pragma once
 #include <string>

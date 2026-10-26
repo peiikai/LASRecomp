@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """tools/ios_frameworks.py on a fixture app: the stdlib's and site-packages' extensions become frameworks, a .fwork
-points at each, keystone's dylib gets a relative symlink (or a .symlink file for the skeleton), and the module
+points at each, keystone's dylib gets a relative symlink, and the module
 names / bundle ids are what CPython's importer and the signer expect."""
 import os
 import plistlib
@@ -40,10 +40,10 @@ def check(cond, what):
         sys.exit(f'FAIL: {what}')
 
 
-def run(skeleton, platform='iPhoneOS'):
+def run(platform='iPhoneOS'):
     with tempfile.TemporaryDirectory() as root:
         app = fixture(root)
-        args = [sys.executable, fw.__file__, app, 'com.example.las', '16.0'] + (['--skeleton'] if skeleton else [])
+        args = [sys.executable, fw.__file__, app, 'com.example.las', '16.0']
         if platform != 'iPhoneOS':
             args += ['--platform', platform]
         out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
@@ -72,9 +72,6 @@ def run(skeleton, platform='iPhoneOS'):
                 check(not os.path.exists(src), f'{rel} still there')
                 pointer = src[:-len('.so')] + '.fwork'
                 check(open(pointer).read().strip() == f'Frameworks/{mod}.framework/{mod}', f'{pointer}: content')
-            elif skeleton:
-                check(not os.path.lexists(src), f'{rel} still there (skeleton)')
-                check(open(src + '.symlink').read() == f'../../../Frameworks/{mod}.framework/{mod}', f'{rel}.symlink')
             else:
                 check(os.path.islink(src), f'{rel}: not a symlink')
                 check(os.path.realpath(src) == os.path.realpath(binary), f'{rel}: link target {os.readlink(src)}')
@@ -98,7 +95,6 @@ def bad_names():
 
 if __name__ == '__main__':
     bad_names()
-    run(skeleton=False)
-    run(skeleton=True)
-    run(skeleton=False, platform='iPhoneSimulator')
+    run()
+    run(platform='iPhoneSimulator')
     print('ok')
