@@ -121,8 +121,8 @@ void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
         static const SDL_DialogFileFilter kit_filters[] = {{"iOS kit", "laskit"}};
         SDL_ShowOpenFileDialog(picked_kit, NULL, win, kit_filters, 1, NULL, false);
     }
-    std::string src_d = "The folder with the game's exefs/ (and romfs/): the game files set up here, or your own copy "
-                        "of the game. The iOS build's files go to an ios/ folder inside it.";
+    std::string src_d = "The game files set up here, or your own copy of the game: any folder the setup would accept "
+                        "(exefs and romfs in it, or their contents). Nothing is written into it.";
     if (!src.empty()) src_d += "\n\nChosen: " + src;
     else if (ready) src_d += "\n\nChosen: the game files set up here.";
     if (busy) opt_disable_next();

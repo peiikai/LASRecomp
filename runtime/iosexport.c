@@ -30,27 +30,51 @@ const char *larecomp_version(void);  // runtime/ui/launcher.mm
 #define SEP "/"
 #endif
 
-static bool exists(const char *p) {
-    struct stat st;
-    return stat(p, &st) == 0;
-}
-
 bool iosexport_available(const char *kit, char *why, size_t why_size) {
     return gamebuild_ios_available(kit, why, why_size);
 }
 
-// The iOS build's own folder: <game_dir>/ios (its .gamebuild/ and library apart from this machine's), with a copy
-// of the game's exefs/ (27 MB; the generator reads main and sdk from there - a link would be refused by the build
-// cache's checks, and Windows has none).
-static bool ios_dir(const char *game_dir, char *out, size_t n) {
-    snprintf(out, n, "%s" SEP "ios", game_dir);
+// The iOS build's own folder, <data root>/cache/ios-build (its .gamebuild/ and library apart from this machine's;
+// nothing is written into the player's folder), with a copy of the game's exefs/ (27 MB; the generator reads main
+// and sdk from there - a link would be refused by the build cache's checks, and Windows has none). The exefs comes
+// from wherever setup would find it in game_dir (runtime/romfs_build.h: exefs/ inside, the folder itself, nested);
+// another game's exefs than last time replaces the copy, and the build cache then rebuilds for it.
+static bool ios_dir(const char *game_dir, char *out, size_t n, char *why, size_t why_size) {
+    char exefs[2200], romfs[2200];
+    bool unusable = false;
+    romfs_find_game(game_dir, exefs, sizeof exefs, romfs, sizeof romfs, &unusable);
+    if (!*exefs) {
+        snprintf(why, why_size, unusable ? "that folder holds game packages (.xci / .nsp / .nca), not the game's files"
+                                         : "no game files in that folder (nothing with main and main.npdm)");
+        return false;
+    }
+    char parent[1100];
+    snprintf(parent, sizeof parent, "%s" SEP "cache", rt_data_root());
+    mkdir(parent, 0755);
+    iosexport_build_dir(out, n);
     mkdir(out, 0755);
-    char from[1100], to[1100], main_nso[1100];
-    snprintf(from, sizeof from, "%s" SEP "exefs", game_dir);
+    char to[1100], main_nso[1100], src_main[2300];
     snprintf(to, sizeof to, "%s" SEP "exefs", out);
     snprintf(main_nso, sizeof main_nso, "%s" SEP "main", to);
-    if (!exists(main_nso) && !romfs_copy_tree(from, to, NULL)) return false;
-    return exists(main_nso);
+    snprintf(src_main, sizeof src_main, "%s" SEP "main", exefs);
+    struct stat a, b;
+    bool same = stat(main_nso, &a) == 0 && stat(src_main, &b) == 0 && a.st_size == b.st_size && a.st_mtime == b.st_mtime;
+    if (!same) {
+        plat_remove_tree(to);
+        mkdir(to, 0755);
+        // (the exefs files by name: in a flat layout the folder holds the romfs too - 6 GB not to copy)
+        static const char *const names[] = {"main", "main.npdm", "sdk", "rtld", "subsdk0", "subsdk1", "subsdk2", "subsdk3"};
+        for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
+            char from[2300], dst[1200];
+            snprintf(from, sizeof from, "%s" SEP "%s", exefs, names[i]);
+            snprintf(dst, sizeof dst, "%s" SEP "%s", to, names[i]);
+            struct stat st;
+            if (stat(from, &st) != 0) continue;
+            if (!romfs_copy_file(from, dst)) { snprintf(why, why_size, "can't copy the game's %s into %s", names[i], out); return false; }
+        }
+    }
+    LOG("[iosexport] exefs %s -> %s%s\n", exefs, to, same ? " (there already)" : "");
+    return true;
 }
 
 static void cli_progress(double f, const char *step) {
@@ -72,6 +96,8 @@ bool iosexport_run_cli(const char *kit, const char *game_dir) {
     return true;
 }
 
+void iosexport_build_dir(char *out, size_t n) { snprintf(out, n, "%s" SEP "cache" SEP "ios-build", rt_data_root()); }
+
 void iosexport_default_path(char *out, size_t n) {
 #ifdef _WIN32
     const char *home = getenv("USERPROFILE");
@@ -83,17 +109,11 @@ void iosexport_default_path(char *out, size_t n) {
 
 bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size_t why_size) {
     uint64_t t0 = plat_now_ns();
-    char main_nso[1100];
     if (!iosexport_available(o->kit, why, why_size)) return false;
-    snprintf(main_nso, sizeof main_nso, "%s" SEP "exefs" SEP "main", game_dir);
-    if (!exists(main_nso)) { snprintf(why, why_size, "the game files folder has no exefs/main"); return false; }
 
-    // 1. the game code library for iOS (<game_dir>/ios/lasgame-ios.dylib; its own build cache)
+    // 1. the game code library for iOS (<data root>/cache/ios-build/lasgame-ios.dylib; its own build cache)
     char dir[1100];
-    if (!ios_dir(game_dir, dir, sizeof dir)) {
-        snprintf(why, why_size, "can't create the iOS build folder in the game files");
-        return false;
-    }
+    if (!ios_dir(game_dir, dir, sizeof dir, why, why_size)) return false;
     GameBuildOpts b = {o->progress, o->jobs, o->cancelled, GAMEBUILD_IOS, o->kit};
     if (!gamebuild_run(dir, &b, why, why_size)) return false;
 

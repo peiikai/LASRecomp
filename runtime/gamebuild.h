@@ -24,7 +24,8 @@ typedef struct {
 } GameBuildOpts;
 
 // Builds it (a few minutes). false: why says what went wrong (details in the log). game_dir holds exefs/ (and gets
-// .gamebuild/ and the library): the iOS build uses its own folder (runtime/iosexport.c) so the two don't mix.
+// .gamebuild/ and the library): the iOS build uses its own folder in the data root's cache (runtime/iosexport.c) so
+// the two don't mix.
 bool gamebuild_run(const char *game_dir, const GameBuildOpts *opts, char *why, size_t why_size);
 // After a failed gamebuild_run: a helper was killed by a signal (e.g. out of memory); why then says so, for the player.
 bool gamebuild_killed(void);
