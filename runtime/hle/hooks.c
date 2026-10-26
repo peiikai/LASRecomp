@@ -62,6 +62,16 @@ static const size_t hook_field[] = {
 #undef X
 };
 
+// The selected game version's hook sites (runtime/gamelib.c: the game code must have every one)
+int rt_hook_sites(uint64_t *out, int max) {
+    int n = 0;
+    for (size_t i = 0; i < sizeof hook_field / sizeof hook_field[0] && n < max; i++) {
+        uint64_t site = *(const uint64_t *)((const char *)g_ga + hook_field[i]);
+        if (site) out[n++] = site;
+    }
+    return n;
+}
+
 static int hook_id(uint64_t site) {
     for (size_t i = 0; i < sizeof hook_field / sizeof hook_field[0]; i++)
         if (*(const uint64_t *)((const char *)g_ga + hook_field[i]) == site) return (int)i;

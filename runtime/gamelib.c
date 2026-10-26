@@ -10,11 +10,13 @@
 #include <dlfcn.h>
 #endif
 
+#include "build_cache.h"
 #include "paths.h"
 #include "rt.h"
 
 static const GameLibTables *g_tables;
 static char g_error[256];
+static bool g_incomplete;  // the library's id matched, but it lacks hooks (open_lib)
 
 // The library's id file (<library>.id, written next to it by the build): its id (gamelib_full_id), read without
 // loading it.
@@ -74,6 +76,32 @@ static const GameLibTables *open_lib(const char *path, const char *want) {
         snprintf(g_error, sizeof g_error, "%s was built for another version", path);
         return NULL;  // (left loaded: nothing of it runs)
     }
+    // Every hook site's mark (tools/gen.py: exported from the file with the hook's code). A library with the right id
+    // but a piece compiled without a hook ran without it: issue #414, the empty event handler crash on Windows.
+    extern int rt_hook_sites(uint64_t *out, int max);  // hle/hooks.c
+    uint64_t sites[64];
+    int n = rt_hook_sites(sites, 64), missing = 0;
+    for (int i = 0; i < n; i++) {
+        char name[64];
+        snprintf(name, sizeof name, "lasgen_hook_%llx", (unsigned long long)sites[i]);
+#ifdef _WIN32
+        bool found = GetProcAddress(h, name) != NULL;
+#else
+        bool found = dlsym(h, name) != NULL;
+#endif
+        if (!found && missing++ < 4) LOG("[gamelib] %s has no hook at %llx\n", path, (unsigned long long)sites[i]);
+    }
+    if (missing) {
+        snprintf(g_error, sizeof g_error,
+                 "The game code is incomplete and has to be built again. Start LAS Recomp again to build it.");
+#ifdef _WIN32
+        FreeLibrary(h);  // (so the rebuild can replace it)
+#else
+        dlclose(h);
+#endif
+        g_incomplete = true;
+        return NULL;
+    }
     return t;
 }
 
@@ -98,9 +126,17 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size) {
                 snprintf(g_error, sizeof g_error, "%s was built for another version", c[i]);
                 continue;
             }
+            g_incomplete = false;
             g_tables = open_lib(c[i], want);
             if (g_tables) LOG("[gamelib] %s (%llu + %llu functions)\n", c[i], (unsigned long long)*g_tables->main_count,
                               (unsigned long long)*g_tables->sdk_count);
+            else if (g_incomplete && !given) {  // the next start builds it again, every piece compiled afresh
+                char id[1200], w[256];
+                snprintf(id, sizeof id, "%s.id", c[i]);
+                remove(id);
+                if (!build_cache_clear(game_dir, w, sizeof w)) LOG("[gamelib] build cache not cleared: %s\n", w);
+                break;
+            }
         }
     }
     if (!g_tables && why) snprintf(why, why_size, "%s", g_error);

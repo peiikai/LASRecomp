@@ -423,6 +423,7 @@ class Module:
                 jumps = ' '.join(f'else if (h_ == {k + 2}) goto L_{t:x};' for k, t in enumerate(targets))
                 out.append(f'    {{ int h_ = rt_hook(c, {hx(a)}); if (h_ == 0) {{ {body} }} {jumps} }}'
                            f'  /* {a:#x}: hook (runtime/hle/hooks.c) */')
+                self._hooks = getattr(self, '_hooks', []) + [a]
                 last = 'op'
                 continue
             if a in PATCHES:  # hand-written replacement for one instruction (tools/patches.py)
@@ -606,12 +607,12 @@ def main():
         order = order[:args.limit]
     nchunks = 0
     ci = 0
-    pending = None  # (address, lines, refs) of a big function that starts the next file
+    pending = None  # (address, lines, refs, hook sites) of a big function that starts the next file
     while ci < len(order) or pending:
-        body, refs, size, fns = [], set(), 0, []
+        body, refs, size, fns, hooks = [], set(), 0, [], []
         while (pending or ci < len(order)) and len(fns) < args.chunk and size < args.chunk_bytes:
             if pending:
-                a, lines, r = pending
+                a, lines, r, hk = pending
                 pending = None
             else:
                 a = order[ci]
@@ -620,14 +621,17 @@ def main():
                 lines = m.emit_function(a, end, labels, tables, hle)
                 r = getattr(m, '_refs', set())
                 m._refs = set()
+                hk = getattr(m, '_hooks', [])
+                m._hooks = []
             n = sum(len(l) + 1 for l in lines)
             if n > args.big_fn and fns:  # (a big function gets a file of its own: they compile in parallel)
-                pending = (a, lines, r)
+                pending = (a, lines, r, hk)
                 break
             body += lines
             size += n
             fns.append(a)
             refs |= r
+            hooks += hk
             if n > args.big_fn:
                 break
         path = os.path.join(args.outdir, f'{args.name}_{nchunks:03d}.c')
@@ -635,6 +639,12 @@ def main():
         text += [f'void {fname(r)}(Cpu *c);\n' for r in sorted(refs)]
         text += [f'void {sanitize(hle[a])}(Cpu *c);\n' for a in sorted(set(hle) & set(fns))]
         text += ['\n'.join(body), '\n']
+        # Each hook site's mark, exported from the same file as the hook's code: the runtime checks the loaded library
+        # has every one (runtime/gamelib.c), so game code compiled without a hook can't run (issue #414)
+        text += [f'GEN_EXPORT const uint64_t lasgen_hook_{a:x} = {hx(a)};\n' for a in sorted(hooks)]
+        if hooks:
+            text.insert(1, '#if defined(_WIN32)\n#define GEN_EXPORT __declspec(dllexport)\n#else\n'
+                           '#define GEN_EXPORT __attribute__((visibility("default")))\n#endif\n')
         write_if_changed(path, ''.join(text))
         nchunks += 1
         # (the start screen's setup reads these for its progress bar: runtime/gamebuild.c)
