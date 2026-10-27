@@ -11,6 +11,7 @@
 #include <pthread.h>
 #include <pthread/qos.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +32,23 @@ const char *plat_ios_os_version(void);                            // ("26.0.1")
 
 static mach_timebase_info_data_t tb;
 static char g_log_path[1024];
+
+// plat_reserve_guest runs from a constructor, before plat_init has opened the log file: what it says is kept here
+// and written into the log once there is one (launched from the home screen, stderr goes nowhere).
+static char g_vm_report[16384];
+static size_t g_vm_report_len;
+static void __attribute__((format(printf, 1, 2))) vm_log(const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    if (g_vm_report_len < sizeof g_vm_report - 1) {
+        va_start(ap, fmt);
+        int n = vsnprintf(g_vm_report + g_vm_report_len, sizeof g_vm_report - g_vm_report_len, fmt, ap);
+        va_end(ap);
+        if (n > 0) g_vm_report_len += (size_t)n < sizeof g_vm_report - g_vm_report_len ? (size_t)n : sizeof g_vm_report - 1 - g_vm_report_len;
+    }
+}
 
 static void sysctl_str(const char *name, char *out, size_t n) {
     size_t len = n;
@@ -67,6 +85,7 @@ void plat_init(void) {
     if (!getenv("LARECOMP_LOG_STDERR") && dir && *dir) {
         mkdir(dir, 0755);
         session_log_open(dir, g_log_path, sizeof g_log_path);
+        if (g_vm_report_len) fputs(g_vm_report, stderr);
     }
     // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
     // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
@@ -85,15 +104,15 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     vm_address_t a = (vm_address_t)lo;
     kern_return_t kr = vm_allocate(mach_task_self(), &a, (vm_size_t)(hi - lo), VM_FLAGS_FIXED);
     if (kr == KERN_SUCCESS) return true;
-    fprintf(stderr, "[vm] vm_allocate(%llx..%llx, FIXED) = %d%s\n", (unsigned long long)lo, (unsigned long long)hi, kr,
-            kr == KERN_NO_SPACE ? " (KERN_NO_SPACE)" : kr == KERN_INVALID_ADDRESS ? " (KERN_INVALID_ADDRESS)" : "");
+    vm_log("[vm] vm_allocate(%llx..%llx, FIXED) = %d%s\n", (unsigned long long)lo, (unsigned long long)hi, kr,
+           kr == KERN_NO_SPACE ? " (KERN_NO_SPACE)" : kr == KERN_INVALID_ADDRESS ? " (KERN_INVALID_ADDRESS)" : "");
     for (uint64_t want = 64ull << 30; want >= 1ull << 30; want >>= 1) {  // (the largest free run, 64 GB down to 1 GB)
         vm_address_t any = 0;
         if (vm_allocate(mach_task_self(), &any, (vm_size_t)want, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
-            fprintf(stderr, "[vm] largest free run: %llu GB at %llx; the window needs %llu GB at %llx. Is the app signed "
-                            "with com.apple.developer.kernel.increased-memory-limit (runtime/platform/ios.entitlements)?\n",
-                    (unsigned long long)(want >> 30), (unsigned long long)any, (unsigned long long)((hi - lo) >> 30),
-                    (unsigned long long)lo);
+            vm_log("[vm] largest free run: %llu GB at %llx; the window needs %llu GB at %llx. Is the app signed "
+                   "with com.apple.developer.kernel.increased-memory-limit (runtime/platform/ios.entitlements)?\n",
+                   (unsigned long long)(want >> 30), (unsigned long long)any, (unsigned long long)((hi - lo) >> 30),
+                   (unsigned long long)lo);
             vm_deallocate(mach_task_self(), any, (vm_size_t)want);
             break;
         }
@@ -102,8 +121,8 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     task_vm_info_data_t vi;
     mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS)
-        fprintf(stderr, "[vm] address space %llx..%llx (%llu GB)\n", (unsigned long long)vi.min_address,
-                (unsigned long long)vi.max_address, (unsigned long long)((vi.max_address - vi.min_address) >> 30));
+        vm_log("[vm] address space %llx..%llx (%llu GB)\n", (unsigned long long)vi.min_address,
+               (unsigned long long)vi.max_address, (unsigned long long)((vi.max_address - vi.min_address) >> 30));
     vm_address_t addr = 0;
     uint64_t prev_end = 0;
     for (int n = 0; n < 4096; n++) {
@@ -113,18 +132,18 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
         mach_msg_type_number_t icnt = VM_REGION_SUBMAP_INFO_COUNT_64;
         if (vm_region_recurse_64(mach_task_self(), &addr, &size, &depth, (vm_region_recurse_info_t)&info, &icnt) != KERN_SUCCESS) break;
         if (addr > prev_end && addr - prev_end >= 256ull << 20)
-            fprintf(stderr, "[vm]   free %llx..%llx (%llu MB)\n", prev_end, (unsigned long long)addr,
-                    (unsigned long long)((addr - prev_end) >> 20));
+            vm_log("[vm]   free %llx..%llx (%llu MB)\n", prev_end, (unsigned long long)addr,
+                   (unsigned long long)((addr - prev_end) >> 20));
         if (size >= 1ull << 30)  // (what holds the big ones: user tag, protection, share mode)
-            fprintf(stderr, "[vm]   used %llx..%llx (%llu MB) tag %u prot %x share %u\n", (unsigned long long)addr,
-                    (unsigned long long)(addr + size), (unsigned long long)(size >> 20), info.user_tag, info.protection,
-                    info.share_mode);
+            vm_log("[vm]   used %llx..%llx (%llu MB) tag %u prot %x share %u\n", (unsigned long long)addr,
+                   (unsigned long long)(addr + size), (unsigned long long)(size >> 20), info.user_tag, info.protection,
+                   info.share_mode);
         prev_end = addr + size;
         addr = prev_end;
     }
     if (cnt && vi.max_address > prev_end)
-        fprintf(stderr, "[vm]   free %llx..%llx (%llu MB, to the limit)\n", prev_end, (unsigned long long)vi.max_address,
-                (unsigned long long)((vi.max_address - prev_end) >> 20));
+        vm_log("[vm]   free %llx..%llx (%llu MB, to the limit)\n", prev_end, (unsigned long long)vi.max_address,
+               (unsigned long long)((vi.max_address - prev_end) >> 20));
     return false;
 }
 
