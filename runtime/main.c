@@ -50,8 +50,16 @@ __attribute__((constructor(101))) static void reserve_guest_space(void) {
     const char *force = getenv("LARECOMP_REEXEC_FORCE");
     bool forced = force && *force && strcmp(force, "0") && !getenv("LARECOMP_REEXEC");
     if (forced) setenv("LARECOMP_REEXEC_WHY", REEXEC_FORCED, 1);
-    else if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { g_guest_reserved = true; return; }
-    else setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
+    else {
+#if LARECOMP_DYNAMIC_BASE
+        // the window wherever the process has room; its base is what every guest address is relative to
+        uint64_t base = plat_place_guest(GUEST_HI - GUEST_LO);  // (a size: the base is still 0 here)
+        if (base) { guest_base_set(base); g_guest_reserved = true; return; }
+#else
+        if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { g_guest_reserved = true; return; }
+#endif
+        setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
+    }
     if (PLAT_IOS) return;  // (no re-exec there: the start screen and the seed generator still run; the game can't)
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
@@ -140,9 +148,12 @@ static void teardown(void) {
 }
 
 static void boot(const char *root) {
-    if (!g_guest_reserved)
+    if (!g_guest_reserved) {
+        if (LARECOMP_DYNAMIC_BASE)
+            FATAL("no room for the guest's %llu MB in this process (the [vm] lines above)\n", (GUEST_HI - GUEST_LO) >> 20);
         FATAL("guest address range %llx-%llx is not free: this device lays its address space out differently (the [vm] lines above)\n",
               GUEST_LO, GUEST_HI);
+    }
     char exefs[1024], romfs[1024], npdm_path[1024];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);

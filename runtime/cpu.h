@@ -29,6 +29,24 @@ _Static_assert(offsetof(Cpu, v) == 512, "v");
 
 typedef void (*GuestFn)(Cpu *);
 
+// ---- guest addresses in the generated code
+// The generator writes every address of the game as GUEST_ADDR(<offset from the guest base>). On the desktops the base is
+// the compile-time LARECOMP_GUEST_BASE (runtime/guest_base.h) and GUEST_ADDR folds to the constant it always was. With
+// LARECOMP_DYNAMIC_BASE the base is a variable set before any guest code runs (the window is placed at start-up:
+// iOS, where no fixed address is free on every device and version), one add per address materialised.
+#ifndef LARECOMP_DYNAMIC_BASE
+#define LARECOMP_DYNAMIC_BASE 0
+#endif
+#if LARECOMP_DYNAMIC_BASE
+extern const uint64_t g_guest_base;
+#define GUEST_ADDR(off) (g_guest_base + (off))
+#else
+#ifndef LARECOMP_GUEST_BASE
+#define LARECOMP_GUEST_BASE 0x7000000000
+#endif
+#define GUEST_ADDR(off) ((uint64_t)LARECOMP_GUEST_BASE + (off))
+#endif
+
 // ---- runtime services (runtime/*.c)
 void rt_dispatch(Cpu *c);                 // call function at c->pc
 // hook site (tools/patches.py HOOKS, runtime/hle/hooks.c): 0 = run the instruction, 1 = the hook did it all,

@@ -86,6 +86,18 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     return mach_vm_allocate(mach_task_self(), &a, hi - lo, VM_FLAGS_FIXED) == KERN_SUCCESS;
 }
 
+// (a LARECOMP_DYNAMIC_BASE build of the macOS app - the iOS code path measured on a desktop: the usual window, or
+// wherever the kernel puts it below 2^39 when that is taken)
+uint64_t plat_place_guest(uint64_t size) {
+    mach_vm_address_t a = 0x7000000000ull;
+    if (mach_vm_allocate(mach_task_self(), &a, size, VM_FLAGS_FIXED) == KERN_SUCCESS) return a;
+    a = 0;
+    if (mach_vm_allocate(mach_task_self(), &a, size, VM_FLAGS_ANYWHERE) != KERN_SUCCESS) return 0;
+    if (a + size <= (1ull << 39)) return a;
+    mach_vm_deallocate(mach_task_self(), a, size);
+    return 0;
+}
+
 // Fresh zero pages over the whole window (the old ones are released at once).
 bool plat_reset_guest(uint64_t lo, uint64_t hi) {
     mach_vm_address_t a = lo;

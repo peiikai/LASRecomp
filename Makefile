@@ -13,12 +13,11 @@ else
 PLATFORM ?= macos
 endif
 
-# iOS: its own generated code (another guest base, runtime/guest_base.h) and build dir; static SDL3 / FFmpeg from
-# `make deps-ios` (tools/build_deps_ios.sh); the game code is its own framework in the app.
-# IOS_GUEST_BASE: an iOS process has 58 GB of address space, but the kernel's reserves cut it into a few free gaps
-# and move with every launch (ASLR); 0x3_0000_0000 is the one gap free on every device and launch seen so far
-# (iPhone 15 Pro, iPhone 17 Pro / iOS 26.6), and the packed 5.25 GB layout of runtime/rt.h fits it.
-IOS_GUEST_BASE := 0x300000000
+# iOS: the same generated code, its own build dir; static SDL3 / FFmpeg from `make deps-ios` (tools/build_deps_ios.sh);
+# the game code is its own framework in the app. The guest window has no fixed address there (where an iOS process
+# has room differs by device and iOS version: runtime/guest_base.h), so the game code is built with the base chosen
+# at start-up (LARECOMP_DYNAMIC_BASE, runtime/cpu.h) - the desktops keep their compile-time base.
+IOS_BASEFLAG := -DLARECOMP_DYNAMIC_BASE=1
 IOS_MIN   ?= 16.0
 # the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
 PYV       ?= 3.13
@@ -40,8 +39,7 @@ DEPS      ?= $(CURDIR)/build/deps-ios
 endif
 IOS_SDK   := $(shell xcrun --sdk $(IOS_SDKNAME) --show-sdk-path)
 CROSS     := -target $(IOS_TRIPLE) -isysroot $(IOS_SDK)
-GEN       ?= generated-ios
-GUEST_BASE ?= $(IOS_GUEST_BASE)
+BASEFLAG  := $(IOS_BASEFLAG)
 endif
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
@@ -64,11 +62,11 @@ endif
 B         ?= build
 MACOS_MIN ?=
 DEPS      ?=
-# GUEST_BASE: where the 12.5 GB guest window lives (runtime/guest_base.h). The default suits macOS / Windows /
-# Linux; iOS processes have no VA there and use a lower base. Part of GAMELIB_ID: the game code bakes it in.
+# GUEST_BASE: where the 12.5 GB guest window lives on the desktops (runtime/guest_base.h); the default suits macOS /
+# Windows / Linux. The generated code holds offsets from it (runtime/cpu.h GUEST_ADDR()), so it is the same at any base and
+# the generator always runs at the Switch's own addresses; only the runtime and the library's compile see the base.
 GUEST_BASE ?= 0x7000000000
-SDK_GEN_BASE := $(shell printf '0x%x' $$(( $(GUEST_BASE) + 0x0004000000 )))
-BASEFLAG  := $(if $(filter-out 0x7000000000,$(GUEST_BASE)),-DLARECOMP_GUEST_BASE=$(GUEST_BASE)ull)
+BASEFLAG  ?= $(if $(filter-out 0x7000000000,$(GUEST_BASE)),-DLARECOMP_GUEST_BASE=$(GUEST_BASE)ull)
 MINFLAG  := $(if $(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN))
 CC       := clang $(MINFLAG) $(CROSS)
 CXX      := clang++ $(MINFLAG) $(CROSS)
@@ -207,9 +205,9 @@ GAMELIB_BASE_SRCS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/game
 GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELIB_SHARED)') | \
                      (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 # The iOS library the start screen can build on any desktop (runtime/gamebuild.c GAMEBUILD_IOS): the id and flags of
-# `make PLATFORM=ios` - the base GENFLAGS at the iOS guest base, none of this host's additions (-march, -fPIC,
+# `make PLATFORM=ios` - the base GENFLAGS with the start-up-chosen base, none of this host's additions (-march, -fPIC,
 # _FILE_OFFSET_BITS) - so the exported app's runtime accepts it whichever desktop built it
-GENFLAGS_IOS := $(GENFLAGS_BASE) -DLARECOMP_GUEST_BASE=$(IOS_GUEST_BASE)ull
+GENFLAGS_IOS := $(GENFLAGS_BASE) $(IOS_BASEFLAG)
 GAMELIB_IOS_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS_IOS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 
 RT_OBJ   := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC)))
@@ -234,7 +232,7 @@ $(B)/rt/gamebuild.o: $(GAMELIB_SRCS) $(GAMELIB_BASE_SRCS) Makefile
 $(B)/rt/gamebuild.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"' -DGAMELIB_BASE_ID='"$(GAMELIB_BASE_ID)"' \
                                 -DGAMELIB_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS)))"' \
                                 -DGAMELIB_SHARED='"$(GAMELIB_SHARED)"' \
-                                -DGAMELIB_IOS_ID='"$(GAMELIB_IOS_ID)"' -DGAMELIB_IOS_BASE=$(IOS_GUEST_BASE)ull \
+                                -DGAMELIB_IOS_ID='"$(GAMELIB_IOS_ID)"' \
                                 -DGAMELIB_IOS_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS_IOS)))"'
 
 $(B)/rt/%.o: runtime/%.c $(RT_HDRS)
@@ -314,9 +312,10 @@ $(B)/rt/zipfile.o: RTFLAGS += -I$(MINIZ)
 # Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
+# (at the Switch's addresses: the output holds offsets from the base, the same for every platform and base)
 gen:
-	cd tools && LARECOMP_GUEST_BASE=$(GUEST_BASE) ../$(PY) gen.py sdk ../extracted/exefs/sdk $(SDK_GEN_BASE) ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && LARECOMP_GUEST_BASE=$(GUEST_BASE) ../$(PY) gen.py main ../extracted/exefs/main $(GUEST_BASE) ../$(GEN)/main $(GENSIMD)
+	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
+	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
 
 gen-objs: $(GEN_OBJ)
 
