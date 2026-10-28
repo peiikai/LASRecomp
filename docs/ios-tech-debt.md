@@ -147,6 +147,11 @@ attribute, so the `removexattr` on the linker is gone too.
   `launcher.mm`, and the row should say the fonts can also be dropped into the app's `fonts/` folder in Files.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
+- **SDL 3.4.18 is patched for iOS 27** ([tools/patches/SDL3-3.4.18-ios27-orientation.patch](../tools/patches/SDL3-3.4.18-ios27-orientation.patch),
+  SDL's own commits ca97578 and 2ee7eb6 from its release-3.4.x branch): on iOS 27 `statusBarOrientation` is a no-op,
+  so SDL took the window for portrait, kept its view at 393x852 under a landscape 852x393 window, and the game drew
+  into the top-left of the screen (SDL issue 16436; an iPhone 15 Pro on 27.0.1). The patch goes once
+  `tools/build_deps_ios.sh` moves to SDL 3.4.20 or later, where both are in.
 - **The guest base differs from the Android port's `GUEST_SHIFT`.** Two mechanisms for one problem; one has to go
   before both merge (below). `GUEST_ADDR(<offset>)` (next item) makes the generated code base-free, which is what
   `GUEST_SHIFT` wanted too.

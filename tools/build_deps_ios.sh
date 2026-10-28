@@ -32,6 +32,9 @@ fetch https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz \
 
 if [ ! -f "$P/lib/libSDL3.a" ]; then
     unpack SDL3-3.4.18.tar.gz sdl-$TAG
+    # iOS 27: the window's view kept a portrait frame after the rotation to landscape (SDL issue 16436) - SDL's
+    # own fixes from its release-3.4.x branch (commits ca97578, 2ee7eb6; in 3.4.20 once that is out)
+    patch -s -p1 -d "$S/sdl-$TAG" < tools/patches/SDL3-3.4.18-ios27-orientation.patch
     cmake -S "$S/sdl-$TAG" -B "$S/sdl-$TAG/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" \
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=$SDKNAME -DCMAKE_OSX_ARCHITECTURES=arm64 \
           -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN" -DSDL_SHARED=OFF -DSDL_STATIC=ON \

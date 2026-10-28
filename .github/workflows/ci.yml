@@ -333,7 +333,7 @@ jobs:
           path: |
             build/deps-ios
             !build/deps-ios/pyvenv
-          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
       - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
         run: make deps-ios
       - uses: actions/cache/save@v4
@@ -361,7 +361,7 @@ jobs:
           path: |
             build/deps-ios-sim
             !build/deps-ios-sim/pyvenv
-          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
       - name: Simulator deps
         run: make deps-ios-sim
       - uses: actions/cache/save@v4
