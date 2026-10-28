@@ -147,11 +147,12 @@ uint64_t plat_place_guest(uint64_t size) {
     const uint64_t align = 1ull << 30, limit = 1ull << 39;
     task_vm_info_data_t vi;
     mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
-    uint64_t max = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS ? vi.max_address : limit;
+    bool have = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS;
+    uint64_t max = have ? vi.max_address : limit;
     if (max > limit) max = limit;
     uint64_t best = 0, best_size = ~0ull;
     vm_address_t addr = 0;
-    uint64_t prev_end = 0;
+    uint64_t prev_end = have ? vi.min_address : 0;  // (below min_address nothing is mappable: not a gap)
     for (int n = 0; n < 4096; n++) {
         vm_size_t rsize;
         natural_t depth = 0;
