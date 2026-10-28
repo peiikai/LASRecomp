@@ -75,7 +75,7 @@ jobs:
   macos:
     needs: check
     if: needs.check.outputs.skip != 'true'
-    runs-on: macos-15  # (arm64; the app's minimum is macOS 15)
+    runs-on: macos-26  # (arm64; the app's minimum stays macOS 15: MACOS_MIN)
     steps:
       - uses: actions/checkout@v4
         with:

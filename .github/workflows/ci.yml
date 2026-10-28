@@ -120,7 +120,7 @@ jobs:
           tools/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
 
   macos:
-    runs-on: macos-15
+    runs-on: macos-26  # (arm64; builds for macOS 15: MACOS_MIN)
     steps:
       - uses: actions/checkout@v4
       - name: Packages
