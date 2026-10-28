@@ -63,8 +63,12 @@ def make_frameworks(app, bundle_id, min_ios, platform='iPhoneOS'):
             fw = os.path.join(app, 'Frameworks', mod + '.framework')
             os.makedirs(fw, exist_ok=True)
             os.replace(path, os.path.join(fw, mod))
-            # the debug map names the build machine's object files (-ffile-prefix-map doesn't reach it); the symbols stay
-            subprocess.run(['strip', '-S', os.path.join(fw, mod)], check=True)
+            # the debug map names the build machine's object files (-ffile-prefix-map doesn't reach it); the symbols stay.
+            # (Xcode's strip, on Mach-O only: the app is bundled on macOS; the test's fixtures are plain files)
+            with open(os.path.join(fw, mod), 'rb') as b:
+                macho = b.read(4) in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe')
+            if macho and sys.platform == 'darwin':
+                subprocess.run(['strip', '-S', os.path.join(fw, mod)], check=True)
             with open(os.path.join(fw, 'Info.plist'), 'wb') as p:
                 plistlib.dump(info_plist(mod, bundle_id, min_ios, platform), p)
             if f.endswith('.so'):
