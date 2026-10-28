@@ -180,6 +180,13 @@ if [ -f "$PYSLICE/Python.framework/Python" ]; then
     echo "python: $n extension frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages, $(du -sh "$APP/rando-gen" | cut -f1) generator"
 fi
 
+# no path of this machine inside (debug paths, the wheels' source file names), as tools/bundle_macos.sh checks. Not
+# on CI: its paths name no one, and BeeWare's prebuilt Pillow holds the CI runner's own
+if [ "${CI:-}" != true ]; then
+    case "$(basename "$HOME")" in runner|runneradmin) home=() ;; *) home=(-e "$HOME") ;; esac
+    if grep -rlaF -e "$PWD" ${home[@]+"${home[@]}"} "$APP"; then echo "^ these hold a path of this machine"; exit 1; fi
+fi
+
 if [ -n "${IOS_SIM:-}" ]; then
     # The simulator runs ad-hoc signed code, every binary signed, and refuses the executable with our entitlement
     # in its signature ("Security policy issue"): plain ad-hoc signatures, inside out.

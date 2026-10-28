@@ -18,6 +18,9 @@ S=$PWD/build/deps/src  # (shared with the macOS deps: the same tarballs)
 mkdir -p "$S" "$P/lib"
 SDK=$(xcrun --sdk $SDKNAME --show-sdk-path)
 JOBS=$(sysctl -n hw.ncpu)
+# No path of this machine in what ships (tools/build_deps_macos.sh does the same): the CMake builds map their source
+# folder away. FFmpeg is static here and its configure line isn't kept in a static archive's objects.
+MAPFLAGS="-ffile-prefix-map=$S=deps-src"
 
 fetch() {  # url sha256 file
     [ -f "$S/$3" ] || curl -fsSL -o "$S/$3.part" "$1" && { [ -f "$S/$3" ] || mv "$S/$3.part" "$S/$3"; }
@@ -38,7 +41,7 @@ if [ ! -f "$P/lib/libSDL3.a" ]; then
     cmake -S "$S/sdl-$TAG" -B "$S/sdl-$TAG/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" \
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=$SDKNAME -DCMAKE_OSX_ARCHITECTURES=arm64 \
           -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN" -DSDL_SHARED=OFF -DSDL_STATIC=ON \
-          -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL_DOCS=OFF
+          -DCMAKE_C_FLAGS="$MAPFLAGS" -DCMAKE_OBJC_FLAGS="$MAPFLAGS" -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF -DSDL_INSTALL_DOCS=OFF
     cmake --build "$S/sdl-$TAG/build" -j"$JOBS" && cmake --install "$S/sdl-$TAG/build"
 fi
 
@@ -125,7 +128,7 @@ if [ ! -f "$P/lib/libkeystone.0.dylib" ]; then
           -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=$SDKNAME -DCMAKE_OSX_ARCHITECTURES=arm64 \
           -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN" -DBUILD_SHARED_LIBS=ON -DBUILD_LIBS_ONLY=ON \
           -DLLVM_TARGETS_TO_BUILD="AArch64" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-          -DCMAKE_CXX_FLAGS="-Wno-everything" -DCMAKE_C_FLAGS="-Wno-everything" \
+          -DCMAKE_CXX_FLAGS="-Wno-everything $MAPFLAGS" -DCMAKE_C_FLAGS="-Wno-everything $MAPFLAGS" \
           -DPYTHON_EXECUTABLE="$HOSTPY" -DPYTHON_VERSION_STRING=$PYV -DPYTHONINTERP_FOUND=ON
     cmake --build "$S/keystone-$TAG/build" -j"$JOBS" && cmake --install "$S/keystone-$TAG/build"
 fi
@@ -135,7 +138,7 @@ OEAD_WHL=oead-1.3.0-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
 if [ ! -f "$P/wheels/$OEAD_WHL" ]; then
     unpack oead-1.3.0.tar.gz oead-$TAG
     (cd "$S/oead-$TAG" && git init -q && PATH="$SLICE/bin:$PATH" IPHONEOS_DEPLOYMENT_TARGET=$MIN \
-        SETUPTOOLS_SCM_PRETEND_VERSION=1.3.0 CMAKE_GENERATOR=Ninja \
+        SETUPTOOLS_SCM_PRETEND_VERSION=1.3.0 CMAKE_GENERATOR=Ninja CFLAGS="$MAPFLAGS" CXXFLAGS="$MAPFLAGS" \
         "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
     [ -f "$P/wheels/$OEAD_WHL" ]
 fi
@@ -151,7 +154,7 @@ if [ ! -f "$P/wheels/$QUICKTEX_WHL" ]; then
     tar -xf "$P"/wheels/quicktex-0.2.1.tar.gz -C "$S/quicktex-$TAG" --strip-components 1
     CROSS_CC=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_config_var("CC"))')  # arm64-apple-ios[-simulator]-clang
     (cd "$S/quicktex-$TAG" && PATH="$SLICE/bin:$(dirname "$(command -v cmake)"):$(dirname "$(command -v ninja)"):$PATH" \
-        CC=$CROSS_CC CXX=${CROSS_CC}++ \
+        CC=$CROSS_CC CXX=${CROSS_CC}++ CFLAGS="$MAPFLAGS" CXXFLAGS="$MAPFLAGS" \
         IPHONEOS_DEPLOYMENT_TARGET=$MIN SETUPTOOLS_SCM_PRETEND_VERSION=0.2.1 CMAKE_GENERATOR=Ninja \
         "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
     [ -f "$P/wheels/$QUICKTEX_WHL" ]

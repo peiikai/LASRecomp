@@ -38,7 +38,10 @@ Done (kept here as the record of what the build now guarantees):
 Still open:
 - **Pillow comes from BeeWare's package index** (`https://pypi.anaconda.org/beeware/simple`), not PyPI: a third-party
   binary we don't build and whose availability we don't control (pinned by checksum now, so at worst the build
-  stops). Building it from the sdist in the cross venv (its codecs static) would remove the dependency.
+  stops). Building it from the sdist in the cross venv (its codecs static) would remove the dependency. It is also
+  the one piece of the app that holds a path of someone else's machine (`/Users/runner/...` from BeeWare's CI):
+  everything we compile maps its source folder away (`-ffile-prefix-map`, `tools/build_deps_ios.sh`) and
+  `tools/bundle_ios.sh` refuses an app holding this machine's paths, as the desktop bundles do since beta 6.
 - **BeeWare's Python-Apple-support release is a binary dependency** (`Python-3.13-iOS-support.b16`): a prebuilt
   CPython we don't rebuild. Acceptable (it's the CPython project's own iOS support, PEP 730), but a new `b`-release
   changes the ABI of every extension we build (`PYB` in `build_deps_ios.sh`: bump it and rebuild them all).
