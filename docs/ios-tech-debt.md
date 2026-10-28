@@ -169,16 +169,26 @@ attribute, so the `removexattr` on the linker is gone too.
   memory, the 1 GB of thread stacks and the 512 MB alias region could each go in a gap of their own, which is what a
   map of sub-4 GB gaps calls for), and if the gaps are smaller still, a smaller `GetInfo(6)` so the game asks for a
   smaller heap - whether it plays on 2-2.5 GB is untested. A failure logs the map (into `lasrecomp.log`).
-- **Fitting weaker devices (4-6 GB of RAM) is unexplored.** The 15 Pro's 2.3 GB footprint in the overworld is
-  against an 8 GB phone's ~5.5 GB ceiling; a 6 GB iPhone (13 / 14, SE) has ~3-3.5 GB for a foreground app and a
-  4 GB one less, with no swap. Where the footprint goes: the guest heap the game actually touches (`SetHeapSize`
-  ~3 GB asked, how much is dirtied?), the renderer's second copy of every texture as `MTLTexture` (~850 MB graphics
-  on the 15 Pro), the shader caches, the per-thread host stacks (16 MB on iOS, VA only, but each touched page
-  stays - the desktops' 256 MB each is what stopped fitting beside the packed window, see above). To study:
-  footprint by region over a play session (`footprint`-style breakdown from `task_vm_info` / `vm_region_recurse`
-  in the probe), the texture copy made purgeable or streamed, a smaller `HEAP_MAX` the game accepts, and the
-  `increased-memory-limit` entitlement's effect on those devices. For the measurements without many phones:
-  `viphone-cli` (virtualised iPhone with a chosen RAM size) as a test bed, if its Metal is faithful enough.
+- **4 GB devices don't fit; the heap size is not what decides it.** `phys_footprint` (the `mem` figure of the
+  `[metal]` stats line, what jetsam goes by) in 2.5 minutes of the overworld: 1.8-1.9 GB on an iPhone 15 Pro,
+  2.4 GB on macOS. A 4 GB iPhone (SE 3, 11, 12 mini) gives a foreground app ~2 GB with `increased-memory-limit`,
+  ~1.4 GB without; a 6 GB one ~3 GB. The guest heap is address space, not memory: the game asks `SetHeapSize` for
+  `GetInfo(6)` minus 64 MB (3220 MB as on hardware) and plays the same down to 1856 MB reported (1792 MB heap) -
+  below that it fails at boot, its fixed arenas leaving a negative size for the last one - with the same footprint
+  at every size measured (2.39 GB median at 3220, 2048, 1920 and 1856). So a smaller heap only helps placing the
+  window (a 2 GB heap: a ~4 GB window, or a 2 GB piece once the regions are placed separately). What the
+  footprint is: the textures twice - the game's block-linear copies in guest memory and ours as `MTLTexture`
+  (~465 MB of them in the overworld) - render targets at the output size, shader caches, and the game's own data.
+  The biggest saving is the guest copy of each texture once it is on the GPU (released while the game doesn't read
+  it back; whether it ever does is to be checked), then rendering at the screen's own size on small devices.
+  Measuring on a 4 GB device: a virtual iPhone ("Lime") can be given 4 GB, once it runs past the title screen
+  (its paravirtual GPU has no BC formats).
+- **`increased-memory-limit` changes the address space too, not only the memory limit.** Signed without it, an
+  iPhone 15 Pro (iOS 26.5) gives the window a gap of 5.5 GB instead of 52 GB - the packed 5.25 GB layout fits with
+  ~128 MB to spare - and plays the overworld at 60 fps with a 1.8-1.9 GB footprint. The comment in
+  [runtime/platform/ios.entitlements](../runtime/platform/ios.entitlements) (the same address space with or without
+  `extended-virtual-addressing`) is about that other entitlement. iOS 27 without `increased-memory-limit` is
+  unmeasured: with it, the only gap that holds the window is above the shared cache.
 
 ## To take from the Android port
 
