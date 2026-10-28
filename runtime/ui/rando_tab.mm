@@ -147,6 +147,7 @@ struct GenOpts {
     bool key_rings = false;   // key-rings: each dungeon's small keys as one key ring (tools/rando/key_rings.py)
     bool hints = false;       // hints: owl statues and phone booths tell about the seed (tools/rando/seed_hints.py)
     bool rocks = false;       // rocks: every overworld rock hides an item (tools/rando/rocks.py)
+    bool mix_dungeons = false;  // mix-dungeon-entrances: dungeon doors shuffled with the houses' (entrance_logic.py)
 };
 static GenOpts g_opts;
 
@@ -196,7 +197,8 @@ static bool *opt_flags(GenOpts &o, int i) {  // the yes/no options, in ID order 
                  &o.pet_rooster, &o.pet_ghost, &o.pet_marin, &o.trendsanity, &o.boss_souls, &o.hookshot_any,
                  &o.digs, &o.miniboss_souls, &o.no_start_sword, &o.no_start_shield, &o.no_start_ocarina,
                  &o.tunic_upgrades, &o.shellsanity, &o.race, &o.random_cosmetics, &o.apples, &o.chest_looks,
-                 &o.key_rings, &o.hints, &o.rocks};  // (order after random_cosmetics: apples, chest_looks, key_rings, hints, rocks)
+                 &o.key_rings, &o.hints, &o.rocks, &o.mix_dungeons};  // (order after random_cosmetics: apples, chest_looks,
+                                                                     // key_rings, hints, rocks, mix_dungeons)
     return i < (int)(sizeof f / sizeof *f) ? f[i] : NULL;
 }
 
@@ -455,6 +457,8 @@ static void start_generation(void) {
     if (g_opts.hints) fprintf(f, " \"hints\": true,\n");  // (only when on: seeds without it stay as they were)
     fprintf(f, " \"triforce-hunt\": %d, \"triforce-extra\": %d,\n", g_opts.tri_needed, g_opts.tri_extra * 25);
     fprintf(f, " \"entrance-tier\": %d, \"entrance-decoupled\": %s,\n", g_opts.entrances, g_opts.entrances >= 2 && g_opts.decoupled ? "true" : "false");
+    if (g_opts.mix_dungeons && g_opts.shuffle_dungeons && g_opts.entrances >= 2)  // (off: not written, seeds as before)
+        fprintf(f, " \"mix-dungeon-entrances\": true,\n");
     fprintf(f, " \"pet-rooster\": %s, \"pet-ghost\": %s, \"open-desert\": %s,\n", g_opts.pet_rooster ? "true" : "false",
             g_opts.pet_ghost ? "true" : "false", g_opts.pet_marin ? "false" : "true");
     fprintf(f, " \"include\": [\"5-seashell-reward\", \"15-seashell-reward\", \"30-seashell-reward\", \"40-seashell-reward\", \"50-seashell-reward\"],\n");
@@ -721,6 +725,11 @@ static void rows_world(float scale) {
             if (!dungeons && !houses) last = true;
             else g_opts.shuffle_dungeons = dungeons;
         }
+        opt_indent(1);  // (mix-dungeon-entrances: needs both kinds on)
+        if (!(dungeons && houses)) opt_disable_next();
+        opt_toggle("Mix with houses & caves", &g_opts.mix_dungeons, false,
+                   "With Houses & caves: dungeon doors are shuffled in with house and cave doors.");
+        opt_indent(-1);
         if (!on) opt_disable_next();
         if (opt_toggle("Houses & caves", &houses, false,
                        "Single-entrance interiors and connector caves (two or three doors) are shuffled. Marin & Tarin's "

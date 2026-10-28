@@ -106,6 +106,8 @@ def dungeon_entrances(seed_dir, settings):
                     if not m:
                         break
                     ent[m.group(1)] = m.group(2)
+    if settings.get('mix-dungeon-entrances'):  # (house / cave door ids too: entrance_data; a dungeon door into a house: none)
+        return dict(ent or {})
     return {k: (ent or {}).get(k, k) for k in ENTRANCE_KEYS}
 
 
@@ -269,9 +271,9 @@ def build(seed_dir, romfs):
         return None
 
     # where interiors are: level -> door cell, and LAS location -> door (entrance_data `inside`)
-    level_cell, loc_door_cell = {}, {}
+    level_cell, loc_door_cell, door_cell = {}, {}, {}
     for d in ed['doors']:
-        c = cell_of_field(d['field_room'])
+        c = door_cell[d['id']] = cell_of_field(d['field_room'])
         level_cell.setdefault(d['dest_level'], c)
         for it in d.get('inside') or []:
             loc_door_cell[it['location']] = c
@@ -296,8 +298,9 @@ def build(seed_dir, romfs):
     door_of = {}
     for door, inside in dungeon_entrances(seed_dir, settings).items():
         lv_door, lv_in = ENTRANCE_KEYS.get(door), ENTRANCE_KEYS.get(inside)
-        if lv_door and lv_in and level_cell.get(lv_door):
-            door_of[dkey[lv_in]] = level_cell[lv_door]
+        cell = level_cell.get(lv_door) if lv_door else door_cell.get(door)  # (mixed: a house / cave door's own cell)
+        if lv_in and cell:
+            door_of[dkey[lv_in]] = cell
 
     def group(dk):
         if dk not in gidx:

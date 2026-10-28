@@ -441,6 +441,34 @@ def door_of(loc, logic_defs, ent):
     return by_id[ways[0]]
 
 
+def via_doors(entered_via, romfs):
+    """mix-dungeon-entrances: entered_via values that are house / cave doors (entrance_data ids, not LAS dungeon keys)
+    -> {'name': door_name, 'area': door_area}"""
+    import entrance_logic as el
+    by_id = {d['id']: d for d in el.load()['doors']}
+    return {k: {'name': door_name(by_id[v]), 'area': door_area(by_id[v], romfs)} if v in by_id else v
+            for k, v in entered_via.items()}
+
+
+def via_phrase(via):
+    """'the door of the Trendy Game in Mabe Village' / 'a cave in Tal Tal Heights' (via_doors)"""
+    where = AREA.get(via['area'], '')
+    name = via['name'] if via['name'] == 'a cave' else f"the door of {via['name']}"
+    return f'{name} in {where}' if where else name
+
+
+def via_segments(via, names, lang):
+    """other languages: ' (entrance: <area>)' for via_doors' doors (the game's area name), else nothing"""
+    import loc_text as lt
+    label = lt.AREA_LABEL.get(via['area'])
+    area = names.place(label) if label and names else None
+    if not area:
+        return []
+    cjk = lang in ('ja', 'zh_cn', 'zh_tw')
+    return [(('（' if cjk else ' (') + lt.tr(lt.DETAIL['entrance'], lang) + lt.T['colon'].get(lang, ': '), False),
+            (area if isinstance(area, bytes) else area.encode(), False), ('）' if cjk else ')', False)]
+
+
 def door_area(door, romfs):
     """The area (AREA key) a door stands in: its spot's place on the Field, else its region's."""
     import field_regions
@@ -501,7 +529,9 @@ def place_phrase(step, dungeon_of, entered_via):
         text = f'in {dungeon_name(dn)}' + (f' ({detail})' if detail else '')
         key = next((k for k, v in DUNGEON_KEY.items() if v == dn), None)
         via = entered_via.get(key)
-        if via and via != key:
+        if isinstance(via, dict):  # (mix-dungeon-entrances: a house or cave door: via_doors())
+            text += f', through {via_phrase(via)}'
+        elif via and via != key:
             text += f", through {DUNGEON[DUNGEON_KEY[via]].removeprefix('the ')}'s entrance"
         return text
     if loc in PLACE:
@@ -668,7 +698,9 @@ def hint_segments(step, dungeon_of, names, lang, entered_via=None):
     dn = check_dungeon(step, dungeon_of)
     key = next((k for k, v in DUNGEON_KEY.items() if v == dn), None)
     via = (entered_via or {}).get(key)
-    if via and via != key:
+    if isinstance(via, dict):  # (mix-dungeon-entrances: a house or cave door, named by its area)
+        seg += via_segments(via, names, lang)
+    elif via and via != key:
         cjk = lang in ('ja', 'zh_cn', 'zh_tw')
         seg += [(('（' if cjk else ' (') + lt.tr(lt.DETAIL['entrance'], lang) + lt.T['colon'].get(lang, ': '), False),
                 (dungeon_name(DUNGEON_KEY[via], lang, names), False), ('）' if cjk else ')', False)]
@@ -772,7 +804,7 @@ def apply(out_dir, romfs, settings, ent=None, logic_defs=None):
         data = json.load(f)
     steps_ = data['steps']
     # dungeon-entrances: entrance -> the dungeon it leads into; the hints need dungeon -> its way in
-    entered_via = {inside: door for door, inside in (data.get('dungeon-entrances') or {}).items()}
+    entered_via = via_doors({inside: door for door, inside in (data.get('dungeon-entrances') or {}).items()}, romfs)
     dungeon_of = settings.get('dungeon-of', {}) or {}
     ev_dir = os.path.join(out_dir, 'romfs', 'region_common', 'event')
     # Tarin: after the Escape Bottle's AddItem (escape_bottle.py), before the starting items and his own item

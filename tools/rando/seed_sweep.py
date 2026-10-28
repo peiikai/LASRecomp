@@ -45,7 +45,7 @@ FLAGS = ['bomb_bag', 'powder_bag', 'environments', 'pets_in_dungeons', 'skip_sto
          'pots', 'no_buffs', 'bushes', 'pet_rooster', 'pet_ghost', 'pet_marin', 'trendsanity', 'boss_souls',
          'hookshot_any', 'digs', 'miniboss_souls', 'no_start_sword', 'no_start_shield', 'no_start_ocarina',
          'tunic_upgrades', 'shellsanity', 'race', 'random_cosmetics', 'apples', 'chest_looks', 'key_rings', 'hints',
-         'rocks']  # (order after random_cosmetics: apples, chest looks, key rings, hints, rocks)
+         'rocks', 'mix_dungeons']  # (order after random_cosmetics: apples, chest looks, key rings, hints, rocks, mix)
 ROOM_IDS = {'off': 0, 'coupled': 2, 'decoupled': 3}  # room_shuffle in the ID (1: the retired Coherent)
 BITS = 150  # (v5: 30 characters; v4 IDs had 125 - decode reads both)
 TIMEOUT = 900  # (seconds per seed)
@@ -144,7 +144,8 @@ def request(sid, o):
         'exclude': [f'{s}-seashell-reward' for s in shells[o['seashells']:]],
         **({'apples': True} if o.get('apples') else {}),
         **({'chest-looks': True} if o.get('chest_looks') else {}), **({'key-rings': True} if o.get('key_rings') else {}),
-        **({'hints': True} if o.get('hints') else {}), **({'rocks': True} if o.get('rocks') else {})}  # (only when on: seeds without it stay as they were)
+        **({'hints': True} if o.get('hints') else {}), **({'rocks': True} if o.get('rocks') else {}),
+        **({'mix-dungeon-entrances': True} if o.get('mix_dungeons') and o['shuffle_dungeons'] and tier >= 2 else {})}  # (only when on: seeds without it stay as they were)
 
 
 def stealing(o):
@@ -319,6 +320,8 @@ def main():
     ap.add_argument('--souls', action='store_true', help='every random mix with boss and mini-boss souls on')
     ap.add_argument('--triforce', type=int, metavar='N', help='every random mix a Triforce hunt for N pieces '
                     '(extra pieces cycled: none / +25%% / +50%%)')
+    ap.add_argument('--mix-dungeons', action='store_true', help='every random mix with dungeon entrances mixed into '
+                    'the houses & caves (entrance tier 2, dungeon entrances on)')
     ap.add_argument('--hints', action='store_true', help='every random mix with Hints on (seed_hints.py)')
     ap.add_argument('--rooms', choices=list(ROOM_IDS), action='append',
                     help='dungeon room shuffle of the random mixes (repeat: cycled)')
@@ -350,6 +353,8 @@ def main():
             o['rocks'] = True
         if args.entrances is not None:
             o['entrances'], o['bushes'] = args.entrances, True
+        if args.mix_dungeons:
+            o.update(mix_dungeons=True, shuffle_dungeons=True, entrances=2)
         if args.triforce:
             o['triforce_needed'], o['triforce_extra'] = args.triforce, i % 3
         if args.rooms:

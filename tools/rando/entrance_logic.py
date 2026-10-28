@@ -10,7 +10,8 @@ Every LAS location inside that interior moves to region inside-<id> with the con
 outside door c, so region outer_region(c) also becomes reachable from inside-I.
 
 Pool (v1): `single` doors that are land doors, recommended for shuffling, not reached through a pocket, and not
-Marin & Tarin's house (the game starts inside it). Dungeons use LAS's own `shuffle-dungeons`.
+Marin & Tarin's house (the game starts inside it). Dungeons use LAS's own `shuffle-dungeons`, or with
+mix-dungeon-entrances join this pool (dungeon_pool(): a dungeon's region node is its `inside`).
 
 Connector caves (part of tier 2, own pool: cave doors lead into cave doors): see connector_pool() / apply_connector_logic().
 """
@@ -45,16 +46,20 @@ def pool(ed, closed=()):
     return out
 
 
-def shuffle(doors, decoupled, rng):
-    """entry: door id -> interior (vanilla door id) it now leads into; exit: interior -> door id it exits to."""
+def shuffle(doors, decoupled, rng, coupled=()):
+    """entry: door id -> interior (vanilla door id) it now leads into; exit: interior -> door id it exits to.
+    coupled: doors that stay coupled when decoupled (dungeon front doors: leaving what's behind one puts Link back
+    outside it, and no other interior exits there - as with LAS's dungeon shuffle)."""
     ids = [d['id'] for d in doors]
     targets = ids[:]
     rng.shuffle(targets)
     entry = dict(zip(ids, targets))
     if decoupled:
-        outs = ids[:]
+        fixed = {entry[d]: d for d in ids if d in coupled}
+        outs = [d for d in ids if d not in coupled]
         rng.shuffle(outs)
-        exit_ = dict(zip(ids, outs))
+        exit_ = dict(zip([t for t in ids if t not in fixed], outs))
+        exit_.update(fixed)
     else:
         exit_ = {t: d for d, t in entry.items()}
     return entry, exit_
@@ -92,6 +97,40 @@ def _outer(d):
     return RAFT_DOCK if d['id'] == 'raft-shop' else d['outer_region']
 
 
+# ---- Dungeon front doors in the house pool (mix-dungeon-entrances). Door id -> LAS's dungeon key (its region node:
+# every room of the dungeon hangs off it). What a door needs stays with the door (the keyhole, the flowers, the
+# Turtle Rock head are outside): door-<id> = its doorstep & door_req, as for LAS's own dungeon shuffle, which moves
+# the entry condition to whatever dungeon now lies behind the door. The dungeon's node becomes "a door leading in".
+DUNGEON_DOORS = {'d1-tail-cave': 'tail-cave', 'd2-bottle-grotto': 'bottle-grotto', 'd3-key-cavern': 'key-cavern',
+                 'd4-anglers-tunnel': 'angler-tunnel', 'd5-catfishs-maw': 'catfish-maw', 'd6-face-shrine': 'face-shrine',
+                 'd7-eagles-tower': 'eagle-tower', 'd8-turtle-rock': 'turtle-rock', 'd0-color-dungeon': 'color-dungeon'}
+# Face Shrine: LAS's region is its own cells ('D6-8D | D6-3A'); the front door is the entrance cell D6-8D's first
+# term (as LAS has it, or as the d6-connector's REGION_PATCHES left it), the second is from inside the dungeon
+D6_ENTRY = 'D6-8D'
+D6_FRONT = ('(river & face-key & (hookshot | rooster))', '(pocket-outside-d6 & face-key)')
+D6_REST = '(D6-3A & ((ocarina & song-mambo) | bombs | shoot-arrows | boomerang | rod))'
+
+
+def dungeon_pool(ed):
+    """The nine dungeon front doors (entrance_data type 'dungeon'), in DUNGEON_DOORS order."""
+    by_id = {d['id']: d for d in ed['doors']}
+    return [by_id[i] for i in DUNGEON_DOORS]
+
+
+def _dungeon_node(t):
+    """the logic node that stands for 'just inside dungeon door t' (its region, D6: its entrance cell)"""
+    return D6_ENTRY if t == 'd6-face-shrine' else DUNGEON_DOORS[t]
+
+
+def _doorstep(logic, d):
+    """where Link stands outside door d (condition parts): a pocket's own region when the connector shuffle built it,
+    else the door's region and what reaches the door from there"""
+    p = (d.get('pocket') or {}).get('name')
+    if p in POCKETS and POCKETS[p][0] in logic:
+        return [POCKETS[p][0]]
+    return [_outer(d), d.get('outer_extra')]
+
+
 def apply_logic(logic, doors, entry, exit_, extra_inside=None):
     """extra_inside: {vanilla door id: [(location, cond)]} for added locations (e.g. item pots) in interiors."""
     by_id = {d['id']: d for d in doors}
@@ -105,15 +144,26 @@ def apply_logic(logic, doors, entry, exit_, extra_inside=None):
         # (the raft-return cave goes from the landing up to the dock: rapids)
         logic[RAFT_DOCK] = {'type': 'region', 'condition-basic': '(heights & hookshot) | rapids'}
     for d in doors:
-        logic[f"door-{d['id']}"] = {'type': 'region',
-                                     'condition-basic': _and(_outer(d), d.get('outer_extra'), d.get('door_req'))}
+        logic[f"door-{d['id']}"] = {'type': 'region', 'condition-basic': _and(*_doorstep(logic, d), d.get('door_req'))}
     into = {}
     for d, t in entry.items():
         into.setdefault(t, []).append(d)
     for t, ds in into.items():
-        logic[f'inside-{t}'] = {'type': 'region', 'condition-basic': ' | '.join(f'door-{d}' for d in ds)}
+        ways = ' | '.join(f'door-{d}' for d in ds)
+        if t in DUNGEON_DOORS:  # (a dungeon: its own node, its locations stay where they are)
+            node = logic[_dungeon_node(t)]
+            for k in ('condition-advanced', 'condition-glitched', 'condition-hell', 'condition-trick'):
+                node.pop(k, None)
+            if t == 'd6-face-shrine':
+                assert any(node['condition-basic'] == f'{f} | {D6_REST}' for f in D6_FRONT), node['condition-basic']
+                ways = f'({ways}) | {D6_REST}'
+            node['condition-basic'] = ways
+            continue
+        logic[f'inside-{t}'] = {'type': 'region', 'condition-basic': ways}
     moved = 0
     for t in into:
+        if t in DUNGEON_DOORS:
+            continue
         for it in list(by_id[t].get('inside') or []) + [{'location': l, 'cond': c} for l, c in (extra_inside or {}).get(t, [])]:
             loc = logic.get(it['location'])
             if not loc:
@@ -141,11 +191,31 @@ def apply_logic(logic, doors, entry, exit_, extra_inside=None):
             logic[loc]['condition-basic'] = ' '.join(f'inside-{door}' if w == token else w for w in c.split())
     # leaving interior I through door c puts Link outside c (coupled: the door he came in by); past what blocks
     # that doorstep (exit_req: the rock at Mamu's cave, the bushes at the Trendy Game)
+    # (a dungeon's front door c is always coupled: only what lies behind it leads back out there, and only Link who came
+    # in by c gets there - nothing new; dungeons leave through their entrance cell)
     for t, c in exit_.items():
+        if c in DUNGEON_DOORS:
+            continue
         region = _outer(by_id[c])
-        if region in logic and f'inside-{t}' in logic:
-            _or_into(logic[region], _and(f'inside-{t}', by_id[c].get('exit_req')))
+        inside = _dungeon_node(t) if t in DUNGEON_DOORS else f'inside-{t}'
+        if region in logic and inside in logic:
+            _or_into(logic[region], _and(inside, by_id[c].get('exit_req')))
     return moved
+
+
+def dungeon_ways(doors, entry, exit_):
+    """Mixed dungeon doors: ({door key: LAS dungeon key} - the door into each dungeon, by LAS's key for a dungeon's
+    own door, else its entrance_data id - and {LAS dungeon key: the Field spawn outside the door its exit leads to}
+    (the instrument / Fairy Queen warps there)."""
+    by_id = {d['id']: d for d in doors}
+    ways, exits = {}, {}
+    for d, t in entry.items():
+        if t in DUNGEON_DOORS:
+            ways[DUNGEON_DOORS.get(d, d)] = DUNGEON_DOORS[t]
+    for t, c in exit_.items():
+        if t in DUNGEON_DOORS:
+            exits[DUNGEON_DOORS[t]] = by_id[c]['return_zone']['target']
+    return ways, exits
 
 
 # ---- Connector caves (part of tier 2). A connector is one interior with 2-3 doors (entrance_data.yml `connectors`: nodes
@@ -488,7 +558,7 @@ def verify(seed_dir, romfs):
     sys.path.insert(0, las)
     from RandomizerCore.Tools import leb
     ed = load()
-    doors = {d['id']: d for d in pool(ed) + connector_pool(ed)}
+    doors = {d['id']: d for d in pool(ed) + dungeon_pool(ed) + connector_pool(ed)}
     sp = open(next(os.path.join(seed_dir, f) for f in os.listdir(seed_dir) if f.startswith('entrances_'))).read()
     entry = dict(re.findall(r'^  (\S+)\s+-> (\S+)\s+\(', sp, re.M))
     exits = dict(re.findall(r'^  (\S+)\s+-> (\S+)$', sp.split('Exits')[1], re.M)) if 'Exits' in sp else {t: d for d, t in entry.items()}

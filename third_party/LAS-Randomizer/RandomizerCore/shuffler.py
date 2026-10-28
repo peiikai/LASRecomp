@@ -283,6 +283,8 @@ class ItemShuffler(QtCore.QThread):
             # edit the new dungeon condition to be the condition of the old one
             for c in conditions:
                 self.logic_defs[c]['condition-basic'] = conditions[c]
+        elif self.settings.get('mixed-dungeon-ways'):  # (LAS Recomp: dungeon doors mixed with houses - las_headless)
+            self.dungeon_entrances = dict(self.settings['mixed-dungeon-ways'])
         else:
             for dungeon in dungeons:
                 self.dungeon_entrances[dungeon] = dungeon
@@ -974,7 +976,8 @@ class ItemShuffler(QtCore.QThread):
             while not success and self.thread_active:
                 placements['tarin'] = items[0]
                 success = (self.canReachLocation('can-shop', placements, settings_access, self.logic)
-                        or self.canReachLocation(self.dungeon_entrances['tail-cave'], placements, settings_access, self.logic)
+                        # (LAS Recomp, dungeons mixed with houses: Tail Cave's door may lead into a house - its door node)
+                        or self.canReachLocation(self.dungeon_entrances.get('tail-cave', 'door-d1-tail-cave'), placements, settings_access, self.logic)
                         or self.canReachLocation('beach', placements, settings_access, self.logic)
                         # or self.canReachLocation('mamasha', placements, settings_access, logic)
                         or self.canReachLocation('ciao-ciao', placements, settings_access, self.logic)

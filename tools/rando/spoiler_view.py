@@ -148,7 +148,8 @@ def build(seed_dir):
     def area_name(sec):
         n = AREAS.get(sec, 'Elsewhere')
         if sec in entered_via:
-            n += f" - enter through {DUNGEONS[entered_via[sec]].split(' (')[0]}'s entrance"
+            v = entered_via[sec]  # (mix-dungeon-entrances: a house or cave door's entrance_data id)
+            n += f" - enter through {DUNGEONS[v].split(' (')[0]}'s entrance" if v in DUNGEONS else f' - enter through the {v} door'
         return n
 
     out = [f'# Seed {seed}']
