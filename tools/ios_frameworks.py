@@ -13,6 +13,7 @@ by its install name's leaf. Prints the number of frameworks made.
 """
 import os
 import plistlib
+import subprocess
 import sys
 
 PY = 'python'  # the app's Python folder: python/lib/python<ver>/lib-dynload, python/site-packages
@@ -62,6 +63,8 @@ def make_frameworks(app, bundle_id, min_ios, platform='iPhoneOS'):
             fw = os.path.join(app, 'Frameworks', mod + '.framework')
             os.makedirs(fw, exist_ok=True)
             os.replace(path, os.path.join(fw, mod))
+            # the debug map names the build machine's object files (-ffile-prefix-map doesn't reach it); the symbols stay
+            subprocess.run(['strip', '-S', os.path.join(fw, mod)], check=True)
             with open(os.path.join(fw, 'Info.plist'), 'wb') as p:
                 plistlib.dump(info_plist(mod, bundle_id, min_ios, platform), p)
             if f.endswith('.so'):
