@@ -88,7 +88,11 @@ if default_base:
     assert hashlib.sha256(json.dumps(patches.HOOKS, sort_keys=True).encode()).hexdigest() == fixture['hooks_sha256']
 else:
     assert set(patches.PATCHES) == {int(a, 16) - SWITCH_BASE + GUEST_BASE for a in fixture['patches']}
-assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM:x}(c);'
+# (the generated code names its functions by the Switch address and writes every address as an offset from the base:
+# the same text at any base - runtime/cpu.h GUEST_ADDR)
+assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM - GUEST_BASE + SWITCH_BASE:x}(c);'
+assert addr_text('c->x[30] = 0x@HAS_ITEM@ull;') == f'c->x[30] = GUEST_ADDR(0x{ADDRESS.HAS_ITEM - GUEST_BASE:x}ull);'
+assert addr_text('goto L_@HAS_ITEM@;') == f'goto L_{ADDRESS.HAS_ITEM:x};'
 try:
     addr_text('@UNKNOWN_ADDRESS@')
 except AttributeError:

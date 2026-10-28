@@ -95,29 +95,13 @@ void plat_init(void) {
     }
 }
 
-// The window is below the process's VA limit (runtime/guest_base.h: iOS builds use a low GUEST_BASE); pages are
-// backed as touched. The limit depends on the signature: without com.apple.developer.kernel.increased-memory-limit
-// the kernel gives the process a smaller address space and the 12.5 GB window doesn't fit (measured on an iPhone
-// 15 Pro: the same app starts with the entitlement and fails here without it), so a failure says what the process
-// got, for the log of a sideloaded build whose signing tool dropped the entitlement.
-bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
-    vm_address_t a = (vm_address_t)lo;
-    kern_return_t kr = vm_allocate(mach_task_self(), &a, (vm_size_t)(hi - lo), VM_FLAGS_FIXED);
-    if (kr == KERN_SUCCESS) return true;
-    vm_log("[vm] vm_allocate(%llx..%llx, FIXED) = %d%s\n", (unsigned long long)lo, (unsigned long long)hi, kr,
-           kr == KERN_NO_SPACE ? " (KERN_NO_SPACE)" : kr == KERN_INVALID_ADDRESS ? " (KERN_INVALID_ADDRESS)" : "");
-    for (uint64_t want = 64ull << 30; want >= 1ull << 30; want >>= 1) {  // (the largest free run, 64 GB down to 1 GB)
-        vm_address_t any = 0;
-        if (vm_allocate(mach_task_self(), &any, (vm_size_t)want, VM_FLAGS_ANYWHERE) == KERN_SUCCESS) {
-            vm_log("[vm] largest free run: %llu GB at %llx; the window needs %llu GB at %llx. Is the app signed "
-                   "with com.apple.developer.kernel.increased-memory-limit (runtime/platform/ios.entitlements)?\n",
-                   (unsigned long long)(want >> 30), (unsigned long long)any, (unsigned long long)((hi - lo) >> 30),
-                   (unsigned long long)lo);
-            vm_deallocate(mach_task_self(), any, (vm_size_t)want);
-            break;
-        }
-    }
-    // the process's address space: its limit and the gaps of 256 MB or more (where a smaller window could go)
+// The process's address space: the free gaps of 256 MB or more and the large regions, to the log (what the window
+// could fit into, and what holds the rest: the dyld shared cache's tag-32 mapping, the kernel's tag-31 reserves).
+// Where an iOS process has room differs by device and iOS version (iOS 26: the gap above 0x3_0000_0000; iOS 27: the
+// shared cache spans 0x2_EA00_0000..0xF_C000_0000, with room only above it, which only
+// com.apple.developer.kernel.extended-virtual-addressing opens), so the window is placed at start-up (plat_place_guest)
+// and a failure reports the map for the next device.
+static void vm_report(void) {
     task_vm_info_data_t vi;
     mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS)
@@ -144,7 +128,58 @@ bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
     if (cnt && vi.max_address > prev_end)
         vm_log("[vm]   free %llx..%llx (%llu MB, to the limit)\n", prev_end, (unsigned long long)vi.max_address,
                (unsigned long long)((vi.max_address - prev_end) >> 20));
+}
+
+bool plat_reserve_guest(uint64_t lo, uint64_t hi) {
+    vm_address_t a = (vm_address_t)lo;
+    kern_return_t kr = vm_allocate(mach_task_self(), &a, (vm_size_t)(hi - lo), VM_FLAGS_FIXED);
+    if (kr == KERN_SUCCESS) return true;
+    vm_log("[vm] vm_allocate(%llx..%llx, FIXED) = %d%s\n", (unsigned long long)lo, (unsigned long long)hi, kr,
+           kr == KERN_NO_SPACE ? " (KERN_NO_SPACE)" : kr == KERN_INVALID_ADDRESS ? " (KERN_INVALID_ADDRESS)" : "");
+    vm_report();
     return false;
+}
+
+// The smallest free gap below 2^39 (guest addresses are 39 bits) that holds the window, 1 GB-aligned so the game's
+// own address arithmetic sees the alignment the Switch's regions have. The map is read with vm_region_recurse_64
+// rather than asked for with VM_FLAGS_ANYWHERE: that may answer above 2^39, and never the best-fitting gap.
+uint64_t plat_place_guest(uint64_t size) {
+    const uint64_t align = 1ull << 30, limit = 1ull << 39;
+    task_vm_info_data_t vi;
+    mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
+    uint64_t max = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS ? vi.max_address : limit;
+    if (max > limit) max = limit;
+    uint64_t best = 0, best_size = ~0ull;
+    vm_address_t addr = 0;
+    uint64_t prev_end = 0;
+    for (int n = 0; n < 4096; n++) {
+        vm_size_t rsize;
+        natural_t depth = 0;
+        vm_region_submap_info_data_64_t info;
+        mach_msg_type_number_t icnt = VM_REGION_SUBMAP_INFO_COUNT_64;
+        bool last = vm_region_recurse_64(mach_task_self(), &addr, &rsize, &depth, (vm_region_recurse_info_t)&info, &icnt) != KERN_SUCCESS;
+        uint64_t gap_end = last ? max : (uint64_t)addr < max ? (uint64_t)addr : max;
+        uint64_t lo = (prev_end + align - 1) & ~(align - 1);
+        if (gap_end > lo && gap_end - lo >= size && gap_end - lo < best_size) best = lo, best_size = gap_end - lo;
+        if (last || (uint64_t)addr >= max) break;
+        prev_end = addr + rsize;
+        addr = prev_end;
+    }
+    if (best) {
+        vm_address_t a = (vm_address_t)best;
+        kern_return_t kr = vm_allocate(mach_task_self(), &a, (vm_size_t)size, VM_FLAGS_FIXED);
+        if (kr == KERN_SUCCESS) {
+            fprintf(stderr, "[vm] guest window %llx..%llx (%llu MB, in a gap of %llu MB)\n", (unsigned long long)best,
+                    (unsigned long long)(best + size), (unsigned long long)(size >> 20), (unsigned long long)(best_size >> 20));
+            return best;
+        }
+        vm_log("[vm] vm_allocate(%llx..%llx, FIXED) = %d (the gap found was not free after all)\n", (unsigned long long)best,
+               (unsigned long long)(best + size), kr);
+    } else
+        vm_log("[vm] no free gap of %llu MB below %llx for the guest window\n", (unsigned long long)(size >> 20),
+               (unsigned long long)max);
+    vm_report();
+    return 0;
 }
 
 bool plat_reset_guest(uint64_t lo, uint64_t hi) {

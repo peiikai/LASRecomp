@@ -100,5 +100,13 @@ def select_build_id(build_id):
 
 
 def addr_text(code):
-    """Expand @NAME@ as hex digits inside generated-C addresses, symbols or labels."""
+    """Expand @NAME@ in generated C by its role: `0x@NAME@ull` (a value) becomes GUEST_ADDR(<offset from the guest base>), as
+    the generator writes every address (runtime/cpu.h); `f_@NAME@` (a function's name) its Switch address, as the
+    generator names them; `L_@NAME@` (a label in the function) the address at the build's base."""
+    def value(m):
+        return f'GUEST_ADDR(0x{getattr(ADDRESS, m[1]) - GUEST_BASE:x}ull)'
+    def name(m):
+        return f'f_{getattr(ADDRESS, m[1]) - GUEST_BASE + SWITCH_BASE:x}'
+    code = re.sub(r'0x@([A-Z][A-Z0-9_]*)@ull', value, code)
+    code = re.sub(r'f_@([A-Z][A-Z0-9_]*)@', name, code)
     return re.sub(r'@([A-Z][A-Z0-9_]*)@', lambda m: f'{getattr(ADDRESS, m[1]):x}', code)

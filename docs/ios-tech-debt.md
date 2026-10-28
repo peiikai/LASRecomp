@@ -148,24 +148,27 @@ attribute, so the `removexattr` on the linker is gone too.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
 - **The guest base differs from the Android port's `GUEST_SHIFT`.** Two mechanisms for one problem; one has to go
-  before both merge (below).
+  before both merge (below). `GUEST_ADDR(<offset>)` (next item) makes the generated code base-free, which is what
+  `GUEST_SHIFT` wanted too.
 - **Untested on iPad and on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number.
   Run so far on an iPhone 15 Pro and a virtual iPhone 17 Pro (vphone "Lime", iOS 26.6), both at 60 fps.
-- **The base and the layout are fixed numbers that happened to fit the devices measured.** iOS gives a process 58 GB
-  of address space (the same on an 8 GB iPhone 15 Pro and a 16 GB iPhone 17 Pro, with or without
-  `com.apple.developer.kernel.extended-virtual-addressing` - so that paid entitlement is not in
-  [runtime/platform/ios.entitlements](../runtime/platform/ios.entitlements) and a free personal team signs the app),
-  but the kernel's own reserves (user tags 31 / 0, no protection) sit in the middle of it and leave only a few free
-  gaps a few GB wide, in places that differ by device and move with every launch (ASLR). The 12.5 GB desktop window
-  at `0x8_0000_0000` fit the 15 Pro and not an iPhone17,1; iOS now builds at `0x3_0000_0000` - free on every launch
-  seen on both - with the regions packed into 5.25 GB in [runtime/rt.h](../runtime/rt.h) (heap 3.25 GB, modules and
-  HLE memory, 1 GB of thread stacks, 512 MB alias). `GetInfo` 2/3/12-15 report whatever the layout says, so the game
-  follows, and only `GUEST_BASE` reaches the generated code. What's left: nothing guarantees the gap on an untested
-  device (iPad, a 4-6 GB iPhone, a future iOS), and the base can't be chosen at run time because the generated code
-  bakes it into its literals (`f_3…`, `adrp` results) - as the Android port's `GUEST_SHIFT` does, moving it means
-  regenerating, not relocating. `plat_reserve_guest`'s failure logs the address-space limit, the free gaps of 256 MB
-  or more and the large regions with their tags ([runtime/platform/ios.c](../runtime/platform/ios.c)), so the next
-  device that fails reports its own map.
+- **The window is one 5.25 GB piece, placed where the process has room - and iOS 27 may have none.** Where an iOS
+  process has free address space differs by device and version: on iOS 26 the gap above `0x3_0000_0000` (an 8 GB
+  iPhone 15 Pro and a 16 GB iPhone 17 Pro alike, 58 GB of address space with or without
+  `com.apple.developer.kernel.extended-virtual-addressing`), on iOS 27.0.1 (a 15 Pro) the dyld shared cache
+  (tag 32) spans `0x2_EA00_0000..0xF_C000_0000` - over every gap iOS 26 had - and the gaps under it are reported
+  under 4 GB, with room only above it, which only `extended-virtual-addressing` (a paid team) opens: 507 GB, a 64 GB
+  gap at `0x70_0000_0000`. So no fixed base works across versions, and the generated code no longer has one: it
+  writes every address as `GUEST_ADDR(<offset>)` ([runtime/cpu.h](../runtime/cpu.h)), the desktops fold it to their
+  compile-time base (the same machine code as before), and the iOS build (`LARECOMP_DYNAMIC_BASE`) adds a base
+  chosen at start-up - `plat_place_guest` ([runtime/platform/ios.c](../runtime/platform/ios.c)) walks the map and
+  takes the smallest free gap below 2^39 that holds the window (the 5.5 GB one on iOS 26). Measured on macOS in the
+  overworld: no CPU cost (game thread 4.1 vs 4.2-4.3 ms a frame, within the noise), the library 3% larger. One
+  generated tree for every platform, functions named by the Switch address (`f_7000…`) everywhere. What's left:
+  the regions placed separately (the heap's 3.25 GB is the only piece that must be contiguous - the modules and HLE
+  memory, the 1 GB of thread stacks and the 512 MB alias region could each go in a gap of their own, which is what a
+  map of sub-4 GB gaps calls for), and if the gaps are smaller still, a smaller `GetInfo(6)` so the game asks for a
+  smaller heap - whether it plays on 2-2.5 GB is untested. A failure logs the map (into `lasrecomp.log`).
 - **Fitting weaker devices (4-6 GB of RAM) is unexplored.** The 15 Pro's 2.3 GB footprint in the overworld is
   against an 8 GB phone's ~5.5 GB ceiling; a 6 GB iPhone (13 / 14, SE) has ~3-3.5 GB for a foreground app and a
   4 GB one less, with no swap. Where the footprint goes: the guest heap the game actually touches (`SetHeapSize`

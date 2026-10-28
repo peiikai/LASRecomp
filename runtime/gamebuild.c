@@ -32,13 +32,11 @@
 #define GAMELIB_BASE_ID "dev"
 #endif
 
-// The iOS build (GAMEBUILD_IOS, any desktop): the same generated C compiled for arm64 iOS at the iOS guest base (the
-// Makefile's PLATFORM=ios values; GAMELIB_IOS_ID: that build's id, which the exported app's runtime checks).
+// The iOS build (GAMEBUILD_IOS, any desktop): the same generated C compiled for arm64 iOS with the guest base chosen
+// at start-up (the Makefile's PLATFORM=ios flags; GAMELIB_IOS_ID: that build's id, which the exported app's runtime
+// checks).
 #ifndef GAMELIB_IOS_CFLAGS
-#define GAMELIB_IOS_CFLAGS "-O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -DLARECOMP_GUEST_BASE=0x800000000ull"
-#endif
-#ifndef GAMELIB_IOS_BASE
-#define GAMELIB_IOS_BASE 0x800000000ull
+#define GAMELIB_IOS_CFLAGS "-O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -DLARECOMP_DYNAMIC_BASE=1"
 #endif
 #ifndef GAMELIB_IOS_ID
 #define GAMELIB_IOS_ID "dev-ios"
@@ -575,13 +573,14 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         t.cc, t.zig ? " cc" : "", o->jobs);
 
     // 1. the generator, both modules at once; their finished files are compiled while it goes on
+    // (the generated C holds offsets from the guest base - runtime/cpu.h GUEST_ADDR() - so the generator runs at the Switch's
+    // own addresses whatever base this build, or the iOS one, puts the window at)
     Gen gens[2] = {{.name = "main"}, {.name = "sdk"}};
     char base[2][24];
-    uint64_t guest_base = ios ? (uint64_t)GAMELIB_IOS_BASE : GUEST_BASE;
-    snprintf(base[0], sizeof base[0], "0x%llx", (unsigned long long)(guest_base + (MAIN_BASE - GUEST_BASE)));
-    snprintf(base[1], sizeof base[1], "0x%llx", (unsigned long long)(guest_base + (SDK_BASE - GUEST_BASE)));
+    snprintf(base[0], sizeof base[0], "0x%llx", (unsigned long long)GUEST_SWITCH_BASE);
+    snprintf(base[1], sizeof base[1], "0x%llx", (unsigned long long)(GUEST_SWITCH_BASE + (SDK_BASE - GUEST_BASE)));
 #ifdef _WIN32
-    _putenv_s("LARECOMP_GUEST_BASE", base[0]);  // tools/game_addresses.py places patch sites from it
+    _putenv_s("LARECOMP_GUEST_BASE", base[0]);
 #else
     setenv("LARECOMP_GUEST_BASE", base[0], 1);
 #endif

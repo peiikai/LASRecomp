@@ -17,8 +17,10 @@ from collections import Counter
 import unicorn as uc
 from unicorn import arm64_const as A
 
+import game_addresses
+import lifter
 from analyze import eh_frame_functions
-from lifter import Insn, Lifter, Unsupported, bits, emit_asm_batch, hx, sext
+from lifter import Insn, Lifter, Unsupported, bits, emit_asm_batch, ga, hx, sext
 from nso import Nso, R_AARCH64_RELATIVE
 
 SCRATCH_MEM = 0x7300000000
@@ -29,8 +31,8 @@ def sext26(w):
     return v - 0x04000000 if v & 0x02000000 else v
 
 
-def fname(a):
-    return f'f_{a:x}'
+def fname(a):  # (named by the Switch's address - f_7000…, as the comments and tools/sym.py refer to them - whatever the base)
+    return f'f_{a - lifter.GUEST_BASE + game_addresses.SWITCH_BASE:x}'
 
 
 def sanitize(sym):
@@ -64,7 +66,7 @@ class Module:
                 ins = self.lifter.lift(self.word(a), a)
             except Unsupported as e:
                 self.stats['unsupported'] += 1
-                ins = Insn('trap', f'rt_udf(c, {hx(a)}); /* {e} */')
+                ins = Insn('trap', f'rt_udf(c, {ga(a)}); /* {e} */')
             self.cache[a] = ins
         return ins
 
@@ -342,10 +344,10 @@ class Module:
             t = ins.target
             if self.in_text(t):
                 refs.add(t)
-                return [f'c->x[30] = {hx(a + 4)}; {fname(t)}(c);']
-            return [f'c->x[30] = {hx(a + 4)}; c->pc = {hx(t)}; rt_dispatch(c);']
+                return [f'c->x[30] = {ga(a + 4)}; {fname(t)}(c);']
+            return [f'c->x[30] = {ga(a + 4)}; c->pc = {ga(t)}; rt_dispatch(c);']
         if k == 'blr':
-            return [f'c->pc = {ins.target}; c->x[30] = {hx(a + 4)}; rt_dispatch(c);']
+            return [f'c->pc = {ins.target}; c->x[30] = {ga(a + 4)}; rt_dispatch(c);']
         if k == 'br':
             return [f'c->pc = {ins.target}; __attribute__((musttail)) return rt_dispatch(c);']
         if k == 'ret':
@@ -358,7 +360,7 @@ class Module:
             out.append(f'    {sanitize(hle[entry])}(c);')
             out.append('}')
             return out
-        out.append(f'    FN_ENTER({hx(entry)});')
+        out.append(f'    FN_ENTER({ga(entry)});')
         batch = []
         refs = set()
 
@@ -371,7 +373,7 @@ class Module:
             if entry <= t < end:
                 return f'goto L_{t:x};'
             if not self.in_text(t):
-                return f'c->pc = {hx(t)}; __attribute__((musttail)) return rt_dispatch(c);'
+                return f'c->pc = {ga(t)}; __attribute__((musttail)) return rt_dispatch(c);'
             refs.add(t)
             return f'__attribute__((musttail)) return {fname(t)}(c);'
 
@@ -404,7 +406,7 @@ class Module:
                 out.append(f'L_{a:x}:;')
             if a - self.base in RANDO_CODE:  # randomizer patch site: the active seed picks the instruction
                 flush()
-                out.append(f'    {{ extern uint32_t rando_word(uint64_t); uint32_t rw = rando_word({hx(a)});')
+                out.append(f'    {{ extern uint32_t rando_word(uint64_t); uint32_t rw = rando_word({ga(a)});')
                 first = True
                 for w in RANDO_CODE[a - self.base]:
                     v = self.lifter.lift(w, a)
@@ -421,7 +423,7 @@ class Module:
                     raise ValueError(f'hook {a:#x}: instruction {w:#010x}, expected {word:#010x}')
                 body = ' '.join(self.render_single(ins, a, jump, refs))
                 jumps = ' '.join(f'else if (h_ == {k + 2}) goto L_{t:x};' for k, t in enumerate(targets))
-                out.append(f'    {{ int h_ = rt_hook(c, {hx(a)}); if (h_ == 0) {{ {body} }} {jumps} }}'
+                out.append(f'    {{ int h_ = rt_hook(c, {ga(a)}); if (h_ == 0) {{ {body} }} {jumps} }}'
                            f'  /* {a:#x}: hook (runtime/hle/hooks.c) */')
                 last = 'op'
                 continue
@@ -454,19 +456,19 @@ class Module:
                 t = ins.target
                 if self.in_text(t):
                     refs.add(t)
-                    out.append(f'    c->x[30] = {hx(a + 4)}; {fname(t)}(c);')
+                    out.append(f'    c->x[30] = {ga(a + 4)}; {fname(t)}(c);')
                 else:
-                    out.append(f'    c->x[30] = {hx(a + 4)}; c->pc = {hx(t)}; rt_dispatch(c);')
+                    out.append(f'    c->x[30] = {ga(a + 4)}; c->pc = {ga(t)}; rt_dispatch(c);')
             elif k == 'blr':
-                out.append(f'    c->pc = {ins.target}; c->x[30] = {hx(a + 4)}; rt_dispatch(c);')
+                out.append(f'    c->pc = {ins.target}; c->x[30] = {ga(a + 4)}; rt_dispatch(c);')
             elif k == 'br':
                 jt = tables.get(a)
                 if jt == 'all':
                     out.append(f'    c->pc = {ins.target}; goto L_dispatch;')
                     continue
-                if jt:
-                    cases = ' '.join(f'case {hx(t)}: goto L_{t:x};' for t in jt)
-                    out.append(f'    switch ({ins.target}) {{ {cases} default: break; }}')
+                if jt:  # (case labels must be constants: the switch is on the offset from the base)
+                    cases = ' '.join(f'case {hx(t - lifter.GUEST_BASE)}: goto L_{t:x};' for t in jt)
+                    out.append(f'    switch ({ins.target} - GUEST_ADDR(0)) {{ {cases} default: break; }}')
                     out.append(f'    c->pc = {ins.target}; goto L_dispatch;')
                     continue
                 out.append(f'    c->pc = {ins.target}; __attribute__((musttail)) return rt_dispatch(c);')
@@ -475,11 +477,11 @@ class Module:
             last = k
         flush()
         if last not in ('b', 'br', 'ret', 'trap'):
-            out.append('    ' + jump(end) if end < self.hi else f'    rt_udf(c, {hx(end)});')
+            out.append('    ' + jump(end) if end < self.hi else f'    rt_udf(c, {ga(end)});')
         if all_labels:
             out.append('L_dispatch:')
-            cases = ' '.join(f'case {hx(t)}: goto L_{t:x};' for t in range(entry, end, 4))
-            out.append(f'    switch (c->pc) {{ {cases} default: break; }}')
+            cases = ' '.join(f'case {hx(t - lifter.GUEST_BASE)}: goto L_{t:x};' for t in range(entry, end, 4))
+            out.append(f'    switch (c->pc - GUEST_ADDR(0)) {{ {cases} default: break; }}')
             out.append('    __attribute__((musttail)) return rt_dispatch(c);')
         out.append('}')
         self._refs = refs
@@ -528,9 +530,11 @@ def main():
 
     t0 = time.time()
     m = Module(args.name, args.nso, args.base, args.simd)
+    # offsets from the window's base (LARECOMP_GUEST_BASE), not the module's: sdk sits 64 MB above main
+    lifter.GUEST_BASE = game_addresses.GUEST_BASE
+    assert args.base >= lifter.GUEST_BASE, f'{args.name}: module base {args.base:#x} below the guest base {lifter.GUEST_BASE:#x}'
     if args.name == 'main':
         global HOOKS, PATCHES
-        import game_addresses
         try:
             version = game_addresses.select_build_id(m.nso.build_id)
         except game_addresses.UnknownGameVersion as e:
@@ -648,8 +652,8 @@ def main():
         f.write('#include "cpu.h"\n')
         for a in order:
             f.write(f'void {fname(a)}(Cpu *c);\n')
-        f.write(f'const uint64_t {args.name}_fn_addrs[] = {{\n')
-        f.write(',\n'.join(hx(a) for a in order))
+        f.write(f'const uint64_t {args.name}_fn_addrs[] = {{\n')  # (offsets: runtime/dispatch.c adds the base)
+        f.write(',\n'.join(hx(a - lifter.GUEST_BASE) for a in order))
         f.write('};\n')
         f.write(f'const GuestFn {args.name}_fn_ptrs[] = {{\n')
         f.write(',\n'.join(fname(a) for a in order))

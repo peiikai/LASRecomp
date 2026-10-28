@@ -8,6 +8,7 @@
 #include "gamelib.h"
 #include "hle.h"
 
+// (addrs: offsets from the guest base, as the generated code's GUEST_ADDR() - runtime/cpu.h; lo / hi are addresses)
 typedef struct { const uint64_t *addrs; const GuestFn *fns; uint64_t count, lo, hi; } FnTable;
 static FnTable tables[2];
 
@@ -97,15 +98,15 @@ uint64_t guest_sym(const char *name) {
     return a;
 }
 
-static uint64_t hle_next = HLE_HEAP;
-RT_ON_RESET(hle_heap_reset) { hle_next = HLE_HEAP; }  // (guest memory, wiped by the reboot)
+static uint64_t hle_used;  // (bytes handed out: the base isn't a constant with LARECOMP_DYNAMIC_BASE)
+RT_ON_RESET(hle_heap_reset) { hle_used = 0; }  // (guest memory, wiped by the reboot)
 
 void *hle_alloc(uint64_t size) {
     static pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
     pthread_mutex_lock(&m);
-    uint64_t a = hle_next;
-    hle_next += (size + 63) & ~63ull;
-    if (hle_next > HLE_HEAP + HLE_HEAP_SIZE) FATAL("HLE heap exhausted\n");
+    uint64_t a = HLE_HEAP + hle_used;
+    hle_used += (size + 63) & ~63ull;
+    if (hle_used > HLE_HEAP_SIZE) FATAL("HLE heap exhausted\n");
     pthread_mutex_unlock(&m);
     plat_commit(a, size);
     memset((void *)a, 0, size);
@@ -115,21 +116,21 @@ void *hle_alloc(uint64_t size) {
 void dispatch_init(void) {  // (after gamelib_load)
     const GameLibTables *g = gamelib_tables();
     uint64_t nm = *g->main_count, ns = *g->sdk_count;
-    tables[0] = (FnTable){g->main_addrs, g->main_fns, nm, g->main_addrs[0], g->main_addrs[nm - 1]};
-    tables[1] = (FnTable){g->sdk_addrs, g->sdk_fns, ns, g->sdk_addrs[0], g->sdk_addrs[ns - 1]};
+    tables[0] = (FnTable){g->main_addrs, g->main_fns, nm, GUEST_ADDR(g->main_addrs[0]), GUEST_ADDR(g->main_addrs[nm - 1])};
+    tables[1] = (FnTable){g->sdk_addrs, g->sdk_fns, ns, GUEST_ADDR(g->sdk_addrs[0]), GUEST_ADDR(g->sdk_addrs[ns - 1])};
 }
 
 GuestFn dispatch_lookup(uint64_t addr) {
     for (int t = 0; t < 2; t++) {
         FnTable *ft = &tables[t];
         if (addr < ft->lo || addr > ft->hi) continue;
-        uint64_t lo = 0, hi = ft->count;
+        uint64_t off = addr - GUEST_ADDR(0), lo = 0, hi = ft->count;
         while (lo < hi) {
             uint64_t mid = (lo + hi) / 2;
-            if (ft->addrs[mid] < addr) lo = mid + 1;
+            if (ft->addrs[mid] < off) lo = mid + 1;
             else hi = mid;
         }
-        if (lo < ft->count && ft->addrs[lo] == addr) return ft->fns[lo];
+        if (lo < ft->count && ft->addrs[lo] == off) return ft->fns[lo];
     }
     return NULL;
 }
@@ -205,7 +206,7 @@ const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) {
         for (int t = 0; t < 2; t++)
             for (uint64_t i = 0; i < tables[t].count; i++) {
                 v[k][0] = (uint64_t)(uintptr_t)tables[t].fns[i];
-                v[k++][1] = tables[t].addrs[i];
+                v[k++][1] = GUEST_SWITCH_BASE + tables[t].addrs[i];  // (the function's name: f_<Switch address>)
             }
         qsort(v, k, sizeof *v, cmp_host);
         n = k;
