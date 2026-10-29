@@ -17,6 +17,7 @@
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,6 +28,19 @@ uint32_t maxwell_gmem_chunk_shift;  // 0: one buffer for the whole heap (GLSL; s
 bool maxwell_gmem_lazy;
 bool maxwell_gmem_fs_miss;
 bool maxwell_glsl_kil_late = true, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;  // (shader.h, #462)
+uint32_t maxwell_glsl_guard = 100000;
+bool maxwell_glsl_guard_report;
+static _Atomic uint64_t guard_names[GGUARD_SLOTS];
+uint32_t maxwell_guard_slot(uint64_t addr, int stage) {
+    uint64_t h = (addr ^ (uint64_t)(stage + 1) << 48) * 0x9E3779B97F4A7C15ull;
+    return (uint32_t)(h >> 40) & (GGUARD_SLOTS - 1);
+}
+uint64_t maxwell_guard_name(uint32_t slot) { return slot < GGUARD_SLOTS ? atomic_load(&guard_names[slot]) : 0; }
+static void guard_register(uint32_t slot, uint64_t addr, int stage) {
+    uint64_t v = (addr & 0x00FFFFFFFFFFFFFFull) | (uint64_t)(stage + 1) << 56, o = 0;
+    if (!atomic_compare_exchange_strong(&guard_names[slot], &o, v) && (o & ~(1ull << 63)) != v)
+        atomic_fetch_or(&guard_names[slot], 1ull << 63);  // (two shaders in one slot: the log says so)
+}
 const uint8_t *maxwell_dbg_code;
 uint32_t maxwell_dbg_pc;
 int maxwell_dbg_reg;
@@ -122,6 +136,7 @@ typedef struct {
     uint32_t cbuf_need[18];  // highest constant vec4 index + 1 per cbuf (array size of the GLSL block)
     bool kil_late;           // KIL is KIL_(): kill_ set, the discard after the loop (maxwell_glsl_kil_late, fragment)
     bool case_open;          // a case label emitted (maxwell_glsl_no_fallthrough: the code before the next one jumps)
+    uint64_t addr;           // (test-462-arc) the program's code address: its loop-guard slot
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -2112,9 +2127,19 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
             sp(&s, "layout(location = %d) out %s c%d;\n", rt, kind == 1 ? "ivec4" : kind == 2 ? "uvec4" : "vec4", rt);
         }
         if (c->omap_depth) info->writes_depth = true;
-        if (glsl_early_tests(c)) sp(&s, "layout(early_fragment_tests) in;\n");
+        // (test-462-arc) the loop-guard counter is a store: a shader whose result can't depend on late tests keeps early
+        // ones as with GMiss; one with discard / depth output / stores of its own runs its tests late with it
+        bool guard_early = any_branch && maxwell_glsl_guard_report && !c->info->uses_discard && !c->omap_depth && !c->uses_gmem_store;
+        if (glsl_early_tests(c) || guard_early) sp(&s, "layout(early_fragment_tests) in;\n");
     } else {
         sp(&s, "layout(local_size_x_id = 0, local_size_y_id = 1, local_size_z_id = 2) in;\n");
+    }
+    bool guard_rep = any_branch && maxwell_glsl_guard_report;
+    if (guard_rep) {
+        uint32_t slot = maxwell_guard_slot(c->addr, stage);
+        guard_register(slot, c->addr, stage);
+        sp(&s, "layout(std430, set = %d, binding = %d) buffer GGuard { uint n[%d]; } gguard_;\n", set, GGUARD_BINDING, GGUARD_SLOTS);
+        sp(&s, "void gguard_hit() { atomicAdd(gguard_.n[%uu], 1u); }\n", slot);
     }
     sp(&s, "void main() {\n");
     if (stage == STAGE_VERTEX) {
@@ -2139,9 +2164,10 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (any_branch) {
         sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
         sp(&s, "  bool exit_now = false;\n");
-        sp(&s, "  for (uint guard = 0u; guard < 100000u; guard++) {\n  switch (pc) {\n");
+        sp(&s, "  uint guard = 0u;\n  for (; guard < %uu; guard++) {\n  switch (pc) {\n", maxwell_glsl_guard);
         sp(&s, "%s", body.buf ? body.buf : "");
         sp(&s, "    exit_now = true; break;\n  default: exit_now = true; break;\n  }\n  if (exit_now) break;\n  }\n");
+        if (guard_rep) sp(&s, "  if (guard >= %uu) gguard_hit();\n", maxwell_glsl_guard);
     } else {
         sp(&s, "  do {\n%s  } while (false);\n", body.buf ? body.buf : "");
     }
@@ -2251,6 +2277,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     c->ipa_mode = -1;
     c->glsl = key && key->glsl;
     c->kil_late = c->glsl && maxwell_glsl_kil_late;
+    c->addr = (uint64_t)(uintptr_t)blob;
     const uint8_t *sph = blob + 0x30;
     const uint8_t *code = blob + 0x80;
     // compute programs have neither the 0x30-byte NVN header nor an SPH: code starts at the blob

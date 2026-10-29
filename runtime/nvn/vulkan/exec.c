@@ -136,9 +136,18 @@ static const uint64_t *cq_last_out;              // (cq_lock) the counter resolv
 static uint64_t cq_last_ticks;                   // two submissions
 static uint64_t snap_ring_end(void);             // (snap_storage: the copies' ring after the game's heap, for gmem_heap_size)
 
+// (test-388-grass-2) the last submission seen finished while the device was fine: after a loss the driver may report
+// every value as reached (AMD: UINT64_MAX), so the device-loss dump starts from this one
+static _Atomic uint64_t dl_done_seen;
+static void dl_seen_done(uint64_t v) {
+    if (v > rec_submitted()) return;  // (not a value the GPU can have reached: a lost device's answer)
+    uint64_t o = atomic_load(&dl_done_seen);
+    while (v > o && !atomic_compare_exchange_weak(&dl_done_seen, &o, v)) {}
+}
 uint64_t vk_completed_seq(void) {
     uint64_t v = 0;
     VK_CHECK(vkGetSemaphoreCounterValue(g_vk.dev, g_vk.timeline, &v));
+    dl_seen_done(v);
     return v;
 }
 
@@ -185,7 +194,7 @@ void vk_wait_seq(uint64_t seq) {
     // Callers recycle command buffers and allocations after this returns; a timeout is not completion.
     if (r == VK_TIMEOUT) FATAL("[vk] GPU did not finish submission %llu within 10 s; stopping before reusing in-flight resources\n",
                               (unsigned long long)seq);
-    else if (r == VK_SUCCESS) cq_resolve_done(seq);  // (the game reads its timing counters after waiting)
+    else if (r == VK_SUCCESS) { dl_seen_done(seq); cq_resolve_done(seq); }  // (the game reads its timing counters after waiting)
     else {
         extern void vk_devlost_dump(void);
         vk_devlost_dump();
@@ -436,24 +445,88 @@ static VkQueryPool gp_qp;
 static int gp_n;
 static char gp_label[512][112];
 static uint32_t gp_draws[512];
-// LARECOMP_VK_DEVLOST_TRACE=1: the last 64 GPU operations, dumped on device loss (with LARECOMP_SYNC_SUBMIT=1 the
-// dump ends with the command list that faulted).
-static char dl_ring[64][128];
-static unsigned dl_n;
+// LARECOMP_VK_DEVLOST_TRACE=1: the recent GPU operations, dumped on device loss (with LARECOMP_SYNC_SUBMIT=1 the
+// dump ends with the command list that faulted). Test build test-388-grass: on unless =0. Draws and dispatches are
+// kept raw (no formatting per draw), the rest as text. The dump starts after the last submission the GPU finished.
+#define DL_N 32768  // (test-462-arc: a whole hung submission of the Field, ~1000 draws a frame, two frames in flight)
+enum { DL_TEXT, DL_DRAW, DL_DISPATCH, DL_SUBMIT };
+typedef struct { uint8_t kind; uint64_t a[14]; const void *prog; char txt[96]; } DlEnt;  // (draw: a[11..13] vertex input; prog)
+static DlEnt dl_ring[DL_N];
+static _Atomic unsigned dl_n;
 static int dl_on = -1;
+static bool dl_shadow_dummy;     // (draw) a shadow slot got the depth dummy
+static VkDescriptorSet dl_gset;  // (draw / dispatch) the chunk set gmem_chunk_bind bound, and its chunks
+static int dl_dk[4];
+static bool dl_enabled(void) {
+    if (dl_on < 0) dl_on = getenv("LARECOMP_VK_DEVLOST_TRACE") ? atoi(getenv("LARECOMP_VK_DEVLOST_TRACE")) : 1;
+    return dl_on != 0;
+}
+static DlEnt *dl_new(int kind) {
+    DlEnt *d = &dl_ring[atomic_fetch_add_explicit(&dl_n, 1, memory_order_relaxed) & (DL_N - 1)];
+    d->kind = (uint8_t)kind;
+    d->prog = NULL;
+    d->a[11] = d->a[12] = d->a[13] = 0;
+    return d;
+}
+static void dl_print_prog(const void *prog);  // (after the programs: their descriptor bindings, once per dump)
 static void dl_note(const char *fmt, ...) {
-    if (dl_on < 0) dl_on = getenv("LARECOMP_VK_DEVLOST_TRACE") ? atoi(getenv("LARECOMP_VK_DEVLOST_TRACE")) : 0;
-    if (!dl_on) return;
+    if (!dl_enabled()) return;
+    DlEnt *d = dl_new(DL_TEXT);
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(dl_ring[dl_n++ & 63], sizeof dl_ring[0], fmt, ap);
+    vsnprintf(d->txt, sizeof d->txt, fmt, ap);
     va_end(ap);
 }
 void vk_dl_note_upload(void *img, uint32_t w, uint32_t h, uint32_t lv) { dl_note("  upload %p %ux%u lv%u", img, w, h, lv); }
+static void dl_print(const DlEnt *d) {
+    const uint64_t *a = d->a;
+    switch (d->kind) {
+    case DL_SUBMIT: LOG("[vk]   submit %llu\n", (unsigned long long)a[0]); break;
+    case DL_DRAW:
+        LOG("[vk]   draw%s n %llu vs %llx fs %llx fshash %016llx gmem v%d f%d store v%d f%d | sets v %llx f %llx chunk %llx"
+            " dk %d %d %d %d | sb v %llx f %llx%s\n", a[6] & 4 ? " indexed" : "", (unsigned long long)a[7], (unsigned long long)a[0],
+            (unsigned long long)a[1], (unsigned long long)a[2], (int)(a[6] & 1), (int)(a[6] >> 1 & 1), (int)(a[6] >> 4 & 1),
+            (int)(a[6] >> 5 & 1), (unsigned long long)a[3], (unsigned long long)a[4], (unsigned long long)a[5],
+            (int)(int16_t)(a[8] & 0xFFFF), (int)(int16_t)(a[8] >> 16 & 0xFFFF), (int)(int16_t)(a[8] >> 32 & 0xFFFF),
+            (int)(int16_t)(a[8] >> 48), (unsigned long long)a[9], (unsigned long long)a[10], a[6] & 8 ? " shadow-dummy" : "");
+        LOG("[vk]     inst %llu base vtx %d | streams %#llx attrs %#llx | ib %llx\n", (unsigned long long)(a[12] & 0xFFFFFFFF),
+            (int)(int32_t)(a[12] >> 32), (unsigned long long)(a[11] & 0xFFFFFFFF), (unsigned long long)(a[11] >> 32), (unsigned long long)a[13]);
+        dl_print_prog(d->prog);
+        break;
+    case DL_DISPATCH:
+        LOG("[vk]   dispatch %llux%llux%llu cs %llx gmem %d store %d | set %llx chunk %llx | sb %llx\n", (unsigned long long)a[0],
+            (unsigned long long)a[1], (unsigned long long)a[2], (unsigned long long)a[3], (int)(a[6] & 1), (int)(a[6] >> 4 & 1),
+            (unsigned long long)a[4], (unsigned long long)a[5], (unsigned long long)a[9]);
+        dl_print_prog(d->prog);
+        break;
+    default: LOG("[vk]   %s\n", d->txt);
+    }
+}
+void vk_gguard_poll(const char *why);  // (test-462-arc: loop-guard hits, below)
 void vk_devlost_dump(void) {
-    if (!dl_on) return;
-    LOG("[vk] last GPU operations before the device loss (oldest first):\n");
-    for (unsigned i = dl_n > 64 ? dl_n - 64 : 0; i < dl_n; i++) LOG("[vk]   %s\n", dl_ring[i & 63]);
+    static _Atomic int dumped;
+    if (!dl_enabled() || atomic_exchange(&dumped, 1)) return;
+    uint64_t done = 0, seen = atomic_load(&dl_done_seen), handed = rec_submitted();
+    VkResult r = vkGetSemaphoreCounterValue(g_vk.dev, g_vk.timeline, &done);
+    // (test-388-grass: AMD answered UINT64_MAX after the loss, so the dump began after the newest submission marker -
+    // only commands not submitted yet. A value past what was handed to the driver isn't real: the last one seen.)
+    bool real = r == VK_SUCCESS && done <= handed;
+    uint64_t from_seq = real && done > seen ? done : seen;
+    unsigned n = atomic_load(&dl_n), from = n > DL_N ? n - DL_N : 0, start = from;
+    bool found = from_seq == 0 && from == 0;
+    for (unsigned i = n; i-- > from;) {
+        const DlEnt *d = &dl_ring[i & (DL_N - 1)];
+        if (d->kind == DL_SUBMIT && d->a[0] <= from_seq) { start = i + 1; found = true; break; }
+    }
+    LOG("[vk] device lost: the driver reports %llu finished (%s, result %d), last seen finished %llu, handed to the driver %llu, "
+        "queued %llu\n", (unsigned long long)done, real ? "usable" : "not usable", (int)r, (unsigned long long)seen,
+        (unsigned long long)handed, (unsigned long long)submit_seq);
+    LOG("[vk] GPU operations after submission %llu, oldest first (%u%s; the operations before \"submit N\" are submission N):\n",
+        (unsigned long long)from_seq, n - start, found ? "" : ", its marker is older than the ring: the whole ring");
+    for (unsigned i = start; i < n; i++) dl_print(&dl_ring[i & (DL_N - 1)]);
+    LOG("[vk] end of the GPU operations\n");
+    vk_gguard_poll("after the device loss: ");
+    fflush(stderr);  // (stderr is unbuffered; in case a file stream is behind it)
 }
 static void gp_mark(VkCommandBuffer cb, const char *fmt, ...) {
     if (!g_gpuprof_frame || gp_n >= 511) return;
@@ -516,7 +589,7 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
     VkSubmitInfo2 si = {.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2, .commandBufferInfoCount = (uint32_t)n, .pCommandBufferInfos = cbs,
                         .signalSemaphoreInfoCount = signal ? 2 : 1, .pSignalSemaphoreInfos = sig,
                         .waitSemaphoreInfoCount = wait ? 1 : 0, .pWaitSemaphoreInfos = &wt};
-    dl_note("submit %llu", (unsigned long long)submit_seq + 1);
+    if (dl_enabled()) dl_new(DL_SUBMIT)->a[0] = submit_seq + 1;
     rec_QueueSubmit2(&si, submit_seq + 1);  // (the recorder: in order with the commands; its vkQueueSubmit2 time is in RecStats)
     pthread_mutex_lock(&seq_lock);
     submit_seq++;
@@ -528,6 +601,7 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
     ring_retire();
     vk_collect_dead();
     if (signal) gc_frame();  // (a present: once a frame)
+    if (signal) vk_gguard_poll(NULL);  // (test-462-arc)
 }
 
 void renderer_submit(void) { vk_submit_extra(VK_NULL_HANDLE, VK_NULL_HANDLE, VK_NULL_HANDLE); }
@@ -930,6 +1004,10 @@ static struct {
     uint32_t restart_index;
     uint64_t copy_row_stride, copy_image_stride;
 } st;
+static uint64_t dl_first_sb(int stage) {  // (the first bound storage buffer's address; 0: none)
+    for (int i = 0; i < 16; i++) if (st.sbuf[stage][i].addr) return st.sbuf[stage][i].addr;
+    return 0;
+}
 
 uint32_t nvn_window_origin(void);
 uint32_t nvn_depth_mode(void);
@@ -1743,6 +1821,40 @@ typedef struct {
     bool reuse;                 // set reuse (stage_set): some uniform buffers are dynamic, sets are kept while their contents repeat
     struct SetCache *scache[2]; // (render thread) stage_set's last set per set index
 } Prog;
+
+// (test-388-grass-2) record-time checks for what AMD's driver doesn't forgive: logged once per program and cause
+static void __attribute__((format(printf, 3, 4))) check_once(const void *prog, int cause, const char *fmt, ...) {
+    static struct { const void *p; int cause; } seen[256];
+    static int nseen;
+    for (int i = 0; i < nseen; i++) if (seen[i].p == prog && seen[i].cause == cause) return;
+    if (nseen < 256) { seen[nseen].p = prog; seen[nseen].cause = cause; nseen++; }
+    else return;
+    char b[400];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(b, sizeof b, fmt, ap);
+    va_end(ap);
+    const Prog *p = prog;
+    LOG("[check] program %llx/%llx: %s\n", (unsigned long long)p->code[0], (unsigned long long)p->code[1], b);
+}
+// The device-loss dump: a program's descriptor bindings (set, binding, type), the first time it appears in the dump
+static void dl_print_prog(const void *prog) {
+    static const void *done[512];
+    static int ndone;
+    if (!prog) return;
+    for (int i = 0; i < ndone; i++) if (done[i] == prog) return;
+    if (ndone < 512) done[ndone++] = prog;
+    const Prog *p = prog;
+    char b[1600];
+    int o = 0;
+    for (int i = 0; i < p->nbinds && o < (int)sizeof b - 32; i++)
+        o += snprintf(b + o, sizeof b - (size_t)o, " %u.%u:%d", p->binds[i].set, p->binds[i].binding, (int)p->binds[i].type);
+    b[o] = 0;
+    LOG("[vk]     program %llx/%llx layout %llx sets %llx %llx %llx bindings (set.binding:type)%s\n",
+        (unsigned long long)p->code[0], (unsigned long long)p->code[1], (unsigned long long)(uintptr_t)p->layout,
+        (unsigned long long)(uintptr_t)p->set_layout[0], (unsigned long long)(uintptr_t)p->set_layout[1],
+        (unsigned long long)(uintptr_t)p->set_layout[2], b);
+}
 
 // ---- descriptor set reuse (graphics programs; port of vk-draw-cpu-2 d50bbce)
 // Every draw allocated and wrote two descriptor sets (~20 descriptors) although most repeat the previous draw's of
@@ -4294,6 +4406,8 @@ static void gmem_chunk_bind(VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipeli
     bool direct = gc_lazy && bp == VK_PIPELINE_BIND_POINT_GRAPHICS;
     if (direct) gmem_direct_pick(stages, gd, dk);
     VkDescriptorSet set = gmem_chunk_set(dk);
+    dl_gset = set;
+    for (int j = 0; j < 4; j++) dl_dk[j] = j < GMEM_DIRECT_MAX ? dk[j] : -1;
     rec_CmdBindDescriptorSets(cb, bp, layout, set_index, 1, &set, 0, NULL);
     if (direct) rec_CmdPushConstants(cb, layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof gd, gd);
 }
@@ -4391,6 +4505,48 @@ static void gfast_flags_poll(void) {
         }
         csw_note(gfr[r].code, covered, written);
         gfr[r].busy = false;
+    }
+}
+
+// (test-462-arc) Loop-guard hits (maxwell/shader.h GGUARD_BINDING): a shader whose dispatcher loop reached its step
+// limit adds one to its slot. Host-visible, read once a frame (gguard_poll, on each present) and after a device loss:
+// each slot's new hits are logged with the shader's code address, so a shader that loops without end is named.
+static VkBuffer gguard_buf;
+static VmaAllocation gguard_mem;
+static uint32_t *gguard_ptr;
+static uint32_t gguard_seen[GGUARD_SLOTS];
+static VkDescriptorBufferInfo gguard_info(void) {
+    if (!gguard_buf) {
+        VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = GGUARD_SLOTS * 4,
+                                 .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+        VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+                                      .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+        VmaAllocationInfo info;
+        VK_CHECK(vmaCreateBuffer(g_vk.vma, &bi, &ai, &gguard_buf, &gguard_mem, &info));
+        gguard_ptr = info.pMappedData;
+        memset(gguard_ptr, 0, GGUARD_SLOTS * 4);
+        vmaFlushAllocation(g_vk.vma, gguard_mem, 0, VK_WHOLE_SIZE);
+    }
+    return (VkDescriptorBufferInfo){gguard_buf, 0, GGUARD_SLOTS * 4};
+}
+void vk_gguard_poll(const char *why) {
+    if (!gguard_ptr) return;
+    static int lines;
+    vmaInvalidateAllocation(g_vk.vma, gguard_mem, 0, VK_WHOLE_SIZE);
+    for (uint32_t i = 0; i < GGUARD_SLOTS; i++) {
+        uint32_t v = ((volatile uint32_t *)gguard_ptr)[i];
+        if (v == gguard_seen[i]) continue;
+        uint32_t add = v - gguard_seen[i];
+        gguard_seen[i] = v;
+        if (lines >= 300 && !why) continue;
+        lines++;
+        uint64_t nm = maxwell_guard_name(i);
+        int stage = (int)(nm >> 56 & 0x7F) - 1;
+        LOG("[guard] %s%s %llx: %u more shader invocations stopped at the loop limit (%u in all, frame %llu)%s\n",
+            why ? why : "", stage == STAGE_VERTEX ? "vs" : stage == STAGE_FRAGMENT ? "fs" : stage == STAGE_COMPUTE ? "cs" : "?",
+            (unsigned long long)(nm & 0x00FFFFFFFFFFFFFFull), add, v, (unsigned long long)vk_frame_counter(),
+            nm >> 63 ? " (slot shared with another shader)" : "");
+        if (lines == 300 && !why) LOG("[guard] further loop-limit lines not logged\n");
     }
 }
 
@@ -4828,6 +4984,10 @@ static void shadow_slot_check(int stage, const ShaderTexture *st_, int i, uint64
                               NvnTexture *t, VkImageView *view) {
     VkImageView dummy = vk_dummy_view(st_->type);
     if (*view && *view != dummy && t && vk_tex_depth_compare(t)) return;
+    static int keep = -1;  // LARECOMP_VK_NO_SHADOW_DUMMY=1 (test-388-grass): the view as it was, no depth dummy (as before c7e85df)
+    if (keep < 0) keep = getenv("LARECOMP_VK_NO_SHADOW_DUMMY") && atoi(getenv("LARECOMP_VK_NO_SHADOW_DUMMY")) != 0;
+    if (keep) return;
+    dl_shadow_dummy = true;
     enum { HANDLE0, NO_ENTRY, FINALIZED, UNREGISTERED, MULTISAMPLE, FEEDBACK_ARRAY, VIEW_FAILED, TYPE_MISMATCH,
            DEPTH_NO_COMPARE, COLOUR, NCAUSE };
     static const char *names[NCAUSE] = {"handle 0 (nothing bound)", "handle past the texture pool", "texture finalized",
@@ -4971,7 +5131,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             bi[n] = cbuf_info(stage, si, (int)b->binding, gx, gy, gz);
             w[n].pBufferInfo = &bi[n];
         } else if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
-            bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info() : gmem_info();
+            bi[n] = b->binding == GFAST_BUFFER_INDEX ? gfast_info() : b->binding == GGUARD_BINDING ? gguard_info() : gmem_info();
             w[n].pBufferInfo = &bi[n];
         } else {
             continue;  // rscale / tint: written below, once the textures (and their scales) are known
@@ -4996,6 +5156,40 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
             bi[n] = ubo_span(copy_dedupe(DEDUPE_TINT, tint ? tint : zero, sizeof zero, 256), sizeof zero);
         }
         w[n].pBufferInfo = &bi[n];
+        n++;
+    }
+    // (test-388-grass-2) every binding of this set the layout declares must be written: one left out (or a buffer with
+    // no handle / range 0) is logged once per program and binding; LARECOMP_VK_FILL_UNWRITTEN=1 writes a zero buffer /
+    // the dummy texture there instead (AMD reads whatever the set's memory held: 0xDEADBEEF descriptors in #388)
+    static int fill = -1;
+    if (fill < 0) fill = getenv("LARECOMP_VK_FILL_UNWRITTEN") && atoi(getenv("LARECOMP_VK_FILL_UNWRITTEN")) != 0;
+    for (int i = 0; i < p->nbinds; i++) {
+        VkBindingInfo *b = &p->binds[i];
+        if (b->set != set) continue;
+        int j = 0;
+        while (j < n && w[j].dstBinding != b->binding) j++;
+        if (j < n) {
+            if (w[j].pBufferInfo && (!bi[j].buffer || !bi[j].range))
+                check_once(p, (int)(set * 128 + b->binding) + 300, "set %u binding %u (type %d): buffer %llx range %llu", set, b->binding,
+                           (int)b->type, (unsigned long long)(uintptr_t)bi[j].buffer, (unsigned long long)bi[j].range);
+            continue;
+        }
+        check_once(p, (int)(set * 128 + b->binding), "set %u binding %u (type %d) declared by the shader, not written%s", set, b->binding,
+                   (int)b->type, fill ? ": filled (diagnostic)" : "");
+        if (!fill || n >= MAX_BIND) continue;
+        w[n] = (VkWriteDescriptorSet){.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = b->binding,
+                                      .descriptorCount = 1, .descriptorType = b->type};
+        if (b->type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+            ii[n] = (VkDescriptorImageInfo){vk_default_sampler(true), vk_dummy_view(TEXTYPE_2D), VK_IMAGE_LAYOUT_GENERAL};
+            w[n].pImageInfo = &ii[n];
+        } else if (is_ubo(b->type)) {
+            static const uint8_t zeros[0x4000];
+            bi[n] = ubo_span(vk_transient_copy(zeros, sizeof zeros, 256), sizeof zeros);
+            w[n].pBufferInfo = &bi[n];
+        } else if (b->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) {
+            bi[n] = gmem_info();
+            w[n].pBufferInfo = &bi[n];
+        } else continue;
         n++;
     }
     // dynamic buffers: the offset moves to the bind (the descriptor keeps buffer and range)
@@ -5414,7 +5608,6 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     vk_full_barrier(cb);
     gp_mark(cb, "dispatch %ux%ux%u (local %ux%ux%u) cs %llx gmem %d", gx, gy, gz, cp->local[0], cp->local[1], cp->local[2],
             (unsigned long long)st.program->stages[5].code_addr, cp->si->uses_gmem);
-    dl_note("dispatch %ux%ux%u cs %llx gmem %d", gx, gy, gz, (unsigned long long)st.program->stages[5].code_addr, cp->si->uses_gmem);
     nfeedback = 0;
     if (ct_on()) {
         LOG("[ct] dispatch cs %llx %ux%ux%u | tex", (unsigned long long)st.program->stages[5].code_addr, gx, gy, gz);
@@ -5429,6 +5622,14 @@ static void dispatch_compute(uint32_t gx, uint32_t gy, uint32_t gz) {
     rec_CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, cp->pipe);
     rec_CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, cp->p.layout, 0, 1, &ds, 0, NULL);
     if (gc_shift && cp->si->uses_gmem) gmem_chunk_bind(cb, VK_PIPELINE_BIND_POINT_COMPUTE, cp->p.layout, GMEM_CHUNK_SET(STAGE_COMPUTE), 1u << STAGE_COMPUTE);
+    if (dl_enabled()) {
+        DlEnt *d = dl_new(DL_DISPATCH);
+        d->a[0] = gx; d->a[1] = gy; d->a[2] = gz; d->a[3] = st.program->stages[5].code_addr; d->a[4] = (uint64_t)ds;
+        d->prog = &cp->p;
+        d->a[5] = gc_shift && cp->si->uses_gmem ? (uint64_t)dl_gset : 0;
+        d->a[6] = (cp->si->uses_gmem ? 1 : 0) | (cp->si->uses_gmem_store ? 16 : 0);
+        d->a[9] = dl_first_sb(5);
+    }
     rec_CmdDispatch(cb, gx, gy, gz);
     if (cp->si->uses_gmem_map && cp->si->uses_gmem_store) gfast_finish(cb);
     if (cp->si->uses_gmem_store) vc_mark_sbufs(5);
@@ -5955,6 +6156,21 @@ static void draw_(CmdRec *r, bool indexed) {
     if (gc_shift && (pr->vi->uses_gmem || pr->fi->uses_gmem))
         gmem_chunk_bind(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pr->layout, GMEM_CHUNK_SET(STAGE_FRAGMENT),
                         (pr->vi->uses_gmem ? 1u << STAGE_VERTEX : 0) | (pr->fi->uses_gmem ? 1u << STAGE_FRAGMENT : 0));
+    DlEnt *dl_draw = NULL;
+    if (dl_enabled()) {
+        bool g = gc_shift && (pr->vi->uses_gmem || pr->fi->uses_gmem);
+        DlEnt *d = dl_draw = dl_new(DL_DRAW);
+        d->prog = pr;
+        d->a[0] = st.program->stages[0].code_addr; d->a[1] = st.program->stages[1].code_addr; d->a[2] = g_cur_fs_hash;
+        d->a[3] = (uint64_t)vset; d->a[4] = (uint64_t)fset; d->a[5] = g ? (uint64_t)dl_gset : 0;
+        d->a[6] = (pr->vi->uses_gmem ? 1 : 0) | (pr->fi->uses_gmem ? 2 : 0) | (indexed ? 4 : 0) | (dl_shadow_dummy ? 8 : 0) |
+                  (pr->vi->uses_gmem_store ? 16 : 0) | (pr->fi->uses_gmem_store ? 32 : 0);
+        d->a[7] = r->x[2];
+        d->a[8] = 0;
+        for (int j = 0; j < 4; j++) d->a[8] |= (uint64_t)(uint16_t)(g ? dl_dk[j] : -1) << (16 * j);
+        d->a[9] = dl_first_sb(0); d->a[10] = dl_first_sb(1);
+    }
+    dl_shadow_dummy = false;
     if (pr->vi->uses_gmem_store) vc_mark_sbufs(0);
     if (pr->fi->uses_gmem_store) vc_mark_sbufs(1);
 
@@ -6054,6 +6270,21 @@ static void draw_(CmdRec *r, bool indexed) {
         if (ss_on && (ss.vb_known >> s & 1) && ss.vb[s] == sp.buf && ss.vo[s] == off) continue;
         ss.vb[s] = sp.buf; ss.vo[s] = off; ss.vb_known |= 1u << s;
         rec_CmdBindVertexBuffers(cb, (uint32_t)s, 1, &sp.buf, &off);
+    }
+    if (dl_draw) {
+        dl_draw->a[11] = vl.used_streams | (uint64_t)vl.attr_mask << 32;
+        dl_draw->a[12] = inst | (uint64_t)(uint32_t)base_vertex << 32;
+        dl_draw->a[13] = use_index ? (uint64_t)(uintptr_t)ib.buf : 0;
+    }
+    {   // (test-388-grass-2) a vertex attribute whose stream isn't bound, an indexed draw without an index buffer
+        uint32_t miss = 0;
+        for (int i = 0; i < 32; i++)
+            if ((vl.attr_mask >> i & 1) && (vl.attr_bind[i] >= 17 || !(vl.used_streams >> vl.attr_bind[i] & 1))) miss |= 1u << i;
+        if (miss || (use_index && !ib.buf)) check_once(pr, 1000 + (miss ? 0 : 1), "vs %llx fs %llx: %s (attrs %#x streams %#x, missing %#x)",
+                                                        (unsigned long long)st.program->stages[0].code_addr,
+                                                        (unsigned long long)st.program->stages[1].code_addr,
+                                                        miss ? "vertex attribute without a bound stream" : "indexed draw without an index buffer",
+                                                        vl.attr_mask, vl.used_streams, miss);
     }
 
     if (prof) prof_vtx += SDL_GetTicksNS() - prof_t2_;
@@ -7331,6 +7562,8 @@ void backend_execute(uint64_t handle) {
     if (prof) cum_exec += SDL_GetTicksNS() - prof_t0_;
     static int sync_submit = -1;
     if (sync_submit < 0) sync_submit = getenv("LARECOMP_SYNC_SUBMIT") ? 1 : 0;
-    if (sync_submit) renderer_flush();
-    else renderer_submit();
+    if (sync_submit) {
+        if (dl_enabled()) dl_note("end of a command list (%llx)", (unsigned long long)handle);
+        renderer_flush();
+    } else renderer_submit();
 }

@@ -251,7 +251,7 @@ static void pick_device(void) {
 
 static bool g_fault_ext;
 // After VK_ERROR_DEVICE_LOST: what the driver says faulted (VK_EXT_device_fault), into the log.
-void vk_device_fault_report(void) {
+static void fault_info(void) {
     static int once;
     if (once++ || !g_fault_ext) return;
     PFN_vkGetDeviceFaultInfoEXT get = (PFN_vkGetDeviceFaultInfoEXT)vkGetDeviceProcAddr(g_vk.dev, "vkGetDeviceFaultInfoEXT");
@@ -273,6 +273,11 @@ void vk_device_fault_report(void) {
     for (uint32_t i = 0; i < c.vendorInfoCount; i++)
         LOG("[vk]   vendor: %s (code %#llx data %#llx)\n", vend[i].description, (unsigned long long)vend[i].vendorFaultCode,
             (unsigned long long)vend[i].vendorFaultData);
+}
+void vk_device_fault_report(void) {
+    fault_info();
+    extern void vk_devlost_dump(void);  // (exec.c: the GPU operations before it; once)
+    vk_devlost_dump();
 }
 
 // Each memory heap: its size, the driver's budget for this process (smaller when other programs hold that memory),
@@ -509,6 +514,13 @@ static void create_device(void) {
     b->vertexPipelineStoresAndAtomics = h->vertexPipelineStoresAndAtomics;
     b->robustBufferAccess = h->robustBufferAccess;  // guest shaders index cbufs freely: keep OOB reads harmless
     g_vk.ssbo_chunks = h->fragmentStoresAndAtomics && h->vertexPipelineStoresAndAtomics && h->robustBufferAccess;
+    {   // (test-462-arc) shader loop limit (LARECOMP_VK_GUARD_LIMIT, diagnostic = guard_low) and its hit counter
+        // (LARECOMP_VK_GUARD_REPORT=0: off): maxwell/shader.h maxwell_glsl_guard
+        const char *e = getenv("LARECOMP_VK_GUARD_LIMIT"), *r = getenv("LARECOMP_VK_GUARD_REPORT");
+        if (e && atoi(e) > 0) maxwell_glsl_guard = (uint32_t)atoi(e);
+        maxwell_glsl_guard_report = h->fragmentStoresAndAtomics && h->vertexPipelineStoresAndAtomics && !(r && *r && !atoi(r));
+        LOG("[vk] shader loop limit %u steps, hits %s\n", maxwell_glsl_guard, maxwell_glsl_guard_report ? "counted" : "not counted");
+    }
     b->shaderClipDistance = h->shaderClipDistance;
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");
     float prio = 1.0f;

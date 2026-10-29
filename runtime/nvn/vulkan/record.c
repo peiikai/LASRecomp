@@ -369,7 +369,7 @@ static bool alloc_sets(Pools *s, VkDescriptorSetLayout layout, uint32_t count, V
             // more a frame with 32768 more of them). A pool that runs out of a type is followed by another.
             static int dynp = -1;
             if (dynp < 0) dynp = getenv("LARECOMP_VK_NO_SET_REUSE") == NULL;  // (as exec.c set_reuse_on)
-            VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dynp ? 8192 : 32768}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4096},
+            VkDescriptorPoolSize sizes[] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, dynp ? 8192 : 32768}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16384},  /* (test-462-arc: + the loop-guard buffer in most sets) */
                                             {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 32768},
                                             {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1024}, {VK_DESCRIPTOR_TYPE_SAMPLER, 1024},
                                             {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 16384}};  // (exec.c stage_set: set reuse)

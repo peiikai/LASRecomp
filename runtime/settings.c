@@ -129,6 +129,52 @@ void settings_resolve_defaults(bool integrated) {
         g_settings.antialias == AA_SMAA ? "smaa" : "off");
 }
 
+// Test builds (test-388-grass, test-462-arc, test-462-arc-2): "diagnostic = <name>" in larecomp.ini turns one suspect off for the next start (the same
+// as its LARECOMP_* variable; one set by hand wins). Several names may be given, comma separated.
+static char g_diagnostic[128];
+static const struct { const char *name, *var, *val, *what; } k_diagnostics[] = {
+    {"overlap_off", "LARECOMP_GPU_OVERLAP", "0", "GPU overlap off"},
+    {"recorder_off", "LARECOMP_VK_RECORDER", "0", "recorder thread off"},
+    {"recycle_off", "LARECOMP_VK_NO_SET_RECYCLE", "1", "descriptor set recycling off"},
+    {"reuse_off", "LARECOMP_VK_NO_SET_REUSE", "1", "descriptor set reuse off"},
+    {"direct_off", "LARECOMP_VK_GMEM_DIRECT", "0", "direct heap addresses off"},
+    {"shadow_off", "LARECOMP_VK_NO_SHADOW_DUMMY", "1", "shadow slot depth dummy off"},
+    {"sync", "LARECOMP_SYNC_SUBMIT", "1", "each command list waited for (slower)"},
+    // (test-462-arc: Intel Arc 140T, the GPU stopped in the Field's main scene pass)
+    {"trace", "LARECOMP_VK_DEVLOST_TRACE", "2", "each pass its own submission, waited for (slower; the crash log names the pass)"},
+    {"guard_low", "LARECOMP_VK_GUARD_LIMIT", "4096", "shader loops stop after 4096 steps instead of 100000"},
+    {"gmem_lazy", "LARECOMP_VK_GMEM_LAZY", "1", "guest heap bound to shaders in 16 MB chunks"},
+    {"skip_cs_light", "LARECOMP_SKIP_CS", "72a8da6000", "the light-tile compute program (30x17 dispatch) skipped"},
+    // (test-462-arc-2: the default discards after the shader loop; each of these turns that off and tries another shape)
+    {"fix_none", "LARECOMP_VK_KIL_LATE", "0", "discard back inside the shader loop (as test-462-arc)"},
+    {"fix_stack", "LARECOMP_VK_KIL_LATE", "0", "discard back inside the shader loop"},
+    {"fix_stack", "LARECOMP_VK_STACK_MASK", "1", "shader stack indices masked"},
+    {"fix_nofall", "LARECOMP_VK_KIL_LATE", "0", "discard back inside the shader loop"},
+    {"fix_nofall", "LARECOMP_VK_NO_FALLTHROUGH", "1", "no fallthrough between shader loop cases"},
+    {"fix_gfast", "LARECOMP_VK_KIL_LATE", "0", "discard back inside the shader loop"},
+    {"fix_gfast", "LARECOMP_VK_GMEM_FAST", "0", "compute storage buffers used in place (no fast copy)"},
+};
+static void diagnostic_apply(void) {
+    char buf[128];
+    strlcpy(buf, g_diagnostic, sizeof buf);
+    int n = 0;
+    for (char *save = NULL, *t = strtok_r(buf, ", ", &save); t; t = strtok_r(NULL, ", ", &save)) {
+        if (!strcmp(t, "none") || !strcmp(t, "off")) continue;
+        bool found = false;
+        for (size_t i = 0; i < sizeof k_diagnostics / sizeof *k_diagnostics; i++) {
+            if (strcmp(t, k_diagnostics[i].name)) continue;
+            found = true;
+            const char *had = getenv(k_diagnostics[i].var);
+            if (!had) setenv(k_diagnostics[i].var, k_diagnostics[i].val, 1);
+            LOG("[diag] diagnostic = %s: %s (%s=%s%s)\n", t, k_diagnostics[i].what, k_diagnostics[i].var, had ? had : k_diagnostics[i].val,
+                had ? ", set outside the ini" : "");
+            n++;
+        }
+        if (!found) LOG("[diag] diagnostic = %s: unknown name, ignored\n", t);
+    }
+    if (!n) LOG("[diag] diagnostic: none (normal settings)\n");
+}
+
 void settings_load(void) {
     static bool loaded;
     if (loaded) return;
@@ -225,6 +271,7 @@ void settings_load(void) {
         else if (!strcmp(key, "enemy_colours")) {
             for (int i = 0; i < N_ENEMY_COLOUR_MODES; i++) if (!strcmp(val, k_enemy_colour_keys[i])) g_settings.enemy_colours = i;
         }
+        else if (!strcmp(key, "diagnostic")) strlcpy(g_diagnostic, val, sizeof g_diagnostic);
         else bind_settings_load(key, val);  // bind_pad_* / bind_key_*: runtime/hle/bindings.c
     }
     fclose(f);
@@ -234,6 +281,7 @@ void settings_load(void) {
     if (g_settings.volume > 2) g_settings.volume = 2;
     if (g_settings.rumble_strength < 25 || g_settings.rumble_strength > 100) g_settings.rumble_strength = 100;
     LOG("[settings] loaded %s\n", SETTINGS_FILE);
+    diagnostic_apply();
 }
 
 void settings_save(void) {
@@ -241,6 +289,7 @@ void settings_save(void) {
     if (!f) { LOG("[settings] cannot write %s\n", SETTINGS_FILE); return; }
     fprintf(f, "# LAS Recomp settings (edited from the in-game menu: F1, Esc, or Minus+Plus on a controller)\n");
     fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
+    if (g_diagnostic[0]) fprintf(f, "diagnostic = %s\n", g_diagnostic);  // (test build: kept until removed by hand)
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
     fprintf(f, "volume = %.2f\n", g_settings.volume);
     fprintf(f, "reverb = %d\n", g_settings.reverb);

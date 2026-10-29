@@ -127,6 +127,16 @@ extern bool maxwell_gmem_fs_miss;
 //   continues instead of falling through.
 // The MSL output doesn't use them.
 extern bool maxwell_glsl_kil_late, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;
+// (test-462-arc) The GLSL dispatcher loop (a shader with branches) stops after maxwell_glsl_guard steps
+// (LARECOMP_VK_GUARD_LIMIT; 100000 as before). With maxwell_glsl_guard_report a shader that reaches it counts one hit
+// in GGuard { uint n[GGUARD_SLOTS]; } at GGUARD_BINDING of its stage's set, in the slot maxwell_guard_slot gives its code
+// address (vulkan/exec.c reads the counts each frame and names the shaders: maxwell_guard_name).
+#define GGUARD_BINDING 23
+#define GGUARD_SLOTS 16384
+extern uint32_t maxwell_glsl_guard;
+extern bool maxwell_glsl_guard_report;
+uint32_t maxwell_guard_slot(uint64_t addr, int stage);
+uint64_t maxwell_guard_name(uint32_t slot);  // code address | (stage + 1) << 56 | 1 << 63 if two shaders share the slot; 0: none
 // Lazy mode, vertex / fragment: the chunks under the draw's storage buffers (where the heap reads are) come as push
 // constants, GDirect { uvec4 gd[GMEM_DIRECT_MAX]; } (x = first word, y = words, 0: unused, z, w = device address), and
 // as storage buffers GDir<k> at GMEM_DIRECT_BINDING + k of the chunk set: an access in one is a compare and a plain
