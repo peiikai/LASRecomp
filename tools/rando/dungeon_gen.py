@@ -1342,6 +1342,15 @@ def chaos_pieces(cat, level, layout, entrance, rng, romfs_for_tiles=None):
     return comps, by_comp, follow
 
 
+def own_room(cat, layout, cell):
+    """What a doorway's 'own room' is (a door jump never leads back into it): every cell of a multi-cell room (catalog
+    'unit': Tail Cave 05C-06E, Turtle Rock 05D-07F...) is one room, and a room placed twice (a copy) is the same room
+    (seed_sweep.self_loops)."""
+    room = layout[cell]
+    unit = cat.get(room, {}).get('unit', [room])
+    return tuple(sorted(unit)) if len(unit) > 1 else room
+
+
 def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness=False):
     """Chaos: pairs every free doorway that isn't physically joined with another one (any room of the level, any
     side) -> door_jumps rows (level, cell, side, own centre, partner centre, partner cell, partner side), both ways.
@@ -1367,8 +1376,8 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
     if len(order) > 1 and any(all(oneway(x) for x in by_comp[k]) for k in order):
         return None  # (a piece left only through drop-down-only doorways: Link would be stuck in it)
     if madness:
-        return _with_followers(cat, level, layout, romfs_for_tiles, follow,
-                               _madness_rows(level, layout, order, by_comp, rng, romfs_for_tiles, cat))
+        rows = _madness_rows(level, layout, order, by_comp, rng, romfs_for_tiles, cat)
+        return None if rows is None else _with_followers(cat, level, layout, romfs_for_tiles, follow, rows)
     # spanning tree: each next piece links to the linked piece with the most free doorways left
     linked = [order[0]] if order else []
     for k in order[1:]:
@@ -1385,18 +1394,22 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
     while len(rest) >= 2:
         pairs.append((rest.pop(), rest.pop()))
     # a room never leads into itself (user 2026-10-09: "rooms shouldn't connect to the same room"): swap partners
-    # between the extra pairs (the spanning tree's pairs join different pieces, so they stay as they are)
+    # between the extra pairs (the spanning tree's pairs join different pieces, so they stay as they are). The room,
+    # not the cell: a multi-cell room's cells are one room (Tail Cave 06E E led into 06C S of the same room)
+    own = {x: own_room(cat, layout, x[1]) for ab in pairs for x in ab}
     for i in range(tree, len(pairs)):
         a, b = pairs[i]
-        if a[1] != b[1]:
+        if own[a] != own[b]:
             continue
         for j in range(tree, len(pairs)):
             c, d = pairs[j]
-            if j != i and c[1] != b[1] and d[1] != a[1]:
+            if j != i and own[c] != own[b] and own[d] != own[a]:
                 pairs[i], pairs[j] = (a, d), (c, b)
                 break
     if rest:  # (an odd one out would lead back into its own doorway - user 2026-10-27: never; plan_all_chaos evens
         return None  # the count first, so this only drops a layout that slipped through)
+    if any(own[a] == own[b] for a, b in pairs):
+        return None  # (no swap left one: drawn again)
     out = []
     for a, b in pairs:
         for x, y in ((a, b), (b, a)) if a != b else ((a, b),):
@@ -1448,18 +1461,21 @@ def _madness_rows(level, layout, order, by_comp, rng, romfs, cat):
             link[exits[k]] = arrivals[ring[(i + 1) % len(ring)]]
     free_out = [x for x in stubs if x not in link]
     free_in = [x for x in stubs if x not in set(link.values())]
+    own = {x: own_room(cat, layout, x[1]) for x in stubs}  # (the room, not the cell: own_room)
     for _ in range(50):
         rng.shuffle(free_in)
-        if all(a[1] != b[1] for a, b in zip(free_out, free_in)):
+        if all(own[a] != own[b] for a, b in zip(free_out, free_in)):
             break
     else:  # swap away what still leads into its own room
         for i, a in enumerate(free_out):
-            if free_in[i][1] == a[1]:
+            if own[free_in[i]] == own[a]:
                 for j in range(len(free_in)):
-                    if free_in[j][1] != a[1] and free_in[i][1] != free_out[j][1]:
+                    if own[free_in[j]] != own[a] and own[free_in[i]] != own[free_out[j]]:
                         free_in[i], free_in[j] = free_in[j], free_in[i]
                         break
     link.update(zip(free_out, free_in))
+    if any(own[x] == own[y] for x, y in link.items()):
+        return None  # (one still leads back into its own room - Eagle's Tower 01F S -> 01F E: drawn again)
     return [_jump_row(cat, level, layout, romfs, x, y) for x, y in sorted(link.items())]
 
 

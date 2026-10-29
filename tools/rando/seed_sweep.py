@@ -15,7 +15,8 @@ usage: seed_sweep.py <romfs> [-n seeds] [-j jobs] [--id SEED-ID ...] [--keep dir
 --miniboss-freq F: every random mix randomizes enemies with mini-boss frequency F (0 - 3: Normal, 2x, 3x, All), enemy
 mode Seeded or Random; --full: each seed is also generated in full (game files, enemies and all) and must finish -
 including its room-link check (room_links.py: every actor link within each room sound, else the game crashes there).
-Room-shuffled seeds are also checked for logic edges out through a drop-down-only doorway (room_logic.inward_exits).
+Room-shuffled seeds are also checked for logic edges out through a drop-down-only doorway (room_logic.inward_exits)
+and for door jumps leading back into their own room (self_loops).
 Exit status 1 if any seed fails either check. Run it with the LAS venv's Python (third_party/LAS-Randomizer/venv).
 """
 import argparse
@@ -264,6 +265,26 @@ def inward_exits(out_dir, romfs):
             for x in room_logic.inward_exits(cat, romfs, lv, layout, plan['jumps'])]
 
 
+def self_loops(out_dir):
+    """Room shuffle: door_jumps rows that lead back into the room they leave - the same cell, or another cell of the
+    same multi-cell room (catalog 'unit') - [(level, cell, side, slot, target cell, target side)], must be none (user
+    2026-10-27 / 10-28: a doorway leading back into its own room looked broken)."""
+    p = json.load(open(os.path.join(out_dir, 'placements.json')))
+    plan = p.get('room-plan')
+    if not plan:
+        return []
+    cat = json.load(open(os.path.join(HERE, 'room_catalog.json')))
+    out = []
+    for r in plan['jumps']:
+        if len(r) < 7:
+            continue
+        layout = plan['layouts'].get(r[0], {})
+        a, b = layout.get(f'{r[0]}_{r[1]}'), layout.get(f'{r[0]}_{r[5]}')
+        if r[1] == r[5] or (a and b in set(cat.get(a, {}).get('unit', [a])) | {a}):
+            out.append((r[0], r[1], r[2], r[3], r[5], r[6]))
+    return out
+
+
 def run_one(job):
     sid, o, romfs, keep, walk, full = job
     tmp = tempfile.mkdtemp(prefix='sweep-', dir=keep)
@@ -283,6 +304,9 @@ def run_one(job):
     oneway = inward_exits(os.path.join(tmp, 'out'), romfs)
     if oneway:
         return sid, f'logic leaves through drop-down-only doorways: {oneway[:4]}', lost
+    loops = self_loops(os.path.join(tmp, 'out'))
+    if loops:
+        return sid, f'doorways lead back into their own room: {loops[:4]}', lost
     if full and not own and not strict:  # (the whole seed: enemies, mini-bosses, every room edit)
         env = dict(os.environ, PYTHONHASHSEED='0')
         env.pop('LARECOMP_CHECK_ONLY', None)
