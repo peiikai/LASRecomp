@@ -552,6 +552,7 @@ static void SDLCALL picked(void *, const char *const *files, int) {
 // The folder picker: SDL's dialog, or on iOS the Files app's (runtime/platform/ios_picker.m: SDL has none there)
 #if PLAT_IOS
 extern "C" void plat_ios_pick_folder(SDL_Window *, void (*)(void *, const char *), void *);
+extern "C" void plat_ios_pick_files(SDL_Window *, const char *, void (*)(void *, const char *const *), void *);
 extern "C" void plat_ios_open_documents(void);
 #endif
 static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *win) {
@@ -1315,6 +1316,15 @@ static void SDLCALL picked_data(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
+static void show_font_dialog(void) {
+    static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
+    font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
+#if PLAT_IOS
+    plat_ios_pick_files(g_launcher_win, font_f[0].pattern, [](void *, const char *const *files) { picked_fonts(NULL, files, -1); }, NULL);
+#else
+    SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+#endif
+}
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
 static void *df_move_thread(void *) {
     g_df_result = rt_data_move(g_df_t.path, df_progress, g_df_err, sizeof g_df_err) ? 1 : -1;
@@ -1512,11 +1522,12 @@ static void prelaunch_tab(float sc) {
                                 "nintendo_udsg-r_std_003 for text, nintendo_udsg-r_org_zh-cn_003, nintendo_udsg-r_ext_zh-cn_003, "
                                 "nintendo_udjxh-db_zh-tw_003 and nintendo_udsg-r_ko_003 for Chinese and Korean, and "
                                 "nintendo_ext_003 for button icons. Both .bfttf and .ttf work."));
+#if PLAT_IOS
+    ImGui::TextDisabled("%s", L("They can also be put into a folder named fonts in LAS Recomp's folder in the Files app."));
+#endif
     ImGui::PopTextWrapPos();
     if (!g_font_msg.empty()) ImGui::TextWrapped("%s", g_font_msg.c_str());
-    static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
-    font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
-    if (ImGui::Button(L("Import fonts"))) SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+    if (ImGui::Button(L("Import fonts"))) show_font_dialog();
     if (fs || fl || fe) {
         ImGui::SameLine();
         if (ImGui::Button(L("Remove imported fonts"))) remove_fonts();

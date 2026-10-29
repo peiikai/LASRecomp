@@ -144,11 +144,6 @@ attribute, so the `removexattr` on the linker is gone too.
 - **No `docs/ios.md`.** The app has its own bundle id now (`com.peiikai.lasrecomp.ios`, tools/bundle_ios.sh; a
   sideloading tool rewrites it per team), but nothing documents the setup for a player: the kit, the export, the
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
-- **Settings > Prelaunch > Game font doesn't work on iOS.** "Import fonts" calls `SDL_ShowOpenFileDialog`, which
-  SDL has no iOS backend for, so the button does nothing (the folder picker was replaced by
-  [runtime/platform/ios_picker.m](../runtime/platform/ios_picker.m); the file picker wasn't). Needs the same
-  `UIDocumentPickerViewController` for files (`.bfttf` / `.ttf`, multiple) behind a `show_file_dialog` in
-  `launcher.mm`, and the row should say the fonts can also be dropped into the app's `fonts/` folder in Files.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
 - **SDL 3.4.18 is patched for iOS 27** ([tools/patches/SDL3-3.4.18-ios27-orientation.patch](../tools/patches/SDL3-3.4.18-ios27-orientation.patch),
