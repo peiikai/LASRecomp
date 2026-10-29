@@ -64,9 +64,13 @@ fi
 # build files patched: tools/patches/keystone-0.9.2.patch); oead (pybind11, built as a wheel from BeeWare's cross venv); PyYAML
 # without its C extension; evfl and appdirs (pure Python). Result: $P/Python.xcframework and $P/python/site-packages.
 # PYV comes from the Makefile (the one place the version is spelled); PYB is BeeWare's build of it, which fixes the
-# ABI every extension here is built against (a new b-release: rebuild them all).
+# ABI every extension here is built against (a new b-release: rebuild them all - done below by the stamp).
 PYV=${PYV:-3.13}
 PYB=b16
+if [ "$(cat "$P/python-build" 2>/dev/null)" != "$PYV-$PYB" ]; then
+    rm -rf "$P/Python.xcframework" "$P/pyvenv" "$P/wheels" "$P/python"
+    echo "$PYV-$PYB" > "$P/python-build"
+fi
 fetch "https://github.com/beeware/Python-Apple-support/releases/download/$PYV-$PYB/Python-$PYV-iOS-support.$PYB.tar.gz" \
       22b96f3d0c3663225f078556b036d2ee6ce3ff98c885706585240681335c71ea Python-$PYV-iOS-support.$PYB.tar.gz
 fetch https://github.com/keystone-engine/keystone/archive/refs/tags/0.9.2.tar.gz \
