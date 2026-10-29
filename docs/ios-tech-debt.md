@@ -141,8 +141,9 @@ attribute, so the `removexattr` on the linker is gone too.
 
 ## Everything else
 
-- **Signed under the device probe's App ID** (`com.lasrecomp.probe`) and a profile found by UUID: no real bundle id,
-  no documented App ID setup. [docs/ios.md] doesn't exist yet.
+- **No `docs/ios.md`.** The app has its own bundle id now (`com.peiikai.lasrecomp.ios`, tools/bundle_ios.sh; a
+  sideloading tool rewrites it per team), but nothing documents the setup for a player: the kit, the export, the
+  sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
 - **Settings > Prelaunch > Game font doesn't work on iOS.** "Import fonts" calls `SDL_ShowOpenFileDialog`, which
   SDL has no iOS backend for, so the button does nothing (the folder picker was replaced by
   [runtime/platform/ios_picker.m](../runtime/platform/ios_picker.m); the file picker wasn't). Needs the same
@@ -203,32 +204,38 @@ attribute, so the `removexattr` on the linker is gone too.
 The Android port lives in [Nycolazs/LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus)
 (formerly upstream PR #91; `main`, merged up to upstream `5c7e498`). Both phone ports need the same pieces, which
 there sit behind `#ifdef __ANDROID__`: they should become one shared condition (`PLAT_TOUCH` / mobile in
-[runtime/platform.h](../runtime/platform.h)), not two copies. In order of value for iOS:
+[runtime/platform.h](../runtime/platform.h)), not two copies.
 
-**Touch and phone UI (shared code, no Vulkan in it)**
-- `runtime/ui/touch_ui.h` + its hooks in `launcher.mm` / `menu.mm`: a finger in the ImGui pages - tap clicks on
-  lift, a drag scrolls pixel for pixel, a flick keeps going. Without it the start screen and the menu aren't usable
-  by finger at all.
-- `runtime/ui/touch_controls.mm` (now 704 lines) + the `input.c` hook (`touch_buttons()` / `touch_stick()`) + the
-  Controls-tab settings: the on-screen controls. The rework (`8b272b8`) shows only what the game uses right now
-  (B once Link has the sword, R the shield, X / Y while an item is on them; ZL / ZR never), draws the game's own item
-  icons in the bubbles (`ui_game_icon` from Game.arc), taps on the game's own screens (skip the opening, L + R on the
-  title, pick a file, move the Items cursor), a layout editor (drag, resize, hide; saved per control), a fixed-stick
-  option, and hides them while a controller is in use. Taken as a whole, not the PR #91 version.
-- Phone menu scale (`menu.mm`: a third larger, fonts built at that size), DejaVu Sans for the name entry / FPS / overlay
-  text, the touch-friendlier `option_rows.mm` / `osk.mm`, `controls_ui.mm`'s touch rows.
-- `launcher.mm` phone branches: the structure for "no setup on this platform" (status lines, no folder picker, no
-  QUIT), the tap hints on the title and file select. Their on-device setup (SAF picker, .xci / .nsp extraction with
-  prod.keys, the game code built on the phone) doesn't apply - iOS has no spawn and the .ipa carries the code.
-- Side bars filled with the picture's blurred edges (`4d234da`, Video > Side bars) for interiors at the phone's
-  aspect; Metal side to write.
+Taken:
+- `runtime/ui/touch_ui.h` (a finger in the ImGui pages: a tap clicks on lift, a drag scrolls, a flick keeps going)
+  and its hooks in `launcher.mm` / `menu.mm`.
+- `runtime/ui/touch_controls.mm`, the reworked one (`8b272b8`): only what the game uses right now, the game's own
+  item icons, taps on its own screens, the layout editor (saved as `touch_ctl_<name>`), hidden while a controller is
+  in use; the `input.c` hook and the Controls-tab settings (`touch_mode`, `touch_opacity`, `touch_size`).
+- The launcher's "no setup on this platform" structure, as iOS branches (`PLAT_IOS`: no build, no data-folder move,
+  the folder picker by `runtime/platform/ios_picker.m`), and DejaVu Sans for the overlay text.
+- The phone menu scale (`d9e0d71`: the menu and the start screen's panels a third larger, in the safe area), the
+  on-screen keyboard's touch form for the name entry (`bc8cfd8`, `osk.mm`), and the tap hints on the title and the
+  file select ("Tap to start", "Tap a file to play", in `touch_controls.mm`).
+- `larecomp.ini` written to `.tmp` then renamed, and saved when the app goes to the background (with the game paused
+  there, `metal.m`).
+- BRX reading only its jump table (upstream took it from the same source: #237, `brx_table_labels`), and the rscale
+  table only for shaders that use it (Metal had it already: `uses_rscale`).
 
-**Input and settings (shared, platform-neutral)**
+Still open, in order of value for iOS:
+
+**Touch and phone UI**
+- One shared condition instead of `PLAT_IOS`: the touch code is behind `PLAT_IOS` here and `__ANDROID__` there.
+- `option_rows.mm` as one column of cards on phones (the name, its description under it, the value with its arrows
+  on the right) instead of rows with the description in a pane beside them - small to read and to touch.
+- Side bars filled with the picture's blurred edges (`4d234daurs still opens the first one listed and keeps it (the
+  "controller in use" check there only hides the touch controls). On iOS a keyboard / mouse receiver or Siri Remote
+  listed aspect; Metal side to write.
+
+**Input**
 - `input.c` controller choice (`ef11b46`): the best-ranked pad wins (a known type > sticks + face buttons > anything),
   and the one whose button is pressed becomes the one read. On iOS a keyboard / mouse receiver or Siri Remote listed
   as a gamepad has the same effect as on Android.
-- `settings.c` written to `larecomp.ini.tmp` then renamed, and saved when the app goes to the background
-  (`ef11b46`): iOS ends backgrounded apps at any moment too. Pair with our missing background / foreground handling.
 
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library
@@ -238,9 +245,9 @@ there sit behind `#ifdef __ANDROID__`: they should become one shared condition (
 - `FN_ENTER` compiled out on phones unless `LARECOMP_FNPROF` (~10% of the game code's instructions).
 - Cold functions at -O0 (`53ac961`): `tools/hot_functions.py` + `gen.py --hot` put the 108k functions a play profile
   never ran in their own files compiled at -O0 - the library builds 3x faster (their phone 26.6 -> 10.8 min) at no
-  game-speed cost, 95 -> 175 MB. For us that's the desktop export's build time (the skeleton's link on the player's
-  machine), worth it once `make PLATFORM=ios gen` is on the player's side.
-- Render thread: the last pipeline key's hash kept, a vectorized max for the largest index, the rscale table only for
+  game-speed cost, 95 -> 175 MB. For us that's the desktop export's build time on the player's machine (the kit's
+  zig compiling the whole library), the longest st (a memcmp instead of hashing ~700 bytes per draw) and a vectorized
+  max for the largest index (`4988c41`): to measure on Metal, whose draw path differs from their Vulkan oner
   shaders that bind it (`4988c41`, Vulkan `rqueue.c`): the first two are in the shared `rqueue.c` and apply to Metal.
 - Game-speed guard (`framepace.c`: `rt_interval_choice`, `g_pace_slow`) and the "keep ~10 % GPU spare" dynamic
   resolution targets (`output_scale.c`): not needed on an A17 at 60 fps; right for older devices and throttling.
@@ -251,13 +258,15 @@ there sit behind `#ifdef __ANDROID__`: they should become one shared condition (
   and `40bff76` keeping their framing with the unlocked aspect): directly applicable to 19.5:9 iPhones; the Metal half
   of it is to write (`renderer.m` had +67 lines in #91).
 
-**Shaders (Maxwell translator, shared)**
-- BRX window labelling and `brx_table` reading only the table (`4988c41`, from the mamcjr port): an SSAO pass 20 ms ->
+**Shaders (Maxwell tran(`4988c41`, from the mamcjr port): a BRX whose table can't be read labels only the window
+  between it and the join of the PBK / SSY around it, not every instruction (`brx_table_labels` returning false still
+  does `memset(label, 1, end)`) - an SSAO pass 20 ms -> under 1 on Adreno;88c41`, from the mamcjr port): an SSAO pass 20 ms ->
   under 1 on Adreno; Metal compiles the same translated source, so check the same pass on the A17.
 
 **Decide, don't copy**
-- Guest base: their `GUEST_SHIFT` (names stay `f_7000…`, values move; `generated/` portable between hosts) vs our
-  `GUEST_BASE` (simpler; byte-identical at the default base). One mechanism before both reach upstream.
+- Guest base: their `GUEST_SHIFT` (a compile-time shift, names stay `f_7000…`) vs ours, now `GUEST_ADDR(<offset>)`
+  in the generated code (names `f_7000…` too; a compile-time base on the desktops, one chosen at start-up on iOS).
+  Ours covers theirs - Android could take the dynamic base as well - but one mechanism before both reach upstream.
 - Brazilian Portuguese (`i18n.mm`, `i18n_pt_br.h`, the fan translation as a RomFS patch): the `T()` plumbing is fine to
   share; the translation itself is their feature.
 
