@@ -517,6 +517,15 @@ static void create_device(void) {
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &f, .queueCreateInfoCount = 1,
                              .pQueueCreateInfos = &qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
     VK_CHECK(vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.dev));
+    {   // the GLSL branch state machine's shape (maxwell/shader.h, #462): KIL's discard after the loop (default),
+        // masked stack indices, no fallthrough into case labels
+        const char *k = getenv("LARECOMP_VK_KIL_LATE"), *m = getenv("LARECOMP_VK_STACK_MASK"), *nf = getenv("LARECOMP_VK_NO_FALLTHROUGH");
+        maxwell_glsl_kil_late = !(k && *k && !atoi(k));
+        maxwell_glsl_stack_mask = m && atoi(m);
+        maxwell_glsl_no_fallthrough = nf && atoi(nf);
+        LOG("[vk] shader loops: discard %s, stack indices %s, fallthrough %s\n", maxwell_glsl_kil_late ? "after the loop" : "in place",
+            maxwell_glsl_stack_mask ? "masked" : "plain", maxwell_glsl_no_fallthrough ? "off" : "on");
+    }
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
     if (g_vk.vids) {
         g_vk.set_vertex_input = (PFN_vkCmdSetVertexInputEXT)vkGetDeviceProcAddr(g_vk.dev, "vkCmdSetVertexInputEXT");

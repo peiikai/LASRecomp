@@ -26,6 +26,7 @@ uint64_t maxwell_gmem_base, maxwell_gmem_size;
 uint32_t maxwell_gmem_chunk_shift;  // 0: one buffer for the whole heap (GLSL; shader.h)
 bool maxwell_gmem_lazy;
 bool maxwell_gmem_fs_miss;
+bool maxwell_glsl_kil_late = true, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;  // (shader.h, #462)
 const uint8_t *maxwell_dbg_code;
 uint32_t maxwell_dbg_pc;
 int maxwell_dbg_reg;
@@ -119,6 +120,8 @@ typedef struct {
     bool glsl;               // emit Vulkan GLSL: dialect-specific constructs here, the rest via glsl_rewrite()
     bool uses_gmem_store;    // STG present: the gmem buffer is not readonly
     uint32_t cbuf_need[18];  // highest constant vec4 index + 1 per cbuf (array size of the GLSL block)
+    bool kil_late;           // KIL is KIL_(): kill_ set, the discard after the loop (maxwell_glsl_kil_late, fragment)
+    bool case_open;          // a case label emitted (maxwell_glsl_no_fallthrough: the code before the next one jumps)
 } Ctx;
 
 static uint64_t bits(uint64_t w, int lo, int n) { return (w >> lo) & ((n == 64) ? ~0ull : ((1ull << n) - 1)); }
@@ -930,6 +933,7 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         c->info->uses_discard = true;
         if (getenv("LARECOMP_NO_DISCARD")) {
         } else if (!c->glsl) sp(&c->body, "    discard_fragment();\n");
+        else if (c->stage == STAGE_FRAGMENT && c->kil_late) sp(&c->body, "    KIL_();\n");  // (shader.h maxwell_glsl_kil_late)
         else if (c->stage == STAGE_FRAGMENT) sp(&c->body, "    discard;\n");
         else sp(&c->body, "    /* kil */\n");  // GLSL has discard in fragment shaders only
     } else if (OPM(0xe240000000000000ull, 0xfff0000000000020ull)) {  // BRA
@@ -938,19 +942,19 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         sp(&c->body, "    pc = %uu; continue;\n", target);
     } else if (OPM(0xe290000000000000ull, 0xfff0000000000020ull)) {  // SSY
         c->uses_branches = true;
-        sp(&c->body, "    ssy[ssy_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    ssy[(ssy_n++) & 15u] = %uu;\n" : "    ssy[ssy_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
     } else if (OPM(0xe2a0000000000000ull, 0xfff0000000000020ull)) {  // PBK
         c->uses_branches = true;
-        sp(&c->body, "    pbk[pbk_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pbk[(pbk_n++) & 15u] = %uu;\n" : "    pbk[pbk_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
     } else if (OPM(0xe2b0000000000000ull, 0xfff0000000000020ull)) {  // PCNT
         c->uses_branches = true;
-        sp(&c->body, "    pcnt[pcnt_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pcnt[(pcnt_n++) & 15u] = %uu;\n" : "    pcnt[pcnt_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
     } else if (OPM(0xf0f8000000000000ull, 0xfff8000000000000ull)) {  // SYNC
-        sp(&c->body, "    pc = ssy[--ssy_n]; continue;\n");
+        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = ssy[(--ssy_n) & 15u]; continue;\n" : "    pc = ssy[--ssy_n]; continue;\n");
     } else if (OPM(0xe340000000000000ull, 0xfff0000000000000ull)) {  // BRK
-        sp(&c->body, "    pc = pbk[--pbk_n]; continue;\n");
+        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = pbk[(--pbk_n) & 15u]; continue;\n" : "    pc = pbk[--pbk_n]; continue;\n");
     } else if (OPM(0xe350000000000000ull, 0xfff0000000000000ull)) {  // CONT
-        sp(&c->body, "    pc = pcnt[pcnt_n - 1]; continue;\n");
+        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = pcnt[(pcnt_n - 1u) & 15u]; continue;\n" : "    pc = pcnt[pcnt_n - 1]; continue;\n");
     } else if (OPM(0xf0f0000000000000ull, 0xfff8000000000000ull) || OPM(0x50b0000000000000ull, 0xfff8000000000000ull) ||
                OPM(0xef98000000000000ull, 0xfff8000000000000ull)) {
         // DEPBAR / NOP / MEMBAR
@@ -2126,6 +2130,12 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (c->uses_cc) sp(&s, "  uint cc = 0u; bool ccz = false, ccs = false;\n");
     if (c->uses_local) sp(&s, "  uint lmem[%d]; for (int li_ = 0; li_ < %d; li_++) lmem[li_] = 0u;\n", LMEM_WORDS, LMEM_WORDS);
     if (dbg) sp(&s, maxwell_dbg_pc == 0xffffffffu ? "  float dbgv = 1.0f;\n" : "  float dbgv = -1.0f;\n");
+    // KIL (maxwell_glsl_kil_late, shader.h): the lane notes it and runs on as it did after the discard - a demote to a
+    // helper, which keeps the quad's derivatives - and discards after the loop. A shader that stores keeps the
+    // discard in place (a killed lane's stores must not land).
+    bool kil_late = stage == STAGE_FRAGMENT && c->kil_late && info->uses_discard && !c->uses_gmem_store;
+    if (stage == STAGE_FRAGMENT && c->kil_late && info->uses_discard)
+        sp(&s, kil_late ? "  bool kill_ = false;\n#define KIL_() kill_ = true\n" : "#define KIL_() discard\n");
     if (any_branch) {
         sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
         sp(&s, "  bool exit_now = false;\n");
@@ -2135,6 +2145,7 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     } else {
         sp(&s, "  do {\n%s  } while (false);\n", body.buf ? body.buf : "");
     }
+    if (kil_late) sp(&s, "  if (kill_) discard;\n");  // (a KIL ran: the discard outside the loop, shader.h)
     free(body.buf);
     if (stage == STAGE_VERTEX) {
         if (key && key->flip_y) sp(&s, "  gl_Position.y = -gl_Position.y;\n");
@@ -2239,6 +2250,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     c->stage = stage;
     c->ipa_mode = -1;
     c->glsl = key && key->glsl;
+    c->kil_late = c->glsl && maxwell_glsl_kil_late;
     const uint8_t *sph = blob + 0x30;
     const uint8_t *code = blob + 0x80;
     // compute programs have neither the 0x30-byte NVN header nor an SPH: code starts at the blob
@@ -2292,7 +2304,12 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
     for (size_t i = 0; i < end && !c->fail; i++) {
         if (i % 4 == 0) continue;
         uint32_t pc = (uint32_t)(i * 8);
-        if (any_branch && label[i]) sp(&c->body, "  case %uu:\n", pc);
+        if (any_branch && label[i]) {
+            if (c->glsl && maxwell_glsl_no_fallthrough && c->case_open)  // (shader.h: no fallthrough into a label)
+                sp(&c->body, "    pc = %uu; continue;\n", pc);
+            sp(&c->body, "  case %uu:\n", pc);
+            c->case_open = true;
+        }
         if (annotate) sp(&c->body, "    // pc %x: %016llx\n", pc, (unsigned long long)((const uint64_t *)code)[i]);
         emit_insn(c, ((const uint64_t *)code)[i], pc);
         light_tiles_fix(c, (const uint64_t *)code, end, pc);

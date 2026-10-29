@@ -116,6 +116,17 @@ extern bool maxwell_gmem_lazy;
 // runtime imports the bound storage buffers' chunks before the draw. true (LARECOMP_VK_GMEM_FS_MISS=1): every shader
 // counts, none declares early tests.
 extern bool maxwell_gmem_fs_miss;
+// (GLSL) The branch state machine's shape (#462: Intel Arc 140T, driver 101.9150, hung in the Field's main pass once
+// the light-tile compute filled the tiles' light lists - the lit fragment shaders then leave their light loop on
+// different iterations, so the lanes of a wave sit in different cases of the loop):
+// - maxwell_glsl_kil_late (default; LARECOMP_VK_KIL_LATE=0 off): KIL only sets kill_ and the lane runs on (as after
+//   GLSL's discard, which recent glslang makes a demote to a helper: same derivatives), and the shader discards after the
+//   loop - no demote inside the divergent loop. Shaders that store keep it in place;
+// - maxwell_glsl_stack_mask (LARECOMP_VK_STACK_MASK=1): SSY / PBK / PCNT stack indices masked to the array (& 15u);
+// - maxwell_glsl_no_fallthrough (LARECOMP_VK_NO_FALLTHROUGH=1): code that runs into the next case label sets pc and
+//   continues instead of falling through.
+// The MSL output doesn't use them.
+extern bool maxwell_glsl_kil_late, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;
 // Lazy mode, vertex / fragment: the chunks under the draw's storage buffers (where the heap reads are) come as push
 // constants, GDirect { uvec4 gd[GMEM_DIRECT_MAX]; } (x = first word, y = words, 0: unused, z, w = device address), and
 // as storage buffers GDir<k> at GMEM_DIRECT_BINDING + k of the chunk set: an access in one is a compare and a plain
