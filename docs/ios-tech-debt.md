@@ -36,15 +36,6 @@ Done (kept here as the record of what the build now guarantees):
   checks its log and compares the seed it generated with the same seed generated here, file by file.
 
 Still open:
-- **Pillow comes from BeeWare's package index** (`https://pypi.anaconda.org/beeware/simple`), not PyPI: a third-party
-  binary we don't build and whose availability we don't control (pinned by checksum now, so at worst the build
-  stops). Building it from the sdist in the cross venv (its codecs static) would remove the dependency. It is also
-  the one piece of the app that holds a path of someone else's machine (`/Users/runner/...` from BeeWare's CI):
-  everything we compile maps its source folder away (`-ffile-prefix-map`, `tools/build_deps_ios.sh`) and
-  `tools/bundle_ios.sh` refuses an app holding this machine's paths, as the desktop bundles do since beta 6.
-- **BeeWare's Python-Apple-support release is a binary dependency** (`Python-3.13-iOS-support.b16`): a prebuilt
-  CPython we don't rebuild. Acceptable (it's the CPython project's own iOS support, PEP 730), but a new `b`-release
-  changes the ABI of every extension we build (`PYB` in `build_deps_ios.sh`: bump it and rebuild them all).
 - **The generator's modules are reset by hand** before each run (`sys.modules` entries whose `__file__` or
   `__path__` is under `rando-gen/`, plus the `PySide6` stubs) because the "process" is really a thread in one
   interpreter. Verified by the self-test, which now generates the seed twice in one interpreter and compares: 291
@@ -78,9 +69,6 @@ Still open:
   build too. **The game itself is not run in the simulator**, by decision: its GPU side is the Mac's, not a
   phone's, the macOS build already exercises the game code, and the 12.5 GB window at the iOS base may not fit a
   simulator process (a separate base and a separate `generated-ios-sim/` for nothing).
-- **`make rando-helper` (PyInstaller) and the embedded interpreter are two ways to ship the same generator.** The
-  desktop helper freezes `las_headless.py`; iOS runs the sources (`tools/rando/` and `RandomizerCore` / `Resources`
-  rsynced into `rando-gen/`).
 
 ## The export from the desktop (the iOS kit)
 
@@ -94,38 +82,12 @@ the symlink entries that replaced them are both gone - keystone's library is pre
 folder picked instead of the file gets a message saying so. Files the runtime writes itself carry no quarantine
 attribute, so the `removexattr` on the linker is gone too.
 
-- **The kit is 209 MB (658 MB unpacked), most of it four linkers** (rust-lld for macOS arm64, Linux x64 / arm64,
-  Windows x64 - 8-122 MB compressed each; the app itself is 65 MB). One file for every desktop keeps the release
-  page simple and was chosen deliberately; a per-host kit would be a quarter of the size.
-- **The export's game files folder is found the way setup finds it** (runtime/romfs_build.h `romfs_find_game`:
-  exefs/ and romfs/ inside, their contents in one folder, or nested), and only the exefs files are staged into
-  `<data root>/cache/ios-build/` by name - nothing is written into the player's folder; "Clear build cache" removes
-  that staging folder too. One build folder for whatever game folder was picked last: picking another version's
-  files replaces the exefs copy and the build cache rebuilds (its inputs changed), as it should.
-- **The picked kit and game files folder aren't remembered across runs** (deliberate: settings.h has no string
-  slots, and the kit is picked once per release anyway).
-- **Windows extraction turns a symlink into a copy of its target** (runtime/zipfile.c `zip_extract`: an unprivileged
-  Windows user can't make symlinks). Nothing in the kit is a symlink today, so this is a fallback nobody hits; a
-  link whose target isn't in the archive fails the unpack.
-- **The two files the export adds carry no Unix mode** (stock miniz writes none; `LASGame` and `LASGame.id` come
-  out `-rw-r--r--`-less, mode 0). dyld maps a library without an executable bit, so the app runs; anything added
-  later that must be executable (none today) would need a way to set the mode - a 12-line addition to miniz, kept
-  out so the release is used unmodified (the build fetches it like zig: network once, `build/miniz-dl` caches it).
-- **ld64.lld is Rust's `rust-lld`** (tools/fetch_lld.sh: the 60-70 MB `rustc` component of a pinned Rust release,
-  sha256 published next to it, for all four hosts). Chosen over the LLVM release archives (1.4-2 GB, and their Linux
-  lld needs the host's libxml2 and Ubuntu 22.04's exact ICU soname): rust-lld needs only libc / libz, plus on Linux
-  its own `lib/libLLVM.so` (155 MB, found by RUNPATH `$ORIGIN/../lib`, hence the `bin/` + `lib/` layout). Verified in a
-  bare `ubuntu:22.04` arm64 container: the Linux zig + Linux rust-lld produce the same `__TEXT` / `__DATA_CONST` bytes
-  as the macOS toolchain (only LINKEDIT differs: STABS paths, hence the UUID). The lld version follows Rust's
-  (21.1.2 for Rust 1.91), which is fine but is not something we pick.
 - **rust-lld isn't in the README's "License" section.** It lists the Zig compiler's LLVM / Clang / LLD (Apache 2.0
   with LLVM exceptions), but the kit ships a second linker: LLD built by the Rust project (Apache 2.0 with LLVM
   exceptions as well, plus on Linux `libLLVM.so` under the same), fetched from Rust's release archives. Add it to
   the list (with the Rust release it comes from, as the Zig entry names its version), and ship LLVM's `LICENSE.TXT`
   next to the linker in the kit (`lld/<host>/`) the way `tools/zig_slim.sh` copies zig's `LICENSE`. miniz (MIT,
   build/miniz/LICENSE after tools/fetch_miniz.sh) belongs in that section too.
-- **zig can't link for iOS** (0.13-0.17: segfaults or a broken libubsan sub-build for the ios target). If a later
-  zig can, lld and the tbd stub go away.
 - **Tests to add for what already broke once**, each found by hand on a device or a Linux box rather than by CI:
   - the exported library's id equals the kit executable's on every desktop: `GAMELIB_IOS_ID` from the macOS,
     Linux and Windows Makefile branches against `GAMELIB_ID` of `PLATFORM=ios` (a Linux export was rejected as
@@ -146,14 +108,21 @@ attribute, so the `removexattr` on the linker is gone too.
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
+- **The start screen's main page ignores the safe area.** `panel_layout` ([runtime/ui/launcher.mm](../runtime/ui/launcher.mm))
+  insets the Settings / Game files panels by `SDL_GetWindowSafeArea`, but the main page's items (PLAY with the seed
+  picker, SETTINGS, SET UP GAME FILES) and the game-files status line are placed from the window's edges: in
+  landscape the notch / Dynamic Island side and the home indicator can cover them. They should take the same insets.
+- **Left / right values have no touch gesture.** A row of `opt_choice` / `opt_int` / `opt_slider`
+  ([runtime/ui/option_rows.mm](../runtime/ui/option_rows.mm): render resolution, upscaler, volume...) changes by
+  d-pad / arrow keys; a tap is "A", which steps forward and wraps - so going back one value on a phone means tapping
+  through the whole list. Options: a horizontal swipe on the row (touch_ui.h already tells a drag from a tap; a
+  sideways one could step instead of scroll), or `‹` / `›` hit areas at the row's ends (the value already draws
+  arrows there on a controller). The Android port's card layout puts the arrows on the right for the same reason.
 - **SDL 3.4.18 is patched for iOS 27** ([tools/patches/SDL3-3.4.18-ios27-orientation.patch](../tools/patches/SDL3-3.4.18-ios27-orientation.patch),
   SDL's own commits ca97578 and 2ee7eb6 from its release-3.4.x branch): on iOS 27 `statusBarOrientation` is a no-op,
   so SDL took the window for portrait, kept its view at 393x852 under a landscape 852x393 window, and the game drew
   into the top-left of the screen (SDL issue 16436; an iPhone 15 Pro on 27.0.1). The patch goes once
   `tools/build_deps_ios.sh` moves to SDL 3.4.20 or later, where both are in.
-- **The guest base differs from the Android port's `GUEST_SHIFT`.** Two mechanisms for one problem; one has to go
-  before both merge (below). `GUEST_ADDR(<offset>)` (next item) makes the generated code base-free, which is what
-  `GUEST_SHIFT` wanted too.
 - **Untested on iPad and on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number.
   Run so far on an iPhone 15 Pro and a virtual iPhone 17 Pro (vphone "Lime", iOS 26.6), both at 60 fps.
 - **The window is one 5.25 GB piece, placed where the process has room - and iOS 27 may have none.** Where an iOS
@@ -223,14 +192,14 @@ Still open, in order of value for iOS:
 - One shared condition instead of `PLAT_IOS`: the touch code is behind `PLAT_IOS` here and `__ANDROID__` there.
 - `option_rows.mm` as one column of cards on phones (the name, its description under it, the value with its arrows
   on the right) instead of rows with the description in a pane beside them - small to read and to touch.
-- Side bars filled with the picture's blurred edges (`4d234daurs still opens the first one listed and keeps it (the
-  "controller in use" check there only hides the touch controls). On iOS a keyboard / mouse receiver or Siri Remote
-  listed aspect; Metal side to write.
+- Side bars filled with the picture's blurred edges (`4d234da`, Video > Side bars) for interiors at the phone's
+  aspect; Metal side to write.
 
 **Input**
 - `input.c` controller choice (`ef11b46`): the best-ranked pad wins (a known type > sticks + face buttons > anything),
-  and the one whose button is pressed becomes the one read. On iOS a keyboard / mouse receiver or Siri Remote listed
-  as a gamepad has the same effect as on Android.
+  and the one whose button is pressed becomes the one read. Ours still opens the first one listed and keeps it (the
+  "controller in use" check there only hides the touch controls). On iOS a keyboard / mouse receiver or Siri Remote
+  listed as a gamepad has the same effect as on Android.
 
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library
@@ -241,9 +210,9 @@ Still open, in order of value for iOS:
 - Cold functions at -O0 (`53ac961`): `tools/hot_functions.py` + `gen.py --hot` put the 108k functions a play profile
   never ran in their own files compiled at -O0 - the library builds 3x faster (their phone 26.6 -> 10.8 min) at no
   game-speed cost, 95 -> 175 MB. For us that's the desktop export's build time on the player's machine (the kit's
-  zig compiling the whole library), the longest st (a memcmp instead of hashing ~700 bytes per draw) and a vectorized
-  max for the largest index (`4988c41`): to measure on Metal, whose draw path differs from their Vulkan oner
-  shaders that bind it (`4988c41`, Vulkan `rqueue.c`): the first two are in the shared `rqueue.c` and apply to Metal.
+  zig compiling the whole library), the longest step of an export.
+- Render thread: the last pipeline key's hash kept (a memcmp instead of hashing ~700 bytes per draw) and a vectorized
+  max for the largest index (`4988c41`): to measure on Metal, whose draw path differs from their Vulkan one.
 - Game-speed guard (`framepace.c`: `rt_interval_choice`, `g_pace_slow`) and the "keep ~10 % GPU spare" dynamic
   resolution targets (`output_scale.c`): not needed on an A17 at 60 fps; right for older devices and throttling.
   Upstream's `28a68f8` (steady 30 fps on machines at the edge) covers part of this already.
@@ -253,15 +222,13 @@ Still open, in order of value for iOS:
   and `40bff76` keeping their framing with the unlocked aspect): directly applicable to 19.5:9 iPhones; the Metal half
   of it is to write (`renderer.m` had +67 lines in #91).
 
-**Shaders (Maxwell tran(`4988c41`, from the mamcjr port): a BRX whose table can't be read labels only the window
+**Shaders (Maxwell translator, shared)**
+- BRX window labelling (`4988c41`, from the mamcjr port): a BRX whose table can't be read labels only the window
   between it and the join of the PBK / SSY around it, not every instruction (`brx_table_labels` returning false still
-  does `memset(label, 1, end)`) - an SSAO pass 20 ms -> under 1 on Adreno;88c41`, from the mamcjr port): an SSAO pass 20 ms ->
-  under 1 on Adreno; Metal compiles the same translated source, so check the same pass on the A17.
+  does `memset(label, 1, end)`) - an SSAO pass 20 ms -> under 1 on Adreno; Metal compiles the same translated source,
+  so check the same pass on the A17.
 
 **Decide, don't copy**
-- Guest base: their `GUEST_SHIFT` (a compile-time shift, names stay `f_7000…`) vs ours, now `GUEST_ADDR(<offset>)`
-  in the generated code (names `f_7000…` too; a compile-time base on the desktops, one chosen at start-up on iOS).
-  Ours covers theirs - Android could take the dynamic base as well - but one mechanism before both reach upstream.
 - Brazilian Portuguese (`i18n.mm`, `i18n_pt_br.h`, the fan translation as a RomFS patch): the `T()` plumbing is fine to
   share; the translation itself is their feature.
 
