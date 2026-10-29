@@ -75,6 +75,7 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 - Shaders are prepared ahead of time, so new areas don't stutter.
 - A start screen where you pick vanilla or a randomizer seed, set up your game files and choose your settings.
 - In-game menu: F1, or Minus + Plus on a controller.
+- [Photo mode](docs/photo-mode.md) (F2): freeze the scene, adjust framing/color and save a PNG (F12).
 - Switch between vanilla and any randomizer seed without restarting.
 - Keyboard and controller support, with every button remappable. Button prompts match your controller (Xbox, PlayStation or Nintendo).
 - Controller rumble, and the light bar on PlayStation controllers shows Link's health.

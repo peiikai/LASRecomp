@@ -16,6 +16,7 @@
 #include "nvn.h"
 #include "rqueue.h"
 #include "../game_addresses.h"
+#include "../photo.h"
 #include "renderer.h"
 #include "pace.h"
 #include "texpatch.h"
@@ -826,11 +827,11 @@ static const char *present_src =
     "  float2 p = float2((vid << 1) & 2, vid & 2);\n"
     "  V o; o.pos = float4(p * 2.0 - 1.0, 0, 1);\n"
     "  float2 uv = float2(p.x, pv[0].x > 0.5 ? p.y : 1.0 - p.y); o.uv = pv[1].xy + uv * pv[1].zw; return o; }\n"
-    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]],\n"
-    "                   constant float4 &pf [[buffer(0)]]) {\n"
-    "  float3 c = t.sample(s, in.uv).rgb;\n"
-    SCREEN_FILTER_SRC("float3")  // (the screen filter: screen_filter.h)
-    "  return float4(c, 1.0); }\n";
+    "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]], constant float4 *pv [[buffer(0)]]) {\n"
+    "  float3 c = t.sample(s, in.uv).rgb; float4 pf = pv[3];\n"
+    SCREEN_FILTER_SRC("float3")
+    "  float y = dot(c, float3(0.2126,0.7152,0.0722));\n"
+    "  return float4(clamp(mix(float3(y), c, pv[2].y) * pv[2].x, 0.0, 1.0), 1.0); }\n";
 
 void backend_init(void) {
     while (!atomic_load(&ui_ready)) usleep(1000);
@@ -1204,11 +1205,10 @@ void renderer_save_texture(id<MTLTexture> tex, const char *path) {
     float flip = renderer_origin_lower_left() ? 1.0f : 0.0f;
     [e setRenderPipelineState:pipe];
     if (g_save_upright || strstr(path, "window")) flip = 0;  // the window image is already upright
-    float pv[8] = {flip, 0, 0, 0, shot_crop[0], shot_crop[1], shot_crop[2], shot_crop[3]};
+    float pv[16] = {flip, 0, 0, 0, shot_crop[0], shot_crop[1], shot_crop[2], shot_crop[3], 1, 1, 0, 0};
+    if (strstr(path, "frame_")) screen_filter_params(pv + 12);  // game texture shots; window captures are already filtered
     [e setVertexBytes:pv length:sizeof pv atIndex:0];
-    float pf[4] = {0};
-    if (strstr(path, "frame_")) screen_filter_params(pf);  // (shots of the game image: as shown)
-    [e setFragmentBytes:pf length:sizeof pf atIndex:0];
+    [e setFragmentBytes:pv length:sizeof pv atIndex:0];
     [e setFragmentTexture:raw_view(tex) atIndex:0];
     [e setFragmentSamplerState:present_sampler atIndex:0];
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1257,6 +1257,7 @@ void backend_represent(void) {
 static int g_presents_inflight;  // present command buffers committed and not yet completed (each holds a drawable)
 void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (rq_stopping()) return;  // quitting: no drawable after the window closed (#40, as Vulkan)
+    photo_mode_frame(frame);
     extern void renderer_submit(void);
     extern void renderer_texture_will_read(NvnTexture *t);
     renderer_texture_will_read(t);  // (a recorded clear of the image becomes its pass first)
@@ -1264,6 +1265,11 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
     TexBackend *b = t->backend;
     if (b) b->presented = true;
     @autoreleasepool {
+        // Photos read the drawable back; ordinary play keeps Metal's framebuffer-only optimisation.
+        static int window_shot = -1;
+        if (window_shot < 0) window_shot = getenv("LARECOMP_WINDOW_SHOT") != NULL;
+        BOOL framebuffer_only = !photo_mode_active() && !window_shot;
+        if (layer.framebufferOnly != framebuffer_only) layer.framebufferOnly = framebuffer_only;
         uint64_t nd0 = SDL_GetTicksNS();
         rq_watch("nextDrawable", frame);
         id<CAMetalDrawable> drawable = [layer nextDrawable];
@@ -1315,6 +1321,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
         float crop[4];  // uv origin and size
         widescreen_present_crop(frame, shape, crop, &vx, &vy, &vw, &vh);
+        photo_mode_compose(crop, dw, dh, &vx, &vy, &vw, &vh);
         widescreen_set_factor((float)shape);
         output_scale_log((unsigned long long)frame, dw, dh, &os);  // (diagnostics: [scale] on a change)
         extern void renderer_set_alloc_scale(float ax, float ay);
@@ -1359,11 +1366,11 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             float flip = renderer_origin_lower_left() ? 1.0f : 0.0f;
             [enc setViewport:(MTLViewport){vx, vy, vw, vh, 0, 1}];
             [enc setRenderPipelineState:present_pipe];
-            float pv[8] = {flip, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
+            float pv[16] = {flip, 0, 0, 0, crop[0], crop[1], crop[2], crop[3], 1, 1, 0, 0};
+            photo_mode_color(pv + 8);
+            screen_filter_params(pv + 12);
             [enc setVertexBytes:pv length:sizeof pv atIndex:0];
-            float pf[4];
-            screen_filter_params(pf);
-            [enc setFragmentBytes:pf length:sizeof pf atIndex:0];
+            [enc setFragmentBytes:pv length:sizeof pv atIndex:0];
             [enc setFragmentTexture:src atIndex:0];
             [enc setFragmentSamplerState:present_sampler atIndex:0];
             [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1375,12 +1382,13 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         static long menu_at = -1;  // test hook: open the menu at this frame (LARECOMP_MENU_AT)
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)frame + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
+        const char *photo_path = photo_mode_capture_path();
         menu_render(dev, cb, drawable.texture);
         static long win_shot = -1;  // LARECOMP_WINDOW_SHOT=<frame>: save the final window image (game + menu)
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         id<MTLTexture> shot_tex = nil;
         extern char g_window_shot_request[256];  // test hooks (runtime/hle/hookshot.c): save the next frame here
-        if ((win_shot && (long)frame + 1 == win_shot) || g_window_shot_request[0]) {
+        if (photo_path || (win_shot && (long)frame + 1 == win_shot) || g_window_shot_request[0]) {
             MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:drawable.texture.pixelFormat
                                          width:drawable.texture.width height:drawable.texture.height mipmapped:NO];
             td.usage = MTLTextureUsageShaderRead;
@@ -1468,7 +1476,9 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             [cb waitUntilCompleted];
             // LARECOMP_SHOT_PATH: where (parallel test runs each write their own; default build/window.png)
             g_save_upright = true;
-            if (g_window_shot_request[0]) {
+            if (photo_path) {
+                renderer_save_texture(shot_tex, photo_path); photo_mode_capture_done();
+            } else if (g_window_shot_request[0]) {
                 renderer_save_texture(shot_tex, g_window_shot_request);
                 g_window_shot_request[0] = 0;
             } else {
@@ -1530,6 +1540,8 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         frames = 0;
         last_fps_time = now;
     }
+    photo_mode_presented(frame + 1);
+
 }
 
 // The game thread's side of a present: the frame counters and the per-frame hooks (input, pacing, test hooks).

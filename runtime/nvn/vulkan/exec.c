@@ -17,6 +17,7 @@
 #endif
 
 #include "../../kernel.h"
+#include "../../photo.h"
 #include "shaders.h"
 #include "vk.h"
 #include "record.h"
@@ -5605,6 +5606,20 @@ static void draw_(CmdRec *r, bool indexed) {
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
         }
+        if (photo_mode_active()) {
+            extern uint64_t renderer_exec_frame(void);
+            // As on Metal: find the scene composite before dropping the HUD draws which follow it.
+            bool photo_composite = composite;
+            if (st.rt.ncolor && st.rt.color[0] && pr->fi->ntex) {
+                NvnTexture *source = shader_texture_object(1, &pr->fi->tex[0]);
+                bool full = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+                            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
+                photo_composite |= source && photo_scene_composite(st.rt.color[0]->width, st.rt.color[0]->height,
+                    source->width, source->height, full, st.color_state[0] & 1, pr->fi->ntex);
+            }
+            if (photo_mode_skip_draw(renderer_exec_frame(), st.rt.ncolor && st.rt.color[0] &&
+                                     renderer_texture_presented(st.rt.color[0]), photo_composite)) { stat_skipped++; return; }
+        }
         if (mirror_draw(composite)) {
             vkey.flip_x = fkey.flip_x = true;
             pr = get_program(st.program, &vkey, &fkey);
@@ -6583,8 +6598,8 @@ static VkPipeline present_pipeline(VkFormat fmt) {
         VkDescriptorSetLayoutBinding b = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, NULL};
         VkDescriptorSetLayoutCreateInfo li = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO, .bindingCount = 1, .pBindings = &b};
         VK_CHECK(vkCreateDescriptorSetLayout(g_vk.dev, &li, NULL, &present_set_layout));
-        // (vertex: flip + crop, 32 bytes; fragment: the screen filter, 16 more)
-        VkPushConstantRange r = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48};
+        // Vertex: flip + crop, 32 bytes; fragment: photo colour + screen filter, 32 more.
+        VkPushConstantRange r = {VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 64};
         VkPipelineLayoutCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO, .setLayoutCount = 1,
                                          .pSetLayouts = &present_set_layout, .pushConstantRangeCount = 1, .pPushConstantRanges = &r};
         VK_CHECK(vkCreatePipelineLayout(g_vk.dev, &ci, NULL, &present_layout));
@@ -7007,14 +7022,14 @@ VkImageView g_vk_scene_view;
 float g_vk_scene_uv[4];
 
 // Inside the window image's rendering (device.c vk_frame_begin): the game image into (vx, vy, vw, vh).
-void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]) {
+void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[12]) {
     if (!b || !b->image || (b->aspect & ~VK_IMAGE_ASPECT_COLOR_BIT)) return;
     // Dynamic: the image occupies the top-left part of the texture; FSR maps that part to its whole output, otherwise
     // the present samples the part
     float fx = b->scalable && b->ax > 0 ? b->sx / b->ax : 1, fy = b->scalable && b->ay > 0 ? b->sy / b->ay : 1;
     bool upscaled = false;
     VkImageView src = post_process(cb, b, fx, fy, pv[6] > 0 ? vw / pv[6] : vw, pv[7] > 0 ? vh / pv[7] : vh, &upscaled);
-    float pvc[8];
+    float pvc[12];
     memcpy(pvc, pv, sizeof pvc);
     if (!upscaled) { pvc[4] *= fx; pvc[5] *= fy; pvc[6] *= fx; pvc[7] *= fy; }
     pv = pvc;
@@ -7030,10 +7045,10 @@ void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, floa
     rec_CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, present_layout, 0, 1, &ds, 0, NULL);
     VkViewport vp = {vx, vy, vw, vh, 0, 1};
     rec_CmdSetViewport(cb, 0, 1, &vp);
-    float pc[12];
-    memcpy(pc, pv, 32);
-    screen_filter_params(pc + 8);
-    rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48, pc);
+    float pc[16];
+    memcpy(pc, pv, sizeof pvc);
+    screen_filter_params(pc + 12);
+    rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pc, pc);
     fullscreen_vertex_bind(cb);
     rec_CmdDraw(cb, 3, 1, 0, 0);
     VkViewport full = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
@@ -7084,9 +7099,9 @@ void renderer_save_texture_tex(TexBackend *b, const char *path) {
     VkRect2D sc = {{0, 0}, {w, h}};
     rec_CmdSetViewport(cb, 0, 1, &vp);
     rec_CmdSetScissor(cb, 0, 1, &sc);
-    float pv[12] = {renderer_origin_lower_left() && !strstr(path, "window") ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
-    if (strstr(path, "frame_")) screen_filter_params(pv + 8);  // (shots of the game image: as shown)
-    rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48, pv);
+    float pv[16] = {renderer_origin_lower_left() && !strstr(path, "window") ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3], 1, 1, 0, 0};
+    if (strstr(path, "frame_")) screen_filter_params(pv + 12);  // (shots of the game image: as shown)
+    rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof pv, pv);
     fullscreen_vertex_bind(cb);
     rec_CmdDraw(cb, 3, 1, 0, 0);
     rec_CmdEndRendering(cb);

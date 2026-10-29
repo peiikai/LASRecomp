@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "../kernel.h"
+#include "../photo.h"
 #include "nvn.h"
 #include "rqueue.h"
 
@@ -811,7 +812,21 @@ NVN(nvnQueueAcquireTexture) {
 NVN(nvnQueuePresentTexture) {
     NvnWindow *w = HOST(NvnWindow, A(1));
     int i = (int)A(2);
-    if (i >= 0 && i < w->num) backend_present(HOST(NvnTexture, w->textures[i]));
+    if (i >= 0 && i < w->num) {
+        backend_present(HOST(NvnTexture, w->textures[i]));
+        extern void backend_represent(void);
+        // The render thread owns photo state. Wait for this present while photo mode is active;
+        // ordinary play keeps the queue's overlap. The queue allows at most one pending present.
+        if (photo_mode_active()) rq_drain();
+        // Hold this present call after a clean frame. Re-presenting it still services the photo controls;
+        // resuming returns to the game so it can submit the next scene (other guest threads are not paused).
+        while (photo_mode_hold() && !rt_reboot_requested()) {
+            uint64_t start = plat_now_ns();
+            backend_represent();
+            rq_drain(); // process capture, refresh and resume before reading the published hold state
+            plat_sleep_until_ns(start + 16666667); // a frozen view does not need to render at the monitor's maximum rate
+        }
+    }
 }
 
 // ================================================================== small state objects

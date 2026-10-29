@@ -36,6 +36,7 @@ extern "C" {
 #include "../settings.h"
 #include "../menu_sfx.h"
 #include "menu.h"
+#include "../photo.h"
 void input_reset(void);
 void save_editor_draw(float scale);  // save_editor.mm
 extern "C" int game_in_play(void);  // hle/warp.c
@@ -126,6 +127,10 @@ static ImGuiKey key_from_scancode(SDL_Scancode sc) {
     case SDL_SCANCODE_V: return ImGuiKey_V;
     case SDL_SCANCODE_X: return ImGuiKey_X;
     case SDL_SCANCODE_Z: return ImGuiKey_Z;
+    case SDL_SCANCODE_EQUALS: return ImGuiKey_Equal;
+    case SDL_SCANCODE_MINUS: return ImGuiKey_Minus;
+    case SDL_SCANCODE_KP_PLUS: return ImGuiKey_KeypadAdd;
+    case SDL_SCANCODE_KP_MINUS: return ImGuiKey_KeypadSubtract;
     case SDL_SCANCODE_Q: return ImGuiKey_Q;  // previous tab
     case SDL_SCANCODE_E: return ImGuiKey_E;  // next tab
     default: return ImGuiKey_None;
@@ -141,7 +146,7 @@ static std::atomic<int> g_kbd{0};  // 1 open, 2 confirmed, 3 cancelled
 static std::atomic<bool> g_last_pad{false};
 static char g_kbd_text[96];
 static int g_kbd_max = 8;
-static bool capturing() { return g_open.load() || g_kbd.load() == 1; }
+static bool capturing() { return g_open.load() || g_kbd.load() == 1 || photo_mode_active(); }
 // The game's name limit counts characters as the console's keyboard does, in UTF-16 units (a character past U+FFFF
 // takes two); the text is UTF-8. Cuts s after max_units of them, only between characters (a character left incomplete
 // - a cut inside it, or bytes that are no character - goes too, with the rest), and returns how many units are left.
@@ -178,6 +183,16 @@ bool menu_handle_event(const SDL_Event *e) {
     }
     // typing (a text field, the on-screen keyboard, the name entry): keys are text, not menu shortcuts
     bool typing = g_kbd.load() == 1 || (g_open.load() && g_text_busy.load());
+    if (!typing && e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat) {
+        if (e->key.scancode == SDL_SCANCODE_F2 && (photo_mode_available() || photo_mode_active())) { set_open(false); photo_mode_toggle(); return true; }
+        if (photo_mode_active()) {
+            if (e->key.scancode == SDL_SCANCODE_ESCAPE) { photo_mode_exit(); return true; }
+            if (e->key.scancode == SDL_SCANCODE_F12) { photo_mode_capture(); return true; }
+            if (e->key.scancode == SDL_SCANCODE_TAB || e->key.scancode == SDL_SCANCODE_F1) {
+                photo_mode_toggle_controls(); return true;
+            }
+        }
+    }
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN:
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F1 ||
@@ -216,15 +231,19 @@ bool menu_handle_event(const SDL_Event *e) {
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_BACK) back_down = down;
         if (e->gbutton.button == SDL_GAMEPAD_BUTTON_START) start_down = down;
         if (down && !typing && ((back_down && start_down) || e->gbutton.button == SDL_GAMEPAD_BUTTON_GUIDE)) {
-            set_open(!g_open.load());
+            if (photo_mode_active()) photo_mode_exit(); else set_open(!g_open.load());
             return true;
         }
+        if (photo_mode_pad_button(e->gbutton.button, down)) return true;
         if (!capturing()) return false;
         ImGuiKey k = ui_pad_key(e->gbutton.which, e->gbutton.button, down);  // (confirm / back: pad_nav.h)
         if (k != ImGuiKey_None) { QEvent q = {}; q.kind = QEvent::KEY; q.key = k; q.down = down; push(q); }
         return true;
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
+        if ((e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e->gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
+            photo_mode_pad_button(e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER ? PADB_LTRIGGER : PADB_RTRIGGER,
+                                  e->gaxis.value > 16000)) return true;
         if (!capturing()) return false;
         float v = e->gaxis.value / 32767.0f;
         QEvent q = {};
@@ -239,6 +258,7 @@ bool menu_handle_event(const SDL_Event *e) {
             q.key = ImGuiKey_GamepadLStickDown; q.value = v > 0.3f ? v : 0; push(q);
             break;
         case SDL_GAMEPAD_AXIS_RIGHTY:  // (scrolls a right column of plain text: option_rows.mm)
+            if (photo_mode_active() && fabsf(v) <= 0.3f) v = 0;
             q.key = ImGuiKey_GamepadRStickUp; q.value = v < 0 ? -v : 0; push(q);
             q.key = ImGuiKey_GamepadRStickDown; q.value = v > 0 ? v : 0; push(q);
             break;
@@ -998,19 +1018,25 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
 #endif
     bool open = g_open.load();
-    bool inv = !open && inventory_overlay_wanted();
-    bool trk = !open && tracker_overlay_wanted();
-    bool trkd = !open && tracker_dungeon_wanted();
-    bool chaos = !open && chaos_overlay_wanted();
+    bool photo = photo_mode_active();
+    if (photo_mode_suppress_overlay()) {
+        pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock);
+        g_ov_same = 0;
+        return;
+    }
+    bool inv = !open && !photo && inventory_overlay_wanted();
+    bool trk = !open && !photo && tracker_overlay_wanted();
+    bool trkd = !open && !photo && tracker_dungeon_wanted();
+    bool chaos = !open && !photo && chaos_overlay_wanted();
     bool kbd = g_kbd.load() == 1;
-    bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
-    bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
+    bool race = !photo && race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
+    bool flyin = !photo && pickup_flyin_wanted() && !open;  // (a silent pickup's card)
 #ifdef __APPLE__
     plastic_perf_note(cb, open);  // (LARECOMP_UI_PERF test only)
 #else
     plastic_perf_note_vk(open);
 #endif
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
+    if (!photo && !render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -1035,7 +1061,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         fps_note(now, io.DeltaTime);
         char rk[64];
         // (only the FPS counter and the run timer; input only reaches ImGui while the menu or the name entry is up)
-        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && race_overlay_key(rk, sizeof rk)) {
+        if (!photo && !open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
@@ -1097,7 +1123,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     ImGui::NewFrame();
 
-    if (g_settings.show_fps) {
+    if (g_settings.show_fps && !photo_mode_active()) {
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 16 * scale, 16 * scale), 0, ImVec2(1, 0));
         ImGui::SetNextWindowBgAlpha(0.5f);
         ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
@@ -1156,6 +1182,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         menu_sfx_frame(true);
     }
 
+    if (photo_mode_active()) photo_mode_draw(scale);
     if (kbd) keyboard_draw(io, scale);
     plastic_widgets(false);
     ImGui::GetStyle() = ov_style;

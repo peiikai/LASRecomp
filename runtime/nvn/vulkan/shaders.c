@@ -231,7 +231,8 @@ VkDescriptorSetLayout vk_set_layout(const VkBindingInfo *b, int n, uint32_t set,
 static const char *builtin_src(const char *name, int *stage) {
     if (!strcmp(name, "present.vert")) {
         *stage = STAGE_VERTEX;
-        // pv[0].x: flip (lower-left origin), pv[1]: uv crop (origin, size). Fullscreen triangle; Vulkan NDC y points down.
+        // pv[0].x: flip (lower-left origin), pv[1]: uv crop, pv[2]: exposure/saturation, pv[3]: screen filter.
+        // Fullscreen triangle; Vulkan NDC y points down.
         return "#version 450\n"
                "layout(push_constant) uniform P { vec4 a; vec4 crop; } pc;\n"
                "layout(location = 0) out vec2 uv;\n"
@@ -246,13 +247,14 @@ static const char *builtin_src(const char *name, int *stage) {
         *stage = STAGE_FRAGMENT;
         return "#version 450\n"
                "layout(set = 0, binding = 0) uniform sampler2D t;\n"
-               "layout(push_constant) uniform F { layout(offset = 32) vec4 pf; };\n"  // (the screen filter)
+               "layout(push_constant) uniform F { layout(offset = 32) vec4 color; vec4 pf; };\n"
                "layout(location = 0) in vec2 uv;\n"
                "layout(location = 0) out vec4 o;\n"
                "void main() {\n"
                "  vec3 c = texture(t, uv).rgb;\n"
                SCREEN_FILTER_SRC("vec3")
-               "  o = vec4(c, 1.0);\n"
+               "  float y = dot(c, vec3(0.2126,0.7152,0.0722));\n"
+               "  o = vec4(clamp(mix(vec3(y), c, color.y) * color.x, 0.0, 1.0), 1.0);\n"
                "}\n";
     }
     // ---- decoded video, NV12 -> RGBA (exec.c vk_convert_nv12): limited range BT.601, as swscale did (the movies

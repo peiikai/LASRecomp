@@ -6,6 +6,7 @@
 
 #include "game_addresses.h"
 #include "gamelib.h"
+#include "photo.h"
 #include "paths.h"
 #include "settings.h"
 #include "hle.h"
@@ -133,6 +134,7 @@ static void teardown(void) {
 }
 
 static void boot(const char *root) {
+    photo_mode_exit();
     char exefs[1024], romfs[1024], npdm_path[1024];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);

@@ -51,6 +51,8 @@ jobs:
           cmake --install sdl-build
       - name: App builds
         run: make -j"$(nproc)" build/lasrecomp DEPS="$HOME/sdl3"
+      - name: Photo mode regression tests
+        run: python3 tools/test_photo.py
       - name: Build cache and resume tests
         run: |
           python3 tools/test_build_cache.py
@@ -137,6 +139,8 @@ jobs:
         run: |
           clang -std=gnu11 -O1 -pthread tools/test_simd_rounding.c -o build/test-simd-rounding
           build/test-simd-rounding
+      - name: Photo mode regression tests
+        run: python3 tools/test_photo.py
       - name: Build cache and resume tests
         run: |
           python3 tools/test_build_cache.py
@@ -226,6 +230,8 @@ jobs:
             vulkan-memory-allocator:p
       - name: App builds
         run: make -j"$(nproc)" build/lasrecomp.exe
+      - name: Photo mode regression tests
+        run: python3 tools/test_photo.py
       - name: Build cache and resume tests
         run: |
           python3 tools/test_build_cache.py

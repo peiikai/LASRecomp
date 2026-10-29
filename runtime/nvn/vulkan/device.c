@@ -9,6 +9,7 @@
 #include <unistd.h>
 
 #include "../../paths.h"
+#include "../../photo.h"
 #include "../../rt.h"  // (HEAP_MAX: lazy_heap_predicted)
 #include "../../settings.h"
 #include "../../ui/menu.h"
@@ -915,7 +916,7 @@ void vk_save_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h) 
 
 // ================================================================== game presentation (metal.m backend_present)
 // Draws the game's image into the window with the widescreen crop, then the overlay menu.
-extern void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[8]);
+extern void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, float vw, float vh, const float pv[12]);
 extern bool g_debug_frame;  // (exec.c; set in present_hooks, read in the render thread's present)
 void renderer_submit(void);
 void renderer_set_scale(float sx, float sy);
@@ -974,6 +975,7 @@ static const char *pp_text(void) {
 void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (pp_on < 0) pp_on = getenv("LARECOMP_VK_PROF") != NULL;
     if (pp_on) pp_t = SDL_GetTicksNS();
+    photo_mode_frame(frame);
     TexBackend *b = vk_tex(t, true);
     b->presented = true;
     vk_end_pass();
@@ -1030,26 +1032,30 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         extern void widescreen_present_crop(uint64_t, double, float *, double *, double *, double *, double *);
         float crop[4];  // uv origin and size
         widescreen_present_crop(frame, shape, crop, &vx, &vy, &vw, &vh);
+        photo_mode_compose(crop, dw, dh, &vx, &vy, &vw, &vh);
         widescreen_set_factor((float)shape);
         extern void renderer_set_alloc_scale(float ax, float ay);
         renderer_set_alloc_scale((float)os.ax, (float)os.ay);
         renderer_set_scale((float)sx, (float)sy);
         pp_mark(PP_SCALE);
         VkCommandBuffer cb = vk_cmd();
-        float pv[8] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3]};
+        float pv[12] = {renderer_origin_lower_left() ? 1.0f : 0.0f, 0, 0, 0, crop[0], crop[1], crop[2], crop[3], 1, 1, 0, 0};
+        photo_mode_color(pv + 8);
         memcpy(g_shot_crop, crop, sizeof crop);
         vk_present_draw(cb, b, (float)vx, (float)vy, (float)vw, (float)vh, pv);
         pp_mark(PP_BLIT);
         static long menu_at = -1;
         if (menu_at < 0) menu_at = getenv("LARECOMP_MENU_AT") ? atol(getenv("LARECOMP_MENU_AT")) : 0;
         if (menu_at && (long)frame + 1 == menu_at) { extern void menu_test_open(void); menu_test_open(); }
+        const char *photo_path = photo_mode_capture_path();
         // (ImGui records through vk_overlay_begin / vk_overlay_end, when it draws anything)
         menu_render((void *)cb, g_vk.sc_extent.width, g_vk.sc_extent.height);
         pp_mark(PP_OVERLAY);
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
-        vk_frame_end(shot ? "build/window.png" : NULL);
+        vk_frame_end(photo_path ? photo_path : shot ? (getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/window.png") : NULL);
+        if (photo_path) photo_mode_capture_done();
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) exit_after_shot();
     } else {
         renderer_submit();
@@ -1120,6 +1126,8 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
     }
     static double mem_at = 60.0;  // (memory in steady state: a minute in, then every 10 minutes)
     if (now >= mem_at) { vk_log_memory("playing"); mem_at = now + 600.0; }
+    photo_mode_presented(frame + 1);
+
 }
 
 // The game thread's side of a present: the frame counters and the per-frame hooks (input, pacing, test hooks).

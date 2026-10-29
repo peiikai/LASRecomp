@@ -12,6 +12,7 @@
 #include <SDL3/SDL_timer.h>
 
 #include "maxwell/shader.h"
+#include "../photo.h"
 #include "nvn.h"
 #include "renderer.h"
 #include "pace.h"
@@ -3116,6 +3117,20 @@ static void draw(CmdRec *r, bool indexed) {
             composite = t0 && mirror_scene_size(t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
+        }
+        if (photo_mode_active()) {
+            extern uint64_t renderer_exec_frame(void);
+            // The scene may be downscaled before this composite; the HUD follows it in the window image.
+            bool photo_composite = composite;
+            if (st.rt.ncolor && st.rt.color[0] && pr->fi->ntex) {
+                NvnTexture *source = shader_texture_object(1, &pr->fi->tex[0]);
+                bool full = r->x[2] <= 6 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+                            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height;
+                photo_composite |= source && photo_scene_composite(st.rt.color[0]->width, st.rt.color[0]->height,
+                    source->width, source->height, full, st.color_state[0] & 1, pr->fi->ntex);
+            }
+            if (photo_mode_skip_draw(renderer_exec_frame(), st.rt.ncolor && st.rt.color[0] &&
+                                     renderer_texture_presented(st.rt.color[0]), photo_composite)) { stat_skipped++; return; }
         }
         if (mirror_draw(composite)) {  // (the vertex flip mirrors a composite drawn with uvs, the fragment one a
             vkey.flip_x = fkey.flip_x = true;  // composite reading pixel positions; get_program keys on vkey)
