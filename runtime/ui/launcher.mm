@@ -552,6 +552,7 @@ static void SDLCALL picked(void *, const char *const *files, int) {
 // The folder picker: SDL's dialog, or on iOS the Files app's (runtime/platform/ios_picker.m: SDL has none there)
 #if PLAT_IOS
 extern "C" void plat_ios_pick_folder(SDL_Window *, void (*)(void *, const char *), void *);
+extern "C" void plat_ios_pick_files(SDL_Window *, const char *, void (*)(void *, const char *const *), void *);
 extern "C" void plat_ios_open_documents(void);
 #endif
 static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *win) {
@@ -1316,6 +1317,15 @@ static void SDLCALL picked_data(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
+static void show_font_dialog(void) {
+    static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
+    font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
+#if PLAT_IOS
+    plat_ios_pick_files(g_launcher_win, font_f[0].pattern, [](void *, const char *const *files) { picked_fonts(NULL, files, -1); }, NULL);
+#else
+    SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+#endif
+}
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
 static void *df_move_thread(void *) {
     g_df_result = rt_data_move(g_df_t.path, df_progress, g_df_err, sizeof g_df_err) ? 1 : -1;
@@ -1496,11 +1506,11 @@ static void prelaunch_tab(float sc) {
     opt_action("Chinese and Korean font", fl ? LN("Imported") : LN("Substitute"), fonts_d, true, fl);
     opt_action("Button icons", fe ? LN("Imported") : LN("Substitute"), fonts_d, true, fe);
     std::string imp_d = L(fonts_d);
+#if PLAT_IOS
+    imp_d += std::string("\n\n") + L("They can also be put into a folder named fonts in LAS Recomp's folder in the Files app.");
+#endif
     if (!g_font_msg.empty()) imp_d += "\n\n" + g_font_msg;
-    static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
-    font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
-    if (opt_action("Import fonts", "", imp_d.c_str(), true))
-        SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+    if (opt_action("Import fonts", "", imp_d.c_str(), true)) show_font_dialog();
     if ((fs || fl || fe) && opt_action("Remove imported fonts", "", "Deletes the fonts you imported. The game goes back to "
                                        "the substitutes.", true))
         remove_fonts();
