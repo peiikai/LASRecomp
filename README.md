@@ -151,7 +151,11 @@ Requirements: Windows 10+ x86-64, a CPU with AVX2 and a GPU with Vulkan 1.3. Mor
    `make -j` -> `build/lasrecomp.exe`. Set up your game files (above), then `make gen` and `make -j` again.
 3. Run: `./build/lasrecomp.exe extracted`, from a shell with `C:\msys64\ucrt64\bin` on PATH (for the DLLs).
 4. Package: `make deps-windows` (once: LGPL FFmpeg), `make rando-helper RANDO_PY="<path to python.org Python 3.12>"`
-   (MSYS2's Python has no oead wheel), then `make dist` -> `build/dist/LAS Recomp-<version>-windows.zip`.
+   (MSYS2's Python has no oead wheel), `make gen-helper`, `make update-helper`, then `make dist` -> `build/dist/LAS Recomp-<version>-windows.zip`.
+
+Windows release packages can check, download and install LAS Recomp updates from **Settings > Video > Updates**
+(also available with **Esc / F1** while playing). Save before choosing **Install and restart**.
+See [Updating on Windows](docs/UPDATING-windows.md) for details and recovery instructions.
 
 ### Linux
 

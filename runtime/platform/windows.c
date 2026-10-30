@@ -814,6 +814,31 @@ PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_
     return spawn_child(argv, log_path, append_log, NULL);
 }
 
+bool plat_spawn_detached(const char *const argv[], const char *log_path) {
+    char cmd[32768] = {0};
+    wchar_t wcmd[32768], wlog[32768];
+    for (int i = 0; argv[i]; i++) append_arg(cmd, sizeof cmd, argv[i]);
+    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, cmd, -1, wcmd, 32768) ||
+        !MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, log_path, -1, wlog, 32768)) return false;
+    SECURITY_ATTRIBUTES sa = {.nLength = sizeof sa, .bInheritHandle = TRUE};
+    HANDLE log = CreateFileW(wlog, GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa, CREATE_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, NULL);
+    if (log == INVALID_HANDLE_VALUE) return false;
+    STARTUPINFOW si = {.cb = sizeof si, .dwFlags = STARTF_USESTDHANDLES, .hStdInput = NULL,
+                       .hStdOutput = log, .hStdError = log};
+    PROCESS_INFORMATION pi;
+    BOOL in_job = FALSE;
+    IsProcessInJob(GetCurrentProcess(), NULL, &in_job);
+    // A launcher may supervise LAS Recomp too. If its job forbids breakaway, fail before asking the app to quit.
+    DWORD flags = CREATE_NO_WINDOW | (in_job ? CREATE_BREAKAWAY_FROM_JOB : 0);
+    BOOL ok = CreateProcessW(NULL, wcmd, NULL, NULL, TRUE, flags, NULL, NULL, &si, &pi);
+    CloseHandle(log);
+    if (!ok) return false;
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
 PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error) {
     unsigned long e = 0;
     PlatProc p = spawn_child(argv, log_path, append_log, &e);

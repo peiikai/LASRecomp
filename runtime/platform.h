@@ -90,6 +90,8 @@ int plat_proc_wait(PlatProc p, bool block);  // exit code, or -1 while still run
 // plat_spawn with Control Flow Guard off for the child (the generator: unicorn's longjmp fails CFG's check, #337).
 // *error: 0 = started that way; else why not (then it was started normally, or not at all if that failed too)
 PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error);
+// Update installer: intentionally outlives the application, outside plat_spawn's kill-on-close job.
+bool plat_spawn_detached(const char *const argv[], const char *log_path);
 #endif
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf

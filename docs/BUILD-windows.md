@@ -28,6 +28,7 @@ Run from a shell that has `C:\msys64\ucrt64\bin` on PATH (SDL3, FFmpeg, Vulkan, 
 ## Package
     make rando-helper   # the seed generator without Python (build/helper/rando-gen)
     make gen-helper     # the game code generator without Python (build/helper/lasgen)
+    make update-helper  # the Windows update installer (build/helper/lasupdate.exe)
     tools/fetch_zig.sh  # the compiler the start screen builds the game code with (build/zig)
     make dist           # -> build/dist/LAS Recomp-<version>-windows.zip (no game code inside)
 

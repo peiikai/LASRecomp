@@ -15,6 +15,7 @@
 #include "imgui.h"
 #include "i18n.h"
 #include "option_rows.h"
+#include "updater.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
 #include "pad_nav.h"
@@ -561,6 +562,10 @@ static void tab_display(void) {
                "Turns off the tilt-shift blur at the top and bottom of the screen.");
     opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
                "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file.");
+#ifdef _WIN32
+    opt_section("LAS Recomp");
+    updater_row();
+#endif
     opt_end();
 }
 
@@ -1095,6 +1100,7 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     style_parchment(ImGui::GetStyle());
     ImGui::GetStyle().ScaleAllSizes(scale);
     tabs_body(scale, in_game, prelaunch);
+    updater_draw(in_game);
     ImGui::GetStyle() = saved;
     g_font = f0, g_font_big = f1;
 }
@@ -1268,6 +1274,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 
         bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before the
         tabs_body(scale, true, NULL);                                                                          //  pages run)
+        updater_draw(true);
         // B with nothing focused-deeper closes the menu (not the Esc / B that ends typing: typing is from the frame
         // before, so it's still true the frame a field lets go)
         if (!any_popup && !typing && !ui_text_busy() && !controls_ui_took_back() && !rando_tab_took_back() &&

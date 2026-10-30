@@ -182,7 +182,7 @@ jobs:
       - name: Generator helpers
         run: |
           PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY" && make update-helper RANDO_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
