@@ -134,6 +134,7 @@ extern bool maxwell_glsl_kil_late, maxwell_glsl_stack_mask, maxwell_glsl_no_fall
 #define GGUARD_BINDING 23
 #define GGUARD_SLOTS 16384
 extern uint32_t maxwell_glsl_guard;
+extern uint32_t maxwell_glsl_guard_fs;  // (test-462-arc-3) fragment shaders' own limit (LARECOMP_VK_GUARD_FS; 0: maxwell_glsl_guard)
 extern bool maxwell_glsl_guard_report;
 uint32_t maxwell_guard_slot(uint64_t addr, int stage);
 uint64_t maxwell_guard_name(uint32_t slot);  // code address | (stage + 1) << 56 | 1 << 63 if two shaders share the slot; 0: none

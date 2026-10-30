@@ -518,8 +518,11 @@ static void create_device(void) {
         // (LARECOMP_VK_GUARD_REPORT=0: off): maxwell/shader.h maxwell_glsl_guard
         const char *e = getenv("LARECOMP_VK_GUARD_LIMIT"), *r = getenv("LARECOMP_VK_GUARD_REPORT");
         if (e && atoi(e) > 0) maxwell_glsl_guard = (uint32_t)atoi(e);
+        const char *f = getenv("LARECOMP_VK_GUARD_FS");
+        if (f && atoi(f) > 0) maxwell_glsl_guard_fs = (uint32_t)atoi(f);
         maxwell_glsl_guard_report = h->fragmentStoresAndAtomics && h->vertexPipelineStoresAndAtomics && !(r && *r && !atoi(r));
-        LOG("[vk] shader loop limit %u steps, hits %s\n", maxwell_glsl_guard, maxwell_glsl_guard_report ? "counted" : "not counted");
+        LOG("[vk] shader loop limit %u steps (fragment %u), hits %s\n", maxwell_glsl_guard,
+            maxwell_glsl_guard_fs ? maxwell_glsl_guard_fs : maxwell_glsl_guard, maxwell_glsl_guard_report ? "counted" : "not counted");
     }
     b->shaderClipDistance = h->shaderClipDistance;
     if (!h->shaderInt64) LOG("[vk] warning: no shaderInt64 (64-bit address math in shaders)\n");

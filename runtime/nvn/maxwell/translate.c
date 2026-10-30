@@ -28,7 +28,7 @@ uint32_t maxwell_gmem_chunk_shift;  // 0: one buffer for the whole heap (GLSL; s
 bool maxwell_gmem_lazy;
 bool maxwell_gmem_fs_miss;
 bool maxwell_glsl_kil_late = true, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;  // (shader.h, #462)
-uint32_t maxwell_glsl_guard = 100000;
+uint32_t maxwell_glsl_guard = 100000, maxwell_glsl_guard_fs;
 bool maxwell_glsl_guard_report;
 static _Atomic uint64_t guard_names[GGUARD_SLOTS];
 uint32_t maxwell_guard_slot(uint64_t addr, int stage) {
@@ -2164,10 +2164,11 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (any_branch) {
         sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
         sp(&s, "  bool exit_now = false;\n");
-        sp(&s, "  uint guard = 0u;\n  for (; guard < %uu; guard++) {\n  switch (pc) {\n", maxwell_glsl_guard);
+        uint32_t glim = stage == STAGE_FRAGMENT && maxwell_glsl_guard_fs ? maxwell_glsl_guard_fs : maxwell_glsl_guard;
+        sp(&s, "  uint guard = 0u;\n  for (; guard < %uu; guard++) {\n  switch (pc) {\n", glim);
         sp(&s, "%s", body.buf ? body.buf : "");
         sp(&s, "    exit_now = true; break;\n  default: exit_now = true; break;\n  }\n  if (exit_now) break;\n  }\n");
-        if (guard_rep) sp(&s, "  if (guard >= %uu) gguard_hit();\n", maxwell_glsl_guard);
+        if (guard_rep) sp(&s, "  if (guard >= %uu) gguard_hit();\n", glim);
     } else {
         sp(&s, "  do {\n%s  } while (false);\n", body.buf ? body.buf : "");
     }
