@@ -44,6 +44,11 @@ static uint8_t *tape_bytes; static uint64_t tape_nbytes, tape_capbytes;
 static bool tape_rec, tape_ok;  // recording now; the tape holds the whole frame
 static int tape_mute;           // (encodes the replays don't make: a readback's downscale)
 static uint64_t ring_gen, tape_ring_gen;  // ring_reset's count (a reset rewrites the ring the tape binds)
+// The frame's copy of dynamic geometry it reads in place (iv_geometry): the next buffer bind / indexed draw is recorded
+// with it - by the time an in-between is made the game has rewritten that memory (the torches' flames in Tail Cave
+// drawn with the next frame's particles: 2% of the image)
+static id<MTLBuffer> iv_sub_buf;
+static uint64_t iv_sub_off;
 
 static TapeOp *tp_push(int op) {
     if (tape_n == tape_cap) {
@@ -68,6 +73,7 @@ static void tape_begin(void) {
     if (!tape_objs) tape_objs = [NSMutableArray new];
     [tape_objs removeAllObjects];
     tape_rec = tape_ok = on;
+    iv_sub_buf = nil;
     tape_ring_gen = ring_gen;
 }
 void renderer_tape_close(void) { tape_rec = false; }  // (the present: the frame is complete)
@@ -104,7 +110,10 @@ static void E_scissor(MTLScissorRect r) {
 static void E_cbuf(int stage, id<MTLBuffer> b, uint64_t off, int idx, int32_t cbi, uint64_t size) {
     if (stage == 0) [enc setVertexBuffer:b offset:off atIndex:idx];
     else [enc setFragmentBuffer:b offset:off atIndex:idx];
-    if (tp_on()) { TapeOp *o = tp_push(TP_BUF); o->stage = (uint8_t)stage, o->idx = (uint16_t)idx, o->obj = tp_obj(b), o->a = off, o->cb = cbi, o->b = size; }
+    if (tp_on()) {
+        if (iv_sub_buf) b = iv_sub_buf, off = iv_sub_off, iv_sub_buf = nil;
+        TapeOp *o = tp_push(TP_BUF); o->stage = (uint8_t)stage, o->idx = (uint16_t)idx, o->obj = tp_obj(b), o->a = off, o->cb = cbi, o->b = size;
+    }
 }
 static void E_buf(int stage, id<MTLBuffer> b, uint64_t off, int idx) { E_cbuf(stage, b, off, idx, -1, 0); }
 static void E_bytes(int stage, const void *p, uint64_t len, int idx) {
@@ -136,6 +145,7 @@ static void E_drawi(MTLPrimitiveType pt, uint32_t count, MTLIndexType it, id<MTL
     [enc drawIndexedPrimitives:pt indexCount:count indexType:it indexBuffer:ib indexBufferOffset:ioff instanceCount:inst
                     baseVertex:base_vertex baseInstance:base_inst];
     if (tp_on()) {
+        if (iv_sub_buf) ib = iv_sub_buf, ioff = iv_sub_off, iv_sub_buf = nil;
         TapeOp *o = tp_push(TP_DRAWI);
         o->idx = (uint16_t)pt, o->stage = (uint8_t)it, o->obj = tp_obj(ib), o->a = count, o->b = ioff, o->c = inst,
         o->d = (uint64_t)(uint32_t)base_vertex | (uint64_t)base_inst << 32;
@@ -1340,6 +1350,7 @@ static bool iv_geometry(uint64_t addr, uint64_t size, id<MTLBuffer> __strong *bu
         iv_off = o + size;
         if (iv_n == iv_cap) { iv_cap = iv_cap ? iv_cap * 2 : 1024; iv_log = realloc(iv_log, sizeof *iv_log * iv_cap); }
         iv_log[iv_n++] = (IvRec){addr, size, o, iv_chunk};
+        if (tp_on()) iv_sub_buf = iv_chunk, iv_sub_off = o;  // (the tape binds the copy)
         return false;  // (the frame itself reads in place, as before)
     }
     if (interp_frame_serial() != iv_serial) { iv_missed++; return false; }

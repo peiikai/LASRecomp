@@ -495,8 +495,19 @@ static void tab_display(void) {
     }
     opt_toggle("Show FPS", &g_settings.show_fps, false, "Shows the frame rate in the top right corner.");
 #ifdef __APPLE__
-    opt_toggle("Frame interpolation", &g_settings.frame_interp, false,
-               "Draws extra images between the game's frames, for smoother motion up to your display's refresh rate.");
+    opt_toggle("Frame Generation", &g_settings.frame_interp, false,
+               "Experimental. Draws extra images between the game's frames for smoother motion. Some visual glitches "
+               "are possible.");
+    if (g_settings.frame_interp) {
+        static const char *const caps[] = {LN("Match refresh rate"), LN("90 fps"), LN("120 fps"), LN("144 fps"), LN("240 fps")};
+        static const int cap_fps[] = {0, 90, 120, 144, 240};
+        int ci = 0;
+        for (int i = 0; i < 5; i++) if (cap_fps[i] == g_settings.frame_gen_cap) ci = i;
+        opt_indent(1);
+        if (opt_choice("Frame rate cap", &ci, caps, 5, 0, "The most images a second. Lower takes less of the GPU.", false))
+            g_settings.frame_gen_cap = cap_fps[ci];
+        opt_indent(-1);
+    }
 #endif
 
     opt_section("Rendering");
