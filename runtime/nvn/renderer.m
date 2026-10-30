@@ -23,6 +23,124 @@
 static id<MTLDevice> dev;
 static id<MTLCommandBuffer> cmdbuf;
 static id<MTLRenderCommandEncoder> enc;
+
+// ---- frame interpolation's tape (runtime/nvn/interp.c): while a frame is logged, its render work is recorded as the
+// Metal calls it made, and an in-between plays them back with the blended uniform copies bound in place of the
+// frame's - instead of translating the frame's command lists again, which was most of an in-between's CPU time
+// (texture pool lookups, state hashing, uniform copies: 4-9 ms an image in the field, the game held back to 20-30 fps).
+// Copies between textures are recorded as blocks that encode them again. Calls on `enc` go through the E_* wrappers.
+// LARECOMP_INTERP_TAPE=0: replays translate the lists again (the old path).
+enum { TP_PASS, TP_END, TP_PIPE, TP_DSS, TP_STREF, TP_STREF2, TP_BLENDC, TP_CULL, TP_WIND, TP_FILL, TP_BIAS,
+       TP_VIEWPORT, TP_SCISSOR, TP_BUF, TP_BYTES, TP_TEX, TP_SMP, TP_DRAW, TP_DRAWI, TP_BLOCK };
+typedef struct {
+    uint8_t op, stage; uint16_t idx;
+    int32_t obj, cb;  // tape_objs index (-1: nil); the uniform copy a TP_BUF binds (interp.c's, -1: none)
+    uint64_t a, b, c, d;
+    float f[6];
+} TapeOp;
+static TapeOp *tape; static uint32_t tape_n, tape_cap;
+static NSMutableArray *tape_objs;
+static uint8_t *tape_bytes; static uint64_t tape_nbytes, tape_capbytes;
+static bool tape_rec, tape_ok;  // recording now; the tape holds the whole frame
+static int tape_mute;           // (encodes the replays don't make: a readback's downscale)
+static uint64_t ring_gen, tape_ring_gen;  // ring_reset's count (a reset rewrites the ring the tape binds)
+
+static TapeOp *tp_push(int op) {
+    if (tape_n == tape_cap) {
+        if (tape_cap >= (4u << 20)) { tape_ok = false; tape_n = 0; }  // (a runaway frame: no tape)
+        else { tape_cap = tape_cap ? tape_cap * 2 : 16384; tape = realloc(tape, sizeof *tape * tape_cap); }
+    }
+    TapeOp *o = &tape[tape_n++];
+    memset(o, 0, sizeof *o);
+    o->op = (uint8_t)op, o->obj = o->cb = -1;
+    return o;
+}
+static int32_t tp_obj(id o) {
+    if (!o) return -1;
+    [tape_objs addObject:o];
+    return (int32_t)tape_objs.count - 1;
+}
+static bool tp_on(void) { return tape_rec && !tape_mute; }
+static void tape_begin(void) {
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("LARECOMP_INTERP_TAPE"); on = !e || atoi(e); }
+    tape_n = 0, tape_nbytes = 0;
+    if (!tape_objs) tape_objs = [NSMutableArray new];
+    [tape_objs removeAllObjects];
+    tape_rec = tape_ok = on;
+    tape_ring_gen = ring_gen;
+}
+void renderer_tape_close(void) { tape_rec = false; }  // (the present: the frame is complete)
+static void tape_block(void (^b)(void)) { if (tp_on()) tp_push(TP_BLOCK)->obj = tp_obj(b); }
+
+static void E_pipe(id<MTLRenderPipelineState> p) { [enc setRenderPipelineState:p]; if (tp_on()) tp_push(TP_PIPE)->obj = tp_obj(p); }
+static void E_dss(id<MTLDepthStencilState> d) { [enc setDepthStencilState:d]; if (tp_on()) tp_push(TP_DSS)->obj = tp_obj(d); }
+static void E_stref(uint32_t v) { [enc setStencilReferenceValue:v]; if (tp_on()) tp_push(TP_STREF)->a = v; }
+static void E_stref2(uint32_t f, uint32_t b) {
+    [enc setStencilFrontReferenceValue:f backReferenceValue:b];
+    if (tp_on()) { TapeOp *o = tp_push(TP_STREF2); o->a = f, o->b = b; }
+}
+static void E_blendc(const float *c) {
+    [enc setBlendColorRed:c[0] green:c[1] blue:c[2] alpha:c[3]];
+    if (tp_on()) memcpy(tp_push(TP_BLENDC)->f, c, 16);
+}
+static void E_cull(MTLCullMode m) { [enc setCullMode:m]; if (tp_on()) tp_push(TP_CULL)->a = m; }
+static void E_wind(MTLWinding w) { [enc setFrontFacingWinding:w]; if (tp_on()) tp_push(TP_WIND)->a = w; }
+static void E_fill(MTLTriangleFillMode m) { [enc setTriangleFillMode:m]; if (tp_on()) tp_push(TP_FILL)->a = m; }
+static void E_bias(float bias, float slope, float clamp) {
+    [enc setDepthBias:bias slopeScale:slope clamp:clamp];
+    if (tp_on()) { TapeOp *o = tp_push(TP_BIAS); o->f[0] = bias, o->f[1] = slope, o->f[2] = clamp; }
+}
+static void E_viewport(MTLViewport v) {
+    [enc setViewport:v];
+    if (tp_on()) { TapeOp *o = tp_push(TP_VIEWPORT); o->f[0] = (float)v.originX, o->f[1] = (float)v.originY, o->f[2] = (float)v.width,
+                   o->f[3] = (float)v.height, o->f[4] = (float)v.znear, o->f[5] = (float)v.zfar; }
+}
+static void E_scissor(MTLScissorRect r) {
+    [enc setScissorRect:r];
+    if (tp_on()) { TapeOp *o = tp_push(TP_SCISSOR); o->a = r.x, o->b = r.y, o->c = r.width, o->d = r.height; }
+}
+// cb: the uniform copy it binds (interp_last_cb), size its length - a replay binds the blended copy instead
+static void E_cbuf(int stage, id<MTLBuffer> b, uint64_t off, int idx, int32_t cbi, uint64_t size) {
+    if (stage == 0) [enc setVertexBuffer:b offset:off atIndex:idx];
+    else [enc setFragmentBuffer:b offset:off atIndex:idx];
+    if (tp_on()) { TapeOp *o = tp_push(TP_BUF); o->stage = (uint8_t)stage, o->idx = (uint16_t)idx, o->obj = tp_obj(b), o->a = off, o->cb = cbi, o->b = size; }
+}
+static void E_buf(int stage, id<MTLBuffer> b, uint64_t off, int idx) { E_cbuf(stage, b, off, idx, -1, 0); }
+static void E_bytes(int stage, const void *p, uint64_t len, int idx) {
+    if (stage == 0) [enc setVertexBytes:p length:len atIndex:idx];
+    else [enc setFragmentBytes:p length:len atIndex:idx];
+    if (!tp_on()) return;
+    if (tape_nbytes + len > tape_capbytes) { tape_capbytes = (tape_nbytes + len) * 2 + 65536; tape_bytes = realloc(tape_bytes, tape_capbytes); }
+    memcpy(tape_bytes + tape_nbytes, p, len);
+    TapeOp *o = tp_push(TP_BYTES);
+    o->stage = (uint8_t)stage, o->idx = (uint16_t)idx, o->a = tape_nbytes, o->b = len;
+    tape_nbytes += len;
+}
+static void E_tex(int stage, id<MTLTexture> t, int idx) {
+    if (stage == 0) [enc setVertexTexture:t atIndex:idx];
+    else [enc setFragmentTexture:t atIndex:idx];
+    if (tp_on()) { TapeOp *o = tp_push(TP_TEX); o->stage = (uint8_t)stage, o->idx = (uint16_t)idx, o->obj = tp_obj(t); }
+}
+static void E_smp(int stage, id<MTLSamplerState> sm, int idx) {
+    if (stage == 0) [enc setVertexSamplerState:sm atIndex:idx];
+    else [enc setFragmentSamplerState:sm atIndex:idx];
+    if (tp_on()) { TapeOp *o = tp_push(TP_SMP); o->stage = (uint8_t)stage, o->idx = (uint16_t)idx, o->obj = tp_obj(sm); }
+}
+static void E_draw(MTLPrimitiveType pt, uint32_t first, uint32_t count, uint32_t inst, uint32_t base_inst) {
+    [enc drawPrimitives:pt vertexStart:first vertexCount:count instanceCount:inst baseInstance:base_inst];
+    if (tp_on()) { TapeOp *o = tp_push(TP_DRAW); o->idx = (uint16_t)pt, o->a = first, o->b = count, o->c = inst, o->d = base_inst; }
+}
+static void E_drawi(MTLPrimitiveType pt, uint32_t count, MTLIndexType it, id<MTLBuffer> ib, uint64_t ioff, uint32_t inst,
+                    int32_t base_vertex, uint32_t base_inst) {
+    [enc drawIndexedPrimitives:pt indexCount:count indexType:it indexBuffer:ib indexBufferOffset:ioff instanceCount:inst
+                    baseVertex:base_vertex baseInstance:base_inst];
+    if (tp_on()) {
+        TapeOp *o = tp_push(TP_DRAWI);
+        o->idx = (uint16_t)pt, o->stage = (uint8_t)it, o->obj = tp_obj(ib), o->a = count, o->b = ioff, o->c = inst,
+        o->d = (uint64_t)(uint32_t)base_vertex | (uint64_t)base_inst << 32;
+    }
+}
 static id<MTLRenderPipelineState> clear_pipes[64];
 static NSMutableDictionary<NSString *, id> *cache;
 // (stats) GPU wait time by cause: 0 = guest fence (nvnSyncWait), 1 = full flush (CPU reads GPU results / ring), 2 = sync all
@@ -289,6 +407,7 @@ static void end_pass(void) {
     if (enc) {
         [enc endEncoding];
         enc = nil;
+        if (tp_on()) tp_push(TP_END);
         if (g_debug_frame && st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->backend) {
             id<MTLTexture> t = renderer_texture(st.rt.color[0], nil, true);
             id<MTLCommandBuffer> c = cmdbuf;
@@ -860,6 +979,7 @@ static void begin_pass(void) {
     if (chunk < 0) { const char *e = ENV("LARECOMP_CHUNK_PASSES"); chunk = e ? atoi(e) : 8; }
     if (chunk > 0 && cmdbuf && ++g_passes_in_cb >= chunk) renderer_submit();
     enc = [cb() renderCommandEncoderWithDescriptor:rp];
+    if (tp_on()) tp_push(TP_PASS)->obj = tp_obj(rp);
     opening_pass = false;
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
     stat_passes++;
@@ -898,7 +1018,7 @@ static void apply_scissor(void) {
     if (pass_rt_h && y + sh > pass_rt_h) sh = pass_rt_h - y;
     if (sw < 0) sw = 0;
     if (sh < 0) sh = 0;
-    [enc setScissorRect:(MTLScissorRect){(NSUInteger)x, (NSUInteger)y, (NSUInteger)sw, (NSUInteger)sh}];
+    E_scissor((MTLScissorRect){(NSUInteger)x, (NSUInteger)y, (NSUInteger)sw, (NSUInteger)sh});
 }
 
 // ------------------------------------------------------------------ clears (full-screen triangle)
@@ -1033,19 +1153,19 @@ static void clear(int index, int kind, const void *color, uint32_t mask, bool de
         dd.frontFaceStencil = sd;
         dd.backFaceStencil = sd;
     }
-    [enc setRenderPipelineState:pipe];
-    [enc setDepthStencilState:[dev newDepthStencilStateWithDescriptor:dd]];
-    [enc setStencilReferenceValue:sval];
-    [enc setCullMode:MTLCullModeNone];
+    E_pipe(pipe);
+    E_dss([dev newDepthStencilStateWithDescriptor:dd]);
+    E_stref(sval);
+    E_cull(MTLCullModeNone);
     int w, h;
     pass_size(&w, &h);
-    [enc setViewport:(MTLViewport){0, 0, w, h, 0, 1}];
+    E_viewport((MTLViewport){0, 0, w, h, 0, 1});
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
     apply_scissor();
     float d4[4] = {dval, 0, 0, 0};
-    [enc setVertexBytes:d4 length:16 atIndex:0];
-    if (index >= 0) [enc setFragmentBytes:color length:16 atIndex:0];
-    [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    E_bytes(0, d4, 16, 0);
+    if (index >= 0) E_bytes(1, color, 16, 0);
+    E_draw(MTLPrimitiveTypeTriangle, 0, 3, 1, 0);
 }
 
 // ------------------------------------------------------------------ shaders (debug dump)
@@ -1102,7 +1222,7 @@ static uint64_t ring_alloc(const void *data, uint64_t size) {
     return aligned;
 }
 
-static void ring_reset(void) { ring_off = 0; }
+static void ring_reset(void) { ring_off = 0; ring_gen++; }
 
 // (debug) LARECOMP_LOG_BINDS=1: guest memory the GPU reads in place, per frame (bytes bound; distinct ranges once),
 // and the ranges of the previous frame whose contents the game rewrote by the time this frame is translated: with
@@ -1241,19 +1361,16 @@ static void bind_guest(id<MTLRenderCommandEncoder> e, bool vertex_stage, uint64_
         snap_note_vertex_bind(addr, size);
         id<MTLBuffer> ivb; uint64_t ivo;
         if (iv_geometry(addr, size, &ivb, &ivo)) {
-            if (vertex_stage) [e setVertexBuffer:ivb offset:ivo atIndex:index];
-            else [e setFragmentBuffer:ivb offset:ivo atIndex:index];
+            E_buf(vertex_stage ? 0 : 1, ivb, ivo, index);
             return;
         }
         if (!dyn_copy(addr, size)) {
-            if (vertex_stage) [e setVertexBuffer:g_guest_buffer offset:addr - HEAP_BASE atIndex:index];
-            else [e setFragmentBuffer:g_guest_buffer offset:addr - HEAP_BASE atIndex:index];
+            E_buf(vertex_stage ? 0 : 1, g_guest_buffer, addr - HEAP_BASE, index);
             return;
         }
     }
     uint64_t off = ring_alloc((void *)(uintptr_t)addr, size);
-    if (vertex_stage) [e setVertexBuffer:ring offset:off atIndex:index];
-    else [e setFragmentBuffer:ring offset:off atIndex:index];
+    E_buf(vertex_stage ? 0 : 1, ring, off, index);
 }
 
 static int attr_kind(uint32_t fmt) {
@@ -2028,11 +2145,15 @@ static void resolve_feedback(Prog *pr) {
                 dst = [dev newTextureWithDescriptor:d];
                 copies[key] = dst;
             }
-            id<MTLBlitCommandEncoder> b = [cb() blitCommandEncoder];
-            [b copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
-                    sourceSize:MTLSizeMake(src.width, src.height, 1) toTexture:dst destinationSlice:0 destinationLevel:0
-             destinationOrigin:MTLOriginMake(0, 0, 0)];
-            [b endEncoding];
+            void (^copy)(void) = ^{
+                id<MTLBlitCommandEncoder> b = [cb() blitCommandEncoder];
+                [b copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0)
+                        sourceSize:MTLSizeMake(src.width, src.height, 1) toTexture:dst destinationSlice:0 destinationLevel:0
+                 destinationOrigin:MTLOriginMake(0, 0, 0)];
+                [b endEncoding];
+            };
+            copy();
+            tape_block(copy);
             feedback_tex[nfeedback] = t;
             feedback_copy[nfeedback++] = dst;
             if (si < 0) { static int rr; si = rr++ & 7; snap_tex[si] = t; }
@@ -2189,16 +2310,16 @@ static void bind_textures(int stage, ShaderInfo *si) {
             if (gt) renderer_save_game_texture(gt, tex, path, apath);
             else { renderer_save_texture(tex, path); renderer_save_texture_alpha(tex, apath); }
         }
-        if (stage == 0) { [enc setVertexTexture:tex atIndex:i]; [enc setVertexSamplerState:smp atIndex:i]; }
-        else if (mapped) { [enc setFragmentTexture:tex atIndex:i]; msmp[i] = smp; mdesc[i] = sd; }
-        else { [enc setFragmentTexture:tex atIndex:i]; [enc setFragmentSamplerState:smp atIndex:i]; }
+        if (stage == 0) { E_tex(0, tex, i); E_smp(0, smp, i); }
+        else if (mapped) { E_tex(1, tex, i); msmp[i] = smp; mdesc[i] = sd; }
+        else { E_tex(1, tex, i); E_smp(1, smp, i); }
     }
     if (mapped && stage == 1) {
         __strong id<MTLSamplerState> slot[MSL_MAX_SAMPLERS];
         uint32_t map[64];
         int ns = sampler_slots(si->ntex, msmp, mdesc, slot, map);
-        for (int k = 0; k < MSL_MAX_SAMPLERS; k++) [enc setFragmentSamplerState:k < ns ? slot[k] : default_sampler() atIndex:k];
-        [enc setFragmentBytes:map length:(NSUInteger)si->ntex * 4 atIndex:SMAP_BUFFER_INDEX];
+        for (int k = 0; k < MSL_MAX_SAMPLERS; k++) E_smp(1, k < ns ? slot[k] : default_sampler(), k);
+        E_bytes(1, map, (NSUInteger)si->ntex * 4, SMAP_BUFFER_INDEX);
     }
 }
 
@@ -2585,8 +2706,7 @@ static void bind_cbufs(int stage, ShaderInfo *si) {
             }
             uint64_t size = si->cbuf_size[0] > sizeof drv ? sizeof drv : (si->cbuf_size[0] ? si->cbuf_size[0] : 256);
             uint64_t off = ring_alloc(drv, size);
-            if (stage == 0) [enc setVertexBuffer:ring offset:off atIndex:0];
-            else [enc setFragmentBuffer:ring offset:off atIndex:0];
+            E_buf(stage, ring, off, 0);
             continue;
         }
         if (k == 1) {  // compiler constants stored after the shader code
@@ -2594,8 +2714,7 @@ static void bind_cbufs(int stage, ShaderInfo *si) {
             uint64_t size = ss->const_size ? ss->const_size : 16;
             if (size < si->cbuf_size[1]) size = si->cbuf_size[1];
             uint64_t off = ring_alloc((void *)(uintptr_t)(ss->code_addr + ss->const_offset), size);
-            if (stage == 0) [enc setVertexBuffer:ring offset:off atIndex:1];
-            else [enc setFragmentBuffer:ring offset:off atIndex:1];
+            E_buf(stage, ring, off, 1);
             continue;
         }
         int idx = k - cbuf_base;
@@ -2604,21 +2723,21 @@ static void bind_cbufs(int stage, ShaderInfo *si) {
         if (!r.addr) {
             static const uint8_t zeros[0x10000];
             uint64_t off = ring_alloc(zeros, size ? size : 256);
-            if (stage == 0) [enc setVertexBuffer:ring offset:off atIndex:k];
-            else [enc setFragmentBuffer:ring offset:off atIndex:k];
+            E_buf(stage, ring, off, k);
             continue;
         }
         if ((si->cbuf_dynamic & (1u << k)) && r.size) size = r.size > 0x10000 ? 0x10000 : r.size;  // indexed: whole buffer
         if (size > r.size && r.size) size = r.size;
         if (size < 16) size = 16;
         const void *src = (const void *)(uintptr_t)r.addr;
+        int32_t cbi = -1;
         if (g_interp_log) {  // (frame interpolation: logged / blended copy; compared over the bytes the shader reads)
             uint64_t used = si->cbuf_used[k] && si->cbuf_used[k] < size ? si->cbuf_used[k] : size;
             src = interp_cbuf(stage, k, idx, src, size, used);
+            cbi = interp_last_cb();
         }
         uint64_t off = ring_alloc(src, size);  // snapshot, as later CPU writes must not leak in
-        if (stage == 0) [enc setVertexBuffer:ring offset:off atIndex:k];
-        else [enc setFragmentBuffer:ring offset:off atIndex:k];
+        E_cbuf(stage, ring, off, k, cbi, size);
     }
 }
 
@@ -3354,7 +3473,7 @@ static void draw(CmdRec *r, bool indexed) {
     pipe_tab[pslot].key = phash;
     pipe_tab[pslot].pipe = (__bridge void *)pipe;  // retained by the cache dictionary
     }
-    [enc setRenderPipelineState:pipe];
+    E_pipe(pipe);
 
     // Decal colour passes (issue #52): the game draws floor decals twice with the same negative polygon offset - a
     // depth pre-pass, then the colour pass with depth test EQUAL and no depth writes. An M4 (macOS 26.4) lands the two
@@ -3410,19 +3529,19 @@ static void draw(CmdRec *r, bool indexed) {
         dss = [dev newDepthStencilStateWithDescriptor:dd];
         cache[dk] = dss;
     }
-    [enc setDepthStencilState:dss];
+    E_dss(dss);
     last_dsk = dsk;
     last_dss = dss;
-    [enc setStencilFrontReferenceValue:st.stencil_ref[0] backReferenceValue:st.stencil_ref[1]];
-    [enc setBlendColorRed:st.blend_color[0] green:st.blend_color[1] blue:st.blend_color[2] alpha:st.blend_color[3]];
+    E_stref2(st.stencil_ref[0], st.stencil_ref[1]);
+    E_blendc(st.blend_color);
 
     // rasterizer
     uint8_t cull = st.poly[0];
     if (vkey.flip_x) cull = 0;  // (mirror mode's composite: one full-screen quad, either winding)
-    [enc setCullMode:cull == 1 ? MTLCullModeFront : cull == 2 ? MTLCullModeBack : MTLCullModeNone];
+    E_cull(cull == 1 ? MTLCullModeFront : cull == 2 ? MTLCullModeBack : MTLCullModeNone);
     bool ccw = st.poly[1] == 1;
-    [enc setFrontFacingWinding:(ccw != vkey.flip_y) ? MTLWindingCounterClockwise : MTLWindingClockwise];
-    [enc setTriangleFillMode:st.poly[2] == 1 ? MTLTriangleFillModeLines : MTLTriangleFillModeFill];
+    E_wind((ccw != vkey.flip_y) ? MTLWindingCounterClockwise : MTLWindingClockwise);
+    E_fill(st.poly[2] == 1 ? MTLTriangleFillModeLines : MTLTriangleFillModeFill);
     {   // polygon offset (decals on floors: without it they z-fight). Enables: bit 2 = fill (NVN PolygonOffsetEnable)
         static float last[3] = {0, 0, 0};
         float f[3] = {0, 0, 0};
@@ -3435,7 +3554,7 @@ static void draw(CmdRec *r, bool indexed) {
         static int nlog;
         if ((st.poly[3] & 4) && nlog < 3 && getenv("LARECOMP_LOG_BIAS")) { nlog++; LOG("[bias] factor %g units %g clamp %g\n", st.poly_offset[0], st.poly_offset[1], st.poly_offset[2]); }
         if (memcmp(f, last, sizeof f) || enc != last_bias_enc) {
-            [enc setDepthBias:f[1] slopeScale:f[0] clamp:f[2]];
+            E_bias(f[1], f[0], f[2]);
             memcpy(last, f, sizeof f);
             last_bias_enc = enc;
         }
@@ -3514,15 +3633,15 @@ static void draw(CmdRec *r, bool indexed) {
                 if ((si->ssbo_read & (1u << i)) && st.sbuf[s_][i].addr && g_bound_sbuf[s_][i] == st.sbuf[s_][i].addr)
                     interp_storage(st.sbuf[s_][i].addr, st.sbuf[s_][i].size);
         }
-    if (pr->vi->uses_gmem) [enc setVertexBuffer:g_guest_buffer offset:0 atIndex:GMEM_BUFFER_INDEX];
+    if (pr->vi->uses_gmem) E_buf(0, g_guest_buffer, 0, GMEM_BUFFER_INDEX);
     static id<MTLBuffer> dbgvs;
     bool dbg_this = maxwell_dbg_vs && (const uint8_t *)(uintptr_t)st.program->stages[0].code_addr == maxwell_dbg_vs;
     if (dbg_this) {
         if (!dbgvs) dbgvs = [dev newBufferWithLength:2 * 64 * 8 * 16 options:MTLResourceStorageModeShared];
         memset(dbgvs.contents, 0xff, 2 * 64 * 8 * 16);
-        [enc setVertexBuffer:dbgvs offset:0 atIndex:DBG_VS_BUFFER_INDEX];
+        E_buf(0, dbgvs, 0, DBG_VS_BUFFER_INDEX);
     }
-    if (pr->fi->uses_gmem) [enc setFragmentBuffer:g_guest_buffer offset:0 atIndex:GMEM_BUFFER_INDEX];
+    if (pr->fi->uses_gmem) E_buf(1, g_guest_buffer, 0, GMEM_BUFFER_INDEX);
     bind_textures(0, pr->vi);
     bind_textures(1, pr->fi);
     extern bool pets_hide_item_cursor(void);  // (the cursor is on the companion card: runtime/hle/pets.c)
@@ -3597,7 +3716,7 @@ static void draw(CmdRec *r, bool indexed) {
         float k = widescreen_effect_stretch(g_cur_fs_hash);
         double vx = vp[0] * vp_sx + vp_ox, vw = vp[2] * vp_sx;
         if (k > 1.0f) { vx -= vw * (k - 1) / 2; vw *= k; }
-        [enc setViewport:(MTLViewport){vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf}];
+        E_viewport((MTLViewport){vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf});
     }
     apply_scissor();
     if (pr->fi->uses_rscale) {  // [0] = render target scale, [1 + i] = scale of texture i
@@ -3606,7 +3725,7 @@ static void draw(CmdRec *r, bool indexed) {
             rs[1 + i][0] = tex_sc[1][i][0]; rs[1 + i][1] = tex_sc[1][i][1]; rs[1 + i][2] = tex_fr[1][i][0]; rs[1 + i][3] = tex_fr[1][i][1];
         }
         if (fkey.flip_x) rs[65][0] = (float)st.rt.color[0]->width;  // (mirror mode: the composite's width, guest pixels)
-        [enc setFragmentBytes:rs length:(NSUInteger)(fkey.flip_x ? 66 : 1 + pr->fi->ntex) * 16 atIndex:RSCALE_BUFFER_INDEX];
+        E_bytes(1, rs, (NSUInteger)(fkey.flip_x ? 66 : 1 + pr->fi->ntex) * 16, RSCALE_BUFFER_INDEX);
     }
     // (uniform buffer 2 = the model matrix - only when the vertex shader reads it: a binding left from an earlier draw
     // is another object's matrix)
@@ -3684,15 +3803,15 @@ static void draw(CmdRec *r, bool indexed) {
             escape_bottle_tint(draw_bottle, (const float *)(uintptr_t)st.ubuf[0][u].addr, (uint32_t)st.ubuf[0][u].size, tint);
         }
         if (draw_heart) { extern void texpatch_heart_tint(int kind, float tint[8]); texpatch_heart_tint(draw_heart, tint); }
-        [enc setFragmentBytes:tint length:sizeof tint atIndex:19];
+        E_bytes(1, tint, sizeof tint, 19);
     }
     for (int s = 0; s < 12; s++) {
         if (!(used_streams & (1u << s))) continue;
         Range v = st.vbuf[s];
         if (v.addr) bind_guest(enc, true, v.addr, v.size ? v.size : 16, 18 + s);
-        else { static const float zero[4]; [enc setVertexBytes:zero length:16 atIndex:18 + s]; }
+        else { static const float zero[4]; E_bytes(0, zero, 16, 18 + s); }
     }
-    if (used_streams & (1u << 31)) { static const float zero[4] = {0, 0, 0, 1}; [enc setVertexBytes:zero length:16 atIndex:30]; }
+    if (used_streams & (1u << 31)) { static const float zero[4] = {0, 0, 0, 1}; E_bytes(0, zero, 16, 30); }
 
     // Instanced draws with item spots among their instances (bushsanity: bushes are drawn in batches, each instance's
     // model matrix in vertex storage buffer 0, indexed by instance id): drawn as runs of instances, gold runs tinted.
@@ -3729,7 +3848,7 @@ static void draw(CmdRec *r, bool indexed) {
         extern void pot_gold_tint(float tint[8]);
         if (run_gold[ri]) pot_gold_tint(tint);
         else recolour_tint_draw(draw_recolour, tint);
-        [enc setFragmentBytes:tint length:sizeof tint atIndex:19];
+        E_bytes(1, tint, sizeof tint, 19);
     }
     // draw
     bool native;
@@ -3738,12 +3857,11 @@ static void draw(CmdRec *r, bool indexed) {
     if (!indexed) {
         uint32_t first = (uint32_t)r->x[1], count = (uint32_t)r->x[2], base_inst = base_all + run_at[ri], inst = run_n[ri];
         if (native) {
-            [enc drawPrimitives:pt vertexStart:first vertexCount:count instanceCount:inst baseInstance:base_inst];
+            E_draw(pt, first, count, inst, base_inst);
         } else if (mode == 6 || mode == 7 || mode == 9) {
             uint32_t n;
             id<MTLBuffer> ib = expand_indices(mode, count, NULL, 0, first, &n);
-            [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle indexCount:n indexType:MTLIndexTypeUInt32 indexBuffer:ib
-                     indexBufferOffset:0 instanceCount:inst baseVertex:0 baseInstance:base_inst];
+            E_drawi(MTLPrimitiveTypeTriangle, n, MTLIndexTypeUInt32, ib, 0, inst, 0, base_inst);
         } else { stat_skipped++; return; }
     } else {
         uint32_t itype = (uint32_t)r->x[1], count = (uint32_t)r->x[2];
@@ -3765,8 +3883,7 @@ static void draw(CmdRec *r, bool indexed) {
             } else {
                 ioff = ring_alloc((void *)(uintptr_t)iaddr, (uint64_t)count * isz); ib = ring;
             }
-            [enc drawIndexedPrimitives:pt indexCount:count indexType:it indexBuffer:ib indexBufferOffset:ioff
-                         instanceCount:inst baseVertex:base_vertex baseInstance:base_inst];
+            E_drawi(pt, count, it, ib, ioff, inst, base_vertex, base_inst);
         } else {
             uint32_t n;
             id<MTLBuffer> ib;
@@ -3780,8 +3897,7 @@ static void draw(CmdRec *r, bool indexed) {
                 ib = expand_indices(mode, count, (const void *)(uintptr_t)iaddr, (int)itype, 0, &n);
                 pt = MTLPrimitiveTypeTriangle;
             }
-            [enc drawIndexedPrimitives:pt indexCount:n indexType:MTLIndexTypeUInt32 indexBuffer:ib indexBufferOffset:0
-                         instanceCount:inst baseVertex:base_vertex baseInstance:base_inst];
+            E_drawi(pt, n, MTLIndexTypeUInt32, ib, 0, inst, base_vertex, base_inst);
         }
     }
     }  // runs
@@ -3898,7 +4014,6 @@ static void draw_copy(id<MTLTexture> s, int sx0, int sy0, int sw, int sh, id<MTL
     rp.colorAttachments[0].texture = d;
     rp.colorAttachments[0].loadAction = MTLLoadActionLoad;
     rp.colorAttachments[0].storeAction = MTLStoreActionStore;
-    id<MTLRenderCommandEncoder> e = [cb() renderCommandEncoderWithDescriptor:rp];
     NSString *key = [NSString stringWithFormat:@"copy %lu", (unsigned long)d.pixelFormat];
     id<MTLRenderPipelineState> pipe = cache[key];
     if (!pipe) {
@@ -3918,15 +4033,21 @@ static void draw_copy(id<MTLTexture> s, int sx0, int sy0, int sw, int sh, id<MTL
         sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear;
         lin = [dev newSamplerStateWithDescriptor:sd];
     }
-    float r[4] = {(float)sx0 / s.width, (float)sy0 / s.height, (float)sw / s.width, (float)sh / s.height};
-    [e setRenderPipelineState:pipe];
-    [e setViewport:(MTLViewport){dx0, dy0, dw, dh, 0, 1}];
-    [e setVertexBytes:r length:16 atIndex:0];
-    [e setFragmentTexture:s atIndex:0];
-    [e setFragmentSamplerState:linear ? lin : near atIndex:0];
-    [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-    [e endEncoding];
-    stat_passes++;
+    id<MTLSamplerState> smp = linear ? lin : near;
+    void (^copy)(void) = ^{
+        float r[4] = {(float)sx0 / s.width, (float)sy0 / s.height, (float)sw / s.width, (float)sh / s.height};
+        id<MTLRenderCommandEncoder> e = [cb() renderCommandEncoderWithDescriptor:rp];
+        [e setRenderPipelineState:pipe];
+        [e setViewport:(MTLViewport){dx0, dy0, dw, dh, 0, 1}];
+        [e setVertexBytes:r length:16 atIndex:0];
+        [e setFragmentTexture:s atIndex:0];
+        [e setFragmentSamplerState:smp atIndex:0];
+        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        [e endEncoding];
+        stat_passes++;
+    };
+    copy();
+    tape_block(copy);
 }
 
 static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
@@ -3956,7 +4077,9 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
         td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
         td.storageMode = MTLStorageModePrivate;
         id<MTLTexture> small = [dev newTextureWithDescriptor:td];
+        tape_mute++;  // (replays make no readbacks)
         draw_copy(tex, 0, 0, (int)lroundf(t->width * tsx), (int)lroundf(t->height * tsy), small, 0, 0, t->width, t->height, true);
+        tape_mute--;
         tex = small;
     }
     id<MTLBlitCommandEncoder> b = [cb() blitCommandEncoder];
@@ -4018,7 +4141,6 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
             drp.stencilAttachment.loadAction = MTLLoadActionLoad;
             drp.stencilAttachment.storeAction = MTLStoreActionStore;
         }
-        id<MTLRenderCommandEncoder> e = [cb() renderCommandEncoderWithDescriptor:drp];
         NSString *key = [NSString stringWithFormat:@"copydepth %lu", (unsigned long)d.pixelFormat];
         id<MTLRenderPipelineState> pipe = cache[key];
         if (!pipe) {
@@ -4060,16 +4182,23 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         id<MTLTexture> sdepth = s;
         if (s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8)
             sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
-        float r[4] = {(float)sx0 / s.width, (float)sy0 / s.height, (float)sw / s.width, (float)sh / s.height};
-        [e setRenderPipelineState:pipe];
-        [e setDepthStencilState:always];
-        [e setViewport:(MTLViewport){dx0, dy0, dw, dh, 0, 1}];
-        [e setVertexBytes:r length:16 atIndex:0];
-        [e setFragmentTexture:sdepth atIndex:0];
-        [e setFragmentSamplerState:up ? dlin : dnear atIndex:0];
-        [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
-        [e endEncoding];
-        stat_passes++;
+        id<MTLSamplerState> smp = up ? dlin : dnear;
+        id<MTLDepthStencilState> dss = always;
+        void (^copy)(void) = ^{
+            float r[4] = {(float)sx0 / s.width, (float)sy0 / s.height, (float)sw / s.width, (float)sh / s.height};
+            id<MTLRenderCommandEncoder> e = [cb() renderCommandEncoderWithDescriptor:drp];
+            [e setRenderPipelineState:pipe];
+            [e setDepthStencilState:dss];
+            [e setViewport:(MTLViewport){dx0, dy0, dw, dh, 0, 1}];
+            [e setVertexBytes:r length:16 atIndex:0];
+            [e setFragmentTexture:sdepth atIndex:0];
+            [e setFragmentSamplerState:smp atIndex:0];
+            [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+            [e endEncoding];
+            stat_passes++;
+        };
+        copy();
+        tape_block(copy);
         static int dbgc = -1;
         if (dbgc < 0) dbgc = getenv("LARECOMP_DEBUG_DEPTHCOPY") != NULL;
         if (dbgc) {
@@ -4093,11 +4222,15 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         return;
     }
     if (renderer_format_is_depth(dt->format) || (s.pixelFormat == d.pixelFormat && sw == dw && sh == dh && s.sampleCount == d.sampleCount)) {
-        id<MTLBlitCommandEncoder> b = [cb() blitCommandEncoder];
-        [b copyFromTexture:s sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(sx0, sy0, 0)
-                sourceSize:MTLSizeMake(MIN(sw, dw), MIN(sh, dh), 1) toTexture:d destinationSlice:0 destinationLevel:0
-         destinationOrigin:MTLOriginMake(dx0, dy0, 0)];
-        [b endEncoding];
+        void (^copy)(void) = ^{
+            id<MTLBlitCommandEncoder> b = [cb() blitCommandEncoder];
+            [b copyFromTexture:s sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(sx0, sy0, 0)
+                    sourceSize:MTLSizeMake(MIN(sw, dw), MIN(sh, dh), 1) toTexture:d destinationSlice:0 destinationLevel:0
+             destinationOrigin:MTLOriginMake(dx0, dy0, 0)];
+            [b endEncoding];
+        };
+        copy();
+        tape_block(copy);
         return;
     }
     draw_copy(s, sx0, sy0, sw, sh, d, dx0, dy0, dw, dh, flags & 1);
@@ -4567,8 +4700,72 @@ void renderer_interp_replay(void) {
     st = st_end;
 }
 
+// An in-between from the frame's tape (above, E_*): false when there is none (the setting came on mid-frame, a runaway
+// frame, a full flush reset the ring it binds) - the caller translates the lists again.
+bool renderer_interp_tape_replay(void) {
+    if (!tape_ok || !tape_n || tape_rec || tape_ring_gen != ring_gen) return false;
+    interp_replay_begin();
+    @autoreleasepool {
+        id<MTLRenderCommandEncoder> e = nil;
+        NSArray *objs = tape_objs;
+        #define OBJ(o) ((o)->obj >= 0 ? objs[(NSUInteger)(o)->obj] : nil)
+        for (uint32_t i = 0; i < tape_n; i++) {
+            const TapeOp *o = &tape[i];
+            switch (o->op) {
+            case TP_PASS: e = [cb() renderCommandEncoderWithDescriptor:OBJ(o)]; break;
+            case TP_END: [e endEncoding]; e = nil; break;
+            case TP_BLOCK: ((void (^)(void))OBJ(o))(); break;
+            case TP_PIPE: [e setRenderPipelineState:OBJ(o)]; break;
+            case TP_DSS: [e setDepthStencilState:OBJ(o)]; break;
+            case TP_STREF: [e setStencilReferenceValue:(uint32_t)o->a]; break;
+            case TP_STREF2: [e setStencilFrontReferenceValue:(uint32_t)o->a backReferenceValue:(uint32_t)o->b]; break;
+            case TP_BLENDC: [e setBlendColorRed:o->f[0] green:o->f[1] blue:o->f[2] alpha:o->f[3]]; break;
+            case TP_CULL: [e setCullMode:(MTLCullMode)o->a]; break;
+            case TP_WIND: [e setFrontFacingWinding:(MTLWinding)o->a]; break;
+            case TP_FILL: [e setTriangleFillMode:(MTLTriangleFillMode)o->a]; break;
+            case TP_BIAS: [e setDepthBias:o->f[0] slopeScale:o->f[1] clamp:o->f[2]]; break;
+            case TP_VIEWPORT: [e setViewport:(MTLViewport){o->f[0], o->f[1], o->f[2], o->f[3], o->f[4], o->f[5]}]; break;
+            case TP_SCISSOR: [e setScissorRect:(MTLScissorRect){(NSUInteger)o->a, (NSUInteger)o->b, (NSUInteger)o->c, (NSUInteger)o->d}]; break;
+            case TP_BUF: {
+                id<MTLBuffer> b = OBJ(o);
+                uint64_t off = o->a;
+                const void *bl = o->cb >= 0 ? interp_tape_cb(o->cb) : NULL;  // (the blended copy, NULL: the frame's own)
+                if (bl) { off = ring_alloc(bl, o->b); b = ring; }
+                if (o->stage == 0) [e setVertexBuffer:b offset:off atIndex:o->idx];
+                else [e setFragmentBuffer:b offset:off atIndex:o->idx];
+                break;
+            }
+            case TP_BYTES:
+                if (o->stage == 0) [e setVertexBytes:tape_bytes + o->a length:o->b atIndex:o->idx];
+                else [e setFragmentBytes:tape_bytes + o->a length:o->b atIndex:o->idx];
+                break;
+            case TP_TEX:
+                if (o->stage == 0) [e setVertexTexture:OBJ(o) atIndex:o->idx];
+                else [e setFragmentTexture:OBJ(o) atIndex:o->idx];
+                break;
+            case TP_SMP:
+                if (o->stage == 0) [e setVertexSamplerState:OBJ(o) atIndex:o->idx];
+                else [e setFragmentSamplerState:OBJ(o) atIndex:o->idx];
+                break;
+            case TP_DRAW:
+                [e drawPrimitives:(MTLPrimitiveType)o->idx vertexStart:o->a vertexCount:o->b instanceCount:o->c baseInstance:o->d];
+                break;
+            case TP_DRAWI:
+                [e drawIndexedPrimitives:(MTLPrimitiveType)o->idx indexCount:o->a indexType:(MTLIndexType)o->stage indexBuffer:OBJ(o)
+                       indexBufferOffset:o->b instanceCount:o->c baseVertex:(int32_t)(uint32_t)o->d baseInstance:(uint32_t)(o->d >> 32)];
+                break;
+            }
+        }
+        #undef OBJ
+        if (e) [e endEncoding];
+        renderer_submit();
+    }
+    interp_replay_end();
+    return true;
+}
+
 void backend_execute(uint64_t handle) {
-    if (interp_list_submitted(handle)) st_frame_begin = st;
+    if (interp_list_submitted(handle)) { st_frame_begin = st; tape_begin(); }
     @autoreleasepool {
         exec_list(handle, 0);
         static int sync_submit = -1;

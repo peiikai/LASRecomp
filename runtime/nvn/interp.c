@@ -77,6 +77,8 @@ typedef struct {
     int64_t prev2_off;  // the same buffer two frames back (-1: none): an element back at that value toggles, not moves
     float maxd;  // the largest element change from the previous frame (-1: not matched): how fast it was moving
     uint32_t plan_first, plan_n; uint8_t plan_switch;  // its rotation blocks (interp_prepare's plans)
+    int32_t dup;    // an earlier-decided copy with the same bytes in all three frames (frame_end): its blend is this one's
+    uint8_t still;  // unchanged since the previous frame (interp_prepare's first image): shown as it is, never blended
 } CbRec;
 typedef struct {
     uint64_t key; uint32_t occ, first_cb, ncb;
@@ -254,7 +256,7 @@ static int pair_cmp(const void *a, const void *b) {
 static uint64_t st_order_pairs, s_order_pairs;
 static int order_check = -1;  // LARECOMP_INTERP_ORDER_CHECK=0: occurrence pairs unchecked (research)
 static int32_t *p_match;  // per draw of this frame: its previous-frame draw (-1: none; -2: UI; -3: just appeared - not blended)
-static uint64_t st_id_pairs, st_content_pairs, st_new_objects, s_id_pairs, s_content_pairs, s_new_objects, s_class_snaps, s_toggled, s_integral, s_wraps, s_discont, s_split;  // (stats)
+static uint64_t st_id_pairs, st_content_pairs, st_new_objects, s_id_pairs, s_content_pairs, s_new_objects, s_class_snaps, s_toggled, s_integral, s_wraps, s_discont, s_split, s_reused;  // (stats)
 static uint32_t *p_order; static uint32_t p_order_cap;
 static int order_cmp(const void *a, const void *b) {
     const DrawRec *x = &cur->draws[*(const uint32_t *)a], *y = &cur->draws[*(const uint32_t *)b];
@@ -428,8 +430,17 @@ void interp_draw(uint64_t key, bool depth_only) {
     d->ncb = 0;
 }
 
+static int32_t last_cb = -1;  // the copy interp_cbuf logged last (-1: none)
+int32_t interp_last_cb(void) { return last_cb; }
+const void *interp_tape_cb(int32_t i) {
+    if (i < 0 || (uint32_t)i >= cur->ncbs || !can_blend) return NULL;
+    const CbRec *c = &cur->cbs[i];
+    return c->blend >= 0 ? blend_bytes + c->blend : NULL;
+}
+
 const void *interp_cbuf(int stage, int k, int slot, const void *src, uint64_t size, uint64_t used) {
     (void)k;
+    last_cb = -1;
     if (g_interp_replaying) {
         if (rp_cur < 0) return src;
         DrawRec *d = &cur->draws[rp_cur];
@@ -452,10 +463,11 @@ const void *interp_cbuf(int stage, int k, int slot, const void *src, uint64_t si
     c->used = stage >= 2 ? 0 : (uint32_t)(used && used < size ? used : size);  // (stage 2, 3: a texture entry, 4, 5: the storage addresses bound - never compared)
     c->addr = (uint64_t)(uintptr_t)src;
     c->prev_off = c->blend = c->prev2_off = -1;
-    c->snap = 0, c->maxd = -1;
+    c->snap = 0, c->maxd = -1, c->dup = -1, c->still = 0;
     memcpy(cur->bytes + cur->nbytes, src, size);
     cur->nbytes += (size + 15) & ~15ull;
     d->ncb++;
+    last_cb = (int32_t)cur->ncbs - 1;
     return src;
 }
 
@@ -505,7 +517,7 @@ static int blend_stages(void) {
 
 // ---- stats (per log period)
 static uint64_t s_frames, s_draws, s_matched, s_changed, s_cut_cbs, s_blended_cbs, s_cuts[9], s_frame_no;
-static uint64_t s_shots, s_mids, s_late, s_skipped;
+static uint64_t s_shots, s_mids, s_late, s_skipped, s_gave_way;
 static double s_replay_cpu, s_replay_cpu_max, s_prep, s_L, s_replay_gpu, s_compose_gpu;
 static _Atomic uint64_t s_gpu_n, s_compose_n;
 static uint64_t s_replays;
@@ -764,7 +776,9 @@ bool interp_frame_end(bool log_next) {
                     bool same = (c0->prev_off < 0) == (cc->prev_off < 0) && c0->snap == cc->snap && (c0->prev2_off < 0) == (cc->prev2_off < 0) &&
                                 (c0->prev_off < 0 || !memcmp(prev->bytes + c0->prev_off, prev->bytes + cc->prev_off, cc->used)) &&
                                 (c0->prev2_off < 0 || !memcmp(prev2->bytes + c0->prev2_off, prev2->bytes + cc->prev2_off, cc->used));
-                    if (same) continue;
+                    // (the same reader of the same bytes in all three frames: blended once, interp_prepare)
+                    bool twin = c0->stage == cc->stage && c0->slot == cc->slot && c0->size == cc->size;
+                    if (same) { if (twin) cc->dup = f; continue; }
                     s_split++;
                     {   static int on = -1, nlog;  // LARECOMP_INTERP_LOG_SPLITS=1: each (research)
                         if (on < 0) on = getenv("LARECOMP_INTERP_LOG_SPLITS") != NULL;
@@ -772,7 +786,7 @@ bool interp_frame_end(bool log_next) {
                             LOG("[interp-split] frame %llu draw %u (%d) stage %d slot %d size %u: first %s%s, this %s%s\n", (unsigned long long)g_interp_present_frame, j, p_match[j], cc->stage, cc->slot, cc->size,
                                 c0->prev_off < 0 ? "unpaired" : "paired", c0->snap ? " snap" : "", cc->prev_off < 0 ? "unpaired" : "paired", cc->snap ? " snap" : "");
                     }
-                    if (unify) cc->prev_off = c0->prev_off, cc->prev2_off = c0->prev2_off, cc->snap = c0->snap;
+                    if (unify) { cc->prev_off = c0->prev_off, cc->prev2_off = c0->prev2_off, cc->snap = c0->snap; if (twin) cc->dup = f; }
                 }
             }
     }
@@ -965,10 +979,18 @@ bool interp_prepare(float t) {
     if (!planned) nplans = 0;
     double t0 = plat_now_ns() / 1e6;
     blend_n = 0;
+    static int snap_elem0 = -1, reuse = -1;  // LARECOMP_INTERP_REUSE=0: every copy blended (research)
+    if (snap_elem0 < 0) { const char *e = getenv("LARECOMP_INTERP_SNAP"); snap_elem0 = e && !strcmp(e, "elem");
+                          e = getenv("LARECOMP_INTERP_REUSE"); reuse = !e || atoi(e); }
     for (uint32_t i = 0; i < cur->ncbs; i++) {
         CbRec *cc = &cur->cbs[i];
         cc->blend = -1;
-        if (cc->prev_off < 0) continue;
+        if (cc->prev_off < 0 || (reuse && cc->dup >= 0)) continue;  // (copies take their twin's below)
+        // Unchanged, or jumped (shown whole at this frame's): every rule gives this frame's values - its own copy
+        // is bound as it is (the camera blocks of a scene that holds still, most objects' material blocks)
+        if (!planned) cc->still = !memcmp(prev->bytes + cc->prev_off, cur->bytes + cc->off, cc->used);
+        if (!reuse) cc->still = 0;
+        if (reuse && (cc->still || (cc->snap && !snap_elem0))) { s_reused++; continue; }
         while (blend_n + cc->size + 16 > blend_cap) {
             blend_cap = blend_cap ? blend_cap * 2 : (4u << 20);
             blend_bytes = realloc(blend_bytes, blend_cap);
@@ -1075,6 +1097,10 @@ bool interp_prepare(float t) {
         memcpy((uint8_t *)out + nf * 4, (const uint8_t *)b + nf * 4, cc->size - nf * 4);
         cc->blend = (int64_t)blend_n;
         blend_n += (cc->size + 15) & ~15u;
+    }
+    for (uint32_t i = 0; i < cur->ncbs; i++) {
+        CbRec *cc = &cur->cbs[i];
+        if (reuse && cc->dup >= 0 && cc->prev_off >= 0) cc->blend = cur->cbs[cc->dup].blend, s_reused++;
     }
     plans_serial = frame_serial;
     s_prep += plat_now_ns() / 1e6 - t0;
@@ -1246,6 +1272,7 @@ int interp_schedule(uint64_t s0u, uint64_t s1u, uint64_t nowu, uint64_t phaseu, 
 }
 
 void interp_note_skipped(void) { s_skipped++; }
+void interp_note_given_way(void) { s_gave_way++; }
 
 void interp_log_stats(void) {
     static double every = -1, last;
@@ -1262,12 +1289,12 @@ void interp_log_stats(void) {
     int o = 0;
     for (int i = 0; i < 9; i++)
         if (s_cuts[i]) o += snprintf(cuts + o, sizeof cuts - (size_t)o, " %s %llu", cut_name[i], (unsigned long long)s_cuts[i]);
-    LOG("[interp] %s: %.1f game frames/s, draws %.0f/frame matched %.1f%% (by object %.0f/f, by content %.0f/f, by order %.1f/f, new objects %.1f/f), buffers blended %.0f/f jumps %.0f/f (+%.0f/f with their class), toggling elements %.0f/image, whole-number %.0f, wraps %.1f, discontinuities %.1f, rotations %.0f (switched %.1f), split buffers %.1f/f | images "
-        "%.1f/s planned (in-between %.1f/s), late %llu, skipped %llu | replay cpu %.2f ms avg %.2f max, gpu %.2f ms; "
+    LOG("[interp] %s: %.1f game frames/s, draws %.0f/frame matched %.1f%% (by object %.0f/f, by content %.0f/f, by order %.1f/f, new objects %.1f/f), buffers blended %.0f/f jumps %.0f/f (+%.0f/f with their class), toggling elements %.0f/image, whole-number %.0f, wraps %.1f, discontinuities %.1f, rotations %.0f (switched %.1f), split buffers %.1f/f, reused %.0f/image | images "
+        "%.1f/s planned (in-between %.1f/s), late %llu, skipped %llu, gave way %llu | replay cpu %.2f ms avg %.2f max, gpu %.2f ms; "
         "present pass gpu %.2f ms; prep %.2f ms/f | latency %.1f ms | cuts:%s\n",
         game_level_name(), n / dt, s_draws / n, s_draws ? 100.0 * s_matched / s_draws : 0, s_id_pairs / n, s_content_pairs / n, s_order_pairs / n, s_new_objects / n, s_blended_cbs / n, s_cut_cbs / n, s_class_snaps / n, s_replays ? (double)s_toggled / s_replays : 0, s_replays ? (double)s_integral / s_replays : 0, s_replays ? (double)s_wraps / s_replays : 0, s_replays ? (double)s_discont / s_replays : 0,
-        s_replays ? (double)s_rot_blocks / s_replays : 0, s_replays ? (double)s_rot_switch / s_replays : 0, (double)s_split / n,
-        s_shots / dt, s_mids / dt, (unsigned long long)s_late, (unsigned long long)s_skipped,
+        s_replays ? (double)s_rot_blocks / s_replays : 0, s_replays ? (double)s_rot_switch / s_replays : 0, (double)s_split / n, s_replays ? (double)s_reused / s_replays : 0,
+        s_shots / dt, s_mids / dt, (unsigned long long)s_late, (unsigned long long)s_skipped, (unsigned long long)s_gave_way,
         s_replays ? s_replay_cpu / s_replays : 0, s_replay_cpu_max, gn ? s_replay_gpu / gn : 0, cn ? s_compose_gpu / cn : 0,
         s_prep / n, s_frames ? s_L / n : 0, o ? cuts : " none");
     {   extern void renderer_interp_geo_stats(uint64_t *binds, uint64_t *differed, uint64_t *missed);
@@ -1279,9 +1306,9 @@ void interp_log_stats(void) {
     if (st_replay_misses || st_replay_cb_miss)
         LOG("[interp] replay draw misses %llu/%llu, uniform misses %llu\n", (unsigned long long)st_replay_misses,
             (unsigned long long)st_replay_draws, (unsigned long long)st_replay_cb_miss);
-    s_frames = s_draws = s_matched = s_changed = s_cut_cbs = s_blended_cbs = s_id_pairs = s_order_pairs = s_content_pairs = s_new_objects = s_class_snaps = s_toggled = s_integral = s_wraps = s_discont = s_rot_blocks = s_rot_switch = s_split = 0;
+    s_frames = s_draws = s_matched = s_changed = s_cut_cbs = s_blended_cbs = s_id_pairs = s_order_pairs = s_content_pairs = s_new_objects = s_class_snaps = s_toggled = s_integral = s_wraps = s_discont = s_rot_blocks = s_rot_switch = s_split = s_reused = 0;
     memset(s_cuts, 0, sizeof s_cuts);
-    s_shots = s_mids = s_late = s_skipped = s_replays = 0;
+    s_shots = s_mids = s_late = s_skipped = s_gave_way = s_replays = 0;
     s_replay_cpu = s_replay_cpu_max = s_prep = s_L = s_replay_gpu = s_compose_gpu = 0;
     st_replay_misses = st_replay_draws = st_replay_cb_miss = 0;
 }

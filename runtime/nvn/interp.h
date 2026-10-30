@@ -15,6 +15,10 @@ extern bool g_interp_log, g_interp_replaying;
 bool interp_list_submitted(uint64_t handle);  // true for the frame's first list (the backend saves its state then)
 void interp_draw(uint64_t key, bool depth_only);  // depth_only: no colour target (a shadow pass)
 const void *interp_cbuf(int stage, int k, int slot, const void *src, uint64_t size, uint64_t used);  // used: bytes the shader reads
+// The tape (renderer.m: an in-between plays the frame's recorded Metal calls back): the copy interp_cbuf logged last
+// (-1: none), and a logged copy's blended bytes for the image being made (NULL: the frame's own are shown)
+int32_t interp_last_cb(void);
+const void *interp_tape_cb(int32_t i);
 // The texture-pool entry a draw's texture i resolves to: logged with the frame (a replay takes the logged one - the
 // pool is the game's memory and it rewrites entries while the replays run; an area's lighting texture swapped under
 // an in-between showed it with the next area's ambient light for one image).
@@ -70,3 +74,4 @@ void interp_compose_gpu(double ms);
 uint64_t interp_replay_ns(uint64_t now);
 void interp_log_stats(void);  // (render thread, per game frame) a line every LARECOMP_INTERP_LOG seconds (default 2)
 void interp_note_skipped(void);  // (stats) an in-between not made: no free image slot
+void interp_note_given_way(void);  // (stats) ... a game thread was waiting for the render thread

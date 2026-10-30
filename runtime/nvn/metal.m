@@ -1926,6 +1926,44 @@ static void ip_stop(void) {
     LOG("[interp] frame interpolation off\n");
 }
 
+// LARECOMP_INTERP_TAPE_CHECK=<frame> (tests): the first in-between from that frame on is made from the tape and by
+// translating the lists again, both composed into images of their own and compared (logged; build/tape_{a,b}.png).
+static void tape_check(NvnTexture *t, uint64_t frame, NSUInteger w, NSUInteger h) {
+    extern bool renderer_interp_tape_replay(void);
+    extern void renderer_interp_replay(void);
+    id<MTLTexture> img[2];
+    for (int k = 0; k < 2; k++) {
+        MTLTextureDescriptor *td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:layer.pixelFormat width:w height:h mipmapped:NO];
+        td.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModeShared;
+        img[k] = [dev newTextureWithDescriptor:td];
+        bool ok = k == 0 ? renderer_interp_tape_replay() : (renderer_interp_replay(), true);
+        if (!ok) { LOG("[interp] tape check: no tape at frame %llu\n", (unsigned long long)frame); return; }
+        id<MTLCommandBuffer> c = [queue commandBuffer];
+        compose(c, t, img[k], frame, false);
+        [c commit];
+        [c waitUntilCompleted];
+    }
+    NSUInteger bpp = layer.pixelFormat == MTLPixelFormatRGBA16Float ? 8 : 4, row = w * bpp;
+    uint8_t *a = malloc(row * h), *b = malloc(row * h);
+    [img[0] getBytes:a bytesPerRow:row fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0];
+    [img[1] getBytes:b bytesPerRow:row fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0];
+    uint64_t px = 0, maxd = 0;
+    for (NSUInteger i = 0; i < w * h; i++) {
+        bool d = false;
+        for (NSUInteger c = 0; c < bpp; c++) {
+            int dd = abs((int)a[i * bpp + c] - (int)b[i * bpp + c]);
+            if (dd) { d = true; if ((uint64_t)dd > maxd) maxd = (uint64_t)dd; }
+        }
+        px += d;
+    }
+    LOG("[interp] tape check at frame %llu: %llu of %lu pixels differ (%.3f%%), largest byte difference %llu\n",
+        (unsigned long long)frame, (unsigned long long)px, (unsigned long)(w * h), 100.0 * px / (w * h), (unsigned long long)maxd);
+    free(a); free(b);
+    save_png(img[0], "build/tape_a.png");
+    save_png(img[1], "build/tape_b.png");
+}
+
 // The present with frame interpolation (render thread). False: not possible now (the plain present shows the frame).
 static bool ip_present(NvnTexture *t, uint64_t frame, bool repeat) {
     TexBackend *b = t ? t->backend : NULL;
@@ -1980,11 +2018,21 @@ static bool ip_present(NvnTexture *t, uint64_t frame, bool repeat) {
         renderer_set_alloc_scale(rax, ray);
         for (int i = 0; i < n; i++) {
             if (sh[i].t == 1.0f) continue;
+            // The game's own frames come first: while a game thread waits for this thread (a fence, a full queue,
+            // the next present), the rest of this frame's in-betweens are left out - made anyway, they held the game
+            // back and it fell to 30 or 20 frames a second, with more in-betweens per frame to make at that rate
+            static int give_way = -1;  // LARECOMP_INTERP_GIVE_WAY=0: made anyway (research)
+            if (give_way < 0) { const char *e = getenv("LARECOMP_INTERP_GIVE_WAY"); give_way = !e || atoi(e); }
+            if (give_way && rq_game_waiting()) { interp_note_given_way(); continue; }
             int si = slot_claim(dw, dh, false);
             if (si < 0) { interp_note_skipped(); continue; }
             interp_prepare(sh[i].t);
+            static long check_at = -1;
+            if (check_at < 0) { const char *e = getenv("LARECOMP_INTERP_TAPE_CHECK"); check_at = e ? atol(e) : 0; }
+            if (check_at > 0 && (long)frame >= check_at) { check_at = 0; tape_check(t, frame, dw, dh); }
+            extern bool renderer_interp_tape_replay(void);
             extern void renderer_interp_replay(void);
-            renderer_interp_replay();
+            if (!renderer_interp_tape_replay()) renderer_interp_replay();
             id<MTLCommandBuffer> c2 = [queue commandBuffer];
             compose(c2, t, sl_tex[si], frame, false);
             slot_commit(c2, si, sh[i].at, frame, K_MID);
@@ -2001,6 +2049,8 @@ static bool ip_present(NvnTexture *t, uint64_t frame, bool repeat) {
 // The GPU side of a present (the render thread when it's on, rqueue.c): the present pass, the overlay, shots.
 // frame: the number of this present (the game thread's frame when it was queued).
 void backend_present_now(NvnTexture *t, uint64_t frame) {
+    extern void renderer_tape_close(void);
+    renderer_tape_close();  // (frame interpolation: the frame's tape is complete)
     if (rq_stopping()) return;  // quitting: no drawable after the window closed (#40, as Vulkan)
     interp_latency_lag(frame, plat_now_ns());
     extern void renderer_submit(void);

@@ -171,11 +171,14 @@ void rq_watch(const char *what, uint64_t arg) {
 
 // Wait on cv while !ready(arg); guest: give up while the kernel stops the threads. Caller holds the lock. A wait of
 // 2 s and more is logged with the queue's state (a stuck render thread shows up instead of a silent hang).
+static _Atomic int game_waiting;  // game threads waiting on the render thread (cv_done): rq_game_waiting
 static void wait_until(pthread_cond_t *cv, bool (*ready)(uint64_t), uint64_t arg, bool guest, const char *what) {
     uint64_t t0 = 0;
     bool warned = false;
     bool noted = what && !ready(arg);
     if (noted) rq_watch(what, arg);
+    bool counted = cv == &cv_done && !ready(arg);
+    if (counted) atomic_fetch_add(&game_waiting, 1);
     while (!ready(arg)) {
         if (guest && g_rt_unwind) break;
         struct timespec ts;
@@ -195,8 +198,10 @@ static void wait_until(pthread_cond_t *cv, bool (*ready)(uint64_t), uint64_t arg
                     (unsigned long long)q_cur, presents_pending);
         }
     }
+    if (counted) atomic_fetch_sub(&game_waiting, 1);
     if (noted) rq_watch(NULL, 0);
 }
+bool rq_game_waiting(void) { return atomic_load(&game_waiting) > 0; }
 
 static bool has_room(uint64_t a) { (void)a; return q_enq - q_done < RQ_CAP; }
 static bool no_present(uint64_t a) { (void)a; return presents_pending == 0; }
