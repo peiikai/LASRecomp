@@ -13,6 +13,8 @@
 # Also on a release published on GitHub (its tag = LARECOMP_VERSION at the tagged commit): the files are built and
 # attached to it, with a "being built" line on top of its notes meanwhile and the sha256 table under them after. A
 # release that already has files (a draft this workflow made, then published) is left alone.
+# Linux aarch64 stays on these releases through Beta 6 (so players on older aarch64 builds still get offered an update);
+# from 1.0.0 it is only on the rolling "experimental" pre-release (experimental.yml).
 name: Release
 on:
   release:
@@ -53,6 +55,8 @@ jobs:
         run: |
           # (a published release that already has its files: made by a dispatched run - nothing to do)
           if [ "$(jq length <<< "$ASSETS")" != 0 ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$TAG already has files"; exit 0; fi
+          # (experimental.yml's own releases)
+          if [[ $TAG == experimental* || $TAG == test-arm-* ]]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$TAG: experimental.yml"; exit 0; fi
           [[ $TAG =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::tag '$TAG': letters, digits, . _ - only"; exit 1; }
           SHA=$(git rev-parse HEAD)
           VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)

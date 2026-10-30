@@ -96,6 +96,20 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // players move to it.
 #define LARECOMP_VERSION "beta_5.4"
 #define LARECOMP_TEST_OF "beta_5.4"
+// Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
+// experimental build). They only look for a newer experimental build of their own platform, never a normal release.
+#define LARECOMP_EXPERIMENTAL_STAMP 0LL
+#if defined(_WIN32) && defined(_M_ARM64)
+#define LARECOMP_PLATFORM "windows-arm64"
+#elif defined(_WIN32)
+#define LARECOMP_PLATFORM "windows"
+#elif defined(__APPLE__)
+#define LARECOMP_PLATFORM "macOS"
+#elif defined(__aarch64__)
+#define LARECOMP_PLATFORM "linux-aarch64"
+#else
+#define LARECOMP_PLATFORM "linux-x86_64"
+#endif
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
 // ------------------------------------------------------------------ update check
@@ -118,7 +132,8 @@ static void *update_thread(void *) {
     if (const char *t = getenv("LARECOMP_UPDATE_TAGS")) {  // (test) "beta_2,v1.0.0": these releases, no network
         for (const char *p = t; *p;) {
             const char *c = strchr(p, ',');
-            body += "\"tag_name\": \"" + std::string(p, c ? c - p : strlen(p)) + "\"\n";
+            std::string t(p, c ? c - p : strlen(p));  // (LAS.Recomp-*: an asset name)
+            body += (t.compare(0, 11, "LAS.Recomp-") ? "\"tag_name\": \"" : "\"name\": \"") + t + "\"\n";
             p = c ? c + 1 : p + strlen(p);
         }
     } else {
@@ -143,14 +158,18 @@ static void *update_thread(void *) {
         remove(out.c_str());
     }
     std::string best;
-    // (a test build ranks just below the release it previews; other test builds rank -1: never offered)
-    long long best_rank = strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
-    for (size_t at = 0; (at = body.find("\"tag_name\"", at)) != std::string::npos;) {
-        size_t q1 = body.find('"', body.find(':', at) + 1), q2 = q1 == std::string::npos ? q1 : body.find('"', q1 + 1);
-        if (q2 == std::string::npos) break;
-        std::string tag = body.substr(q1 + 1, q2 - q1 - 1);
-        if (tag_rank(tag) > best_rank) best_rank = tag_rank(tag), best = tag;
-        at = q2;
+    if (LARECOMP_EXPERIMENTAL_STAMP) {
+        if (newest_experimental(body, LARECOMP_PLATFORM) > LARECOMP_EXPERIMENTAL_STAMP) best = "experimental";
+    } else {
+        // (a test build ranks just below the release it previews; other test builds rank -1: never offered)
+        long long best_rank = strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
+        for (size_t at = 0; (at = body.find("\"tag_name\"", at)) != std::string::npos;) {
+            size_t q1 = body.find('"', body.find(':', at) + 1), q2 = q1 == std::string::npos ? q1 : body.find('"', q1 + 1);
+            if (q2 == std::string::npos) break;
+            std::string tag = body.substr(q1 + 1, q2 - q1 - 1);
+            if (tag_rank(tag) > best_rank) best_rank = tag_rank(tag), best = tag;
+            at = q2;
+        }
     }
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);

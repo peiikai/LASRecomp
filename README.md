@@ -16,7 +16,7 @@ native Windows, macOS and Linux application.
 > - macOS - Apple Silicon only, Metal graphics backend + MetalFX
 > - Windows - x86-64 only, Vulkan graphics backend
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
-> - Linux aarch64 (ARM) - **experimental**: built but untested on real hardware; reports welcome
+> - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
 
 ## System requirements
