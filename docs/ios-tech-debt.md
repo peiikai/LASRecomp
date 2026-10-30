@@ -200,15 +200,18 @@ Still open, in order of value for iOS:
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library
   TLS cost on Android; iOS loads the game as a dlopen'ed framework too. Upstream since took "no stack frame on the
-  cached path" (`02146de`), so only the in-`Cpu` array and the slot hash remain to take. Needs regeneration
-  (`CPU_RESTRICT`).
+  cached path" (`02146de`) - which on Apple doesn't hold: the `blr` to dyld's TLV getter keeps the `stp` / `ldp`
+  frame (`otool -tv build/ios/lasrecomp`, `_rt_dispatch`). Measured (iPhone 15 Pro, Field, `xctrace` Time Profiler
+  15 s): `rt_dispatch` 7.0% of the game thread's self time, the TLV descriptor load + `blr` + frame 1.5-3% of it;
+  the game thread 4.1 ms of a 16.7 ms frame - so at most ~0.1 ms a frame, for a regeneration (`CPU_RESTRICT`) and a
+  new library id. Not worth it while the thread has that headroom. Their slot hash is taken (`dcache_slot`,
+  `(pc >> 4) ^ (pc >> 14)`: 98% of the functions start 16-byte aligned, so `pc >> 2` reached 2261 of the 4096
+  slots): the misses' share of the game thread 2.7 -> 1.7% on the iPhone, 2.7 -> 2.0% on an M-series Mac.
 - `FN_ENTER` compiled out on phones unless `LARECOMP_FNPROF` (~10% of the game code's instructions).
 - Cold functions at -O0 (`53ac961`): `tools/hot_functions.py` + `gen.py --hot` put the 108k functions a play profile
   never ran in their own files compiled at -O0 - the library builds 3x faster (their phone 26.6 -> 10.8 min) at no
   game-speed cost, 95 -> 175 MB. For us that's the desktop export's build time on the player's machine (the kit's
   zig compiling the whole library), the longest step of an export.
-- Render thread: the last pipeline key's hash kept (a memcmp instead of hashing ~700 bytes per draw) and a vectorized
-  max for the largest index (`4988c41`): to measure on Metal, whose draw path differs from their Vulkan one.
 - Game-speed guard (`framepace.c`: `rt_interval_choice`, `g_pace_slow`) and the "keep ~10 % GPU spare" dynamic
   resolution targets (`output_scale.c`): not needed on an A17 at 60 fps; right for older devices and throttling.
   Upstream's `28a68f8` (steady 30 fps on machines at the edge) covers part of this already.
@@ -229,4 +232,6 @@ Still open, in order of value for iOS:
   share; the translation itself is their feature.
 
 **Not applicable to iOS**: Vulkan / Turnip / SGSR, BC decode on the CPU, pre-rotated swapchain, frame generation (A17
-holds 60 natively), on-device build and extraction (no spawn, no keys), root power modes, `PlayService`.
+holds 60 natively), on-device build and extraction (no spawn, no keys), root power modes, `PlayService`; the render
+thread's pipeline-key cache and index maximum (`4988c41`, Vulkan `exec.c`): Metal hashes only the fields in use (~90
+bytes a draw, 22-26 draws a frame on the phone) and binds index buffers in place, so it never scans them.
