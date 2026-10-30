@@ -28,7 +28,7 @@ uint32_t maxwell_gmem_chunk_shift;  // 0: one buffer for the whole heap (GLSL; s
 bool maxwell_gmem_lazy;
 bool maxwell_gmem_fs_miss;
 bool maxwell_glsl_kil_late = true, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;  // (shader.h, #462)
-uint32_t maxwell_glsl_guard = 100000, maxwell_glsl_guard_fs;
+uint32_t maxwell_glsl_guard = 100000, maxwell_glsl_guard_fs = 256;  // (test-462-arc-3: fragment loops stop at 256)
 bool maxwell_glsl_guard_report;
 static _Atomic uint64_t guard_names[GGUARD_SLOTS];
 uint32_t maxwell_guard_slot(uint64_t addr, int stage) {

@@ -154,7 +154,7 @@ static const struct { const char *name, *var, *val, *what; } k_diagnostics[] = {
     {"fix_gfast", "LARECOMP_VK_KIL_LATE", "0", "discard back inside the shader loop"},
     {"fix_gfast", "LARECOMP_VK_GMEM_FAST", "0", "compute storage buffers used in place (no fast copy)"},
     // (test-462-arc-3: a light loop needs well under 256 steps; a fragment shader that runs away stops there)
-    {"guard_fs", "LARECOMP_VK_GUARD_FS", "256", "fragment shader loops stop after 256 steps"},
+    {"guard_fs_off", "LARECOMP_VK_GUARD_FS", "100000", "fragment shader loops stop after 100000 steps (as before)"},
     {"guard_fs64", "LARECOMP_VK_GUARD_FS", "64", "fragment shader loops stop after 64 steps"},
 };
 static void diagnostic_apply(void) {
