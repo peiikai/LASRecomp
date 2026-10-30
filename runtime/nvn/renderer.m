@@ -2339,6 +2339,8 @@ static volatile int rs_cpu_wrote[512];  // (by entry index, set by the fault han
 static uint8_t rs_hit_inside[512];      // (a store was ever seen inside the range itself, not just on its page)
 static uint64_t rs_store_frame[512];    // the frame of the previous counted store (a one-off initialisation store of
                                         // a GPU output - BowWow's skinning buffers at his spawn - must not copy it)
+static volatile uint8_t rs_rewrites[512];  // (copied for stores of its own: the CPU rewrites the range itself; only
+                                           // such a range's stores mark its page-mates, renderer_watch_fault)
 bool renderer_watch_fault(uint64_t fa);
 static bool watch_on(void) {
     static int on = -1;
@@ -2400,14 +2402,19 @@ bool renderer_watch_fault(uint64_t fa) {
     // it says nothing about the buffers beside it, and marking them copied BowWow's skinning output, which the
     // CPU reads back every frame (f_700102d0f4: the body's chain) - read from the frozen original once the dispatch
     // wrote the copy, the body came apart into spikes as a companion indoors. A store outside every range (per-frame
-    // constants next to a buffer) only opens the page. LARECOMP_LOG_BINDS: "[snap] ... never inside" shows what
-    // this marked by neighbourhood.
+    // constants next to a buffer) only opens the page. Nor a one-off store into a range the CPU doesn't rewrite:
+    // BowWow's skinning outputs lie back to back, and his spawn's initialisation stores into one marked the next
+    // ones on its page - two spawns' worth within 8 frames copied them, the same spikes on leaving a house in Mabe
+    // (body one time, the teeth / eyes' 3104-byte outputs another; user 2026-10-27). So the page-mates are marked
+    // only by a range already copied for stores of its own (rs_rewrites: the big list, rewritten every frame, a
+    // frame or two before its neighbours). LARECOMP_LOG_BINDS: "[snap] ... never inside" shows what this marked by
+    // neighbourhood.
     int x = -1;
     for (int k = 0; k < nrs; k++) if (fa >= rs_tab[k].addr && fa < rs_tab[k].addr + rs_tab[k].size) { x = k; break; }
     if (x >= 0) {
         rs_hit_inside[x] = 1;
         rs_cpu_wrote[x] = 2;  // (the store was inside the range itself)
-        if (rs_tab[x].size >= 256)
+        if (rs_tab[x].size >= 256 && rs_rewrites[x])
             for (int k = 0; k < nrs; k++)
                 if (k != x && rs_tab[k].addr < pg + PLAT_PAGE && pg < rs_tab[k].addr + rs_tab[k].size && !rs_cpu_wrote[k]) rs_cpu_wrote[k] = 1;
     }
@@ -2471,6 +2478,7 @@ static uint64_t snap_storage(uint64_t addr, uint64_t size, bool cs_slot) {
         e->addr = addr, e->size = size, e->mode = RS_PROBE, e->level = rs_level_gen, e->frame = f;
         e->cs_bound = cs_slot;
         rs_cpu_wrote[e - rs_tab] = 0, rs_store_frame[e - rs_tab] = 0, rs_hit_inside[e - rs_tab] = 0;
+        rs_rewrites[e - rs_tab] = 0;
         {   // (debug) LARECOMP_WATCH_SIZE=<size>,<frame>,<page>,<frames>: the data watchpoint (dispatch.c, any access, the
             // GPU stalls on the protected page) on page <page> of the first range of that size bound from <frame>, for <frames> frames
             static long ws = -1, wf, wp, wn; static bool armed; static uint64_t at;
@@ -2495,6 +2503,7 @@ static uint64_t snap_storage(uint64_t addr, uint64_t size, bool cs_slot) {
         rs_cpu_wrote[k] = 0;
         if (rs_store_frame[k] && f - rs_store_frame[k] <= 8) {  // stores keep coming: the CPU rewrites it - copied from now on
             e->mode = RS_COPY;
+            if (inside) rs_rewrites[k] = 1;
             rs_log(e, inside ? "-> copy (CPU stores keep hitting it)" : rs_hit_inside[k] ? "-> copy (CPU stores keep hitting its page; one was inside)" : "-> copy (CPU stores keep hitting its page, never inside)", cs_slot, f);
             e->frame = f;
             return rs_copy_make(e, range_hash(addr, size));
@@ -4034,8 +4043,20 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
             dd.depthWriteEnabled = YES;
             always = [dev newDepthStencilStateWithDescriptor:dd];
         }
-        static id<MTLSamplerState> dnear;
-        if (!dnear) dnear = [dev newSamplerStateWithDescriptor:[MTLSamplerDescriptor new]];
+        // An upsampling copy (a source of lower resolution, as the guest-sized AO depth gets from the scaled pyramid
+        // below 0.5x: runtime/nvn/metal.m tex_guest_sized_ao) interpolates: nearest made stairs of the ground's
+        // slope that the ambient occlusion shaded as dark horizontal lines (issue #356, 25% in a window).
+        // Downsampling stays nearest (the game's own choice of samples). LARECOMP_DEPTH_UP_NEAREST=1 (A/B): nearest.
+        static id<MTLSamplerState> dnear, dlin;
+        static int up_nearest = -1;
+        if (up_nearest < 0) up_nearest = getenv("LARECOMP_DEPTH_UP_NEAREST") != NULL;
+        if (!dnear) {
+            MTLSamplerDescriptor *sd = [MTLSamplerDescriptor new];
+            dnear = [dev newSamplerStateWithDescriptor:sd];
+            sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear;
+            dlin = [dev newSamplerStateWithDescriptor:sd];
+        }
+        bool up = !up_nearest && (dw > sw || dh > sh);
         id<MTLTexture> sdepth = s;
         if (s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8)
             sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
@@ -4045,7 +4066,7 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         [e setViewport:(MTLViewport){dx0, dy0, dw, dh, 0, 1}];
         [e setVertexBytes:r length:16 atIndex:0];
         [e setFragmentTexture:sdepth atIndex:0];
-        [e setFragmentSamplerState:dnear atIndex:0];
+        [e setFragmentSamplerState:up ? dlin : dnear atIndex:0];
         [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [e endEncoding];
         stat_passes++;
@@ -4507,6 +4528,7 @@ void renderer_reset(void) {
     memset((void *)rs_cpu_wrote, 0, sizeof rs_cpu_wrote);
     memset(rs_hit_inside, 0, sizeof rs_hit_inside);
     memset(rs_store_frame, 0, sizeof rs_store_frame);
+    memset((void *)rs_rewrites, 0, sizeof rs_rewrites);
     memset(snap_tex, 0, sizeof snap_tex);
     memset(snap_ok, 0, sizeof snap_ok);
     for (int i = 0; i < 4; i++) { feedback_tex[i] = NULL; feedback_copy[i] = nil; }

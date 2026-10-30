@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "imgui.h"
+#include "i18n.h"
 #ifdef __APPLE__
 #import <Metal/Metal.h>
 #endif
@@ -187,15 +188,15 @@ extern "C" void pickup_flyin_draw(ImVec2 display, ImFont *font, float scale) {
     if (it == IT_HEART_PIECE) {
         int n = g_card.held % 4;
         quarters = n ? n : 4;
-        snprintf(title, sizeof title, "Piece of Heart");
+        snprintf(title, sizeof title, "%s", L("Piece of Heart"));
         if (n) snprintf(value, sizeof value, "%d / 4", n);
-        else snprintf(value, sizeof value, "4 / 4   +1 Heart");
+        else snprintf(value, sizeof value, "%s", L("4 / 4   +1 Heart"));
     } else if (it == IT_HEART_CONTAINER) {
-        snprintf(title, sizeof title, g_card.amount > 1 ? "Heart Containers" : "Heart Container");
-        if (g_card.amount > 1) snprintf(value, sizeof value, "+%d Hearts", g_card.amount);
-        else snprintf(value, sizeof value, "+1 Heart");
+        snprintf(title, sizeof title, "%s", g_card.amount > 1 ? L("Heart Containers") : L("Heart Container"));
+        if (g_card.amount > 1) snprintf(value, sizeof value, L("+%d Hearts"), g_card.amount);
+        else snprintf(value, sizeof value, "%s", L("+1 Heart"));
     } else if (it == IT_SEASHELL) {
-        snprintf(title, sizeof title, "Secret Seashells");
+        snprintf(title, sizeof title, "%s", L("Secret Seashells"));
         snprintf(value, sizeof value, "%d / %d", g_card.held, silent_seashell_total());
     } else {
         return;

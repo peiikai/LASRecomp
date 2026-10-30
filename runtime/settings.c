@@ -4,8 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#elif defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include "hle.h"
+#include "i18n_mark.h"
 #include "input_bind.h"
 
 #define SETTINGS_FILE settings_file()
@@ -16,9 +22,10 @@ static const char *settings_file(void) {
     return e && *e ? e : "larecomp.ini";
 }
 
-const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES] = {"Off", "Random per seed", "Random every load"};
+const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES] = {LN("Off"), LN("Random per seed"), LN("Random every load")};
 static const char *const k_enemy_colour_keys[N_ENEMY_COLOUR_MODES] = {"off", "seed", "load"};  // (larecomp.ini)
-const char *const g_screen_filters[N_SCREEN_FILTERS] = {"Off", "Game Boy", "Game Boy Color", "Grayscale"};
+const char *const g_screen_filters[N_SCREEN_FILTERS] = {LN("Off"), LN("Game Boy"), LN("Game Boy Color"),
+                                                        LN("Grayscale")};
 static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale"};  // (else: off)
 
 Settings g_settings = {
@@ -57,17 +64,13 @@ const char *const g_language_codes[N_LANGUAGES] = {"auto", "ja", "en-US", "es", 
 const char *const g_language_names[N_LANGUAGES] = {"Auto", "Japanese", "English", "Spanish", "French", "German",
                                                    "Italian", "Dutch", "Russian", "Korean", "Chinese (Simplified)",
                                                    "Chinese (Traditional)"};
+const char *const g_language_endonyms[N_LANGUAGES] = {"Auto", "日本語", "English", "Español", "Français", "Deutsch",
+                                                      "Italiano", "Nederlands", "Русский", "한국어", "简体中文", "繁體中文"};
 
-// LANG_AUTO: the host's own language (LANG=es_ES.UTF-8 -> es), en-US when it is none of the game's. Linux only:
-// macOS / Windows apps get no locale variables from the system, so Auto is English there (pick one in settings).
-static const char *host_language(void) {
-#ifndef __linux__
-    return "en-US";
-#endif
-    const char *e = getenv("LC_ALL");
-    if (!e || !*e) e = getenv("LC_MESSAGES");
-    if (!e || !*e) e = getenv("LANG");
-    if (!e || !*e || !strcmp(e, "C") || !strcmp(e, "POSIX")) return "en-US";
+// A locale name ("es_ES.UTF-8", "zh-Hans-CN", "ja-JP", "zh_TW") -> one of the game's codes, NULL for none of its
+// languages.
+static const char *match_locale(const char *e) {
+    if (!e || !*e || !strcmp(e, "C") || !strcmp(e, "POSIX")) return NULL;
     if (!strncmp(e, "zh", 2) && (!e[2] || strchr("_-.@", e[2]))) {
         char locale[64];
         snprintf(locale, sizeof locale, "%s", e);
@@ -85,12 +88,48 @@ static const char *host_language(void) {
     }
     char l[8] = {0};
     size_t n = 0;
-    for (const char *p = e; *p && *p != '.' && *p != '@' && *p != '_' && n < sizeof l - 1; p++) l[n++] = *p;
+    for (const char *p = e; *p && !strchr(".@_-", *p) && n < sizeof l - 1; p++) l[n++] = (char)tolower((unsigned char)*p);
     static const struct { const char *loc, *code; } map[] = {{"ja", "ja"}, {"ko", "ko"}, {"ru", "ru"}, {"nl", "nl"},
-                                                             {"de", "de"}, {"it", "it"}, {"fr", "fr"}, {"es", "es"}};
+                                                             {"de", "de"}, {"it", "it"}, {"fr", "fr"}, {"es", "es"},
+                                                             {"en", "en-US"}};
     for (size_t i = 0; i < sizeof map / sizeof *map; i++)
         if (!strcmp(l, map[i].loc)) return map[i].code;
-    return "en-US";
+    return NULL;
+}
+
+// LANG_AUTO: the host's own language, en-US when it is none of the game's. Linux: the locale variables
+// (LANG=es_ES.UTF-8 -> es); macOS / Windows: the first of the user's preferred languages that the game has (apps get
+// no locale variables there).
+static const char *host_language(void) {
+    static const char *lang;
+    if (lang) return lang;
+#if defined(__APPLE__)
+    CFArrayRef prefs = CFLocaleCopyPreferredLanguages();
+    for (CFIndex i = 0; prefs && i < CFArrayGetCount(prefs) && !lang; i++) {
+        char buf[64];
+        if (CFStringGetCString((CFStringRef)CFArrayGetValueAtIndex(prefs, i), buf, sizeof buf, kCFStringEncodingUTF8))
+            lang = match_locale(buf);
+    }
+    if (prefs) CFRelease(prefs);
+#elif defined(_WIN32)
+    ULONG count = 0, len = 0;
+    if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, NULL, &len) && len) {
+        WCHAR *w = (WCHAR *)calloc(len, sizeof *w);
+        if (w && GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, w, &len))
+            for (WCHAR *p = w; *p && !lang; p += wcslen(p) + 1) {
+                char buf[64];
+                if (WideCharToMultiByte(CP_UTF8, 0, p, -1, buf, sizeof buf, NULL, NULL)) lang = match_locale(buf);
+            }
+        free(w);
+    }
+#else
+    const char *e = getenv("LC_ALL");
+    if (!e || !*e) e = getenv("LC_MESSAGES");
+    if (!e || !*e) e = getenv("LANG");
+    lang = match_locale(e);
+#endif
+    if (!lang) lang = "en-US";
+    return lang;
 }
 
 const char *settings_language(void) {
@@ -225,6 +264,9 @@ void settings_load(void) {
         else if (!strcmp(key, "grass")) col_parse(&g_settings.grass, val);
         else if (!strcmp(key, "sand")) col_parse(&g_settings.sand, val);
         else if (!strcmp(key, "water")) col_parse(&g_settings.water, val);
+        else if (!strcmp(key, "fences")) col_parse(&g_settings.fences, val);
+        else if (!strcmp(key, "walls")) col_parse(&g_settings.walls, val);
+        else if (!strcmp(key, "houses")) col_parse(&g_settings.houses, val);
         else if (!strcmp(key, "screen_filter")) {
             for (int i = 0; i < N_SCREEN_FILTERS; i++) if (!strcmp(val, k_screen_filter_keys[i])) g_settings.screen_filter = i;
         }
@@ -293,7 +335,8 @@ void settings_save(void) {
         {"tunic", &g_settings.tunic}, {"hearts", &g_settings.hearts}, {"hair", &g_settings.hair},
         {"shield", &g_settings.shield}, {"skin", &g_settings.skin},
         {"leaves", &g_settings.leaves}, {"grass", &g_settings.grass}, {"sand", &g_settings.sand},
-        {"water", &g_settings.water}};
+        {"water", &g_settings.water}, {"fences", &g_settings.fences}, {"walls", &g_settings.walls},
+        {"houses", &g_settings.houses}};
     for (size_t i = 0; i < sizeof cols / sizeof *cols; i++) {
         char v[16];
         col_format(cols[i].c, v, sizeof v);

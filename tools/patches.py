@@ -308,6 +308,21 @@ def _map_page(gen, a):
 PATCHES[MAP_PAGE_SITE] = _map_page
 
 
+# HUD hearts refresh (runtime/hle/hud_hearts.c): main+0xeaa800 is the HUD's normal state update (x0 = the HUD). Its
+# prologue reruns the HUD's own set-up when a menu changed Link's hearts.
+HUD_HEARTS_SITE = A.HUD_HEARTS_SITE
+
+
+def _hud_hearts(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xd102c3ff, hex(w)  # sub sp, sp, #0xb0
+    return ('{ extern void rt_hud_hearts_tick(Cpu *); rt_hud_hearts_tick(c); c->sp -= 0xb0; }'
+            f'  /* {a:#x}: sub sp, sp, #0xb0 (HUD update: hearts refresh) */')
+
+
+PATCHES[HUD_HEARTS_SITE] = _hud_hearts
+
+
 # ... and its epilogue (the page's layout was updated this frame): the check tracker hides the game's own cursor and
 # button bar there (tracker_overlay.mm map_page_takeover), after the update that may have shown them again.
 MAP_PAGE_END_SITE = A.MAP_PAGE_END_SITE
@@ -783,6 +798,33 @@ def _font_box_glyph(gen, a):
 
 
 PATCHES[FONT_BOX_GLYPH_SITE] = _font_box_glyph
+
+
+# Issue #452: a character the font has no glyph for is drawn and measured as that same "□" (the font's [+0x34]): its
+# width (main+0x111e1c0, at main+0x111e260), its widths (main+0x111e270, at main+0x111e31c) and its glyph
+# (main+0x111e350, at main+0x111e4a0 / main+0x111e4a4) read the box's glyph without checking for none. With a font
+# whose "□" the game can't use (#45) that read crashed at 0x4c - the German text of the Pothole Field owl statue has
+# "ẞ" (U+1E9E), which neither the console's font nor Yu Gothic has. Now no box glyph reads as an empty one (no width,
+# nothing drawn).
+FONT_FALLBACK_SITES = [A.FONT_FALLBACK_SITES_0, A.FONT_FALLBACK_SITES_1, A.FONT_FALLBACK_SITES_2,
+                       A.FONT_FALLBACK_SITES_3]
+_FONT_FALLBACK_OPS = {0x79409800: ('ldrh w0, [x0, #0x4c]', 'c->x[0] = LD16(c->x[0] + 0x4c);'),
+                      0xaa0003e9: ('mov x9, x0', 'c->x[9] = c->x[0];'),
+                      0x79409816: ('ldrh w22, [x0, #0x4c]', 'c->x[22] = LD16(c->x[0] + 0x4c);'),
+                      0x79409c08: ('ldrh w8, [x0, #0x4e]', 'c->x[8] = LD16(c->x[0] + 0x4e);')}
+
+
+def _font_fallback(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w in _FONT_FALLBACK_OPS, hex(w)
+    asm, op = _FONT_FALLBACK_OPS[w]
+    return ('{ static uint8_t empty_glyph_[0x60] __attribute__((aligned(16))); '
+            'if (c->x[0] == 0) c->x[0] = (uint64_t)(uintptr_t)empty_glyph_; } ' + op +
+            f'  /* {a:#x}: {asm} (font fallback glyph: none reads as an empty one) */')
+
+
+for _a in FONT_FALLBACK_SITES:
+    PATCHES[_a] = _font_fallback
 
 
 # Issue #19: [this+0x10] is the delegate of a recycled "action" object (the class whose vtable is 0x7001c51358, and

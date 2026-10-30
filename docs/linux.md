@@ -41,6 +41,9 @@ Ubuntu / Debian packages (other distributions: the same libraries under their na
     sudo apt install clang lld make pkg-config python3-venv libsdl3-dev libavformat-dev libavcodec-dev \
         libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev libvulkan-memory-allocator-dev glslc vulkan-tools
 
+For Chinese or Korean menus, also install a font for them (`fonts-noto-cjk`). LAS Recomp bundles fonts for Russian
+and Japanese only; without one, Chinese and Korean menu text shows as boxes.
+
 shaderc is linked the way its pkg-config file says (`libshaderc_shared` on Arch, Fedora, AOSC...); to choose
 yourself: `make SHADERC=-lshaderc_shared` (or `-lshaderc`).
 

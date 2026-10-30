@@ -1,4 +1,5 @@
 // Builds the game code library on the player's machine (runtime/gamebuild.h).
+#include "i18n_mark.h"
 #include "gamebuild.h"
 #include "build_cache.h"
 
@@ -19,7 +20,7 @@
 
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
 #ifndef GAMELIB_CFLAGS
-#define GAMELIB_CFLAGS "-O1 -fno-strict-aliasing -fvisibility=hidden"
+#define GAMELIB_CFLAGS "-O1 -g0 -fno-strict-aliasing -fvisibility=hidden -mllvm -disable-licm-promotion"  // (see GENFLAGS in the Makefile)
 #endif
 #ifndef GAMELIB_SHARED
 #define GAMELIB_SHARED "-shared"
@@ -250,10 +251,10 @@ static void helper_failed(const char *what, int r, const char *log, char *why, s
         int sig = r - PLAT_PROC_SIGNALED;
         if (sig == SIGKILL) {
             snprintf(how, sizeof how, "killed by signal %d (SIGKILL: likely out of memory)", sig);
-            snprintf(why, why_size, "A build helper was killed by the system, likely out of memory.");
+            snprintf(why, why_size, LN("A build helper was killed by the system, likely out of memory."));
         } else {
             snprintf(how, sizeof how, "killed by signal %d (%s)", sig, strsignal(sig));
-            snprintf(why, why_size, "A build helper crashed (signal %d).", sig);
+            snprintf(why, why_size, LN("A build helper crashed (signal %d)."), sig);
         }
         g_killed = true;
     } else
@@ -343,12 +344,12 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     if (!registered) registered = true, atexit(end_all);
     g_killed = false, g_cfg_stopped = false;
     if (!gamelib_full_id(game_dir, g_full_id, sizeof g_full_id)) {
-        snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
+        snprintf(why, why_size, LN("the game files' exefs/main is missing or unreadable"));
         return false;
     }
     Tools t;
     if (!find_tools(&t)) {
-        snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp");
+        snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp"));
         return false;
     }
     char work[1100], tmp[1100];
@@ -366,7 +367,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     snprintf(spec, sizeof spec, "LASBUILD3\n%s\n%s\n%s\nzig=%d pointer=%d%s%s\n", GAMELIB_BASE_ID,
              GAMELIB_CFLAGS, GAMELIB_SHARED, t.zig, (int)sizeof(void *),  // (+ the Linux zig target: objects from
              t.zig && ZIG_TARGET[0] ? " target=" : "", t.zig ? ZIG_TARGET : "");  // before it are rebuilt once)
-    if (o->progress) o->progress(0, "Checking completed build files...");
+    if (o->progress) o->progress(0, LN("Checking completed build files..."));
     bool resuming = build_cache_resumable(game_dir);  // (a cancelled or interrupted build; read before open marks this one)
     BuildCache *cache = build_cache_open(game_dir, spec, inputs, 5, why, why_size);
     if (!cache) return false;
@@ -426,7 +427,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         if (i == 1) { add(&a, "--hle"); add(&a, t.hle); }
         g->p = spawn_proc(a.v, g->log, true);
         args_free(&a);
-        if (!g->p) { snprintf(why, why_size, "the game code builder didn't start"); ok = false; }
+        if (!g->p) { snprintf(why, why_size, LN("the game code builder didn't start")); ok = false; }
     }
 
     Units units = {0};
@@ -443,7 +444,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     }
     while (ok) {
         if (o->cancelled && o->cancelled()) {
-            snprintf(why, why_size, "Compilation cancelled. Completed files are kept for Resume."); ok = false; break;
+            snprintf(why, why_size, LN("Compilation cancelled. Completed files are kept for Resume.")); ok = false; break;
         }
         // generator progress, newly finished files
         bool gens_done = true;
@@ -460,7 +461,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
                     if (r != 0) {
                         char what[64];
                         snprintf(what, sizeof what, "generator (%s)", g->name);
-                        snprintf(why, why_size, "the game code couldn't be prepared");
+                        snprintf(why, why_size, LN("the game code couldn't be prepared"));
                         helper_failed(what, r, g->log, why, why_size);
 #ifdef _WIN32
                         if (r == PLAT_PROC_FAST_FAIL) g_cfg_stopped = true;  // (#337)
@@ -494,10 +495,10 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         while (nrun < jobs && next < units.n) {
             Unit *u = &units.u[next];
             int cached = build_cache_object(cache, u->stem, u->src, u->source_hash);
-            if (cached < 0) { snprintf(why, why_size, "A generated source file is missing or unreadable."); ok = false; break; }
+            if (cached < 0) { snprintf(why, why_size, LN("A generated source file is missing or unreadable.")); ok = false; break; }
             if (cached && next != 0) { done_bytes += u->bytes; ++reused; ++next; continue; }
             PlatProc p = start_compile(&t, &units.u[next]);
-            if (!p) { snprintf(why, why_size, "the compiler didn't start"); ok = false; break; }
+            if (!p) { snprintf(why, why_size, LN("the compiler didn't start")); ok = false; break; }
             run[nrun].p = p, run[nrun].unit = next++;
             nrun++;
         }
@@ -508,7 +509,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
             if (r != 0) {
                 char what[1200];
                 snprintf(what, sizeof what, "compiling %s", u->src);
-                snprintf(why, why_size, "the game code didn't compile");
+                snprintf(why, why_size, LN("the game code didn't compile"));
                 helper_failed(what, r, u->log, why, why_size);
                 ok = false;
             } else if (!build_cache_save_object(cache, u->stem, u->src, u->source_hash, why, why_size)) {
@@ -532,7 +533,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         double secs = (double)(plat_now_ns() - t0) / 1e9;
         if (gen_frac == 0) f = 0.05 * (secs / (secs + 20));  // (the generator's first pass: no count yet)
         if (f > shown) shown = f;
-        if (o->progress) o->progress(shown, gen_frac < 1 && !gens_done ? "Reading the game code..." : resuming ? "Resuming compilation..." : "Recompiling...");
+        if (o->progress) o->progress(shown, gen_frac < 1 && !gens_done ? LN("Reading the game code...") : resuming ? LN("Resuming compilation...") : LN("Recompiling..."));
         sleep_ms(50);
     }
     for (int k = 0; k < nrun; k++) stop(run[k].p);  // (a failure: the rest is of no use - the failure shows at once)
@@ -541,7 +542,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
 
     // 2. link
     if (ok) {
-        if (o->progress) o->progress(shown > 0.95 ? shown : 0.95, "Finishing...");
+        if (o->progress) o->progress(shown > 0.95 ? shown : 0.95, LN("Finishing..."));
         char rsp[1100], log[1100];
         snprintf(rsp, sizeof rsp, "%s" SEP "link.rsp", work);
         snprintf(log, sizeof log, "%s" SEP "link.log", work);
@@ -591,14 +592,14 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         }
         if (r == 130) {
             LOG("[gamebuild] linking cancelled\n");
-            snprintf(why, why_size, "Compilation cancelled. Completed files are kept for Resume.");
+            snprintf(why, why_size, LN("Compilation cancelled. Completed files are kept for Resume."));
             ok = false;
         } else if (!p) {
             LOG("[gamebuild] linking failed: the linker didn't start\n");
-            snprintf(why, why_size, "the game code didn't link");
+            snprintf(why, why_size, LN("the game code didn't link"));
             ok = false;
         } else if (r != 0) {
-            snprintf(why, why_size, "the game code didn't link");
+            snprintf(why, why_size, LN("the game code didn't link"));
             helper_failed("linking", r, log, why, why_size);
             ok = false;
         }
@@ -610,6 +611,6 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     build_cache_close(cache);
     LOG("[gamebuild] reused %d objects, compiled %d objects\n", reused, compiled);
     LOG("[gamebuild] %s in %.0fs\n", ok ? "done" : cancelled ? "cancelled" : "failed", (double)(plat_now_ns() - t0) / 1e9);
-    if (ok && o->progress) o->progress(1, "Finishing...");
+    if (ok && o->progress) o->progress(1, LN("Finishing..."));
     return ok;
 }

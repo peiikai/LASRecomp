@@ -1038,14 +1038,16 @@ static uint32_t skin_rgb(void) {  // (+1: 0 = Default)
     return col_target(&g_settings.skin, COL_SLOT_SKIN, &rgb) ? rgb + 1 : 0;
 }
 
-// body: the tunic map (arms, hands), recoloured block by block; else a face map, recoloured as a whole level
-// (skin_face: with a very dark colour its details are told apart by shape). mouth: one of the mouth maps.
+// body: the tunic map (arms, hands), recoloured block by block, the skin told on `orig` (the map as uploaded: a
+// tunic recoloured to a peach hue would read as skin; NULL: on the blocks themselves); else a face map, recoloured as
+// a whole level (skin_face: with a very dark colour its details are told apart by shape). mouth: one of the mouth maps.
 // The face maps' smaller mip levels are made from the recoloured full-size level (box filter), as the game's own are
 // from its: recoloured on their own, the details' shapes are too few pixels to tell apart (an open mouth's outline
 // would fill it). The levels of one upload come in order, on one thread: the full-size result is kept per thread.
 static __thread struct { int id; uint32_t c, w, h; uint8_t *img; } t_face;
 
-static void skin_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_t h, uint32_t row, bool body, bool mouth) {
+static void skin_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_t h, uint32_t row, bool body, bool mouth,
+                       const uint8_t *orig) {
     uint32_t c = skin_rgb();
     if (!c) return;
     float sh, ts, tv;
@@ -1063,12 +1065,13 @@ static void skin_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_
     if (body) {
         for (uint32_t by = 0; by < bh; by++)
             for (uint32_t bx = 0; bx < bw; bx++) {
-                uint8_t *b = blocks + by * row + bx * 8, px[16][4];
+                uint8_t *b = blocks + by * row + bx * 8, px[16][4], ox[16][4];
                 bc1_decode(b, px);
+                bc1_decode(orig ? orig + by * row + bx * 8 : b, ox);
                 bool any = false, holes = false;
                 for (int i = 0; i < 16; i++) {
                     if (!px[i][3]) { holes = true; continue; }
-                    float m = skin_weight(px[i], true, false);
+                    float m = skin_weight(ox[i], true, false);
                     if (m < 0.004f) continue;
                     any = true;
                     skin_recolour(px[i], m, &k);
@@ -1131,11 +1134,15 @@ void texpatch_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_t h
     if (id < 0 || id >= g_nrefs) return;
     const Ref *r = &g_refs[id];
     if (r->role == R_TUNIC || r->role == R_TUNIC_RED || r->role == R_TUNIC_BLUE) {
+        size_t n = (size_t)((h + 3) / 4 - 1) * row + (w + 3) / 4 * 8;  // (the level's blocks)
+        uint8_t *orig = tunic_rgb() && skin_rgb() && row >= (w + 3) / 4 * 8 ? malloc(n) : NULL;
+        if (orig) memcpy(orig, blocks, n);
         tunic_apply(lv, blocks, w, h, row);
-        skin_apply(id, lv, blocks, w, h, row, true, false);  // (the arms and hands)
+        skin_apply(id, lv, blocks, w, h, row, true, false, orig);  // (the arms and hands)
+        free(orig);
         return;
     }
-    if (r->role == R_SKIN) { skin_apply(id, lv, blocks, w, h, row, false, !strncmp(r->name, "MI_mouth_alb", 12)); return; }
+    if (r->role == R_SKIN) { skin_apply(id, lv, blocks, w, h, row, false, !strncmp(r->name, "MI_mouth_alb", 12), NULL); return; }
     if (lv || r->w != w || r->h != h) return;
     if (r->role == R_BOTTLE || r->role == R_BOTTLE_MODEL || r->role == R_FAIRY_MODEL || r->role == R_POWDER_MODEL ||
         r->role == R_ITEM_CURSOR || r->role == R_DGN_MAP || r->role == R_MAP_MODEL || r->role == R_POWER_PIECE_MODEL ||

@@ -105,6 +105,7 @@ def default_settings(seed):
         'digs': False,  # digsanity: every diggable overworld tile is a check (tools/rando/digs.py)
         'shellsanity': False,  # every Secret Seashell spot is a check (tools/rando/seashell_spots.py); off: vanilla
         'hookshot-anything': False,  # the hookshot latches onto anything (tools/rando/hookshot_logic.py)
+        'fast-egg': False,  # the Egg's first drop lands at the boss, no maze (tools/rando/fast_egg.py)
         'dungeon-room-shuffle': 'off',  # off / coupled / decoupled (tools/rando/dungeon_gen.py; ROOM_MODES)
         'pet-rooster': False, 'pet-ghost': False, 'open-desert': True,  # pets (tools/rando/pets.py)
         'shopsanity': 'off', 'trendsanity': False,  # tools/rando/shopsanity.py (off / vanilla / random prices), trendsanity.py
@@ -427,10 +428,6 @@ def main():
             soul_cat, romfs, logic_defs, vanilla, {n: p['room'] for n, p in pot_locs.items() if p.get('room')}),
             'conditions', flush=True)
 
-    if settings.get('key-rings'):  # key rings (tools/rando/key_rings.py; after the room shuffle set the key counts)
-        import key_rings
-        print('key rings:', key_rings.convert(item_defs, settings), flush=True)
-
     result = {}
     errors = []
     stage('Shuffling items', 0.04)
@@ -521,8 +518,6 @@ def main():
             if a is not None:
                 ix[src] = a
             print(f'test swap: {item} {src} -> {loc}', flush=True)
-    if settings.get('key-rings'):
-        print('key rings placed:', key_rings.mark_indexes(result['placements']), flush=True)
     with open(os.path.join(out_dir, 'logic.json'), 'w') as f:  # the seed's final logic (tracker: tools/rando/tracker.py)
         json.dump({k: {kk: vv for kk, vv in v.items() if kk in ('type', 'subtype', 'region', 'content') or kk.startswith('condition-')}
                    for k, v in sh.logic_defs.items() if not v.get('_check_only')}, f)
@@ -580,7 +575,7 @@ def main():
         with open(os.path.join(out_dir, 'placements.json'), 'w') as f:
             json.dump({'placements': {k: v for k, v in pl.items() if isinstance(v, str)},
                        'access': {k: 1 for k, v in settings.items() if v is True},
-                       **({'key-ring-sizes': settings['key-ring-sizes']} if 'key-ring-sizes' in settings else {})}, f)
+                       **({'room-plan': {'layouts': room_plan[0], 'jumps': room_plan[1]}} if room_plan else {})}, f)
         sys.exit(0)
 
     if pot_locs or bush_locs or dig_locs or rock_locs:  # bomb / powder / arrow refills anywhere: only once owned, else a blue rupee (runtime)
@@ -764,6 +759,9 @@ def main():
     if settings.get('chest-looks'):  # (every room edit done) the recoloured chests; no chest without a model
         print('chest looks:', chest_looks.write_models(out_dir, romfs), 'models,',
               chest_looks.sweep(out_dir, romfs, _uw_leb), 'chests fixed', flush=True)
+    if settings.get('fast-egg'):
+        import fast_egg
+        print('fast egg:', fast_egg.apply(out_dir, romfs, _uw_leb), flush=True)
     import room_links  # (every room edit done: actors' links within each room must still be sound)
     problems = room_links.check(out_dir, _uw_leb, romfs)
     if problems:

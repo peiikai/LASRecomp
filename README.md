@@ -79,9 +79,9 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 - Keyboard and controller support, with every button remappable. Button prompts match your controller (Xbox, PlayStation or Nintendo).
 - Controller rumble, and the light bar on PlayStation controllers shows Link's health.
 - Controllers that aren't recognised can be added with a mapping file (see [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB)).
-- Play in English, Japanese, Spanish, French, German, Italian, Dutch, Russian, Korean or Chinese (Simplified or Traditional).
+- Play in English, Japanese, Spanish, French, German, Italian, Dutch, Russian, Korean or Chinese (Simplified or Traditional). The menus, randomizer, tracker and spoiler log are in your language too, and Auto follows your system language.
 - Optional extras: 360-degree movement, blur removal, mirror mode, faster walking and hiding the Hero Mode icon.
-- Cosmetics: change Link's tunic, hair, skin and shield colours, the colour of the grass, leaves and sand (with season presets) and of the water, give enemies random colours, or play with a Game Boy, Game Boy Color or grayscale filter.
+- Cosmetics: change Link's tunic, hair, skin and shield colours, the colour of the grass, leaves and sand (with season presets), the water, fences, walls and houses, give enemies random colours, or play with a Game Boy, Game Boy Color or grayscale filter.
 - Optional run timer, with LiveSplit support.
 
 **Randomizer**
@@ -194,12 +194,17 @@ without touching the installed game, your game files or your saves.
   memory fixes (#112), Windows logs (#114), resumable game-code builds (#56), and save fixes (#169, #170, #182)
 - **[@gitarre1234rr5](https://github.com/gitarre1234rr5)** - controller rumble (#104) and a regression test (#88)
 - **[@rkammoun](https://github.com/rkammoun)** - the fix for the black walls in the Ukuku Prairie cave on Mac (#215, #216)
-- **[@NevesHenry](https://github.com/NevesHenry)** - a clear message on Linux when no file window can open (#298), and
-  the rumble test running in CI (#299)
+- **[@NevesHenry](https://github.com/NevesHenry)** - a clear message on Linux when no file window can open (#298),
+  the rumble test running in CI (#299), Linux builds finding their own SDL3 (#437), font re-imports that no longer
+  empty the font (#490), and a message box on Linux for a CPU without AVX2 (#491)
 - **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319)
 - **[@theb0rg](https://github.com/theb0rg)** - the fix for AMD integrated graphics on Windows (#335)
 - **[@gtf-dot](https://github.com/gtf-dot)** - the game-text font on Linux (#330)
 - **[@cfcosta](https://github.com/cfcosta)** - full speed on Linux AMD handhelds like the Steam Deck and ROG Ally (#392)
+- **[@gsel001](https://github.com/gsel001)** - a check in CI that the Mac app starts (#420), and rupees up to 9,999 in the
+  cheats and save editor (#453)
+- **[@wimw85](https://github.com/wimw85)** - much faster game code setup on the Steam Deck and other PCs (#434)
+- **[@missionfloyd](https://github.com/missionfloyd)** - a much smaller game code build, without debug info (#487)
 
 Thanks also to everyone who reports issues and tests builds. Your logs and screenshots find most of the bugs.
 

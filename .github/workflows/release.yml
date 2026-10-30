@@ -75,7 +75,7 @@ jobs:
   macos:
     needs: check
     if: needs.check.outputs.skip != 'true'
-    runs-on: macos-15  # (arm64; the app's minimum is macOS 15)
+    runs-on: [self-hosted, macos-vm]  # (a fresh Tart VM per job on the maintainer's Mac, deleted after; macOS 15)
     steps:
       - uses: actions/checkout@v4
         with:

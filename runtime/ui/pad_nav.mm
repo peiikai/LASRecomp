@@ -1,5 +1,6 @@
 // Controller buttons into our ImGui menus: see pad_nav.h.
 #include "pad_nav.h"
+#include "i18n.h"
 #include <atomic>
 #include "input_bind.h"
 #include "../settings.h"
@@ -39,10 +40,10 @@ ImGuiKey ui_pad_key(SDL_JoystickID which, Uint8 button, bool down) {
 int ui_pad_family(void) { return input_menu_family(g_last_pad.load()) % 3; }
 const char *ui_pad_confirm_label(void) {
     int f = ui_pad_family();
-    return bind_pad_label(south_confirms(f) ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST, f);
+    return L(bind_pad_label(south_confirms(f) ? SDL_GAMEPAD_BUTTON_SOUTH : SDL_GAMEPAD_BUTTON_EAST, f));
 }
 const char *ui_pad_back_label(void) {
     int f = ui_pad_family();
-    return bind_pad_label(south_confirms(f) ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH, f);
+    return L(bind_pad_label(south_confirms(f) ? SDL_GAMEPAD_BUTTON_EAST : SDL_GAMEPAD_BUTTON_SOUTH, f));
 }
-const char *ui_pad_start_label(void) { return bind_pad_label(SDL_GAMEPAD_BUTTON_START, ui_pad_family()); }
+const char *ui_pad_start_label(void) { return L(bind_pad_label(SDL_GAMEPAD_BUTTON_START, ui_pad_family())); }

@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "../hle.h"
+#include "../i18n_mark.h"
 #include "../input_bind.h"
 
 _Static_assert(PADB_LTRIGGER == SDL_GAMEPAD_BUTTON_COUNT, "trigger pseudo-buttons follow SDL's buttons");
@@ -32,9 +33,10 @@ static const char *const k_ini[BIND_KEY_COUNT] = {
     "ls_up", "ls_down", "ls_left", "ls_right", "rs_up", "rs_down", "rs_left", "rs_right",
 };
 static const char *const k_names[BIND_KEY_COUNT] = {
-    "A", "B", "X", "Y", "Left stick press", "Right stick press", "L", "R", "ZL", "ZR", "Plus", "Minus",
-    "D-pad Left", "D-pad Up", "D-pad Right", "D-pad Down", "Left stick Up", "Left stick Down", "Left stick Left",
-    "Left stick Right", "Right stick Up", "Right stick Down", "Right stick Left", "Right stick Right",
+    "A", "B", "X", "Y", LN("Left stick press"), LN("Right stick press"), "L", "R", "ZL", "ZR", LN("Plus"),
+    LN("Minus"), LN("D-pad Left"), LN("D-pad Up"), LN("D-pad Right"), LN("D-pad Down"), LN("Left stick Up"),
+    LN("Left stick Down"), LN("Left stick Left"), LN("Left stick Right"), LN("Right stick Up"),
+    LN("Right stick Down"), LN("Right stick Left"), LN("Right stick Right"),
 };
 // controller buttons by position (larecomp.ini)
 static const char *const k_pad_ini[PADB_HOST_COUNT] = {
@@ -57,28 +59,31 @@ const char *bind_input_name(int slot) { return slot >= 0 && slot < BIND_KEY_COUN
 // fam: 0 Nintendo, 1 Xbox (and pads SDL labels like one), 2 PlayStation
 const char *bind_pad_label(int host, int fam) {
     static const char *const nin[PADB_HOST_COUNT] = {
-        "B", "A", "Y", "X", "Minus", "Home", "Plus", "Left stick press", "Right stick press", "L", "R",
-        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Capture", "Right paddle 1", "Left paddle 1",
-        "Right paddle 2", "Left paddle 2", "Touchpad", "Misc 2", "Misc 3", "Misc 4", "Misc 5", "Misc 6", "ZL", "ZR",
+        "B", "A", "Y", "X", LN("Minus"), LN("Home"), LN("Plus"), LN("Left stick press"), LN("Right stick press"),
+        "L", "R", LN("D-pad Up"), LN("D-pad Down"), LN("D-pad Left"), LN("D-pad Right"), LN("Capture"),
+        LN("Right paddle 1"), LN("Left paddle 1"), LN("Right paddle 2"), LN("Left paddle 2"), LN("Touchpad"),
+        LN("Misc 2"), LN("Misc 3"), LN("Misc 4"), LN("Misc 5"), LN("Misc 6"), "ZL", "ZR",
     };
     static const char *const xb[PADB_HOST_COUNT] = {
-        "A", "B", "X", "Y", "View", "Xbox", "Menu", "LS (press)", "RS (press)", "LB", "RB",
-        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Share", "Paddle P1", "Paddle P3",
-        "Paddle P2", "Paddle P4", "Touchpad", "Misc 2", "Misc 3", "Misc 4", "Misc 5", "Misc 6", "LT", "RT",
+        "A", "B", "X", "Y", LN("View"), "Xbox", LN("Menu"), LN("LS (press)"), LN("RS (press)"), "LB", "RB",
+        LN("D-pad Up"), LN("D-pad Down"), LN("D-pad Left"), LN("D-pad Right"), LN("Share"), LN("Paddle P1"),
+        LN("Paddle P3"), LN("Paddle P2"), LN("Paddle P4"), LN("Touchpad"), LN("Misc 2"), LN("Misc 3"), LN("Misc 4"),
+        LN("Misc 5"), LN("Misc 6"), "LT", "RT",
     };
     static const char *const ps[PADB_HOST_COUNT] = {
-        "Cross", "Circle", "Square", "Triangle", "Create", "PS", "Options", "L3", "R3", "L1", "R1",
-        "D-pad Up", "D-pad Down", "D-pad Left", "D-pad Right", "Mute", "Right back button", "Left back button",
-        "Right Fn", "Left Fn", "Touchpad", "Misc 2", "Misc 3", "Misc 4", "Misc 5", "Misc 6", "L2", "R2",
+        LN("Cross"), LN("Circle"), LN("Square"), LN("Triangle"), LN("Create"), "PS", LN("Options"), "L3", "R3", "L1",
+        "R1", LN("D-pad Up"), LN("D-pad Down"), LN("D-pad Left"), LN("D-pad Right"), LN("Mute"),
+        LN("Right back button"), LN("Left back button"), LN("Right Fn"), LN("Left Fn"), LN("Touchpad"), LN("Misc 2"),
+        LN("Misc 3"), LN("Misc 4"), LN("Misc 5"), LN("Misc 6"), "L2", "R2",
     };
-    if (host < 0 || host >= PADB_HOST_COUNT) return "(none)";
+    if (host < 0 || host >= PADB_HOST_COUNT) return LN("(none)");
     return fam == 1 ? xb[host] : fam == 2 ? ps[host] : nin[host];
 }
 
 const char *bind_key_label(int sc) {
-    if (sc <= 0 || sc >= SDL_SCANCODE_COUNT) return "(none)";
+    if (sc <= 0 || sc >= SDL_SCANCODE_COUNT) return LN("(none)");
     const char *n = SDL_GetScancodeName((SDL_Scancode)sc);
-    return n && *n ? n : "(unnamed key)";
+    return n && *n ? n : LN("(unnamed key)");
 }
 
 int bind_label_family(void) {

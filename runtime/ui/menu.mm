@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "imgui.h"
+#include "i18n.h"
 #include "option_rows.h"
 #include "imgui_internal.h"  // (NavCursorVisible)
 #include "osk.h"
@@ -23,6 +24,7 @@
 #else
 #include "imgui_impl_vulkan.h"
 extern "C" bool vk_imgui_backend_init(void);  // runtime/nvn/vulkan/imgui_glue.cpp
+extern "C" void vk_imgui_fonts_rebuild(void);
 // runtime/nvn/vulkan/device.c: the command buffer ImGui records into (a secondary one the recorder thread executes in
 // the window image's commands, or that buffer itself after the recorder caught up), then handed back
 extern "C" void *vk_overlay_begin(void *window_cmd);
@@ -34,6 +36,7 @@ extern "C" float g_vk_scene_uv[4];
 extern "C" {
 #include "../hle.h"
 #include "../settings.h"
+#include "../menu_sfx.h"
 #include "menu.h"
 void input_reset(void);
 void save_editor_draw(float scale);  // save_editor.mm
@@ -49,7 +52,9 @@ bool rando_tab_took_back(void);  // rando_tab.mm: B went back a step in the righ
 bool save_editor_took_back(void);  // save_editor.mm (the same)
 bool warp_tab_took_back(void);  // warp_tab.mm (the same)
 #include "../input_bind.h"
+#include "../livesplit.h"
 #include "../paths.h"
+#include "../rando.h"
 }
 
 // ------------------------------------------------------------------ state shared with the main thread
@@ -86,6 +91,7 @@ void menu_tabs_focus(bool first_tab);
 static void set_open(bool open) {
     if (open == g_open.load()) return;
     g_open.store(open);
+    menu_sfx_play(open ? MENU_SFX_OPEN : MENU_SFX_CLOSE);
     input_reset();  // nothing held while the menu had focus leaks into the game
     bind_capture_cancel();
     if (open) {
@@ -389,18 +395,12 @@ static void style_parchment(ImGuiStyle &s) {
 }
 
 
-#ifdef __APPLE__
-static void init(id<MTLDevice> dev) {
-#else
-static void init(void) {
-#endif
-    IMGUI_CHECKVERSION();
-    g_ctx = ImGui::CreateContext();
-    ImGui::SetCurrentContext(g_ctx);
+// The fonts, with the glyphs of the menus' language (i18n.h): again when it changes
+static void load_fonts(void) {
     ImGuiIO &io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
-    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
-    io.IniFilename = NULL;
+    io.Fonts->Clear();
+    g_font = g_font_big = g_menu_font = g_menu_font_big = NULL;
+    i18n_fonts_stale(io.Fonts);
     ImFontConfig cfg;
     cfg.OversampleH = 2;
     char dejavu[1024];  // none of the system's: the bundled DejaVu Sans (third_party/fonts/DejaVu, in every release)
@@ -412,20 +412,44 @@ static void init(void) {
         if (!p) continue;
         if (FILE *f = fopen(p, "rb")) fclose(f);  // a missing file is an assertion in ImGui, not a NULL return
         else continue;
-        if (!g_font) g_font = io.Fonts->AddFontFromFileTTF(p, 34, &cfg);
-        if (g_font && !g_font_big) { ImFontConfig b = cfg; b.FontNo = 0; g_font_big = io.Fonts->AddFontFromFileTTF(p, 56, &b); }
+        if (!g_font) g_font = io.Fonts->AddFontFromFileTTF(p, 34, &cfg, i18n_glyph_ranges()), i18n_merge_fonts(io.Fonts, 34);
+        if (g_font && !g_font_big) {
+            ImFontConfig b = cfg;
+            b.FontNo = 0;
+            g_font_big = io.Fonts->AddFontFromFileTTF(p, 56, &b, i18n_glyph_ranges());
+            i18n_merge_fonts(io.Fonts, 56);
+        }
     }
     // the menu window itself: Baloo 2 SemiBold, as on the start screen (shipped, OFL), at its Settings window's sizes; the
     // FPS counter, overlays and on-screen keyboard keep the fonts above
     char baloo[1024];
     if (const char *f = getenv("LARECOMP_MENU_FONT")) strlcpy(baloo, f, sizeof baloo);  // (test) another weight / face
     if (getenv("LARECOMP_MENU_FONT") || rt_resource("Baloo2-SemiBold.ttf", "third_party/fonts/Baloo2/Baloo2-SemiBold.ttf", baloo, sizeof baloo)) {
-        g_menu_font = io.Fonts->AddFontFromFileTTF(baloo, 39, &cfg);
-        g_menu_font_big = io.Fonts->AddFontFromFileTTF(baloo, 72, &cfg);
+        g_menu_font = io.Fonts->AddFontFromFileTTF(baloo, 39, &cfg, i18n_glyph_ranges());
+        i18n_merge_fonts(io.Fonts, 39, 0.8f);
+        g_menu_font_big = io.Fonts->AddFontFromFileTTF(baloo, 72, &cfg, i18n_glyph_ranges());
+        i18n_merge_fonts(io.Fonts, 72, 0.8f);
     }
-    if (!g_font) g_font = io.Fonts->AddFontDefault();
+    if (!g_font) g_font = io.Fonts->AddFontDefault(), i18n_merge_fonts(io.Fonts, 13);
     if (!g_font_big) g_font_big = g_font;
     if (!g_menu_font || !g_menu_font_big) g_menu_font = g_font, g_menu_font_big = g_font_big;
+}
+
+#ifdef __APPLE__
+static id<MTLDevice> g_dev;  // (the font texture again: load_fonts)
+static void init(id<MTLDevice> dev) {
+    g_dev = dev;
+#else
+static void init(void) {
+#endif
+    IMGUI_CHECKVERSION();
+    g_ctx = ImGui::CreateContext();
+    ImGui::SetCurrentContext(g_ctx);
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+    io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
+    io.IniFilename = NULL;
+    load_fonts();
     style_init();
 #ifdef __APPLE__
     ImGui_ImplMetal_Init(dev);
@@ -460,12 +484,12 @@ static void tab_display(void) {
     float scale = ImGui::GetFontSize() / 34;
     opt_begin("##video", scale);
     opt_section("Display");
-    const char *aspects[] = {"Unlocked", "Original 16:9"};
+    const char *aspects[] = {LN("Unlocked"), LN("Original 16:9")};
     opt_choice("Aspect ratio", &g_settings.aspect, aspects, 2, ASPECT_UNLOCKED,
-               "Unlocked: the view fills the window, so wider (or taller) windows show more of the island - up to "
-               "ultrawide; houses and dungeons keep their framing. Original 16:9: the game's own framing, with bars.");
+               "Unlocked fills the window and shows more of the island on wide screens, up to ultrawide. Original keeps "
+               "the game's 16:9 view with bars.");
     bool fs = g_settings.fullscreen;
-    if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. Also: F11, Alt+Enter or Cmd+Ctrl+F.")) {
+    if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. You can also press F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
@@ -479,7 +503,8 @@ static void tab_display(void) {
     // display order -> RES_* (the ini / enum order predates the menu order)
     // (up to 4x: 7680 x 4320, 8K - more only ran out of GPU memory, and sat next to 75% in the list)
     // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then 1x-4x; user 2026-10-11)
-    static const char *res[] = {"25%", "50%", "75%", "Match display", "Dynamic", "1x", "2x", "3x", "4x"};
+    static const char *res[] = {LN("25%"), LN("50%"), LN("75%"), LN("Match display"), LN("Dynamic"),
+                                LN("1x"), LN("2x"), LN("3x"), LN("4x")};
     static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2, 3, 4};
     enum { RES_MATCH_AT = 3 };
     enum { NRES = sizeof res_mode / sizeof res_mode[0] };
@@ -491,40 +516,49 @@ static void tab_display(void) {
         }
         float sx, sy;
         renderer_get_scale(&sx, &sy);
-        char d[400];
-        int n = snprintf(d, sizeof d, "How sharp the 3D image is. Match display: your screen's own resolution. Dynamic: "
-                                      "as sharp as your GPU keeps at full speed. 1x-4x: the Switch's 1080p times that%s. "
-                                      "75%% / 50%% / 25%%: a share of the display, for slower machines.\n\nRendering at "
-                                      "%.0f x %.0f.", g_gpu_integrated ? " (1x: 720p on this GPU)" : "", 1920.0 * sx, 1080.0 * sy);
-        if (g_settings.res_mode == RES_DYNAMIC)
-            snprintf(d + n, sizeof d - n, " Dynamic: %.0f%% of the display right now.", output_scale_dynamic_factor() * 100);
+        char d[1024];  // (in the menus' language already: the row leaves it as it is)
+        int n = snprintf(d, sizeof d,
+                         g_gpu_integrated
+                             ? L("How sharp the 3D image is. Match display uses your screen's resolution, and Dynamic "
+                                 "goes as sharp as your GPU can at full speed. 1x to 4x multiply the Switch's 1080p, and "
+                                 "1x is 720p on this GPU. 75%%, 50%% and 25%% are for slower machines.\n\nRendering at "
+                                 "%.0f x %.0f.")
+                             : L("How sharp the 3D image is. Match display uses your screen's resolution, and Dynamic "
+                                 "goes as sharp as your GPU can at full speed. 1x to 4x multiply the Switch's 1080p. 75%%, "
+                                 "50%% and 25%% are for slower machines.\n\nRendering at %.0f x %.0f."),
+                         1920.0 * sx, 1080.0 * sy);
+        if (g_settings.res_mode == RES_DYNAMIC && n > 0 && n < (int)sizeof d) {
+            char dyn[256];
+            snprintf(dyn, sizeof dyn, L("Dynamic is at %.0f%% of the display right now."), output_scale_dynamic_factor() * 100);
+            snprintf(d + n, sizeof d - n, " %s", dyn);
+        }
         if (opt_choice("Internal resolution", &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__
-        static const char *ups[] = {"Bilinear", "MetalFX"};
-        const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. MetalFX: Apple's "
-                         "upscaler, sharper. Bilinear: plain and soft.";
+        static const char *ups[] = {LN("Bilinear"), LN("MetalFX")};
+        const char *ud = LN("How the picture is scaled up when it renders below your window's resolution. MetalFX is "
+                            "Apple's upscaler and looks sharper, Bilinear is plain and soft.");
 #else
-        static const char *ups[] = {"Bilinear", "AMD FSR 1"};
-        const char *ud = "How the image is scaled up to the window when it renders at a lower resolution. AMD FSR 1: "
-                         "edge-aware upscaling and sharpening, sharper. Bilinear: plain and soft.";
+        static const char *ups[] = {LN("Bilinear"), LN("AMD FSR 1")};
+        const char *ud = LN("How the picture is scaled up when it renders below your window's resolution. AMD FSR 1 "
+                            "sharpens edges as it scales, Bilinear is plain and soft.");
 #endif
         int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
-        char udm[512];
+        char udm[1024];
         if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
-            snprintf(udm, sizeof udm, "%s\n\nNot used at Match display: the game already renders at your display's resolution.", ud);
+            snprintf(udm, sizeof udm, "%s\n\n%s", L(ud),
+                     L("Does nothing at Match display, since the game already renders at your screen's resolution."));
             ud = udm;
             opt_disable_next();
         }
         if (opt_choice("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
             g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR, g_settings.upscaler_auto = false;
     }
-    static const char *aa[] = {"Off", "SMAA"};
+    static const char *aa[] = {LN("Off"), LN("SMAA")};
     opt_choice("Anti-aliasing", &g_settings.antialias, aa, 2, AA_OFF,
-               "Smooths jagged edges of the game image before it is scaled to the window. SMAA: finds the edges and "
-               "blends only along them, so textures stay sharp. Most useful at a lower internal resolution.");
+               "Smooths jagged edges. SMAA keeps textures sharp and helps most at a lower internal resolution.");
 
     opt_section("Game");
     opt_toggle("Remove blur", &g_settings.blur_removal, false,
@@ -537,29 +571,38 @@ static void tab_display(void) {
 extern "C" bool cosmetics_seed_on(void);  // runtime/cosmetics_seed.c
 
 // Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c), and recolours by draw (runtime/nvn/recolour*.c);
-// a seed made with "Random cosmetics" fills the rows left on Default (shown as "Seed: <colour>")
+// a seed made with "Random cosmetics" has its own, and the page is locked while it's played (rows greyed out, showing
+// the seed's): the player's own choices stay saved for another seed or vanilla
 static void tab_cosmetics(void) {
     opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
-                         &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water};
-    if (opt_button("Randomize all", "Every color below gets a random color."))
-        for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
-    if (opt_button("Default all", "Everything on this page back to the game's own look.")) {
-        for (CosColour *c : rows) c->pick = COL_DEFAULT;
-        g_settings.enemy_colours = 0;
-        g_settings.screen_filter = 0;
+                         &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
+                         &g_settings.fences, &g_settings.walls, &g_settings.houses};
+    bool seed = cosmetics_seed_on();
+    if (seed) {
+        opt_disable_next();
+        opt_action("This seed picked your look. Commit to it!", "", NULL, false);
+    } else {
+        if (opt_button("Randomize all", "Picks a random color for everything below."))
+            for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
+        if (opt_button("Default all", "Puts everything on this page back to the game's normal look.")) {
+            for (CosColour *c : rows) c->pick = COL_DEFAULT;
+            g_settings.enemy_colours = 0;
+            g_settings.screen_filter = 0;
+        }
     }
     opt_section("Colors");
-    opt_colour("Tunic color", &g_settings.tunic, COL_SLOT_TUNIC,
-               "Link's tunic color. Default: the game's own (or the randomizer seed's).");
+    opt_colour("Tunic color", &g_settings.tunic, COL_SLOT_TUNIC, "Link's tunic color.");
     opt_colour("Heart color", &g_settings.hearts, COL_SLOT_HEARTS, "The color of the hearts on the HUD.");
     opt_colour("Hair color", &g_settings.hair, COL_SLOT_HAIR, "Link's hair color.");
     opt_colour("Body color", &g_settings.skin, COL_SLOT_SKIN, "Link's body color.");  // (larecomp.ini: skin)
     opt_colour("Shield color", &g_settings.shield, COL_SLOT_SHIELD, "The color of Link's shield.");
     opt_section("Overworld");
     {   // Season: fills Leaves, Grass and Sand at once (palette: Orange 2, Gold 3, Pink 9, White 10; Water stays out: it
-        // has no season, and white water would read as ice); "Mixed" when they match none
-        static const char *const names[] = {"Spring", "Autumn", "Winter", "Cherry blossom", "Mixed"};
+        // has no season, and white water would read as ice; nor fences, walls or houses: wood and stone have none);
+        // "Mixed" when they match none
+        static const char *const names[] = {LN("Spring"), LN("Autumn"), LN("Winter"),
+                                             LN("Cherry blossom"), LN("Mixed")};
         static const int preset[4][3] = {{COL_DEFAULT, COL_DEFAULT, COL_DEFAULT}, {2, 3, 3}, {10, 10, 10},
                                          {9, COL_DEFAULT, COL_DEFAULT}};
         int cur = 4;  // (as shown: a row on Default shows the seed's colour, if it has its own)
@@ -569,6 +612,7 @@ static void tab_cosmetics(void) {
                 col_pick(&g_settings.sand, COL_SLOT_SAND) == preset[i][2])
                 cur = i;
         int v = cur;
+        if (seed) opt_disable_next();
         if (opt_choice("Season", &v, names, 5, 0, "Sets the leaves, grass and sand colors below.") && v != cur) {
             if (v == 4) v = cur == 0 ? 3 : 0;  // (Mixed is never chosen: past the ends, back round)
             g_settings.leaves.pick = preset[v][0];
@@ -578,19 +622,24 @@ static void tab_cosmetics(void) {
     }
     opt_colour("Leaves color", &g_settings.leaves, COL_SLOT_LEAVES, "The overworld's tree leaves and bushes.");
     opt_colour("Grass color", &g_settings.grass, COL_SLOT_GRASS, "The overworld's grass.");
-    opt_colour("Sand color", &g_settings.sand, COL_SLOT_SAND, "The beaches, the desert and the sandy south.");
+    opt_colour("Sand color", &g_settings.sand, COL_SLOT_SAND, "The beaches, the desert and other sandy ground.");
     opt_colour("Water color", &g_settings.water, COL_SLOT_WATER, "The sea, rivers, ponds, waterfalls and dungeon water.");
+    opt_colour("Fence color", &g_settings.fences, COL_SLOT_FENCES, "The wooden fences.");
+    opt_colour("Wall color", &g_settings.walls, COL_SLOT_WALLS, "The overworld's cliff walls and ledges.");
+    opt_colour("House color", &g_settings.houses, COL_SLOT_HOUSES, "The roofs of the village houses.");
     opt_section("Enemies");
-    {   // (Off in a seed with its own cosmetics: "Seed", its enemies are per seed)
+    {   // (a seed with its own cosmetics: "Seed", its enemies are per seed; and no screen filter)
         const char *modes[N_ENEMY_COLOUR_MODES];
         for (int i = 0; i < N_ENEMY_COLOUR_MODES; i++) modes[i] = g_enemy_colour_modes[i];
-        if (cosmetics_seed_on()) modes[0] = "Seed";
-        opt_choice("Enemy colors", &g_settings.enemy_colours, modes, N_ENEMY_COLOUR_MODES, 0,
-                   "Each kind of enemy in another color. Enemies whose color shows their strength or type keep theirs.");
+        int shown = 0;
+        if (seed) modes[0] = LN("Seed"), opt_disable_next();
+        opt_choice("Enemy colors", seed ? &shown : &g_settings.enemy_colours, modes, N_ENEMY_COLOUR_MODES, 0,
+                   "Gives each kind of enemy a new color. Enemies whose color shows how strong they are keep theirs.");
+        opt_section("Screen");
+        if (seed) opt_disable_next();
+        opt_choice("Screen filter", seed ? &shown : &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
+                   "Puts a filter over the whole screen, HUD included.");
     }
-    opt_section("Screen");
-    opt_choice("Screen filter", &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
-               "A filter over the whole picture, the HUD included.");
     opt_end();
 }
 
@@ -599,12 +648,12 @@ static void tab_audio(void) {
     opt_section("Sound");
     float pct = roundf(g_settings.volume * 100);
     if (opt_slider("Volume", &pct, 0, 200, 5, 100, "%g%%",
-                   "The game's volume. 100% is the game's own level; above it, louder."))
+                   "The game's volume. 100% is normal, higher is louder."))
         g_settings.volume = pct / 100.0f;
     opt_toggle("Room reverb", &g_settings.reverb, true,
                "The game's echo in caves, dungeons and big rooms.");
     opt_toggle("Movie audio", &g_settings.movie_audio, true,
-               "Sound in the game's movies (the opening and the ending). Applies the next time a movie starts.");
+               "Sound in the opening and ending movies. Changes the next time a movie plays.");
     opt_end();
 }
 
@@ -615,18 +664,20 @@ static void tab_quit(float scale, bool in_game) {
     static int ask;  // 0: the two choices; 1: start screen?; 2: desktop?
     if (ask && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
         ask = 0;
-    const char *lost = in_game ? "\n\nProgress since your last save is lost." : "";
-    char d1[200], d2[200];
-    snprintf(d1, sizeof d1, "Leaves the game and goes back to the LAS Recomp start screen.%s", lost);
-    snprintf(d2, sizeof d2, "Closes LAS Recomp.%s", lost);
+    // (in the menus' language already: the rows leave them as they are)
+    const char *lost = in_game ? L("Progress since your last save is lost.") : "";
+    char d1[512], d2[512];
+    snprintf(d1, sizeof d1, "%s%s%s", L("Leaves the game and goes back to the LAS Recomp start screen."),
+             in_game ? "\n\n" : "", lost);
+    snprintf(d2, sizeof d2, "%s%s%s", L("Closes LAS Recomp."), in_game ? "\n\n" : "", lost);
     opt_begin("##quit", scale);
     opt_section("Quit");
     if (!ask) {
         if (!in_game) opt_disable_next();  // (already on it)
-        if (opt_action("Quit to Start Screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
-        if (opt_action("Quit to Desktop", "", d2)) ask = 2;
+        if (opt_action("Quit to start screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
+        if (opt_action("Quit to desktop", "", d2)) ask = 2;
     } else {
-        if (opt_action(ask == 1 ? "Yes, quit to Start Screen" : "Yes, quit to Desktop", "", ask == 1 ? d1 : d2)) {
+        if (opt_action(ask == 1 ? "Yes, quit to start screen" : "Yes, quit to desktop", "", ask == 1 ? d1 : d2)) {
             settings_save();
             if (ask == 1) {
                 rt_request_reboot(2);
@@ -641,6 +692,66 @@ static void tab_quit(float scale, bool in_game) {
         if (opt_action("Cancel", "", "Stays where you are.")) ask = 0;
     }
     opt_end();
+}
+
+// Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the Gameplay tab (but
+// its language and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio otherwise and the controls
+// stay. A seed being played ends: the game boots again without it (as the Randomizer tab's Switch to vanilla).
+static void reset_to_vanilla(void) {
+    Settings &s = g_settings;
+    s.aspect = ASPECT_ORIGINAL;
+    s.cheat_hookshot = s.no_buff_drops = s.mirror_mode = false;
+    s.walk_speed = 1.0f, s.walk_speed_dungeons = false;
+    s.diff_damage = 1.0f, s.diff_ohko = false;
+    s.timer = false, s.timer_pos = TIMER_POS_LEFT;
+    if (s.livesplit) s.livesplit = false, livesplit_poke();
+    s.cheat_hearts = s.cheat_ammo = s.cheat_rupees = false;
+    for (CosColour *c : {&s.tunic, &s.hearts, &s.hair, &s.skin, &s.shield, &s.leaves, &s.grass, &s.sand, &s.water,
+                         &s.fences, &s.walls, &s.houses})
+        c->pick = COL_DEFAULT;
+    s.enemy_colours = 0, s.screen_filter = 0;
+    LOG("[menu] reset to vanilla%s\n", rando_seed_dir() ? " (leaving the seed)" : "");
+    settings_save();
+    if (rando_seed_dir()) {
+        rando_select("");
+        rt_request_reboot(RT_REBOOT_GAME);
+        set_open(false);
+    }
+}
+
+static void vanilla_popup(float scale) {
+    // LARECOMP_MENU_VANILLA=ask / reset / cancel (test): the question opens with the menu; reset / cancel press that
+    // button a few frames later
+    static const char *test = getenv("LARECOMP_MENU_VANILLA");
+    static int test_frames;
+    if (test && !test_frames++) ImGui::OpenPopup("##vanilla");
+    bool test_reset = test && test_frames == 30 && !strcmp(test, "reset");
+    bool test_cancel = test && test_frames == 30 && !strcmp(test, "cancel");
+    if (!ImGui::BeginPopupModal("##vanilla", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        return;
+    ImGui::PushFont(g_font_big);
+    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Reset to vanilla?"));
+    ImGui::PopFont();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(L("This resets your settings to the vanilla game experience.\nYour controls stay as they are."));
+    if (rando_seed_dir()) {
+        ImGui::Spacing();
+        ImGui::TextUnformatted(L("This also ends the current randomizer seed.\nIts save files are kept."));
+    }
+    ImGui::Spacing();
+    ImGui::Spacing();
+    if (ImGui::Button(L("Reset"), ImVec2(220 * scale, 0)) || test_reset) {
+        ImGui::CloseCurrentPopup();
+        reset_to_vanilla();
+    }
+    ImGui::SameLine();
+    ImGui::SetItemDefaultFocus();
+    if (ImGui::Button(L("Cancel"), ImVec2(220 * scale, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false) || test_cancel) {
+        LOG("[menu] reset to vanilla cancelled\n");
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 extern "C" bool inventory_overlay_wanted(void);
@@ -702,7 +813,7 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
     ImGui::Begin("##kbd", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                     ImGuiWindowFlags_AlwaysAutoResize);
     ImGui::PushFont(g_font_big);
-    ImGui::TextColored(plastic_col(plastic_theme().title), "Enter your name");
+    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Enter your name"));
     ImGui::PopFont();
     static bool was_open, was_pad;
     bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
@@ -716,7 +827,7 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
                          [](ImGuiInputTextCallbackData *d) -> int { return d->EventChar < 0x20 ? 1 : 0; });
         ImGui::PopFont();
         int units = kbd_cut(g_kbd_text, g_kbd_max);
-        ImGui::TextDisabled("Enter  confirm      Esc  cancel      (%d / %d)", units, g_kbd_max);
+        ImGui::TextDisabled(L("Enter  confirm      Esc  cancel      (%d / %d)"), units, g_kbd_max);
     } else {  // controller: on-screen keyboard (osk.mm, shared with our menus' text fields)
         int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big);
         if (r) g_kbd = r > 0 ? 2 : 3;  // (Start / + confirms in menu_handle_event too)
@@ -796,9 +907,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     struct Tab { const char *name; int id; bool on; };
     Tab tabs[11];
     int ntabs = 0;
-    if (prelaunch) tabs[ntabs++] = {"Prelaunch", -1, true};
-    static const char *names[] = {"Video", "Audio", "Save Editor", "Randomizer", "Warp", "Cheats", "Gameplay",
-                                  "Cosmetics", "Controls", "Quit"};
+    if (prelaunch) tabs[ntabs++] = {LN("Game files"), -1, true};
+    static const char *names[] = {LN("Video"), LN("Audio"), LN("Save Editor"), LN("Randomizer"), LN("Warp"),
+                                  LN("Cheats"), LN("Gameplay"), LN("Cosmetics"), LN("Controls"), LN("Quit")};
     static const int order[] = {8, 0, 1, 6, 7, 3, 5, 4, 2, 9};  // Controls, Video, Audio, Gameplay, Cosmetics, Randomizer,
                                                                 // Cheats, Warp, Save Editor, Quit (ids stay: test hooks)
     for (int i : order)  // (Quit: in game only - the start screen has its own QUIT, and an eleventh tab cut names short)
@@ -808,6 +919,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     if (!tabs[cur].on) cur = 0;
     // L/R (or Q/E) switch tabs, skipping greyed-out ones (not while typing: Q / E are letters then, and the on-screen
     // keyboard has the controller)
+    static const int cycle = getenv("LARECOMP_MENU_TAB_CYCLE") ? atoi(getenv("LARECOMP_MENU_TAB_CYCLE")) : 0;
+    static int cycle_frames, cycle_i;  // (test) <frames>: each tab in turn, that many frames each (screenshot series)
+    if (cycle > 0 && cycle_frames++ % cycle == 0 && cycle_i < ntabs) g_tab_request_ext = tabs[cycle_i++].id;
     if (g_tab_request_ext >= 0) { g_tab_request = g_tab_request_ext; g_tab_request_ext = -1; }
     bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();
     static int focused_tab = -99;  // the tab the controller's cursor is on (from the frame before; -99: none)
@@ -824,6 +938,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             // had been)
             g_focus_tab = tabs[i].id, g_focus_frames = 0;
             switching = true;
+            menu_sfx_play(MENU_SFX_TAB);
         }
     }
     bool down = !any_popup && !typing && (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown) ||
@@ -870,8 +985,15 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         ImDrawList *dl = ImGui::GetWindowDrawList();
         float gap = 8 * scale, pad = 20 * scale, th = ImGui::GetFontSize() + 20 * scale;
         float tw[16], text_w[16], total = 0, avail = ImGui::GetContentRegionAvail().x - 4 * scale;
-        for (int k = 0; k < ntabs; k++) text_w[k] = ImGui::CalcTextSize(tabs[k].name).x, total += text_w[k] + (k ? gap : 0);
+        for (int k = 0; k < ntabs; k++) text_w[k] = ImGui::CalcTextSize(L(tabs[k].name)).x, total += text_w[k] + (k ? gap : 0);
         if (total + 2 * pad * ntabs > avail) pad = fmaxf((avail - total) / (2 * ntabs), 3 * scale);  // (a narrow window: tighter)
+        // still too wide (long names: Russian, German): the names a little smaller
+        float tfs = ImGui::GetFontSize(), names = total - gap * (ntabs - 1), room = avail - gap * (ntabs - 1) - (2 * pad + 2 * scale) * ntabs;
+        if (names > room && names > 0) {
+            float k = fmaxf(room / names, 0.6f);
+            tfs *= k;
+            for (int i = 0; i < ntabs; i++) text_w[i] *= k;
+        }
         for (int k = 0; k < ntabs; k++) tw[k] = text_w[k] + 2 * pad;
         if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 8;  // (no Prelaunch in game: Controls, the first tab)
         for (int k = 0; k < ntabs; k++) {
@@ -885,6 +1007,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             ImGui::PushID(t.id + 2);
             bool clicked = ImGui::InvisibleButton("##tab", ImVec2(tw[k], th),
                                                   ImGuiButtonFlags_EnableNav | ImGuiButtonFlags_PressedOnClick);
+            menu_sfx_tab_item();
             ImGui::PopID();
             ImGui::PopStyleColor();
             bool focus_here = g_focus_tab == t.id || (g_focus_tab == -100 && t.id == g_tab);
@@ -904,8 +1027,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             plastic_pill(dl, ImVec2(p.x, p.y + (sel ? 0 : 2 * scale)), ImVec2(p.x + tw[k], p.y + th - 2 * scale), 10 * scale, col,
                          (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
             ImU32 tc = sel ? pt.text_sel : t.on ? pt.text : pt.text_dim;
-            ImVec2 ts(text_w[k], ImGui::GetFontSize());
-            dl->AddText(ImVec2(p.x + (tw[k] - ts.x) * 0.5f, p.y + (th - ts.y) * 0.5f - (sel ? 2 : 1) * scale), tc, t.name);
+            ImVec2 ts(text_w[k], tfs);
+            dl->AddText(ImGui::GetFont(), tfs, ImVec2(p.x + (tw[k] - ts.x) * 0.5f, p.y + (th - ts.y) * 0.5f - (sel ? 2 : 1) * scale),
+                        tc, L(t.name));
             if (ImGui::IsItemFocused()) focused_tab = t.id;
             else if (focused_tab == t.id) focused_tab = -99;
             ImGui::EndDisabled();
@@ -929,7 +1053,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         case 1: tab_audio(); break;
         case 2:
             if (game_in_play()) save_editor_draw(scale);
-            else ImGui::TextDisabled("Load a save file and get into the game to edit it.");
+            else ImGui::TextDisabled("%s", L("Load a save to edit it."));
             break;
         case 3: rando_tab_draw(scale); break;
         case 4: if (warp_tab_draw(scale)) set_open(false); break;
@@ -1085,6 +1209,15 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         style_scale = scale;
     }
     ImGui::GetStyle() = ov_style;
+    if (i18n_fonts_stale(io.Fonts)) {  // (the Language setting changed: the glyphs of the new one)
+        load_fonts();
+#ifdef __APPLE__
+        ImGui_ImplMetal_DestroyFontsTexture();
+        ImGui_ImplMetal_CreateFontsTexture(g_dev);
+#else
+        vk_imgui_fonts_rebuild();
+#endif
+    }
 #ifdef __APPLE__
     ImGui_ImplMetal_NewFrame(rp);
 #else
@@ -1097,7 +1230,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::SetNextWindowBgAlpha(0.5f);
         ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        ImGui::Text("%.0f fps", g_ov_cache ? g_fps_shown : io.Framerate);
+        ImGui::Text(L("%.0f fps"), g_ov_cache ? g_fps_shown : io.Framerate);
         ImGui::End();
     }
 
@@ -1128,11 +1261,13 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         // header as on the start screen's Settings: the title, and a close X in the corner (B / Esc too). ("Title
         // screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user 2026-10-11.)
         ImGui::PushFont(g_font_big);
-        ImGui::TextColored(plastic_col(plastic_theme().title), "Settings");
+        ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Settings"));
         ImGui::PopFont();
         {
             float bx = 44 * scale;
             if (plastic_close_corner(bx, scale)) set_open(false);
+            if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
+            vanilla_popup(scale);
         }
 
         bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before the
@@ -1148,6 +1283,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         g_font_big = keep_big;
         ImGui::End();
         osk_draw(g_font_big, scale);  // (a text field activated with the controller)
+        menu_sfx_frame(true);
     }
 
     if (kbd) keyboard_draw(io, scale);

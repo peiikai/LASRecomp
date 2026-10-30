@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "i18n.h"
 #include "imgui.h"
 #include "option_rows.h"
 #include "osk.h"
@@ -42,7 +43,8 @@ static const char *current_level(void) {
 
 static bool matches(const WarpSpot &w, const char *f) {
     if (!*f) return true;
-    const char *fields[] = {w.area, w.label, w.level, w.locator};
+    // (the names as shown too: in the menus' language)
+    const char *fields[] = {w.area, w.label, w.level, w.locator, L(w.area), L_line(w.label).c_str()};
     for (const char *s : fields) {
         for (const char *p = s; *p; p++) {
             int i = 0;
@@ -57,14 +59,14 @@ static bool matches(const WarpSpot &w, const char *f) {
 static bool spot(const WarpSpot &w, bool show_area, bool enabled) {
     bool swim = warp_blocked(w.locator);
     enabled = enabled && !swim;
-    char lbl[256], desc[320];
-    if (show_area) snprintf(lbl, sizeof lbl, "%s  -  %s", w.area, w.label);
-    else snprintf(lbl, sizeof lbl, "%s", w.label);
-    snprintf(desc, sizeof desc, "%s%s / %s", !swim ? "" : strncmp(w.locator, "Warp_", 5)
-                 ? "Link arrives here swimming: needs the Flippers.\n\n" : "A Manbo's Mambo arrival point: can't be warped to directly.\n\n",
-             w.level, w.locator);
+    char lbl[512];  // (in the menus' language: the area and spot names are put together from parts, i18n.h)
+    if (show_area) snprintf(lbl, sizeof lbl, "%s  -  %s", L(w.area), L_line(w.label).c_str());
+    else snprintf(lbl, sizeof lbl, "%s", L_line(w.label).c_str());
+    const char *desc = !swim ? NULL : strncmp(w.locator, "Warp_", 5) ? LN("You arrive here swimming, so you need the Flippers.")
+                                      : LN("This is where Manbo's Mambo drops you. You can't warp here directly.");
     ImGui::PushID((int)(&w - kWarpSpots));  // (spot names repeat across levels)
     if (!enabled) opt_disable_next();
+    opt_shown_next();
     bool go = opt_action(lbl, "", desc, false);
     ImGui::PopID();
     if (go) {
@@ -125,7 +127,7 @@ extern "C" bool warp_tab_draw(float scale) {
     if (!area_ok) g_area = na ? areas[0].first : -1;
 
     if (!avail) {  // (no header line otherwise: the lists start at the top)
-        ImGui::TextDisabled("Load a save and get into the game to warp.");
+        ImGui::TextDisabled("%s", L("Load a save to warp."));
         ImGui::Spacing();
     }
 
@@ -175,10 +177,11 @@ extern "C" bool warp_tab_draw(float scale) {
     for (int k = 0; k < na; k++) {
         const Area &a = areas[k];
         char v[48];
-        snprintf(v, sizeof v, area_here(a, cur) ? "<- here   %d" : "%d", a.end - a.first);
+        snprintf(v, sizeof v, area_here(a, cur) ? L("<- here   %d") : "%d", a.end - a.first);
         if (g_in_right && a.first == g_area) opt_mark_next();
         ImGui::PushID(a.first);
-        bool open = opt_link(kWarpSpots[a.first].area, NULL, v);
+        opt_shown_next();  // (the area is translated below: the count as it is)
+        bool open = opt_link(L(kWarpSpots[a.first].area), NULL, v);
         ImGui::PopID();
         bool clicked = ImGui::IsItemClicked();
         if (a.first == g_area && g_focus == FOCUS_AREA) g_focus = FOCUS_NONE, opt_focus_item();
@@ -194,7 +197,7 @@ extern "C" bool warp_tab_draw(float scale) {
         int shown = 0;
         for (int i = 0; i < kNumSpots && shown < 300; i++)
             if (matches(kWarpSpots[i], g_filter)) { started |= spot(kWarpSpots[i], true, avail); shown++; }
-        if (!shown) ImGui::TextDisabled("No matches.");
+        if (!shown) ImGui::TextDisabled("%s", L("No matches."));
     } else if (g_area >= 0) {
         for (int k = g_area; k < kNumSpots && kWarpSpots[k].group == kWarpSpots[g_area].group &&
                              !strcmp(kWarpSpots[k].area, kWarpSpots[g_area].area); k++)

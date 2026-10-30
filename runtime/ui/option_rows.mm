@@ -14,7 +14,10 @@
 
 extern "C" {
 #include "../cosmetic_colour.h"
+#include "../input_bind.h"
+#include "../menu_sfx.h"
 }
+#include "i18n.h"
 #include "option_rows.h"
 #include "osk.h"
 #include "plastic.h"
@@ -107,8 +110,7 @@ void opt_begin(const char *id, float scale) {
 
 void opt_section(const char *title) {
     if (g_collect) return;
-    std::string t = title;
-    for (char &c : t) c = (char)toupper((unsigned char)c);
+    std::string t = i18n_upper(L(title));
     if (ImGui::GetCursorPosY() > ImGui::GetStyle().WindowPadding.y + 1) ImGui::Dummy(ImVec2(0, 10 * g_scale));
     ImGui::TextColored(plastic_col(plastic_theme().section), "%s", t.c_str());
 }
@@ -116,12 +118,20 @@ void opt_section(const char *title) {
 // One row: draws it, handles A / click and left / right while selected. Returns 2 (A / click), -1 / +1 (left / right) or 0.
 // arrows: ◀ value ▶ (a choice of several, or a stepper): left / right step it, and the arrows click too
 // chevron: a ">" on the right (opt_link)
-static int row(const char *label, const std::string &value, bool changed, const char *desc, bool upper = true,
+// The label, value and description are English (i18n.h): shown in the menus' language. The label stays the row's id.
+static bool g_value_shown;  // (the next row's value is already in the menus' language: a number put in L(fmt), a name)
+static bool g_label_shown;  // (opt_shown_next: the label too)
+void opt_shown_next(void) { g_value_shown = g_label_shown = true; }
+static int row(const char *label, const std::string &value_en, bool changed, const char *desc_en, bool upper = true,
                bool arrows = false, bool chevron = false) {
     bool lr = arrows || g_lr_row;
     g_lr_row = false;
+    const std::string &value = g_value_shown ? value_en : L_line(value_en);
+    const char *desc = L(desc_en);
+    const char *label_shown = g_label_shown ? label : L(label);
+    g_value_shown = g_label_shown = false;
     if (g_collect) {
-        if (!g_next_disabled && !g_next_own && !value.empty()) g_collect->push_back({label, value, changed, g_indent});
+        if (!g_next_disabled && !g_next_own && !value.empty()) g_collect->push_back({label_shown, value, changed, g_indent});
         g_next_disabled = g_next_mark = g_next_warn = g_row_button = g_next_own = false;
         g_half = 0;
         return 0;
@@ -165,6 +175,7 @@ static int row(const char *label, const std::string &value, bool changed, const 
     g_next_disabled = g_next_mark = g_next_warn = g_next_own = false;
     bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible;
     int step = clicked && !off ? 2 : 0;
+    if (clicked && off) menu_sfx_play(MENU_SFX_BEEP);  // (greyed out: can't change)
     g_held = false;
     if (foc && !off) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft) ||
@@ -202,14 +213,11 @@ static int row(const char *label, const std::string &value, bool changed, const 
     plastic_pill(dl, ImVec2(p.x + 3 * g_scale, p.y + 1 * g_scale), ImVec2(p.x + w - 8 * g_scale, p.y + h - 3 * g_scale),
                  h * 0.5f, col, dep, sel || button ? 1.0f : 0.6f, g_scale, sel && !off);
     float lpad = h * 0.66f;  // (the label clear of the pill's rounded end)
-    std::string t = label;
-    if (upper)
-        for (char &c : t) c = (char)toupper((unsigned char)c);
+    std::string t = upper ? i18n_upper(label_shown) : std::string(label_shown);
     float ty = p.y + (h - fs) * 0.5f - 1 * g_scale;
     bool light = !off && (sel || button);
     ImU32 on_col = sel ? pt.text_sel : pt.text_button;  // (text on the selection / on a button)
     ImU32 label_col = off ? pt.text_dim : light ? on_col : pt.text;
-    dl->AddText(ImVec2(p.x + lpad, ty), label_col, t.c_str());
     float right = p.x + w - pad - 14 * g_scale;  // (the value's right edge)
     ImU32 ac = off ? pt.text_dim : light ? on_col : pt.arrow;  // (arrows, chevron)
     if (arrows && !value.empty()) {  // ◀ value ▶, drawn (the fonts have no arrow glyphs); a click on one steps
@@ -229,21 +237,49 @@ static int row(const char *label, const std::string &value, bool changed, const 
         const ImVec2 pts[] = {ImVec2(right - cw, cy - cw * 1.1f), ImVec2(right, cy), ImVec2(right - cw, cy + cw * 1.1f)};
         dl->AddPolyline(pts, 3, ac, 0, 2.6f * g_scale);
         right -= cw + fs * 0.55f;
-        if (step == 1) step = 2;  // (Right opens it too)
+        if (step == 1) step = 2, menu_sfx_play(MENU_SFX_DECIDE);  // (Right opens it too)
     }
     if (!value.empty()) {
         float vw = ImGui::CalcTextSize(value.c_str()).x, vx = right - vw;
         ImU32 vc = off ? pt.text_dim : light ? on_col : changed ? pt.value_changed : pt.value;
         dl->AddText(ImVec2(vx, ty), vc, value.c_str());
+        right = vx;
+    }
+    {   // the label, clear of the value: a long one (German, French) a little smaller, then cut short with "..."
+        float room = right - (p.x + lpad) - fs * (value.empty() && !chevron && !arrows ? 0.2f : 0.7f);
+        float lw = ImGui::CalcTextSize(t.c_str()).x, lfs = fs;
+        if (lw > room && room > 0) lfs = fmaxf(fs * 0.78f, fs * room / lw);
+        float lty = ty + (fs - lfs) * 0.55f;
+        if (lw * lfs / fs <= room || room <= 0) {
+            dl->AddText(ImGui::GetFont(), lfs, ImVec2(p.x + lpad, lty), label_col, t.c_str());
+        } else {
+            const char *end = t.c_str() + t.size();
+            float ew = ImGui::GetFont()->CalcTextSizeA(lfs, FLT_MAX, 0, "...").x;
+            while (end > t.c_str() && ImGui::GetFont()->CalcTextSizeA(lfs, FLT_MAX, 0, t.c_str(), end).x + ew > room) {
+                do end--; while (end > t.c_str() && (*end & 0xC0) == 0x80);  // (a whole UTF-8 character)
+            }
+            std::string cut = std::string(t.c_str(), end) + "...";
+            static std::unordered_map<std::string, bool> cut_logged;  // (test: names too long for their row, once each)
+            bool &logged = cut_logged[t];
+            if (!logged && getenv("LARECOMP_I18N_MISSING")) logged = true, fprintf(stderr, "[i18n] cut: \"%s\"\n", t.c_str());
+            dl->AddText(ImGui::GetFont(), lfs, ImVec2(p.x + lpad, lty), label_col, cut.c_str());
+        }
     }
     if (dup) ImGui::PopID();
     ImGui::PopID();
     return step;
 }
 
+// a value stepped with left / right: the cursor sound (A / click: menu_sfx_frame's decide)
+static void step_sfx(int step) {
+    if (step == 1 || step == -1) menu_sfx_play(MENU_SFX_CURSOR);
+}
+
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc) {
     g_lr_row = true;  // (left / right flip it)
-    if (!row(label, *v ? "On" : "Off", *v != def, desc)) return false;  // (any step flips it)
+    int step = row(label, *v ? LN("On") : LN("Off"), *v != def, desc);
+    if (!step) return false;  // (any step flips it)
+    step_sfx(step);
     *v = !*v;
     return true;
 }
@@ -255,26 +291,31 @@ bool opt_choice(const char *label, int *v, const char *const *names, int n, int 
     int nv = cur + (step == 2 ? 1 : step);
     nv = wrap ? (nv + n) % n : nv < 0 ? 0 : nv >= n ? n - 1 : nv;
     if (nv == cur) return false;
+    step_sfx(step);
     *v = nv;
     return true;
 }
 
 bool opt_slider(const char *label, float *v, float lo, float hi, float step, float def, const char *fmt, const char *desc) {
-    char buf[32];
-    snprintf(buf, sizeof buf, fmt, *v);
+    char buf[64];
+    snprintf(buf, sizeof buf, L(fmt), *v);
+    g_value_shown = true;
     int s = row(label, buf, fabsf(*v - def) > step * 0.01f, desc, true, true);
     if (!s) return false;
     float eps = step * 0.01f, n = roundf(*v / step) * step + (s == 2 ? step : s * step);
     if (s == 2 && n > hi + eps) n = lo;  // (A / click past the top wraps to the bottom; left / right stop at the ends)
-    *v = n < lo ? lo : n > hi ? hi : n;
+    n = n < lo ? lo : n > hi ? hi : n;
+    if (fabsf(n - *v) > eps) step_sfx(s);
+    *v = n;
     return true;
 }
 
 bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const char *fmt, const char *desc,
              const char *lo_name) {
-    char buf[48];
-    if (lo_name && *v == lo) snprintf(buf, sizeof buf, "%s", lo_name);
-    else snprintf(buf, sizeof buf, fmt, *v);
+    char buf[96];
+    if (lo_name && *v == lo) snprintf(buf, sizeof buf, "%s", L(lo_name));
+    else snprintf(buf, sizeof buf, L(fmt), *v);
+    g_value_shown = true;
     int s = row(label, buf, *v != def, desc, true, true);
     if (!s) return false;
     int d = s == 2 ? step : s * step * (g_held && hi - lo > 40 * step ? 10 : 1);
@@ -282,6 +323,7 @@ bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const
     if (s == 2 && n > hi) n = lo;  // (A / click past the top wraps; left / right stop at the ends)
     n = n < lo ? lo : n > hi ? hi : n;
     if (n == *v) return false;
+    step_sfx(s);
     *v = n;
     return true;
 }
@@ -315,12 +357,19 @@ bool opt_colour(const char *label, CosColour *c, int slot, const char *desc) {
     int prev = c->pick;
     const char *names[N_COL];
     for (int i = 0; i < N_COL; i++) names[i] = g_col_names[i];
-    char seed[48];
-    int sp = col_pick(c, slot);  // (Default: the seed's own colour, shown as such)
+    char seed[96], hexs[16];
+    int sp = col_pick(c, slot);
     uint32_t srgb = 0;  // (the seed's own colours are any colour: shown as #RRGGBB)
-    if (sp == COL_CUSTOM && col_seed_rgb(c, slot, &srgb)) snprintf(seed, sizeof seed, "Seed: #%06X", (unsigned)srgb);
-    else if (c->pick == COL_DEFAULT && sp != COL_DEFAULT) snprintf(seed, sizeof seed, "Seed: %s", g_col_names[sp]);
-    if (c->pick == COL_DEFAULT && sp != COL_DEFAULT) names[0] = seed;
+    if (sp == COL_CUSTOM && col_seed_rgb(c, slot, &srgb))
+        snprintf(hexs, sizeof hexs, "#%06X", (unsigned)srgb), snprintf(seed, sizeof seed, L("Seed: %s"), hexs);
+    else if (col_seed_rgb(c, slot, &srgb)) snprintf(seed, sizeof seed, L("Seed: %s"), L(g_col_names[sp]));
+    else seed[0] = 0;
+    if (seed[0]) {  // (the seed's own colour: locked, greyed out)
+        opt_disable_next();
+        g_value_shown = true;
+        opt_action(label, seed, desc, true, true);
+        return false;
+    }
     bool changed = opt_choice(label, &c->pick, names, N_COL, COL_DEFAULT, desc);
     if (g_collect) return false;
     if (changed && c->pick == COL_CUSTOM && prev != COL_CUSTOM)  // (Custom starts from the colour it was on)
@@ -330,7 +379,8 @@ bool opt_colour(const char *label, CosColour *c, int slot, const char *desc) {
     char hex[16];
     snprintf(hex, sizeof hex, "#%06X", (unsigned)(c->rgb & 0xFFFFFF));
     opt_indent(1);
-    bool open = opt_action("Custom color", hex, "Any color: pick its hue, saturation and brightness.", true, true);
+    g_value_shown = true;
+    bool open = opt_action("Custom color", hex, "Pick any color by hue, saturation and brightness.", true, true);
     opt_indent(-1);
     ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
     {   // a swatch of it, left of the value
@@ -357,7 +407,7 @@ bool opt_colour(const char *label, CosColour *c, int slot, const char *desc) {
             c->rgb = (uint32_t)lroundf(f[0] * 255) << 16 | (uint32_t)lroundf(f[1] * 255) << 8 | (uint32_t)lroundf(f[2] * 255);
             changed = true;
         }
-        if (ImGui::Button("Done", ImVec2(ImGui::GetFontSize() * 11, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        if (ImGui::Button(L("Done"), ImVec2(ImGui::GetFontSize() * 11, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -379,14 +429,15 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
     static int focus;        // frames left to give it the keyboard focus
     ImGuiID id = ImGui::GetID(label);
     if (editing != id || g_collect) {
-        if (row(label, buf[0] ? buf : (hint ? hint : ""), false, desc) == 2) editing = id, focus = 2;
+        g_value_shown = true;  // (what was typed, as typed)
+        if (row(label, buf[0] ? buf : (hint ? L(hint) : ""), false, desc) == 2) editing = id, focus = 2;
         return false;
     }
     ImGui::PushID(label);
     ImGui::SetNextItemWidth(-1);
     if (focus > 0) ImGui::SetKeyboardFocusHere(), focus--;
-    bool done = ui_input_text("##text", buf, cap, ImGuiInputTextFlags_EnterReturnsTrue, hint, label);
-    if (ImGui::IsItemFocused()) g_desc_focus = desc ? desc : "";
+    bool done = ui_input_text("##text", buf, cap, ImGuiInputTextFlags_EnterReturnsTrue, L(hint), L(label));
+    if (ImGui::IsItemFocused()) g_desc_focus = desc ? L(desc) : "";
     if (done || ui_input_text_cancelled() || (focus == 0 && !ImGui::IsItemActive() && !osk_is_open())) editing = 0;
     ImGui::PopID();
     return done;
@@ -535,3 +586,37 @@ static int g_collect_indent;  // (the pane's indent, kept while the rows are rea
 void opt_collect_begin(std::vector<OptLine> *out) { g_collect = out, g_collect_indent = g_indent, g_indent = 0; }
 bool opt_collecting(void) { return g_collect != NULL; }
 void opt_collect_end(void) { g_collect = NULL, g_indent = g_collect_indent; }
+
+// The menu's sounds this frame (menu_sfx.h): what the controller's cursor and the presses did. Value steps, greyed-out
+// rows (above), tab switches and the menu opening / closing (menu.mm) play theirs where they happen.
+static ImGuiID g_tab_ids[16];  // (the menu tabs drawn this frame)
+static int g_ntab_ids;
+extern "C" void menu_sfx_tab_item(void) {
+    if (g_ntab_ids < 16) g_tab_ids[g_ntab_ids++] = ImGui::GetItemID();
+}
+static bool is_tab(ImGuiID id) {
+    for (int i = 0; i < g_ntab_ids; i++)
+        if (g_tab_ids[i] == id) return true;
+    return false;
+}
+
+extern "C" void menu_sfx_frame(bool back_ok) {
+    ImGuiContext &g = *ImGui::GetCurrentContext();
+    static ImGuiContext *ctx;  // (the start screen's and the game's overlay are two)
+    static ImGuiID last;
+    if (ctx != &g) ctx = &g, last = 0;
+    int cap = -1;
+    bind_capture_active(&cap, NULL, NULL);
+    if (!ui_text_busy() && cap < 0) {
+        if (back_ok && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
+            menu_sfx_play(MENU_SFX_CANCEL);
+        else if (g.NavActivatePressedId || (ImGui::IsMouseClicked(0) && g.HoveredId))
+            menu_sfx_play(is_tab(g.NavActivatePressedId ? g.NavActivatePressedId : g.HoveredId) ? MENU_SFX_TAB
+                                                                                                : MENU_SFX_DECIDE);
+        else if (g.NavCursorVisible && g.NavId && last && g.NavId != last)
+            menu_sfx_play(MENU_SFX_CURSOR);
+    }
+    last = g.NavId;
+    g_ntab_ids = 0;
+    menu_sfx_idle_check();
+}

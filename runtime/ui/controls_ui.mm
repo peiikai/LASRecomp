@@ -10,6 +10,7 @@
 
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetFocusID, NavCursorVisible)
+#include "i18n.h"
 #include "option_rows.h"
 
 extern "C" {
@@ -22,7 +23,7 @@ void input_apply_background(void);
 
 // ------------------------------------------------------------------ Configure inputs: what's on it
 enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, N_CAT };
-static const char *const k_cat_name[N_CAT] = {"Buttons", "Triggers", "Sticks", "D-pad"};
+static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad")};
 static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad"};  // (LARECOMP_CONTROLS_SUB)
 
 struct Bind { int slot; const char *label; const char *section; };  // section: a header before this row
@@ -31,17 +32,23 @@ static int cat_rows(int cat, bool pad, Bind *out) {
     auto add = [&](int slot, const char *label, const char *section = NULL) { out[n++] = {slot, label, section}; };
     switch (cat) {
     case CAT_BUTTONS:
-        add(BIND_A, "A"), add(BIND_B, "B"), add(BIND_X, "X"), add(BIND_Y, "Y"), add(BIND_PLUS, "Plus"),
-            add(BIND_MINUS, "Minus");
+        add(BIND_A, "A"), add(BIND_B, "B"), add(BIND_X, "X"), add(BIND_Y, "Y"), add(BIND_PLUS, LN("Plus")),
+            add(BIND_MINUS, LN("Minus"));
         break;
     case CAT_TRIGGERS: add(BIND_L, "L"), add(BIND_R, "R"), add(BIND_ZL, "ZL"), add(BIND_ZR, "ZR"); break;
     case CAT_STICKS:  // (a controller's sticks stay its sticks: only their presses are buttons)
-        add(BIND_LSTICK, "Press", "Left stick");
-        if (!pad) add(BIND_LS_UP, "Up"), add(BIND_LS_DOWN, "Down"), add(BIND_LS_LEFT, "Left"), add(BIND_LS_RIGHT, "Right");
-        add(BIND_RSTICK, "Press", "Right stick");
-        if (!pad) add(BIND_RS_UP, "Up"), add(BIND_RS_DOWN, "Down"), add(BIND_RS_LEFT, "Left"), add(BIND_RS_RIGHT, "Right");
+        add(BIND_LSTICK, LN("Press"), LN("Left stick"));
+        if (!pad)
+            add(BIND_LS_UP, LN("Up")), add(BIND_LS_DOWN, LN("Down")), add(BIND_LS_LEFT, LN("Left")),
+                add(BIND_LS_RIGHT, LN("Right"));
+        add(BIND_RSTICK, LN("Press"), LN("Right stick"));
+        if (!pad)
+            add(BIND_RS_UP, LN("Up")), add(BIND_RS_DOWN, LN("Down")), add(BIND_RS_LEFT, LN("Left")),
+                add(BIND_RS_RIGHT, LN("Right"));
         break;
-    case CAT_DPAD: add(BIND_UP, "Up"), add(BIND_DOWN, "Down"), add(BIND_LEFT, "Left"), add(BIND_RIGHT, "Right"); break;
+    case CAT_DPAD:
+        add(BIND_UP, LN("Up")), add(BIND_DOWN, LN("Down")), add(BIND_LEFT, LN("Left")), add(BIND_RIGHT, LN("Right"));
+        break;
     }
     return n;
 }
@@ -66,13 +73,13 @@ static int list_devices(Device *d, int cap) {
     for (int i = 0; i < np && n < cap - 1; i++) {
         const char *nm = SDL_GetGamepadNameForID(ids[i]);
         d[n].id = ids[i], d[n].pad = true, d[n].fam = pad_fam(ids[i]);
-        snprintf(d[n].name, sizeof d[n].name, "%s", nm && *nm ? nm : "Controller");
+        snprintf(d[n].name, sizeof d[n].name, "%s", nm && *nm ? nm : LN("Controller"));
         if (strlen(d[n].name) > 30) strcpy(d[n].name + 27, "...");  // (fits beside DEVICE)
         n++;
     }
     SDL_free(ids);
-    if (!n) d[n].id = 0, d[n].pad = true, d[n].fam = pad_fam(0), snprintf(d[n].name, sizeof d[n].name, "Controller"), n++;
-    d[n].id = 0, d[n].pad = false, d[n].fam = 0, snprintf(d[n].name, sizeof d[n].name, "Keyboard"), n++;
+    if (!n) d[n].id = 0, d[n].pad = true, d[n].fam = pad_fam(0), snprintf(d[n].name, sizeof d[n].name, LN("Controller")), n++;
+    d[n].id = 0, d[n].pad = false, d[n].fam = 0, snprintf(d[n].name, sizeof d[n].name, LN("Keyboard")), n++;
     return n;
 }
 
@@ -122,8 +129,8 @@ static void watch_results(int fam, char *msg, size_t cap) {
     seen = serial;
     msg[0] = 0;
     if (kind == 2)
-        snprintf(msg, cap, "%s moved to %s (swapped).", bind_input_name(rother),
-                 rdev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[rother], fam) : bind_key_label(g_bind_key[rother]));
+        snprintf(msg, cap, L("Swapped. %s is on %s now."), L(bind_input_name(rother)),
+                 L(rdev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[rother], fam) : bind_key_label(g_bind_key[rother])));
     if (kind == 1 || kind == 2 || kind == 5) settings_save();
 }
 
@@ -194,7 +201,7 @@ static void configure_inputs(float scale) {
             if (b.section) opt_section(b.section);
             bool waiting = cd == dev && cs == b.slot;
             char val[64];
-            if (waiting) snprintf(val, sizeof val, "%s...  %d", g_dev_pad ? "Press a button" : "Press a key", (ms + 999) / 1000);
+            if (waiting) snprintf(val, sizeof val, g_dev_pad ? L("Press a button...  %d") : L("Press a key...  %d"), (ms + 999) / 1000);
             else snprintf(val, sizeof val, "%s", g_dev_pad ? bind_pad_label(g_bind_pad[b.slot], fam) : bind_key_label(g_bind_key[b.slot]));
             // the same button / key on two inputs (a hand-edited larecomp.ini): red
             const int16_t *t = g_dev_pad ? g_bind_pad : g_bind_key;
@@ -214,7 +221,7 @@ static void configure_inputs(float scale) {
             }
         }
         g_in_right = in_right;
-        if (cd == dev) ImGui::TextDisabled("Esc cancels.");
+        if (cd == dev) ImGui::TextDisabled("%s", L("Esc cancels."));
         else if (msg[0]) ImGui::TextDisabled("%s", msg);
     }
     opt_split_end();
@@ -252,8 +259,8 @@ extern "C" void controls_tab_draw(float scale) {
 
     opt_begin("##controls", scale);
     opt_section("Inputs");
-    if (opt_link("Configure inputs", "Choose the buttons and keys for the game. The menu always opens with F1, Esc, "
-                                     "Home or Back + Start, so no binding can lock you out.")) {
+    if (opt_link("Configure inputs", "Set the buttons and keys for the game. F1, Esc, Home or Back + Start always "
+                                     "open this menu.")) {
         pick_device(keyboard_pressed());
         g_sub = true, g_focus = FOCUS_DEVICE, g_in_right = false;
     }
@@ -264,14 +271,14 @@ extern "C" void controls_tab_draw(float scale) {
         input_apply_background();
 
     opt_section("Movement");
-    opt_toggle("D-pad moves Link", &g_settings.dpad_move, false, "The d-pad moves Link like the control stick.");
+    opt_toggle("D-pad moves Link", &g_settings.dpad_move, false, "Move Link with the D-pad as well as the stick.");
     opt_toggle("360-degree movement", &g_settings.move_360, false,
                "Link walks in the exact direction of the stick instead of snapping to 8 directions.");
 
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "Controller vibration.");
     if (g_settings.rumble) {
-        static const char *const pct[] = {"25%", "50%", "75%", "100%"};
+        static const char *const pct[] = {LN("25%"), LN("50%"), LN("75%"), LN("100%")};
         int i = g_settings.rumble_strength / 25 - 1;
         if (i < 0 || i > 3) i = 3;
         opt_indent(1);
@@ -281,17 +288,18 @@ extern "C" void controls_tab_draw(float scale) {
     }
     opt_toggle("Controller light", &g_settings.controller_light, true, "The light bar shows Link's health.");
     {
-        static const char *const fam[] = {"Nintendo", "Xbox", "PlayStation"};
-        char autol[64];
-        snprintf(autol, sizeof autol, "Auto (%s)", fam[input_pad_family() % 3]);
-        const char *names[] = {autol, "Nintendo", "Xbox", "PlayStation"};
+        static const char *const fam[] = {LN("Nintendo"), LN("Xbox"), LN("PlayStation")};
+        char autol[64];  // (in the menus' language already: the row leaves it as it is)
+        snprintf(autol, sizeof autol, L("Auto (%s)"), L(fam[input_pad_family() % 3]));
+        const char *names[] = {autol, LN("Nintendo"), LN("Xbox"), LN("PlayStation")};
         opt_choice("Button icons", &g_settings.prompts, names, 4, PROMPTS_AUTO,
-                   "The button icons the game shows. Auto: the connected controller's.");
+                   "Which button icons the game shows. Auto matches the controller you have plugged in.");
     }
     {
-        static const char *const names[] = {"Game layout", "Controller convention"};
+        static const char *const names[] = {LN("Nintendo layout"), LN("Bottom button")};
         opt_choice("Confirm button", &g_settings.menu_confirm, names, 2, MENU_CONFIRM_CONTROLLER,
-                   "Which button confirms in LAS Recomp's menus.");
+                   "Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, "
+                   "Bottom button uses the bottom one like Xbox and PlayStation.");
     }
 
     opt_end();

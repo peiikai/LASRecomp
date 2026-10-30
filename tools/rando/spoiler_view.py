@@ -61,8 +61,6 @@ def pretty_item(it):
         kind = {'small-key': 'Small Key', 'key': 'Small Key', 'nightmare-key': 'Nightmare Key', 'compass': 'Compass',
                 'map': 'Dungeon Map', 'stone-beak': 'Stone Beak', 'beak': 'Stone Beak'}[m.group(2)]
         return f'{kind} ({DPREFIX[m.group(1)]})'
-    if re.match(r'^keyring-D\d$', base):  # (key rings: key_rings.py)
-        return f'Key Ring ({DPREFIX[base[-2:]]})'
     m = re.match(r'^(small-key|key|nightmare-key|compass|map|stone-beak)-?(D\d)$', base)
     if m:
         return pretty_item(f'{m.group(2)}-{m.group(1)}')

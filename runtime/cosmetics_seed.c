@@ -1,8 +1,9 @@
 // The randomizer seed's own cosmetics (Randomizer tab "Random cosmetics", seed option "random-cosmetics"): a seed
 // made with it has its own set, picked from its seed (the same every time it's played): a fully random colour (any
-// hue, saturation and brightness) for each of the tunic, hearts, hair, skin, shield, leaves, grass, sand and water, and
-// enemy colours "per seed" (the screen filter stays off: it isn't a colour). Only while that seed is being played (never in vanilla), and only for
-// Cosmetics rows left on Default / Off: whatever the player chose in the Cosmetics tab wins.
+// hue, saturation and brightness) for each of the tunic, hearts, hair, skin, shield, leaves, grass, sand, water,
+// fences, walls and houses, and enemy colours "per seed" (the screen filter stays off: it isn't a colour). Only while
+// that seed is being played (never in vanilla), over whatever the player chose: the Cosmetics tab is locked meanwhile
+// (the player's own choices stay saved, and are back in another seed or vanilla).
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #include "cosmetic_colour.h"
 #include "hle.h"
 #include "rando.h"
+#include "settings.h"
 
 static char g_dir[300] = "\1";  // (the seed the picks were made for; seeds switch in place)
 static uint32_t g_rgb[COL_SLOTS];  // (0xRRGGBB, one per row)
@@ -22,8 +24,14 @@ static uint32_t mix32(uint32_t h) {
 
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;  // (draws on the render thread, the menu on the UI's)
 
+// On the start screen: the seed PLAY would start (g_settings.rando_seed), read from its folder - rando_seed_dir() would
+// apply its patches before the game is loaded (the Cosmetics tab's colour rows crashed there; hookshot.c does the same)
+extern int g_start_screen;  // warp.c
 static void refresh_locked(void) {
-    const char *dir = rando_seed_dir();
+    char sdir[256];
+    const char *dir = NULL;
+    if (!g_start_screen) dir = rando_seed_dir();
+    else if (g_settings.rando_seed[0]) dir = (snprintf(sdir, sizeof sdir, "rando/%s", g_settings.rando_seed), sdir);
     if (!strcmp(dir ? dir : "", g_dir)) return;
     snprintf(g_dir, sizeof g_dir, "%s", dir ? dir : "");
     g_on = false;
@@ -57,7 +65,7 @@ static int seed_pick(int slot, uint32_t *rgb) {
     return p;
 }
 
-// The seed has its own cosmetics (enemy colours "per seed" while the row is Off)
+// The seed has its own cosmetics (the Cosmetics tab is locked; enemy colours "per seed", no screen filter)
 bool cosmetics_seed_on(void) {
     pthread_mutex_lock(&g_lock);
     refresh_locked();

@@ -8,8 +8,11 @@
 #include <strings.h>
 #include <time.h>
 
-const char *const g_col_names[N_COL] = {"Default", "Red",   "Orange", "Gold",  "Brown",  "Green",  "Teal", "Blue",
-                                        "Purple",  "Pink",  "White",  "Black", "Silver", "Random", "Custom"};
+#include "i18n_mark.h"
+
+const char *const g_col_names[N_COL] = {LN("Default"), LN("Red"),   LN("Orange"), LN("Gold"),   LN("Brown"),
+                                        LN("Green"),   LN("Teal"),  LN("Blue"),   LN("Purple"), LN("Pink"),
+                                        LN("White"),   LN("Black"), LN("Silver"), LN("Random"), LN("Custom")};
 const uint32_t g_col_rgb[N_COL] = {0,        0xD63A3A, 0xF08A24, 0xE8B830, 0x7A4A28, 0x3FA34D, 0x22A7A0, 0x2F6FD6,
                                    0x8A4FD8, 0xE86AA8, 0xF2F0EA, 0x2A2A2E, 0xA9B0B8, 0,        0};
 
@@ -40,7 +43,8 @@ void col_format(const CosColour *c, char *out, size_t n) {
 int (*g_col_seed_pick)(int slot, uint32_t *rgb);
 
 static int seed_pick(const CosColour *c, int slot, uint32_t *rgb) {
-    if (c->pick != COL_DEFAULT || !g_col_seed_pick) return COL_DEFAULT;
+    (void)c;  // (the seed's colour wins over the player's: the Cosmetics tab is locked while it's played)
+    if (!g_col_seed_pick) return COL_DEFAULT;
     uint32_t v = 0;
     int p = g_col_seed_pick(slot, &v);
     if (p > COL_DEFAULT && p < COL_RANDOM) v = g_col_rgb[p];
@@ -60,6 +64,7 @@ bool col_target(const CosColour *c, int slot, uint32_t *rgb) {
     static int picks[COL_SLOTS];
     static unsigned seed;
     if (slot < 0 || slot >= COL_SLOTS) return false;
+    if (col_seed_rgb(c, slot, rgb)) return true;  // (the seed's colour, if it has its own)
     if (c->pick != COL_RANDOM) picks[slot] = 0;
     if (c->pick == COL_CUSTOM) { *rgb = c->rgb & 0xFFFFFF; return true; }
     if (c->pick == COL_RANDOM) {
@@ -71,7 +76,6 @@ bool col_target(const CosColour *c, int slot, uint32_t *rgb) {
         *rgb = g_col_rgb[picks[slot]];
         return true;
     }
-    if (col_seed_rgb(c, slot, rgb)) return true;  // (Default: the seed's colour, if it has one)
     int p = c->pick;
     if (p <= COL_DEFAULT || p >= COL_RANDOM) return false;
     *rgb = g_col_rgb[p];

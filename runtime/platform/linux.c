@@ -302,12 +302,15 @@ static void log_to_file_without_terminal(void) {
 
 #if defined(__x86_64__)
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
-// with an illegal instruction on an older CPU.
+// with an illegal instruction on an older CPU. Without a terminal also in a message box, as on Windows: the log line
+// alone looks like the app never started.
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    fprintf(stderr, "FATAL: LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or "
-                    "newer).\n");
+    static const char msg[] = "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or "
+                              "newer).";
+    fprintf(stderr, "FATAL: %s\n", msg);
+    if (g_log_path[0]) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
     exit(1);
 }
 #else

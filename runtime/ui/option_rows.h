@@ -25,7 +25,8 @@ bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const
 // a Cosmetics colour row (the shared palette, runtime/cosmetic_colour.h): Default, the named colours, Random, Custom;
 // with Custom, a row under it shows the colour and opens a colour picker. True when the colour changed.
 struct CosColour;
-// slot: the row (COL_SLOT_*): on Default it shows the randomizer seed's colour as "Seed: <colour>" when it has one.
+// slot: the row (COL_SLOT_*): when the randomizer seed has its own colour, the row shows it as "Seed: <colour>",
+// greyed out.
 bool opt_colour(const char *label, CosColour *c, int slot, const char *desc);
 // an action: true when activated
 bool opt_button(const char *label, const char *desc);
@@ -51,6 +52,9 @@ void opt_mark_next(void);
 void opt_warn_next(void);
 void opt_button_next(void);  // the next row (one with a value too, or a text row) as a button
 void opt_own_next(void);  // the next row is the player's own setting, not part of a seed: the summary leaves it out
+// the next row's label and value are already in the menus' language (i18n.h: put together with L_line, or the
+// player's own text): shown as they are
+void opt_shown_next(void);
 // rows after this sit one step in (+1) or back out (-1): options that belong to the row above
 void opt_indent(int step);
 void opt_end(void);

@@ -230,6 +230,12 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    if (getenv("LARECOMP_MENU_SFX_TEST")) {  // (test: the menu sounds loaded now, each logged)
+        extern void menu_sfx_set_game_dir(const char *dir);
+        extern void menu_sfx_load_now(void);
+        menu_sfx_set_game_dir(root);
+        menu_sfx_load_now();
+    }
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");

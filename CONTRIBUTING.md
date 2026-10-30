@@ -101,6 +101,9 @@ The comparison checks every generated C file byte-for-byte.
 
 ## Tests
 
+New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
+untranslated text shows in English.
+
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 
 Build-cache regression tests use synthetic inputs and the production scheduler:
