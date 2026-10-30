@@ -328,7 +328,8 @@ static void create_device(void) {
     if (g_vk.custom_border) ext[n_ext++] = VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME;
     g_vk.divisor = has_ext(ep, ne, VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME);
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
-    g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
+    g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) &&  // guest heap as a GPU buffer (exec.c)
+                       !getenv("LARECOMP_VK_NO_HOST_IMPORT");  // (test: a driver without it, like panvk, issue #483)
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
@@ -454,6 +455,20 @@ static void create_device(void) {
         ext[n_ext++] = VK_EXT_MAP_MEMORY_PLACED_EXTENSION_NAME;
     }
 #endif
+    // what the guest heap's GPU paths can use, and the memory types they choose from (issue #483: panvk)
+    LOG("[vk] optional: host import %d, dma-buf %d, placed mapping %d, custom border %d, divisor %d\n", g_vk.host_import,
+        g_vk.dmabuf, g_vk.map_placed, g_vk.custom_border, g_vk.divisor);
+    {
+        VkPhysicalDeviceMemoryProperties mp;
+        vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+        for (uint32_t i = 0; i < mp.memoryTypeCount; i++) {
+            VkMemoryPropertyFlags f = mp.memoryTypes[i].propertyFlags;
+            LOG("[vk] memory type %u: heap %u (%llu MB)%s%s%s%s\n", i, mp.memoryTypes[i].heapIndex,
+                (unsigned long long)(mp.memoryHeaps[mp.memoryTypes[i].heapIndex].size >> 20),
+                f & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT ? " device-local" : "", f & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT ? " host-visible" : "",
+                f & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT ? " coherent" : "", f & VK_MEMORY_PROPERTY_HOST_CACHED_BIT ? " cached" : "");
+        }
+    }
     bool probe;
     g_vk.lazy_heap = lazy_heap_predicted(budget, &probe);
     g_vk.heap_probe = !g_vk.lazy_heap && probe && g_vk.host_import && have12.bufferDeviceAddress;

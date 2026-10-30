@@ -3677,13 +3677,15 @@ static void heap_unmap_placed(void) {
 
 static bool guest_heap_dmabuf(void) {
     if (gmem_buf || !g_vk.dev || !(g_vk.dmabuf || g_vk.map_placed) || getenv("LARECOMP_VK_NO_GMEM")) return false;
+    // (RADV, and any driver without host import - panvk, issue #483 - where this is the only GPU path to the heap)
     const char *e = getenv("LARECOMP_VK_HEAP_DMABUF");
-    if (e ? !atoi(e) : !strstr(g_vk.props.deviceName, "RADV")) return false;
+    if (e ? !atoi(e) : !strstr(g_vk.props.deviceName, "RADV") && g_vk.host_import) return false;
     const uint64_t size = HEAP_MAX;
     VkPhysicalDeviceMemoryProperties mp;
     vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+    // (cached: the game's CPU work runs in it; LARECOMP_VK_HEAP_UNCACHED=1 takes uncached memory to test the visuals)
     const VkMemoryPropertyFlags want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
-                                       VK_MEMORY_PROPERTY_HOST_CACHED_BIT;  // (cached: the game's CPU work runs in it)
+                                       (getenv("LARECOMP_VK_HEAP_UNCACHED") ? 0 : VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
     int type = -1, largest_type = -1;
     uint64_t largest = 0;  // (the largest heap with a cached host-visible type, for the log when none is big enough)
     for (uint32_t i = 0; i < mp.memoryTypeCount && type < 0; i++) {
@@ -3860,6 +3862,12 @@ static VkDescriptorBufferInfo gmem_info(void) {
         off = 1;
     }
     if (gmem_buf) return (VkDescriptorBufferInfo){gmem_buf, 0, gmem_size};
+    static bool told;
+    if (!told && !gc_lazy && !getenv("LARECOMP_VK_NO_GMEM")) {
+        told = true;
+        LOG("[vk] no GPU path to the guest heap (no host import or driver memory here): shader global memory reads "
+            "return zero, and things drawn from it are missing\n");
+    }
     static uint32_t zero[1024];
     VkSpan s = vk_transient_copy(zero, sizeof zero, 256);
     return (VkDescriptorBufferInfo){s.buf, s.off, sizeof zero};
