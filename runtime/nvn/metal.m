@@ -1286,8 +1286,10 @@ static void compose(id<MTLCommandBuffer> cb, NvnTexture *t, id<MTLTexture> dst, 
     id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rp];
     double dw = dst.width, dh = dst.height;
     extern uint64_t renderer_gpu_busy(id<MTLCommandBuffer> done, bool win);
+    extern uint64_t g_gpu_interp_ns;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {  // (the upscale / scaling draw and the menu: the window's part)
-        renderer_gpu_busy(done, true);
+        uint64_t ns = renderer_gpu_busy(done, true);
+        if (!update) __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED);  // (an in-between's)
     }];
     if (update) {
         // Next frame's render resolution follows the window: the 1920x1080 image scaled to fit.
@@ -2015,13 +2017,38 @@ static bool ip_present(NvnTexture *t, uint64_t frame, bool repeat) {
     present_tail(t, frame);
     int mids = 0;
     for (int i = 0; i < n; i++) mids += sh[i].t != 1.0f;
+    // The GPU's time goes to the game's frames first: in-betweens only in what a game frame leaves of its interval
+    // (the game's own GPU time, pace.c; an in-between's, replay and compose). Made anyway, they held the game at 30
+    // (5120x1440 on an M3 Max: the game 13 ms a frame, an in-between 7 + 3 ms) - three in-betweens of a 30 fps game
+    // instead of the game's own 60. Too few fit: spread evenly over the interval. LARECOMP_INTERP_GPU_BUDGET=0: all made.
+    int allowed = mids;
+    {
+        static int budget_on = -1;
+        if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
+        extern double pace_gpu_frame_ms(void);
+        double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
+        double D = s1 > s0 ? (s1 - s0) / 1e6 : 16.667;
+        if (D < 16.667) D = 16.667;
+        if (D > 50) D = 50;
+        if (budget_on && game >= 0 && img > 0) {
+            double left = 0.9 * D - game;
+            allowed = left > 0 ? (int)(left / img) : 0;
+            if (allowed > mids) allowed = mids;
+        }
+    }
     if (mids && interp_replay_lock()) {
+        int mid_i = 0;
         float nsx, nsy, nax = g_al_x, nay = g_al_y;
         renderer_get_scale(&nsx, &nsy);
         renderer_set_scale(rsx, rsy);
         renderer_set_alloc_scale(rax, ray);
         for (int i = 0; i < n; i++) {
             if (sh[i].t == 1.0f) continue;
+            int m = mid_i++;  // (the k-th of `allowed` evenly through the mids: 1 of 3 is the middle one)
+            if (allowed < mids && (m * allowed + mids / 2) / mids == ((m + 1) * allowed + mids / 2) / mids) {
+                interp_note_no_gpu();
+                continue;
+            }
             // The game's own frames come first: while a game thread waits for this thread (a fence, a full queue,
             // the next present), the rest of this frame's in-betweens are left out - made anyway, they held the game
             // back and it fell to 30 or 20 frames a second, with more in-betweens per frame to make at that rate

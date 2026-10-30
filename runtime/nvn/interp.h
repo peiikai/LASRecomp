@@ -71,7 +71,9 @@ int interp_schedule(uint64_t s0, uint64_t s1, uint64_t now, uint64_t phase, uint
 // Stats (any thread) and the pacer: the render thread's time in replays (rqueue.c's waits take it out of busy time).
 void interp_replay_gpu(double ms);
 void interp_compose_gpu(double ms);
+double interp_image_gpu_ms(void);  // an in-between's GPU time, replay and compose (moving average; -1: none yet)
 uint64_t interp_replay_ns(uint64_t now);
 void interp_log_stats(void);  // (render thread, per game frame) a line every LARECOMP_INTERP_LOG seconds (default 2)
 void interp_note_skipped(void);  // (stats) an in-between not made: no free image slot
 void interp_note_given_way(void);  // (stats) ... a game thread was waiting for the render thread
+void interp_note_no_gpu(void);     // (stats) ... no GPU time left for it in the game's frame

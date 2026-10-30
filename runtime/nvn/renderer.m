@@ -162,9 +162,12 @@ static double stat_gpu_s;
 // GPU busy time (dynamic resolution: output_scale.c; the "gpu" of the [metal] stats line), ns so far: the game's
 // command buffers, the window image's (metal.m backend_present), and the plain sum of their spans (diagnostics)
 uint64_t g_gpu_total_ns, g_gpu_win_ns, g_gpu_sum_ns;
-// Frame pacing (pace.c): the GPU's busy time so far, the game's command buffers and the window image's (renderer_gpu_busy).
+uint64_t g_gpu_interp_ns;  // (the part of both that made frame interpolation's in-betweens: replays and their composes)
+// Frame pacing (pace.c): the GPU's busy time so far, the game's command buffers and the window image's (renderer_gpu_busy)
+// - without the in-betweens': they give way to the game's frames (metal.m ip_present), so they must not hold it at 30.
 int64_t pace_gpu_ns(void) {
-    return (int64_t)(__atomic_load_n(&g_gpu_total_ns, __ATOMIC_RELAXED) + __atomic_load_n(&g_gpu_win_ns, __ATOMIC_RELAXED));
+    return (int64_t)(__atomic_load_n(&g_gpu_total_ns, __ATOMIC_RELAXED) + __atomic_load_n(&g_gpu_win_ns, __ATOMIC_RELAXED) -
+                     __atomic_load_n(&g_gpu_interp_ns, __ATOMIC_RELAXED));
 }
 // (forward: texture-lifetime cleanup and stats, defined further down)
 static int g_views_live;
@@ -612,8 +615,9 @@ void renderer_submit(void) {
         bool replay = g_interp_replaying;
         [c addCompletedHandler:^(id<MTLCommandBuffer> done) {
             // (frame interpolation's replays count as the game's work: Dynamic budgets the frame and its in-betweens)
-            stat_gpu_s += renderer_gpu_busy(done, false) / 1e9;
-            if (replay) interp_replay_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3);
+            uint64_t ns = renderer_gpu_busy(done, false);
+            stat_gpu_s += ns / 1e9;
+            if (replay) { interp_replay_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
             if (done.error) LOG("[metal] command buffer error: %s\n", done.error.localizedDescription.UTF8String);
         }];
         [c commit];

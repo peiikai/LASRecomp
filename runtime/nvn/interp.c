@@ -517,20 +517,24 @@ static int blend_stages(void) {
 
 // ---- stats (per log period)
 static uint64_t s_frames, s_draws, s_matched, s_changed, s_cut_cbs, s_blended_cbs, s_cuts[9], s_frame_no;
-static uint64_t s_shots, s_mids, s_late, s_skipped, s_gave_way;
+static uint64_t s_shots, s_mids, s_late, s_skipped, s_gave_way, s_no_gpu;
 static double s_replay_cpu, s_replay_cpu_max, s_prep, s_L, s_replay_gpu, s_compose_gpu;
 static _Atomic uint64_t s_gpu_n, s_compose_n;
 static uint64_t s_replays;
 static const char *const cut_name[9] = {"level/forced", "no previous frame", "few matches", "jumps", "object freed", "loading/hitch", "camera jump", "game ahead", "storage rewritten"};
 
+static double img_replay_ms = -1, img_compose_ms = -1;  // (moving averages: an in-between's GPU time)
 void interp_replay_gpu(double ms) {  // (completion handlers)
     atomic_fetch_add(&s_gpu_n, 1);
     s_replay_gpu += ms;
+    img_replay_ms = img_replay_ms < 0 ? ms : img_replay_ms + (ms - img_replay_ms) * 0.1;
 }
 void interp_compose_gpu(double ms) {
     atomic_fetch_add(&s_compose_n, 1);
     s_compose_gpu += ms;
+    img_compose_ms = img_compose_ms < 0 ? ms : img_compose_ms + (ms - img_compose_ms) * 0.1;
 }
+double interp_image_gpu_ms(void) { return img_replay_ms < 0 ? -1 : img_replay_ms + (img_compose_ms > 0 ? img_compose_ms : 0); }
 
 
 static void log_cut(int why, const char *more) {
@@ -1273,6 +1277,7 @@ int interp_schedule(uint64_t s0u, uint64_t s1u, uint64_t nowu, uint64_t phaseu, 
 
 void interp_note_skipped(void) { s_skipped++; }
 void interp_note_given_way(void) { s_gave_way++; }
+void interp_note_no_gpu(void) { s_no_gpu++; }
 
 void interp_log_stats(void) {
     static double every = -1, last;
@@ -1290,11 +1295,11 @@ void interp_log_stats(void) {
     for (int i = 0; i < 9; i++)
         if (s_cuts[i]) o += snprintf(cuts + o, sizeof cuts - (size_t)o, " %s %llu", cut_name[i], (unsigned long long)s_cuts[i]);
     LOG("[interp] %s: %.1f game frames/s, draws %.0f/frame matched %.1f%% (by object %.0f/f, by content %.0f/f, by order %.1f/f, new objects %.1f/f), buffers blended %.0f/f jumps %.0f/f (+%.0f/f with their class), toggling elements %.0f/image, whole-number %.0f, wraps %.1f, discontinuities %.1f, rotations %.0f (switched %.1f), split buffers %.1f/f, reused %.0f/image | images "
-        "%.1f/s planned (in-between %.1f/s), late %llu, skipped %llu, gave way %llu | replay cpu %.2f ms avg %.2f max, gpu %.2f ms; "
+        "%.1f/s planned (in-between %.1f/s), late %llu, skipped %llu, gave way %llu, no GPU time %llu | replay cpu %.2f ms avg %.2f max, gpu %.2f ms; "
         "present pass gpu %.2f ms; prep %.2f ms/f | latency %.1f ms | cuts:%s\n",
         game_level_name(), n / dt, s_draws / n, s_draws ? 100.0 * s_matched / s_draws : 0, s_id_pairs / n, s_content_pairs / n, s_order_pairs / n, s_new_objects / n, s_blended_cbs / n, s_cut_cbs / n, s_class_snaps / n, s_replays ? (double)s_toggled / s_replays : 0, s_replays ? (double)s_integral / s_replays : 0, s_replays ? (double)s_wraps / s_replays : 0, s_replays ? (double)s_discont / s_replays : 0,
         s_replays ? (double)s_rot_blocks / s_replays : 0, s_replays ? (double)s_rot_switch / s_replays : 0, (double)s_split / n, s_replays ? (double)s_reused / s_replays : 0,
-        s_shots / dt, s_mids / dt, (unsigned long long)s_late, (unsigned long long)s_skipped, (unsigned long long)s_gave_way,
+        s_shots / dt, s_mids / dt, (unsigned long long)s_late, (unsigned long long)s_skipped, (unsigned long long)s_gave_way, (unsigned long long)s_no_gpu,
         s_replays ? s_replay_cpu / s_replays : 0, s_replay_cpu_max, gn ? s_replay_gpu / gn : 0, cn ? s_compose_gpu / cn : 0,
         s_prep / n, s_frames ? s_L / n : 0, o ? cuts : " none");
     {   extern void renderer_interp_geo_stats(uint64_t *binds, uint64_t *differed, uint64_t *missed);
@@ -1308,7 +1313,7 @@ void interp_log_stats(void) {
             (unsigned long long)st_replay_draws, (unsigned long long)st_replay_cb_miss);
     s_frames = s_draws = s_matched = s_changed = s_cut_cbs = s_blended_cbs = s_id_pairs = s_order_pairs = s_content_pairs = s_new_objects = s_class_snaps = s_toggled = s_integral = s_wraps = s_discont = s_rot_blocks = s_rot_switch = s_split = s_reused = 0;
     memset(s_cuts, 0, sizeof s_cuts);
-    s_shots = s_mids = s_late = s_skipped = s_gave_way = s_replays = 0;
+    s_shots = s_mids = s_late = s_skipped = s_gave_way = s_no_gpu = s_replays = 0;
     s_replay_cpu = s_replay_cpu_max = s_prep = s_L = s_replay_gpu = s_compose_gpu = 0;
     st_replay_misses = st_replay_draws = st_replay_cb_miss = 0;
 }
