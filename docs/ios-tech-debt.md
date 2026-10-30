@@ -108,10 +108,6 @@ attribute, so the `removexattr` on the linker is gone too.
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
   `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
-- **The start screen's main page ignores the safe area.** `panel_layout` ([runtime/ui/launcher.mm](../runtime/ui/launcher.mm))
-  insets the Settings / Game files panels by `SDL_GetWindowSafeArea`, but the main page's items (PLAY with the seed
-  picker, SETTINGS, SET UP GAME FILES) and the game-files status line are placed from the window's edges: in
-  landscape the notch / Dynamic Island side and the home indicator can cover them. They should take the same insets.
 - **Left / right values have no touch gesture.** A row of `opt_choice` / `opt_int` / `opt_slider`
   ([runtime/ui/option_rows.mm](../runtime/ui/option_rows.mm): render resolution, upscaler, volume...) changes by
   d-pad / arrow keys; a tap is "A", which steps forward and wraps - so going back one value on a phone means tapping
