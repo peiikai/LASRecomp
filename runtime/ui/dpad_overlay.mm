@@ -1,6 +1,8 @@
 // D-pad items' HUD cross (runtime/hle/dpad_items.c): next to the game's X / Y buttons, a D-pad (Kenney's, CC0:
 // dpad_art.h) with the item of each direction at the end of its arm, drawn as the game's own item icon (from the
-// player's game files), the count on bombs, arrows and powder as on X / Y. Directions without an item stay empty. Up while the world is on screen and on the Items page
+// player's game files), the count on bombs, arrows and powder as on X / Y. Directions without an item stay empty.
+// On the Items page it flies (a little smaller) to the left of the Y button there, clear of the page, and back when
+// the page closes; there it shows even with no items (none: it isn't on the HUD, so it doesn't fly - it's just there). Up while the world is on screen and on the Items page
 // (where the directions are set).
 #include <float.h>
 #include <math.h>
@@ -105,19 +107,26 @@ static const Icon *icon(const char *name) {
     return &ic;
 }
 
-extern "C" bool dpad_overlay_wanted(void) {
-    if (g_settings.dpad_mode != DPAD_ITEMS || !game_in_play() || !(world_on_screen() || inventory_items_page_shown()))
-        return false;
+static bool any_item(void) {
     for (int d = 0; d < 4; d++)
         if (dpad_items_slot(d) >= 0) return true;
     return false;
 }
 
+// on the Items page always (where the directions are set), in play once a direction has an item
+extern "C" bool dpad_overlay_wanted(void) {
+    if (g_settings.dpad_mode != DPAD_ITEMS || !game_in_play()) return false;
+    return inventory_items_page_shown() || (world_on_screen() && any_item());
+}
+
 // (menu.mm's overlay reuse) what dpad_overlay_draw draws now, as text
+static bool g_flying;  // (the D-pad on its way to or from the Items page: a new drawing every frame)
+
 extern "C" void dpad_overlay_key(char *out, size_t cap) {
     uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
-    int n = 0;
-    out[0] = 0;
+    static unsigned frame;
+    int n = g_flying ? snprintf(out, cap, "fly %u ", ++frame) : 0;
+    if (!g_flying) out[0] = 0;
     for (int d = 0; d < 4 && ps; d++) {
         int s = dpad_items_slot(d);
         n += snprintf(out + n, cap > (size_t)n ? cap - n : 0, "%s.%d ", s >= 0 ? icon_name(s, ps) : "-", s >= 0 ? item_count(s, ps) : 0);
@@ -137,8 +146,22 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
         lx = 558, ly = 182;
         if (const char *e = getenv("LARECOMP_DPAD_POS")) sscanf(e, "%f,%f", &lx, &ly);
     }
-    ImVec2 c(bx + (lx + 640) * u, by + (360 - ly) * u);
-    float pad = 74 * u, arm = 50 * u, h = 30 * u;  // (the D-pad's size; centre to an item; an item's half size)
+    // the Items page: left of its Y button (the same spot as the HUD's), 85% the size. 0.3 s from one to the other, eased.
+    static const float px = 370, py = 288, ps_ = 0.85f, fly = 0.3f;
+    static bool page_was;
+    static double t0 = -1;
+    static float from, at;  // (0 the HUD's spot, 1 the Items page's)
+    bool page = inventory_items_page_shown();
+    double now = ImGui::GetTime();
+    if (t0 < 0 || !any_item()) from = page ? 1 : 0, t0 = now - fly, page_was = page;  // (just there)
+    else if (page != page_was) from = at, t0 = now, page_was = page;
+    float k = fminf(1, (float)(now - t0) / fly);
+    k = k * k * (3 - 2 * k);
+    at = from + ((page ? 1 : 0) - from) * k;
+    g_flying = k < 1;
+    float cx = lx + (px - lx) * at, cy = ly + (py - ly) * at, sz = 1 + (ps_ - 1) * at;
+    ImVec2 c(bx + (cx + 640) * u, by + (360 - cy) * u);
+    float pad = 74 * sz * u, arm = 50 * sz * u, h = 30 * sz * u;  // (the D-pad's size; centre to an item; an item's half size)
     static const ImVec2 dir[4] = {ImVec2(-1, 0), ImVec2(0, -1), ImVec2(1, 0), ImVec2(0, 1)};  // Left Up Right Down
     ImVec2 a(c.x - pad * 0.5f, c.y - pad * 0.5f), z(c.x + pad * 0.5f, c.y + pad * 0.5f);
     if (ImTextureID t = dpad_tex(0)) {
@@ -159,9 +182,9 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
         if (n >= 0) {  // (a yellow tag with the number, as the game's)
             char txt[8];
             snprintf(txt, sizeof txt, "%d", n);
-            float size = 19 * u;
+            float size = 19 * sz * u;
             ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0, txt);
-            float w = fmaxf(ts.x + 8 * u, 22 * u), th = 15 * u;
+            float w = fmaxf(ts.x + 8 * sz * u, 22 * sz * u), th = 15 * sz * u;
             ImVec2 ta(p.x + r * 0.95f - w * 0.5f, p.y + r * 0.62f), tz(ta.x + w, ta.y + th);
             dl->AddRectFilled(ta, tz, IM_COL32(0xF4, 0xD6, 0x2A, 255), th * 0.5f);
             dl->AddText(font, size, ImVec2(roundf((ta.x + tz.x - ts.x) * 0.5f), roundf((ta.y + tz.y - ts.y) * 0.5f)),
