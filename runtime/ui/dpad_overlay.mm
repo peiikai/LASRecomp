@@ -129,12 +129,12 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
     if (!ps) return;
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
     // the game's HUD sits in a 16:9 box centred in the window; its 1280x720 layout has X / Y top right (Y at 476, 296
-    // from the centre, y up; runtime/hle/escape.c). The cross goes left of Y. LARECOMP_DPAD_POS=x,y (layout): elsewhere.
+    // from the centre, y up; runtime/hle/escape.c). The D-pad goes under X. LARECOMP_DPAD_POS=x,y (layout): elsewhere.
     float bw = fminf(display.x, display.y * 16 / 9), bh = bw * 9 / 16;
     float bx = (display.x - bw) * 0.5f, by = (display.y - bh) * 0.5f, u = bw / 1280;
     static float lx = 1e9f, ly;
     if (lx > 1e8f) {
-        lx = 348, ly = 266;
+        lx = 558, ly = 182;
         if (const char *e = getenv("LARECOMP_DPAD_POS")) sscanf(e, "%f,%f", &lx, &ly);
     }
     ImVec2 c(bx + (lx + 640) * u, by + (360 - ly) * u);
