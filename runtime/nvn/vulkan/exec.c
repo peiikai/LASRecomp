@@ -447,7 +447,7 @@ void vk_full_barrier(VkCommandBuffer cb) {
             {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = rest, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
              .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT}};
         VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 2, .pMemoryBarriers = mb};
-        vkCmdPipelineBarrier2(cb, &di);
+        rec_CmdPipelineBarrier2(cb, &di);  // (through the recorder, as the full barrier below)
         return;
     }
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
