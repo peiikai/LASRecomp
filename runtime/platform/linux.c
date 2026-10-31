@@ -183,9 +183,11 @@ static int soft_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int
     atomic_fetch_add(&g_soft_inflight, 1);
     int n;
     if (atomic_load(&g_soft_hold)) {  // (an import is pinning pages: protect nothing, every page counts as written)
+        // The marks stay set: the pages stay open meanwhile, so a CPU write to one now neither faults nor marks it; the
+        // first query after the hold arms the page and must still report it (once more: the safe side).
         uint64_t first = (addr - g_soft_lo) / SOFT_PAGE, last = (addr + size - 1 - g_soft_lo) / SOFT_PAGE;
         n = 0;
-        for (uint64_t p = first; p <= last && n < max; p++) { atomic_store(&g_soft_written[p], 0); pages[n++] = g_soft_lo + p * SOFT_PAGE; }
+        for (uint64_t p = first; p <= last && n < max; p++) { atomic_store(&g_soft_written[p], 1); pages[n++] = g_soft_lo + p * SOFT_PAGE; }
     } else n = soft_written_pages_(addr, size, pages, max);
     atomic_fetch_sub(&g_soft_inflight, 1);
     return n;
