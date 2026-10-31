@@ -93,7 +93,7 @@ attribute, so the `removexattr` on the linker is gone too.
     Linux and Windows Makefile branches against `GAMELIB_ID` of `PLATFORM=ios` (a Linux export was rejected as
     "built for another version": host `-march` / `-fPIC` leaked into the id), and the generator gets `--simd asm`
     for iOS whatever the host (tools/test_gamebuild_ios.py can assert both from `launched`);
-  - the kit itself: release.yml checks its layout (Payload/, no symlink entries, keystone's framework, four linkers, headers,
+  - the kit itself: release.yml checks its layout (Payload/, no symlink entries, keystone's framework, five linkers, headers,
     stub); still unchecked: the executable's ad-hoc signature carries `increased-memory-limit` (ci.yml checks the
     .app, not the kit) and `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction
     (tools/test_gamebuild_ios.py links with it, which covers the host CI runs on);

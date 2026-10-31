@@ -11,7 +11,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 VER=1.91.0
 case "$(uname -s)" in Darwin) OS=macos;; Linux) OS=linux;; *) OS=windows;; esac
-case "$(uname -m)" in arm64|aarch64) ARCH=aarch64;; *) ARCH=x86_64;; esac
+# (MSYS2 on Windows ARM64: uname -m is the emulated x86_64 of its shell, MSYSTEM_CARCH the environment's real arch)
+case "${MSYSTEM_CARCH:-$(uname -m)}" in arm64|aarch64) ARCH=aarch64;; *) ARCH=x86_64;; esac
 TARGET=${LLD_TARGET:-$ARCH-$OS}
 # the Rust triple, the archive's sha256 (static.rust-lang.org/dist/<archive>.sha256) and, on Linux, the LLVM dylib
 case "$TARGET" in
@@ -19,6 +20,7 @@ case "$TARGET" in
     x86_64-linux)   TRIPLE=x86_64-unknown-linux-gnu;  SHA=a7169e8cb6174af2f45717703370363d8de82ce55f6ccba185893045b9370874; DYLIB=libLLVM.so.21.1-rust-$VER-stable ;;
     aarch64-linux)  TRIPLE=aarch64-unknown-linux-gnu; SHA=f3ea3c964b7f3b884337f2d411764032bbd1722d7f55592a547cbb29afd87c03; DYLIB=libLLVM.so.21.1-rust-$VER-stable ;;
     x86_64-windows) TRIPLE=x86_64-pc-windows-msvc;    SHA=fe4fb6431282c714434fee3a8cb268961b88ba1c29122b42b3de97f571dba354; DYLIB= ;;
+    aarch64-windows) TRIPLE=aarch64-pc-windows-msvc;  SHA=582b61e4752ec6e7aaf78ec9eb91d0f50e85f14d1cbae4f089f6a439d3a03f83; DYLIB= ;;
     *) echo "no lld for $TARGET"; exit 1;;
 esac
 EXE=; [ "${TARGET#*-}" = windows ] && EXE=.exe

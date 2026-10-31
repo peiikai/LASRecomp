@@ -234,12 +234,28 @@ jobs:
         run: python3 tools/test_vulkan_overlay.py
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Game address table at the iOS guest base
+        run: LARECOMP_GUEST_BASE=0x800000000 python3 tools/test_game_addresses.py
+      - name: iOS extension frameworks layout
+        run: python3 tools/test_ios_frameworks.py
       - name: Randomizer Field region table
         run: python3 tools/test_field_regions.py
       - name: Randomizer room shuffle ledges
         run: python3 tools/test_room_ledges.py
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
+      - name: iOS toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: iOS game-code build (zig + lld, a fixture)
+        run: |
+          tools/fetch_zig.sh
+          tools/fetch_lld.sh
+          python3 tools/test_gamebuild_ios.py
   macos:
     runs-on: [self-hosted, macos-vm]  # (a fresh Tart VM per job on the maintainer's Mac, deleted after)
     steps:
@@ -583,3 +599,15 @@ jobs:
         run: python tools/test_windows_logs.py
       - name: Vulkan synchronization failure regression
         run: python tools/test_vulkan_sync_errors.py
+      - name: iOS toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: iOS game-code build (zig + lld, a fixture)
+        run: |
+          tools/fetch_zig.sh
+          tools/fetch_lld.sh
+          python tools/test_gamebuild_ios.py
