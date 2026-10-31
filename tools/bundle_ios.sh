@@ -121,6 +121,7 @@ cat > "$APP/Info.plist" <<EOF
 	<key>CFBundleSupportedPlatforms</key><array><string>$PLATFORM_KEY</string></array>
 	<key>DTPlatformName</key><string>$PLATFORM_NAME</string>
 	<key>DTSDKName</key><string>$PLATFORM_NAME</string>
+	<key>LSApplicationCategoryType</key><string>public.app-category.games</string>
 	<key>LSRequiresIPhoneOS</key><true/>
 	<key>MinimumOSVersion</key><string>$IOS_MIN</string>
 	<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
@@ -136,8 +137,11 @@ cat > "$APP/Info.plist" <<EOF
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 	<key>GCSupportsControllerUserInteraction</key><true/>
+	<key>GCSupportsGameMode</key><true/>
+	<key>LSSupportsGameMode</key><true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key><true/>
 	<key>ITSAppUsesNonExemptEncryption</key><false/>
+	<key>NSLocalNetworkUsageDescription</key><string>LiveSplit: LAS Recomp connects to LiveSplit's Server on your computer to drive the timer.</string>
 EOF
 cat >> "$APP/Info.plist" <<'EOF'
 </dict>

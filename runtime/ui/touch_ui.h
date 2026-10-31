@@ -5,6 +5,8 @@
 // Driven from the thread that renders the page: event() for each finger event, frame() once before each ImGui frame.
 // The drag goes out as one scroll per frame: ImGui takes queued input one wheel event a frame, and a finger reports
 // several moves a frame - the page fell further and further behind it.
+// A finger's highlight waits a moment, as UIScrollView's delaysContentTouches: a scroll that starts on a row doesn't
+// light it up first.
 #pragma once
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_timer.h>
@@ -18,8 +20,11 @@ struct TouchUi {
     bool active = false, drag = false, flinging = false;
     int tap_step = 0;  // a tap, spread over frames: the mouse at the spot, pressed a frame later, released the next
     float x0 = 0, y0 = 0, last_x = 0, last_y = 0, pending = 0, vel = 0;  // vel: px / s (the flick)
-    uint64_t last_t = 0;
+    uint64_t last_t = 0, hover_at = 0;  // hover_at: when a resting finger starts to highlight what is under it
+    bool hovering = false;
+    int axis = 1;  // what a drag scrolls: 0 across (the tab bar), 1 down
     ImGuiID scroll_win = 0;  // the window under the finger when it came down: what a drag scrolls (touch_scroll_apply)
+    static constexpr uint64_t kHoverDelay = 150000000ull;  // (ns: UIScrollView's delay)
 
     // pos(x, y), button(down): what the finger means, in window pixels (w x h)
     template <typename Pos, typename Button>
@@ -30,7 +35,8 @@ struct TouchUi {
             if (active) return;  // (a second finger: ignored)
             id = e->tfinger.fingerID, active = true, drag = false, flinging = false, pending = 0, vel = 0;
             x0 = last_x = x, y0 = last_y = y, last_t = t;
-            pos(x, y);
+            hover_at = SDL_GetTicksNS() + kHoverDelay, hovering = false;
+            if (tap_step == 0) pos(-FLT_MAX, -FLT_MAX);  // (a flick's hover, if any, goes)
             return;
         }
         if (!active || e->tfinger.fingerID != id) return;
@@ -40,14 +46,18 @@ struct TouchUi {
                 // a drag: the window under the finger is what scrolls from now on, and the hover goes away - with
                 // one, ImGui's navigation moved its focus (and the scroll, back to the focused row) to each row
                 // passing under the finger
-                drag = true, last_y = y;
-                scroll_win = scroll_window_id();
-                pos(-FLT_MAX, -FLT_MAX);
+                axis = fabsf(x - x0) > fabsf(y - y0) ? 0 : 1;
+                scroll_win = scroll_window_id(x0, y0, axis);
+                if (!scroll_win && axis == 0) axis = 1, scroll_win = scroll_window_id(x0, y0, 1);  // (nothing scrolls across)
+                drag = true, last_x = x, last_y = y;
+                if (hovering) pos(-FLT_MAX, -FLT_MAX);
+                hovering = false;
             }
             if (drag) {
-                pending += y - last_y;
+                float d = axis ? y - last_y : x - last_x;
+                pending += d;
                 if (t > last_t) {
-                    float v = (y - last_y) / ((t - last_t) / 1e9f);
+                    float v = d / ((t - last_t) / 1e9f);
                     vel = vel * 0.6f + v * 0.4f;  // (smoothed over the last few moves)
                 }
                 last_y = y, last_x = x, last_t = t;
@@ -66,17 +76,27 @@ struct TouchUi {
         if (!flinging && !tap_step) pos(-FLT_MAX, -FLT_MAX);  // (no hover left behind; a tap: after its click)
     }
 
-    // The scrollable window under the mouse (the finger's position at touch-down): the hovered one, or its first
-    // parent that scrolls.
-    static ImGuiID scroll_window_id() {
-        ImGuiWindow *w = GImGui->HoveredWindow;
-        while (w && w->ScrollMax.y <= 0 && (w->Flags & ImGuiWindowFlags_ChildWindow) && w->ParentWindow) w = w->ParentWindow;
-        return w && w->ScrollMax.y > 0 ? w->ID : 0;
+    // The window under the finger's touch-down that scrolls along axis: the one there, or its first parent that does
+    // (the last frame's windows: the mouse isn't at the finger yet, so ImGui's hovered window isn't this one)
+    static ImGuiID scroll_window_id(float x, float y, int axis) {
+        ImGuiWindow *w = NULL, *under_moving = NULL;
+        ImGui::FindHoveredWindowEx(ImVec2(x, y), true, &w, &under_moving);
+        // (across: only a strip made to scroll that way - a page a pixel too wide moved whole under a sideways drag)
+        auto ok = [axis](ImGuiWindow *w) {
+            return w->ScrollMax[axis] > 0 && (axis || (w->Flags & ImGuiWindowFlags_HorizontalScrollbar));
+        };
+        while (w && !ok(w) && (w->Flags & ImGuiWindowFlags_ChildWindow) && w->ParentWindow) w = w->ParentWindow;
+        return w && ok(w) ? w->ID : 0;
     }
 
     // once a frame: the scroll to apply now (pixels, + = content down), the flick carried on, a tap's release
     template <typename Pos, typename Button>
     float frame(float dt, Pos pos, Button button) {
+        if (active && !drag && !hovering && !tap_step && SDL_GetTicksNS() >= hover_at) {  // (a resting finger: highlight)
+            GImGui->NavHighlightItemUnderNav = false;
+            pos(x0, y0);
+            hovering = true;
+        }
         if (tap_step == 3) {  // (this frame: the mouse at the spot, hovered)
             // a controller / keyboard focus (the page's first row at start) turns ImGui's mouse hover off until the mouse
             // moves - a finger appears without moving, so its first tap found nothing under it
@@ -101,6 +121,8 @@ struct TouchUi {
     void scroll_apply(float px) const {
         if (px == 0 || !scroll_win) return;
         ImGuiWindow *w = ImGui::FindWindowByID(scroll_win);
-        if (w && w->ScrollMax.y > 0) ImGui::SetScrollY(w, ImClamp(w->Scroll.y - px, 0.0f, w->ScrollMax.y));
+        if (!w || w->ScrollMax[axis] <= 0) return;
+        if (axis) ImGui::SetScrollY(w, ImClamp(w->Scroll.y - px, 0.0f, w->ScrollMax.y));
+        else ImGui::SetScrollX(w, ImClamp(w->Scroll.x - px, 0.0f, w->ScrollMax.x));
     }
 };
