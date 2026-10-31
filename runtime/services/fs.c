@@ -862,6 +862,8 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             save_editor_file_read(f->path, b->addr, off, n);
             extern void flags_ext_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
             flags_ext_save_read(f->path, b->addr, off, n);
+            extern void dpad_items_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
+            dpad_items_save_read(f->path, b->addr, off, n);  // (runtime/hle/dpad_items.c)
             extern void weather_cycle_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
             weather_cycle_save_read(f->path, b->addr, off, n);  // (runtime/nvn/weather_cycle.c)
         }
@@ -888,6 +890,8 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             if (!flags_ext_save_written(f->path, a->addr, off, size)) error = errno ? errno : EIO;
             extern void weather_cycle_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
             if (!error) weather_cycle_save_written(f->path, a->addr, off, size);  // (runtime/nvn/weather_cycle.c)
+            extern void dpad_items_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
+            if (!error) dpad_items_save_written(f->path, a->addr, off, size);  // (runtime/hle/dpad_items.c)
         }
         if (error && f->fs) file_failed(f, "write", error);
         else if (error) { errno = error; resp->result = errno_result(); }

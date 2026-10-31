@@ -96,6 +96,8 @@ extern "C" int inventory_items_cursor(void) {
     uint32_t i = LD32(g_items_obj + 0x4020);
     return i < 12 ? (int)i : -1;
 }
+// dpad_items.c: the Items page's object (its cells: +0x598 + 0x280 * cell = the cell's item slot)
+extern "C" uint64_t inventory_items_obj(void) { return g_items_obj; }
 
 static bool companion_card(void) {
     int o[6];

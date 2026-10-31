@@ -271,7 +271,10 @@ extern "C" void controls_tab_draw(float scale) {
         input_apply_background();
 
     opt_section("Movement");
-    opt_toggle("D-pad moves Link", &g_settings.dpad_move, false, "Move Link with the D-pad as well as the stick.");
+    {
+        static const char *const modes[] = {LN("Nothing"), LN("Items"), LN("Movement")};
+        opt_choice("D-pad", &g_settings.dpad_mode, modes, 3, DPAD_NOTHING, "What the D-pad does in play.");
+    }
     opt_toggle("360-degree movement", &g_settings.move_360, false,
                "Link walks in the exact direction of the stick instead of snapping to 8 directions.");
 
