@@ -418,7 +418,38 @@ VkCommandBuffer vk_upload_cmd(void) {
     return s->upload;
 }
 
+// LARECOMP_VK_SPLIT_BARRIER=1 (default on Mali): the same barrier in two halves, so that the work after it may start
+// its vertex / tiling stages while the fragment work before it is still running (on a tiler such as Mali an
+// ALL_COMMANDS -> ALL_COMMANDS barrier at every pass drains the GPU: the next pass's geometry waits for the previous
+// pass's last fragment). Fragment-stage writes (attachments, fragment storage writes) are made visible to the
+// fragment / compute / transfer stages after; everything else (transfers, compute, geometry-stage reads) to all
+// stages, as before. Assumes no vertex shader reads what a previous pass's fragments wrote (the game's passes
+// don't: render targets are sampled in fragment / compute shaders). Mali-G610, Marin & Tarin's house: GPU frame (the
+// game's own counters) 14.8 -> 13.65 ms.
+static int split_barrier = -1;
 void vk_full_barrier(VkCommandBuffer cb) {
+    if (split_barrier < 0) {
+        const char *e = getenv("LARECOMP_VK_SPLIT_BARRIER");
+        split_barrier = e ? atoi(e) != 0 : g_vk.props.vendorID == 0x13B5;
+        if (split_barrier) LOG("[vk] split pass barriers (fragment writes -> fragment / compute / transfer)%s\n",
+                               e ? " (LARECOMP_VK_SPLIT_BARRIER)" : ": Mali");
+    }
+    if (split_barrier) {
+        const VkPipelineStageFlags2 frag = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                           VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const VkPipelineStageFlags2 rest = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
+                                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                                           VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT;
+        VkMemoryBarrier2 mb[2] = {
+            {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = frag, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+             .dstStageMask = frag | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+             .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT},
+            {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = rest, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+             .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT}};
+        VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 2, .pMemoryBarriers = mb};
+        vkCmdPipelineBarrier2(cb, &di);
+        return;
+    }
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
