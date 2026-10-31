@@ -4,7 +4,14 @@ Status: part of main. Builds and runs the game on Vulkan (with your own game fil
 release zip.
 
 ## One-time setup
-Run in PowerShell from the repo root:
+Clone with LF line endings to a short path (deep folders hit Windows' path length limit), e.g.:
+
+    git clone -c core.autocrlf=false https://github.com/peiikai/LASRecomp.git C:\dev\lasrecomp
+
+(The setup script also sets `core.autocrlf=false`, but files already checked out keep CRLF until they are checked
+out again, and the bash tools break on CRLF.)
+
+Then run in PowerShell from the repo root:
 
     powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1
 
@@ -23,9 +30,11 @@ Without `generated/` only the app is built: the start screen builds the game cod
 files (as for players), given the generator and the compiler (`make gen-helper`, `tools/fetch_zig.sh`).
 `make runtime-objs` compiles the runtime only (quick check).
 
-Run from a shell that has `C:\msys64\ucrt64\bin` on PATH (SDL3, FFmpeg, Vulkan, shaderc DLLs).
+Run from a shell that has `C:\msys64\ucrt64\bin` (ARM64: `C:\msys64\clangarm64\bin`) on PATH (SDL3, FFmpeg,
+Vulkan, shaderc DLLs).
 
 ## Package
+    make deps-windows   # once: the LGPL FFmpeg the zip ships (build/deps-win; MSYS2's own FFmpeg is GPL)
     make rando-helper   # the seed generator without Python (build/helper/rando-gen)
     make gen-helper     # the game code generator without Python (build/helper/lasgen)
     tools/fetch_zig.sh  # the compiler the start screen builds the game code with (build/zig)
@@ -45,6 +54,7 @@ Build from an MSYS2 CLANGARM64 shell, or with `/c/msys64/clangarm64/bin` first o
 above, except that the helpers need that Python passed in (there is no `py` launcher):
 
     PY64=/c/Users/<you>/AppData/Local/Programs/Python/Python312-x64/python.exe
+    make deps-windows
     make rando-helper RANDO_PY="$PY64"
     make gen-helper RANDO_PY="$PY64"
     tools/fetch_zig.sh  # (zig for aarch64-windows)
@@ -53,6 +63,10 @@ above, except that the helpers need that Python passed in (there is no `py` laun
 Everything in the zip is ARM64 except the two helpers (`lasgen`, `rando-gen`), which are x64. AArch64 FP/SIMD
 instructions stay inline assembly (`--simd asm`), as on the Mac. The ARM64 zip is not part of the normal releases.
 It is built by `.github/workflows/experimental.yml` for the Experimental builds page.
+
+Running it needs a Vulkan 1.3 driver (on Snapdragon X, Qualcomm's). To test without one, Mesa's lavapipe (a CPU
+Vulkan driver) for ARM64 works: set `VK_DRIVER_FILES=<its folder>\lvp_icd.aarch64.json`. The Vulkan loader ignores
+driver entries under HKCU. Lavapipe is slow, so keep the window minimized while the start screen builds the game code.
 
 ## Differences from macOS
 - Guest window 0x70_0000_0000..0x73_2000_0000 is reserved with VirtualAlloc and committed per region
@@ -67,5 +81,6 @@ It is built by `.github/workflows/experimental.yml` for the Experimental builds 
 ## Tests
 - `tools/test_translate.sh`: shader translator fuzz (MSL output unchanged, GLSL compiles and validates).
 - `tools/test_vk_pipelines.sh`: fuzzed shaders through the backend's compile/reflection into real pipelines.
-- `LARECOMP_VK_VALIDATION=1` with `VK_ADD_LAYER_PATH` pointing at `C:\msys64\ucrt64\bin`: Khronos validation layer.
+- `LARECOMP_VK_VALIDATION=1` with `VK_ADD_LAYER_PATH` pointing at `C:\msys64\ucrt64\bin` (ARM64:
+  `C:\msys64\clangarm64\bin`): Khronos validation layer.
 - Run test windows directly, not under MSYS `timeout` (it stalls the window).
