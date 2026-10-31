@@ -351,7 +351,7 @@ app:
 # The iOS app without game code (build/ios-skeleton/LAS Recomp.app), and the release's iOS kit around it
 # (build/dist/LAS Recomp-<version>-iOS.laskit: a zip with the app as Payload/, a linker for each desktop, the Darwin
 # headers), which the start screen on any desktop completes with the library it builds there (runtime/iosexport.c).
-# Needs `make deps-ios`; the kit needs the four linkers (tools/fetch_lld.sh for each LLD_TARGET).
+# Needs `make deps-ios`; the kit needs the five linkers (tools/fetch_lld.sh for each LLD_TARGET).
 ios-skeleton:
 	$(MAKE) PLATFORM=ios build/ios/lasrecomp
 	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
