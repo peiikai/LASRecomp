@@ -776,6 +776,9 @@ extern "C" void race_overlay_draw(ImVec2 display, ImFont *font, float scale);
 extern "C" bool pickup_flyin_wanted(void);  // (silent pickups: pickup_flyin.mm)
 extern "C" void pickup_flyin_draw(ImVec2 display, ImFont *font, float scale);
 extern "C" bool race_overlay_key(char *out, size_t cap);
+extern "C" bool dpad_overlay_wanted(void);  // (d-pad items' HUD cross: dpad_overlay.mm)
+extern "C" void dpad_overlay_key(char *out, size_t cap);
+extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale);
 
 // ---- reusing the overlay's last drawing (LARECOMP_OVERLAY_CACHE=0: off, a new ImGui frame every present as before)
 // While only the FPS counter and / or the run timer are up (no menu, no input, nothing interactive or animated), the
@@ -786,7 +789,7 @@ extern "C" bool race_overlay_key(char *out, size_t cap);
 // The FPS counter then shows the same average as ImGui's io.Framerate (the last 60 frame times), sampled twice a
 // second instead of every frame.
 static int g_ov_cache = -1;
-static char g_ov_key[96];
+static char g_ov_key[288];
 static int g_ov_same;  // frames built in a row with g_ov_key
 static float g_fps_dt[60];
 static int g_fps_n, g_fps_i;
@@ -1114,8 +1117,8 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
 
 // Whether menu_render draws anything: the menu, the keyboard, an overlay (FPS, inventory, tracker, chaos, race, a
 // pickup card).
-static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin) {
-    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin;
+static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin, bool dpad) {
+    return open || kbd || g_settings.show_fps || inv || trk || trkd || chaos || race || flyin || dpad;
 }
 
 #ifdef __APPLE__
@@ -1133,12 +1136,13 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool kbd = g_kbd.load() == 1;
     bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
     bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
+    bool dpad = !open && dpad_overlay_wanted();
 #ifdef __APPLE__
     plastic_perf_note(cb, open);  // (LARECOMP_UI_PERF test only)
 #else
     plastic_perf_note_vk(open);
 #endif
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin)) {
+    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -1161,14 +1165,16 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     key[0] = 0;
     if (g_ov_cache) {
         fps_note(now, io.DeltaTime);
-        char rk[64];
-        // (only the FPS counter and the run timer; input only reaches ImGui while the menu or the name entry is up)
+        char rk[64], dk[160] = "";
+        // (only the FPS counter, the run timer and the d-pad cross; input only reaches ImGui while the menu or the name
+        // entry is up)
         if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
-            if (!events) snprintf(key, sizeof key, "%.0fx%.0f fps %d %.0f | %s", tw, th, (int)g_settings.show_fps,
-                                  g_settings.show_fps ? g_fps_shown : 0.0, rk);
+            if (dpad) dpad_overlay_key(dk, sizeof dk);
+            if (!events) snprintf(key, sizeof key, "%.0fx%.0f fps %d %.0f | %s | %s", tw, th, (int)g_settings.show_fps,
+                                  g_settings.show_fps ? g_fps_shown : 0.0, rk, dk);
         }
         ImDrawData *dd = ImGui::GetDrawData();
         if (key[0] && g_ov_same >= 3 && !strcmp(key, g_ov_key) && dd && dd->Valid) {
@@ -1244,6 +1250,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     }
 
     if (race) race_overlay_draw(io.DisplaySize, g_menu_font_big, scale);
+    if (dpad) dpad_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont(), scale);
     if (flyin) pickup_flyin_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont(), scale);
     if (trk) tracker_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());
     if (chaos) chaos_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());

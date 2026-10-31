@@ -490,6 +490,39 @@ def _bottle1_use(gen, a):
 PATCHES[BOTTLE1_USE_SITE] = _bottle1_use
 
 
+# D-pad items (runtime/hle/dpad_items.c): the d-pad as a third set of item buttons, in the game's own "use it now?"
+# checks. The 12 Items page items each have one (main+0xd50e60 .. 0xd52fb0; Roc's Feather the last): the buttons newly
+# pressed (`bic w8, w8, w9`), then `tbnz w8, #3` (Y) -> `ldrb wN, [x8, #0xa2]` (the item on Y) `cmp wN, #<its slot>`,
+# and the same for X with #2 / +0xa3. The Y test also passes for a newly pressed d-pad direction, and the read then
+# answers the item itself when a direction just pressed holds it - else the item on Y (Y pressed) or none. A direction
+# and Y (or X) pressed together use both items, as Y and X do (bomb arrows); the button slots never change.
+EQUIP_Y_TEST_SITES = tuple(getattr(A, f'EQUIP_Y_TEST_SITES_{i}') for i in range(12))
+EQUIP_Y_READ_SITES = tuple(getattr(A, f'EQUIP_Y_READ_SITES_{i}') for i in range(12))
+
+
+def _equip_y_test(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w & 0xFFF8001F == 0x37180008, hex(w)  # tbnz w8, #3, <read>
+    t = a + ((((w >> 5) & 0x3FFF) ^ 0x2000) - 0x2000) * 4
+    return (f'{{ extern int rt_equip_y_test(uint32_t pressed); if (rt_equip_y_test((uint32_t)c->x[8])) goto L_{t:x}; }}'
+            f'  /* {a:#x}: tbnz w8, #3 (Y newly pressed, or a d-pad direction) */')
+
+
+def _equip_y_read(gen, a):
+    w, n = struct.unpack_from('<II', gen.nso.image, a - gen.base)
+    assert w & 0xFFFFFFE0 == 0x39428900 and w & 31 < 30, hex(w)  # ldrb wN, [x8, #0xa2]
+    assert n & 0xFFC003FF == 0x71000000 | (w & 31) << 5 | 0x1F, hex(n)  # cmp wN, #<slot>
+    slot = (n >> 10) & 0xFFF
+    return (f'{{ extern uint32_t rt_equip_y_read(uint64_t ps, int slot); c->x[{w & 31}] = rt_equip_y_read(c->x[8], {slot}); }}'
+            f'  /* {a:#x}: ldrb w{w & 31}, [x8, #0xa2] (item on Y; item {slot:#x} on a d-pad direction) */')
+
+
+for _a in EQUIP_Y_TEST_SITES:
+    PATCHES[_a] = _equip_y_test
+for _a in EQUIP_Y_READ_SITES:
+    PATCHES[_a] = _equip_y_read
+
+
 # Boss souls (runtime/hle/souls.c): the actor factory f_70008f5ea0 (x2 = spawn info, type u16 at +8) takes the type's
 # create function from the actor table (main+0x1bcc898, 0x58 bytes per type, +0 create fn, +0x50 name); a null fn is
 # its "no such actor" path (the caller gets an empty handle). A dungeon boss whose soul isn't found yet gets that path.
