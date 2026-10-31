@@ -27,6 +27,7 @@
 #include "../hle.h"
 #include "../input_bind.h"
 #include "../paths.h"
+#include "../platform.h"
 #include "../rando.h"
 #include "../settings.h"
 #include "astc.h"
@@ -38,10 +39,10 @@
 #define STB_TRUETYPE_IMPLEMENTATION
 #include "../../third_party/imgui/imstb_truetype.h"
 
-enum { K_BC5, K_BC3, K_ASTC4, K_RGBA8, K_BC1 };
+enum { K_BC5, K_BC3, K_ASTC4, K_RGBA8, K_BC1, K_OTHER /* identified only */ };
 enum { R_A = 1, R_B, R_X, R_Y, R_L, R_R, R_ZL, R_ZR, R_PLUS, R_MINUS, R_HERO, R_SHEET, R_BOTTLE, R_BOTTLE_MODEL, R_FAIRY_MODEL,
        R_ITEM_CURSOR, R_TUNIC, R_TUNIC_RED, R_TUNIC_BLUE, R_HEART, R_POWDER_MODEL, R_DGN_MAP, R_MAP_MODEL, R_POWER_PIECE_MODEL,
-       R_SKIN };
+       R_SKIN, R_TITLE_LOGO, R_FILE_FRAME };
 enum { STYLE_NINTENDO, STYLE_XBOX, STYLE_PS };
 // labels: R_A..R_MINUS = the button that role is on by default; or these
 enum { L_LS = 32, L_RS, L_DUP, L_DDOWN, L_DLEFT, L_DRIGHT, L_OTHER };
@@ -115,6 +116,8 @@ static int role_of(const char *name) {
         {"Hp_00^w", R_HEART}, {"Hp_01^w", R_HEART}, {"Hp_02^w", R_HEART}, {"HeartUp^w", R_HEART},
         // the Items page's cursor brackets: identified only (hidden while the companion card has the cursor, pets.c)
         {"ItemCursor_", R_ITEM_CURSOR},
+        // the title's logo (Tl_Title) and the file select's frame (Cm_FileOperate): which of them is on screen
+        {"Logo_00^f", R_TITLE_LOGO}, {"Logo_01^f", R_TITLE_LOGO}, {"MainFrameLT_03^w", R_FILE_FRAME},
     };
     for (unsigned i = 0; i < sizeof m / sizeof *m; i++)
         if (!strncmp(name, m[i].prefix, strlen(m[i].prefix))) return m[i].role;
@@ -155,6 +158,7 @@ static void scan_bntx(const uint8_t *b, size_t len, bool sheet) {
         if (data + size > len) continue;
         int kind = (fmt >> 8) == 0x1e ? K_BC5 : (fmt >> 8) == 0x1c ? K_BC3 : (fmt >> 8) == 0x2d ? K_ASTC4 :
                    (fmt >> 8) == 0x0b ? K_RGBA8 : (fmt >> 8) == 0x1a ? K_BC1 : -1;
+        if (kind < 0 && (role == R_TITLE_LOGO || role == R_FILE_FRAME)) kind = K_OTHER;  // (the logo: 0x09, never decoded)
         if (kind < 0 || (sheet && kind != K_RGBA8)) continue;
         add_ref(role, kind, (fmt & 0xff) == 6, w, h, levels, b + data, size, name, rd32(t + 36) & 7);
     }
@@ -257,6 +261,19 @@ static const uint8_t *seed_tunic(uint32_t *size) {
 static TexLayout g_tunic_layout;  // (the game's tunic texture: its levels' places in the map's data)
 static bool g_tunic_layout_ok;
 bool texpatch_is_item_cursor(int id) { return id >= 0 && id < g_nrefs && g_refs[id].role == R_ITEM_CURSOR; }
+
+static _Atomic uint64_t g_screen_seen[2];  // when the title's logo / the file select's frame was last drawn
+void texpatch_note_draw(int id) {
+    if (id < 0 || id >= g_nrefs) return;
+    int r = g_refs[id].role;
+    if (r == R_TITLE_LOGO || r == R_FILE_FRAME) g_screen_seen[r == R_FILE_FRAME] = plat_now_ns();
+}
+int texpatch_title_screen(void) {
+    uint64_t now = plat_now_ns(), recent = 300000000ull;  // (the render thread is a frame or two behind)
+    if (now - g_screen_seen[1] < recent) return 2;
+    if (now - g_screen_seen[0] < recent) return 1;
+    return 0;
+}
 
 int texpatch_identify(const NvnTexture *t) {
     pthread_once(&g_once, load_refs);
@@ -1146,7 +1163,7 @@ void texpatch_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_t h
     if (lv || r->w != w || r->h != h) return;
     if (r->role == R_BOTTLE || r->role == R_BOTTLE_MODEL || r->role == R_FAIRY_MODEL || r->role == R_POWDER_MODEL ||
         r->role == R_ITEM_CURSOR || r->role == R_DGN_MAP || r->role == R_MAP_MODEL || r->role == R_POWER_PIECE_MODEL ||
-        r->role == R_HEART) return;
+        r->role == R_HEART || r->role == R_TITLE_LOGO || r->role == R_FILE_FRAME) return;
     if (r->role == R_HERO) {  // fully transparent (BC5 blocks of zeros)
         if (hide_hero()) for (uint32_t y = 0; y < (h + 3) / 4; y++) memset(blocks + y * row, 0, (w + 3) / 4 * 16);
         return;

@@ -43,7 +43,7 @@ int game_in_play(void);              // runtime/hle/warp.c
 int inventory_items_cursor(void);    // runtime/ui/inventory_overlay.mm
 bool tracker_map_page_shown(void);   // runtime/ui/tracker_overlay.mm
 bool chaos_dgnmap_shown(void);       // runtime/ui/chaos_overlay.mm
-bool movie_opening_playing(void);    // runtime/hle/movie.c
+int texpatch_title_screen(void);     // runtime/nvn/texpatch.c
 }
 ImTextureID ui_game_icon(const char *name);  // runtime/ui/triforce_icons.mm
 
@@ -239,28 +239,34 @@ static int file_at(float x, float y) {
     for (int i = 0; i < 4; i++) if (fabsf(y / g_h - kFileY[i]) < 0.095f) return i;
     return -1;
 }
-// where the title screens are: 0 the title (or the opening), 1 the file select, 2 its "load this file?"
-static int g_title_step;
+// The file select's "load this file?" is up: a file was tapped and the file select is still shown
+static bool g_file_picked;
+
+// What the game shows before play, from what it draws: 1 the title, 2 the file select, 0 else (a movie, loading)
+static int title_screen(void) {
+    int s = texpatch_title_screen();
+    if (s != 2) g_file_picked = false;
+    return s;
+}
 
 static void title_tap(float x, float y) {
-    if (movie_opening_playing()) { seq_start(); seq_add(BIT(BTN_A), 0.10f, 0.05f); return; }  // (skips it)
-    if (g_title_step == 0) {  // the title: L + R
+    int s = title_screen();
+    if (s == 1) {  // the title: L + R
         seq_start();
         seq_add(BIT(BTN_L) | BIT(BTN_R), 0.12f, 0.10f);
-        g_title_step = 1;
         return;
     }
-    if (g_title_step == 1) {  // the file select: the file tapped (its cursor stops at the top), and in
+    if (s == 2 && !g_file_picked) {  // the file select: the file tapped (its cursor stops at the top), and in
         int f = file_at(x, y);
         if (f < 0) return;
         seq_start();
         for (int i = 0; i < 4; i++) seq_add(BIT(BTN_UP), 0.08f, 0.08f);
         for (int i = 0; i < f; i++) seq_add(BIT(BTN_DOWN), 0.08f, 0.08f);
         seq_add(BIT(BTN_A), 0.10f, 0.10f);
-        g_title_step = 2;
+        g_file_picked = true;
         return;
     }
-    seq_start();  // "load this file?" (its first choice is the one to play), or anything after: A
+    seq_start();  // a movie (skips it), "load this file?" (its first choice is the one to play): A
     seq_add(BIT(BTN_A), 0.10f, 0.05f);
 }
 
@@ -417,10 +423,7 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
         if (slot < 0) return true;
         g_fingers[slot].id = e->tfinger.fingerID, g_fingers[slot].ctl = c;
         if (c > C_STICK) g_held_until[c] = now_s() + 0.08;
-        if (g_ctx.load() == X_TITLE) {  // (the title's own buttons move its steps along too)
-            if (c == C_B && g_title_step > 0) g_title_step--;
-            if (c == C_START && g_title_step < 2) g_title_step++;
-        }
+        if (g_ctx.load() == X_TITLE && c == C_B) g_file_picked = false;  // (B backs out of "load this file?")
         if (c == C_STICK) {  // the base comes to the thumb (kept on screen) - or stays where it is (Fixed)
             float r = g_ctl[C_STICK].r;
             if (!g_settings.touch_stick_fixed)
@@ -591,7 +594,6 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font) {
     }
     int ctx = g_editing ? X_PLAY : context();
     if (ctx != g_ctx.load()) {
-        if (ctx == X_TITLE) g_title_step = 0;  // (back on the title: its steps from the start)
         g_ctx = ctx;
         release_all();
     }
@@ -660,10 +662,11 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font) {
             dl->AddText(font, hs, q, IM_COL32(255, 255, 255, 255), hn);
         }
     }
-    if (ctx == X_TITLE && !g_editing && g_title_step < 2) {  // what a tap does (past the file select: the game's own)
-        const char *t = g_title_step == 1 ? "Tap a file to play" : "Tap to start";
+    int ts = ctx == X_TITLE && !g_editing ? title_screen() : 0;
+    if (ts == 1 || (ts == 2 && !g_file_picked)) {  // what a tap does (past the file select: the game's own)
+        const char *t = ts == 2 ? "Tap a file to play" : "Tap to start";
         // (the title screen: between its "Press L + R" and the copyright line at the bottom, which it covered)
-        float ty = g_title_step == 1 ? h - 40 * tt : h * 0.835f;
+        float ty = ts == 2 ? h - 40 * tt : h * 0.835f;
         label_text(dl, font, 40 * tt, ImVec2(w * 0.5f, ty), t, IM_COL32(255, 255, 255, 255), true);
     }
     if ((want & 1) && (g_editing || !hidden(C_STICK))) {
