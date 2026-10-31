@@ -302,48 +302,96 @@ static long cpu_sysfs_long(int cpu, const char *file) {
     return v;
 }
 
+// "0-7,16-23" (a sysfs cpu list) into a set; the number of cpus, or -1 when the file is missing / empty
+static int cpulist_read(const char *path, cpu_set_t *set) {
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    char b[256];
+    bool ok = fgets(b, sizeof b, f) != NULL;
+    fclose(f);
+    if (!ok) return -1;
+    CPU_ZERO(set);
+    int n = 0;
+    for (char *p = b; *p && *p != '\n';) {
+        char *q;
+        long lo = strtol(p, &q, 10), hi = lo;
+        if (q == p) break;
+        if (*q == '-') hi = strtol(q + 1, &q, 10);
+        for (long c = lo; c <= hi && c < CPU_SETSIZE; c++) CPU_SET((int)c, set), n++;
+        p = *q == ',' ? q + 1 : q;
+    }
+    return n ? n : -1;
+}
+
+static void pcore_log_set(const char *how, int ncpu) {
+    char list[256] = "";
+    size_t n = 0;
+    for (int c = 0; c < CPU_SETSIZE; c++)
+        if (CPU_ISSET(c, &pcore_set) && n < sizeof list - 8) n += (size_t)snprintf(list + n, sizeof list - n, "%s%d", n ? "," : "", c);
+    fprintf(stderr, "[pcore] big.LITTLE / hybrid CPU (%s): game threads on cores %s (%d of %d)\n", how, list, pcore_n, ncpu);
+}
+
 static void pcore_init(void) {
     const char *e = getenv("LARECOMP_PCORE");
     if (e && *e && atoi(e) == 0) { fprintf(stderr, "[pcore] off (LARECOMP_PCORE=0): default scheduling\n"); return; }
     cpu_set_t allowed;
     if (sched_getaffinity(0, sizeof allowed, &allowed) != 0) return;
     pcore_all = allowed;
-    long cls[CPU_SETSIZE];
-    const char *src = "cpu_capacity";
-    int ncpu = 0;
+    int ncpu = CPU_COUNT(&allowed);
+    char how[96];
+#if defined(__aarch64__) || defined(__arm__)
+    // arm64: each core's capacity from the device tree; big = every class above the lowest
+    long cap[CPU_SETSIZE], lo = -1, hi = -1;
     for (int c = 0; c < CPU_SETSIZE; c++) {
-        cls[c] = -1;
-        if (!CPU_ISSET(c, &allowed)) continue;
-        cls[c] = cpu_sysfs_long(c, "cpu_capacity");
-        ncpu++;
+        cap[c] = CPU_ISSET(c, &allowed) ? cpu_sysfs_long(c, "cpu_capacity") : -1;
+        if (cap[c] <= 0) continue;
+        if (lo < 0 || cap[c] < lo) lo = cap[c];
+        if (cap[c] > hi) hi = cap[c];
     }
-    bool have = false;
-    for (int c = 0; c < CPU_SETSIZE; c++) have |= cls[c] > 0;
-    if (!have) {  // (no capacities: x86, or an arm64 kernel without them)
-        src = "highest frequency";
+    if (lo > 0 && hi > lo) {
+        CPU_ZERO(&pcore_set);
         for (int c = 0; c < CPU_SETSIZE; c++)
-            if (CPU_ISSET(c, &allowed)) cls[c] = cpu_sysfs_long(c, "cpufreq/cpuinfo_max_freq");
+            if (cap[c] > lo) CPU_SET(c, &pcore_set), pcore_n++;
+        snprintf(how, sizeof how, "cpu_capacity %ld..%ld", lo, hi);
+        pcore_log_set(how, ncpu);
+        return;
     }
-    long lo = -1, hi = -1;
+    if (lo > 0) { fprintf(stderr, "[pcore] %d cores of one capacity: default scheduling\n", ncpu); return; }
+#else
+    // Intel hybrid: the kernel lists the P and E cores (these files exist only on a hybrid CPU)
+    cpu_set_t pc, ec;
+    if (cpulist_read("/sys/devices/cpu_core/cpus", &pc) > 0 && cpulist_read("/sys/devices/cpu_atom/cpus", &ec) > 0) {
+        CPU_AND(&pcore_set, &pc, &allowed);
+        CPU_AND(&ec, &ec, &allowed);
+        if (CPU_COUNT(&pcore_set) && CPU_COUNT(&ec)) {
+            pcore_n = CPU_COUNT(&pcore_set);
+            pcore_log_set("cpu_core / cpu_atom", ncpu);
+            return;
+        }
+        fprintf(stderr, "[pcore] hybrid CPU, but the affinity allows one kind only: default scheduling\n");
+        return;
+    }
+#endif
+    // Otherwise each core's highest frequency, and only a large gap counts: a desktop's favoured cores (Turbo Boost Max
+    // 3.0, some Ryzen frequency drivers) report a few percent more than the rest of the same kind of core, and pinning
+    // the game to those one or two would be a big regression. Big and little when the slowest is under 80 % of the
+    // fastest; big = every core within 80 % of the fastest.
+    long f[CPU_SETSIZE], flo = -1, fhi = -1;
     for (int c = 0; c < CPU_SETSIZE; c++) {
-        if (cls[c] <= 0) continue;
-        if (lo < 0 || cls[c] < lo) lo = cls[c];
-        if (cls[c] > hi) hi = cls[c];
+        f[c] = CPU_ISSET(c, &allowed) ? cpu_sysfs_long(c, "cpufreq/cpuinfo_max_freq") : -1;
+        if (f[c] <= 0) continue;
+        if (flo < 0 || f[c] < flo) flo = f[c];
+        if (f[c] > fhi) fhi = f[c];
     }
-    if (lo <= 0 || hi <= lo) {
-        fprintf(stderr, "[pcore] %d cores of one class (%s): default scheduling\n", ncpu, src);
+    if (flo <= 0 || flo * 5 >= fhi * 4) {
+        fprintf(stderr, "[pcore] %d cores of one class (highest frequency %ld..%ld kHz): default scheduling\n", ncpu, flo, fhi);
         return;
     }
     CPU_ZERO(&pcore_set);
-    char list[256] = "";
-    size_t n = 0;
     for (int c = 0; c < CPU_SETSIZE; c++)
-        if (cls[c] > lo) {
-            CPU_SET(c, &pcore_set), pcore_n++;
-            if (n < sizeof list - 8) n += (size_t)snprintf(list + n, sizeof list - n, "%s%d", n ? "," : "", c);
-        }
-    fprintf(stderr, "[pcore] big.LITTLE / hybrid CPU (%s %ld..%ld): game/render/vsync threads on cores %s (%d of %d)\n",
-            src, lo, hi, list, pcore_n, ncpu);
+        if (f[c] > 0 && f[c] * 5 >= fhi * 4) CPU_SET(c, &pcore_set), pcore_n++;
+    snprintf(how, sizeof how, "highest frequency %ld..%ld kHz", flo, fhi);
+    pcore_log_set(how, ncpu);
 }
 
 static int pcore_process_cpus(void) {
