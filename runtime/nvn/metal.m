@@ -1590,6 +1590,10 @@ static id<MTLTexture> sl_tex[NSLOT];
 static uint64_t sl_at[NSLOT], sl_frame[NSLOT];
 static int sl_state[NSLOT], sl_kind[NSLOT], sl_readers[NSLOT];
 static int ip_shown = -1;  // the slot on screen (the presenter's latest)
+// LARECOMP_INTERP_TRACE=1 (debug): a line for each image shown and anything out of the ordinary on its way to the
+// screen ("[trace]")
+static int ip_trace = -1;
+static bool trace_on(void) { if (ip_trace < 0) ip_trace = getenv("LARECOMP_INTERP_TRACE") && atoi(getenv("LARECOMP_INTERP_TRACE")); return ip_trace; }
 static pthread_mutex_t sl_mx = PTHREAD_MUTEX_INITIALIZER;
 static _Atomic bool ip_on;           // the presenter shows slots
 static _Atomic uint64_t ip_phase, ip_period, ip_last_cb;  // the display: a vsync's time, its period; the latest callback
@@ -1611,6 +1615,9 @@ static int slot_claim(NSUInteger w, NSUInteger h, bool force) {
         if (got < 0 && force) {
             for (int i = 0; i < NSLOT; i++)
                 if (sl_state[i] == SL_READY && i != ip_shown && !sl_readers[i] && (got < 0 || sl_at[i] < sl_at[got])) got = i;
+            if (got >= 0 && trace_on() && ip_shown >= 0 && sl_at[got] > sl_at[ip_shown])
+                LOG("[trace] game frame takes slot %d: its image (frame %llu, kind %d) was never shown\n", got,
+                    (unsigned long long)sl_frame[got], sl_kind[got]);
         }
         if (got >= 0) sl_state[got] = SL_RENDER;
         pthread_mutex_unlock(&sl_mx);
@@ -1630,6 +1637,11 @@ static void slot_commit(id<MTLCommandBuffer> cb, int i, uint64_t at, uint64_t fr
     sl_at[i] = at, sl_frame[i] = frame, sl_kind[i] = kind;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
         if (kind == K_MID) interp_compose_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3);
+        if (done.error) LOG("[trace] image's command buffer error (slot %d, frame %llu): %s\n", i, (unsigned long long)frame,
+                            done.error.localizedDescription.UTF8String);
+        if (trace_on() && plat_now_ns() > at)
+            LOG("[trace] slot %d (frame %llu, kind %d) ready %.2f ms after it was due\n", i, (unsigned long long)frame, kind,
+                (plat_now_ns() - at) / 1e6);
         pthread_mutex_lock(&sl_mx);
         if (sl_state[i] == SL_RENDER) sl_state[i] = SL_READY;
         pthread_mutex_unlock(&sl_mx);
@@ -1714,12 +1726,13 @@ static void ip_tick(uint64_t tp) {
     // The window's presents can queue up behind each other (seen: images on screen 1 to 4 vsyncs after the one they
     // were made for, steady for a whole run): each vsync of that queue is latency. One vsync without a present lets
     // it shrink by one - a single repeated image - until images reach the screen one vsync after theirs.
-    static int drain_wait;
+    static int drain_wait, drain_on = -1;  // LARECOMP_INTERP_DRAIN=0: no skipped vsyncs (tests)
+    if (drain_on < 0) drain_on = !getenv("LARECOMP_INTERP_DRAIN") || atoi(getenv("LARECOMP_INTERP_DRAIN"));
     if (drain_wait > 0) drain_wait--;
-    else if (atomic_load(&ip_late_ns) > 1.8 * P) {  // (a whole extra vsync, not single late images)
+    else if (drain_on && atomic_load(&ip_late_ns) > 1.8 * P) {  // (a whole extra vsync, not single late images)
         drain_wait = 60;
         static int nlog;
-        if (nlog++ < 10) LOG("[interp] window presents %.1f ms behind: one vsync skipped\n", atomic_load(&ip_late_ns) / 1e6);
+        if (nlog++ < 10 || trace_on()) LOG("[interp] window presents %.1f ms behind: one vsync skipped\n", atomic_load(&ip_late_ns) / 1e6);
         atomic_store(&ip_late_ns, (int64_t)P);
         return;
     }
@@ -1736,6 +1749,14 @@ static void ip_tick(uint64_t tp) {
         if (i != best && sl_state[i] == SL_READY && !sl_readers[i] && NEWER(best, i)) sl_state[i] = SL_FREE;
 #undef NEWER
     int kind = best == ip_shown ? K_REPEAT : sl_kind[best];
+    static uint64_t tr_frame, tr_at;  // (the last new image shown)
+    if (trace_on() && kind != K_REPEAT) {
+        if (sl_frame[best] < tr_frame || (sl_frame[best] == tr_frame && sl_at[best] < tr_at))
+            LOG("[trace] OUT OF ORDER: slot %d frame %llu due %.2f after frame %llu due %.2f\n", best,
+                (unsigned long long)sl_frame[best], sl_at[best] / 1e6, (unsigned long long)tr_frame, tr_at / 1e6);
+        tr_frame = sl_frame[best], tr_at = sl_at[best];
+    }
+    uint64_t tr_due = sl_at[best];
     ip_shown = best;
     sl_readers[best]++;
     id<MTLTexture> src = sl_tex[best];
@@ -1743,7 +1764,10 @@ static void ip_tick(uint64_t tp) {
     pthread_mutex_unlock(&sl_mx);
 
     // the window's next image (up to 3 in flight: waits for one to come off screen at most)
+    uint64_t tr_t0 = plat_now_ns();
     id<CAMetalDrawable> drawable = [layer nextDrawable];
+    if (trace_on() && plat_now_ns() - tr_t0 > (uint64_t)(P / 2))
+        LOG("[trace] nextDrawable waited %.2f ms\n", (plat_now_ns() - tr_t0) / 1e6);
     if (!drawable) {
         pthread_mutex_lock(&sl_mx);
         sl_readers[best]--;
@@ -1825,6 +1849,15 @@ static void ip_tick(uint64_t tp) {
     double target_s = tp / 1e9;
     [drawable addPresentedHandler:^(id<MTLDrawable> d) {
         ip_presented(d.presentedTime, target_s, kind);
+        if (trace_on()) {
+            static double last;
+            double t = d.presentedTime, gap = last > 0 && t > 0 ? (t - last) * 1e3 : 0;
+            bool odd = t <= 0 || (last > 0 && t < last) || (gap > 0 && (gap < P / 2e6 || gap > P * 1.5 / 1e6));
+            LOG("[trace] %s %c frame %llu slot %d due %.2f vsync %.2f shown %.3f gap %.2f%s\n", odd ? "!!" : "  ", "gmr"[kind],
+                (unsigned long long)frame, b, tr_due / 1e6, target_s * 1e3, t * 1e3, gap,
+                t <= 0 ? " NOT SHOWN" : last > 0 && t < last ? " BEFORE THE PREVIOUS" : "");
+            if (t > 0) last = t;
+        }
         if (d.presentedTime > 0) {
             int64_t late = (int64_t)((d.presentedTime - target_s) * 1e9), e = atomic_load(&ip_late_ns);
             atomic_store(&ip_late_ns, e + (late - e) / 8);

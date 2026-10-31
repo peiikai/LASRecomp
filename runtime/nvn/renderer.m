@@ -49,6 +49,14 @@ static uint64_t ring_gen, tape_ring_gen;  // ring_reset's count (a reset rewrite
 // drawn with the next frame's particles: 2% of the image)
 static id<MTLBuffer> iv_sub_buf;
 static uint64_t iv_sub_off;
+// LARECOMP_INTERP_INPLACE_CHECK=1 (debug): game memory the tape reads in place (vertex / index buffers), with a hash
+// of it at the frame - checked when an in-between is made and when the next frame starts: rewritten by then, the
+// in-between drew with the game's newer data
+typedef struct { uint64_t addr, size, hash; } InPlace;
+static InPlace *ip_list; static uint32_t ip_n, ip_cap;
+static int ip_check = -1;
+static uint64_t range_hash(uint64_t addr, uint64_t size);
+static void tape_note_inplace(uint64_t addr, uint64_t size);
 
 static TapeOp *tp_push(int op) {
     if (tape_n == tape_cap) {
@@ -66,9 +74,40 @@ static int32_t tp_obj(id o) {
     return (int32_t)tape_objs.count - 1;
 }
 static bool tp_on(void) { return tape_rec && !tape_mute; }
+static void inplace_check(const char *when) {
+    if (ip_check <= 0 || !ip_n) return;
+    static uint64_t checks[2], changed[2], bytes[2], binds[2];
+    static double last;
+    int k = when[0] == 'n';
+    uint32_t n = 0; uint64_t b = 0;
+    for (uint32_t i = 0; i < ip_n; i++)
+        if (range_hash(ip_list[i].addr, ip_list[i].size) != ip_list[i].hash) {
+            if (n < 3 && changed[k] < 40) LOG("[inplace] %s: %llx+%llu rewritten since the frame\n", when, (unsigned long long)ip_list[i].addr, (unsigned long long)ip_list[i].size);
+            n++, b += ip_list[i].size;
+        }
+    checks[k]++, binds[k] += ip_n;
+    if (n) changed[k]++, bytes[k] += b;
+    extern uint64_t plat_now_ns(void);
+    double now = plat_now_ns() / 1e9;
+    if (now - last > 2) {
+        last = now;
+        LOG("[inplace] at the in-between: %llu of %llu checks found rewritten data (%.0f binds/frame); at the next frame: %llu of %llu\n",
+            (unsigned long long)changed[0], (unsigned long long)checks[0], checks[0] ? (double)binds[0] / checks[0] : 0,
+            (unsigned long long)changed[1], (unsigned long long)checks[1]);
+        memset(checks, 0, sizeof checks), memset(changed, 0, sizeof changed), memset(bytes, 0, sizeof bytes), memset(binds, 0, sizeof binds);
+    }
+}
+static void tape_note_inplace(uint64_t addr, uint64_t size) {
+    if (ip_check < 0) ip_check = getenv("LARECOMP_INTERP_INPLACE_CHECK") && atoi(getenv("LARECOMP_INTERP_INPLACE_CHECK"));
+    if (ip_check <= 0 || !tp_on() || !size) return;
+    if (ip_n == ip_cap) { ip_cap = ip_cap ? ip_cap * 2 : 4096; ip_list = realloc(ip_list, sizeof *ip_list * ip_cap); }
+    ip_list[ip_n++] = (InPlace){addr, size & ~7ull, range_hash(addr, size & ~7ull)};
+}
 static void tape_begin(void) {
     static int on = -1;
     if (on < 0) { const char *e = getenv("LARECOMP_INTERP_TAPE"); on = !e || atoi(e); }
+    inplace_check("next frame");
+    ip_n = 0;
     tape_n = 0, tape_nbytes = 0;
     if (!tape_objs) tape_objs = [NSMutableArray new];
     [tape_objs removeAllObjects];
@@ -1369,6 +1408,28 @@ static bool iv_geometry(uint64_t addr, uint64_t size, id<MTLBuffer> __strong *bu
     iv_missed++;
     return false;
 }
+// The tape's copy of small vertex / index data the frame reads in place from cached pools too: the game rewrites
+// some of it for its next frame by the time an in-between runs (quads of 16 to 224 bytes, at 80-100 of 120
+// in-betweens a second): drawn with half-written corners, a quad became a thin black line across the screen now and
+// then, at full speed only. Big ranges are static meshes. LARECOMP_INTERP_TAPE_COPY=<bytes>: the largest copied (0: none).
+static void tape_copy_small(uint64_t addr, uint64_t size) {
+    static int64_t max = -1;
+    if (max < 0) { const char *x = ENV("LARECOMP_INTERP_TAPE_COPY"); max = x ? atoll(x) : 65536; }
+    if (!tp_on() || g_interp_replaying || !size || size > (uint64_t)max) return;
+    if (interp_frame_serial() != iv_serial) {
+        iv_serial = interp_frame_serial();
+        iv_n = 0, iv_off = IV_CHUNK, iv_bufs = [NSMutableArray array], iv_chunk = nil;
+    }
+    uint64_t o = (iv_off + 255) & ~255ull;
+    if (!iv_chunk || o + size > IV_CHUNK) {
+        id<MTLBuffer> c = [dev newBufferWithLength:IV_CHUNK options:MTLResourceStorageModeShared];
+        [iv_bufs addObject:c];
+        iv_chunk = c, o = 0;
+    }
+    memcpy((uint8_t *)iv_chunk.contents + o, (const void *)(uintptr_t)addr, size);
+    iv_off = o + size;
+    iv_sub_buf = iv_chunk, iv_sub_off = o;  // (the tape binds the copy)
+}
 
 static void bind_guest(id<MTLRenderCommandEncoder> e, bool vertex_stage, uint64_t addr, uint64_t size, int index) {
     if (addr >= HEAP_BASE && addr + size <= HEAP_BASE + HEAP_MAX && (addr & 3) == 0) {
@@ -1380,6 +1441,8 @@ static void bind_guest(id<MTLRenderCommandEncoder> e, bool vertex_stage, uint64_
             return;
         }
         if (!dyn_copy(addr, size)) {
+            tape_copy_small(addr, size);
+            if (!iv_sub_buf) tape_note_inplace(addr, size);
             E_buf(vertex_stage ? 0 : 1, g_guest_buffer, addr - HEAP_BASE, index);
             return;
         }
@@ -3895,6 +3958,8 @@ static void draw(CmdRec *r, bool indexed) {
                 ib = ivb; ioff = ivo;
             } else if (in_heap && !dyn_copy(iaddr, (uint64_t)count * isz)) {
                 ib = g_guest_buffer; ioff = iaddr - HEAP_BASE;
+                tape_copy_small(iaddr, (uint64_t)count * isz);
+                if (!iv_sub_buf) tape_note_inplace(iaddr, (uint64_t)count * isz);
             } else {
                 ioff = ring_alloc((void *)(uintptr_t)iaddr, (uint64_t)count * isz); ib = ring;
             }
@@ -4719,6 +4784,7 @@ void renderer_interp_replay(void) {
 // frame, a full flush reset the ring it binds) - the caller translates the lists again.
 bool renderer_interp_tape_replay(void) {
     if (!tape_ok || !tape_n || tape_rec || tape_ring_gen != ring_gen) return false;
+    inplace_check("in-between");
     interp_replay_begin();
     @autoreleasepool {
         id<MTLRenderCommandEncoder> e = nil;
