@@ -275,6 +275,12 @@ bool menu_handle_event(const SDL_Event *e) {
     }
 }
 
+// Command-drag moves a borderless window without taking ordinary clicks from the UI or game.
+static SDL_HitTestResult SDLCALL window_hit_test(SDL_Window *window, const SDL_Point *, void *) {
+    return !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) && (SDL_GetModState() & SDL_KMOD_GUI)
+        ? SDL_HITTEST_DRAGGABLE : SDL_HITTEST_NORMAL;
+}
+
 extern "C" uint32_t g_window_resize_request;  // (test scripts: runtime/hle/input.c "resize")
 void menu_apply_window_requests(void *win) {
     SDL_Window *w = (SDL_Window *)win;
@@ -287,6 +293,8 @@ void menu_apply_window_requests(void *win) {
         text_input = want_text;
     }
     static bool first = true;
+    if (first && !SDL_SetWindowHitTest(w, window_hit_test, NULL))
+        SDL_Log("SDL_SetWindowHitTest: %s", SDL_GetError());
     if (first || g_want_fullscreen_apply.exchange(false)) {
         first = false;
         SDL_SetWindowFullscreen(w, g_settings.fullscreen);
