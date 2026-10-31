@@ -496,8 +496,16 @@ PATCHES[BOTTLE1_USE_SITE] = _bottle1_use
 # and the same for X with #2 / +0xa3. The Y test also passes for a newly pressed d-pad direction, and the read then
 # answers the item itself when a direction just pressed holds it - else the item on Y (Y pressed) or none. A direction
 # and Y (or X) pressed together use both items, as Y and X do (bomb arrows); the button slots never change.
-EQUIP_Y_TEST_SITES = tuple(getattr(A, f'EQUIP_Y_TEST_SITES_{i}') for i in range(12))
-EQUIP_Y_READ_SITES = tuple(getattr(A, f'EQUIP_Y_READ_SITES_{i}') for i in range(12))
+EQUIP_Y_TEST_SITES = (
+    A.EQUIP_Y_TEST_SITES_0, A.EQUIP_Y_TEST_SITES_1, A.EQUIP_Y_TEST_SITES_2, A.EQUIP_Y_TEST_SITES_3,
+    A.EQUIP_Y_TEST_SITES_4, A.EQUIP_Y_TEST_SITES_5, A.EQUIP_Y_TEST_SITES_6, A.EQUIP_Y_TEST_SITES_7,
+    A.EQUIP_Y_TEST_SITES_8, A.EQUIP_Y_TEST_SITES_9, A.EQUIP_Y_TEST_SITES_10, A.EQUIP_Y_TEST_SITES_11,
+)
+EQUIP_Y_READ_SITES = (
+    A.EQUIP_Y_READ_SITES_0, A.EQUIP_Y_READ_SITES_1, A.EQUIP_Y_READ_SITES_2, A.EQUIP_Y_READ_SITES_3,
+    A.EQUIP_Y_READ_SITES_4, A.EQUIP_Y_READ_SITES_5, A.EQUIP_Y_READ_SITES_6, A.EQUIP_Y_READ_SITES_7,
+    A.EQUIP_Y_READ_SITES_8, A.EQUIP_Y_READ_SITES_9, A.EQUIP_Y_READ_SITES_10, A.EQUIP_Y_READ_SITES_11,
+)
 
 
 def _equip_y_test(gen, a):
@@ -508,11 +516,17 @@ def _equip_y_test(gen, a):
             f'  /* {a:#x}: tbnz w8, #3 (Y newly pressed, or a d-pad direction) */')
 
 
+EQUIP_Y_READ_SLOTS = (0xf, 0xe, 0xd, 0x6, 0x5, 0x4, 0x3, 0x2, 0x7, 0xc, 0x8, 0x9)  # (each check's item, its `cmp`)
+
+
 def _equip_y_read(gen, a):
-    w, n = struct.unpack_from('<II', gen.nso.image, a - gen.base)
+    at = a - gen.base
+    w = struct.unpack_from('<I', gen.nso.image, at)[0]
     assert w & 0xFFFFFFE0 == 0x39428900 and w & 31 < 30, hex(w)  # ldrb wN, [x8, #0xa2]
-    assert n & 0xFFC003FF == 0x71000000 | (w & 31) << 5 | 0x1F, hex(n)  # cmp wN, #<slot>
-    slot = (n >> 10) & 0xFFF
+    slot = EQUIP_Y_READ_SLOTS[EQUIP_Y_READ_SITES.index(a)]
+    if at + 8 <= len(gen.nso.image):
+        n = struct.unpack_from('<I', gen.nso.image, at + 4)[0]
+        assert n == 0x7100001F | slot << 10 | (w & 31) << 5, hex(n)  # cmp wN, #<slot>
     return (f'{{ extern uint32_t rt_equip_y_read(uint64_t ps, int slot); c->x[{w & 31}] = rt_equip_y_read(c->x[8], {slot}); }}'
             f'  /* {a:#x}: ldrb w{w & 31}, [x8, #0xa2] (item on Y; item {slot:#x} on a d-pad direction) */')
 
