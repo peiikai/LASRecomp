@@ -26,6 +26,7 @@
 #include "../screen_filter.h"
 #include "../shader_prep.h"
 #include "../../settings.h"
+#include "../weather.h"
 
 static uint64_t stat_draws, stat_skipped, stat_passes, stat_dispatches, stat_wait_ns, stat_flushes, stat_feedback_copies;
 // (the guest heap for shaders in chunks: with the heap import below)
@@ -5574,10 +5575,82 @@ static void prep_check(const PipeKey *k, uint64_t vh, uint64_t fh, const ShaderR
         k->prog->prep_vh ? "prepared" : "not prepared", progs, nprep, best ? diff : " (none)", line);
 }
 
+// ------------------------------------------------------------------ weather (runtime/nvn/weather.h; the pass:
+// weather_vk.c). As renderer.m: the scene's draws give the camera and the depth they draw into (wx_*), and right after
+// the scene composite into the window image the weather goes on it
+static bool wx_composite, wx_mirror, wx_dm1;
+static NvnTexture *wx_depth;
+static uint64_t wx_depth_frame;
+static float wx_zn, wx_zf;
+static void weather_encode(void);
+
+extern uint64_t renderer_exec_frame(void);
+bool vk_weather_probes(float out[WEATHER_PROBES]);  // weather_vk.c
+void vk_weather_pass(VkImageView color, VkFormat fmt, uint32_t w, uint32_t h, VkImageView depth, const WeatherFrame *wf,
+                     int parts, bool dbg);
+
+// right after the scene composite (its pass still open): renderer.m's weather_encode, the same checks and frame
+static void weather_encode(void) {
+    static long off = -1;  // (LARECOMP_WEATHER_SKIP=1: the weather computed but not drawn)
+    if (off < 0) off = getenv("LARECOMP_WEATHER_SKIP") ? atol(getenv("LARECOMP_WEATHER_SKIP")) : 0;
+    uint64_t frame = renderer_exec_frame();
+    weather_cycle_scene();  // (the weather cycle's clock runs while the game draws its scene)
+    NvnTexture *win = st.rt.ncolor ? st.rt.color[0] : NULL, *dep = wx_depth;
+    extern bool mirror_scene_size(uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
+    int why = off ? 1 : !win ? 2 : !dep ? 3 : wx_depth_frame != frame ? 4 : fabsf(wx_zf - wx_zn) < 1e-6f ? 5 :
+              !mirror_scene_size(dep->width, dep->height, win->width, win->height) ? 6 : 0;
+    static int wlog = -1, wlast = -1;  // LARECOMP_LOG_WEATHER=1 (test): why the renderer skips the weather, as that changes
+    if (wlog < 0) wlog = getenv("LARECOMP_LOG_WEATHER") != NULL;
+    if (wlog && why != wlast)
+        LOG("[weather] frame %llu renderer: %s (depth %ux%u window %ux%u)\n", (unsigned long long)frame,
+            (const char *const[]){"ok", "skip", "no window", "no depth", "depth from another frame", "depth range", "depth size"}[why],
+            dep ? dep->width : 0, dep ? dep->height : 0, win ? win->width : 0, win ? win->height : 0);
+    wlast = why;
+    if (why) return;
+    float wsx, wsy, dsx, dsy;
+    renderer_texture_scale(win, &wsx, &wsy);
+    renderer_texture_scale(dep, &dsx, &dsy);
+    TexBackend *cb_ = vk_tex(win, true), *db = vk_tex(dep, true);
+    VkImageView cv = vk_view(win, &st.rt.cview[0], st.rt.has_cview[0], true, TEXTYPE_2D);
+    VkImageView dv = vk_view(dep, NULL, false, false, TEXTYPE_2D);
+    VkFormat cf = pass_color[0];  // (the composite's pass is the open one)
+    if (!cb_ || !db || !cv || !dv || cf == VK_FORMAT_UNDEFINED) return;
+    WeatherFrame wf;
+    memset(&wf, 0, sizeof wf);
+    int cw = (int)lroundf(win->width * wsx), ch = (int)lroundf(win->height * wsy);
+    if (cw > (int)cb_->width) cw = (int)cb_->width;
+    if (ch > (int)cb_->height) ch = (int)cb_->height;
+    wf.screen[0] = (float)cw, wf.screen[1] = (float)ch;
+    wf.screen[2] = fminf((float)lroundf(dep->width * dsx), (float)db->width);
+    wf.screen[3] = fminf((float)lroundf(dep->height * dsy), (float)db->height);
+    wf.flags[0] = nvn_window_origin() == 0, wf.flags[1] = wx_dm1;
+    wf.flags[2] = wx_mirror;  // (the composite was drawn mirrored: mirror_draw)
+    wf.zr[0] = wx_zn, wf.zr[1] = wx_zf - wx_zn;
+    static uint64_t probe_frame;  // (the scene depth at the probe points, as last frame's particle draw wrote it)
+    float pd[WEATHER_PROBES];
+    bool have = probe_frame && frame - probe_frame < 4 && vk_weather_probes(pd);
+    if (!weather_frame(&wf, frame, have ? pd : NULL)) return;
+    static int dbg = -1;  // LARECOMP_WEATHER_DEBUG (test): 1 opaque red particles, 2 red poles standing on the ground
+    if (dbg < 0) dbg = getenv("LARECOMP_WEATHER_DEBUG") ? atoi(getenv("LARECOMP_WEATHER_DEBUG")) : 0;
+    if (dbg) {
+        wf.color[0] = 1, wf.color[1] = wf.color[2] = 0, wf.color[3] = 1, wf.shape[1] = 4;
+        if (dbg == 2) wf.flags[3] = 3, wf.count = 400, wf.splashes = 0;
+    }
+    static int parts = -1;  // LARECOMP_WEATHER_PARTS=<mask> (test): renderer.m's
+    if (parts < 0) parts = getenv("LARECOMP_WEATHER_PARTS") ? atoi(getenv("LARECOMP_WEATHER_PARTS")) : 63;
+    vk_end_pass();
+    st.rt_dirty = true;  // (the game's next draw opens its pass again)
+    ss_forget();         // (the weather's pass set its own pipeline and dynamic state)
+    vk_weather_pass(cv, cf, (uint32_t)cw, (uint32_t)ch, dv, &wf, parts, dbg != 0);
+    probe_frame = frame;
+}
+
 static void draw_(CmdRec *r, bool indexed);
 static void draw(CmdRec *r, bool indexed) {
     PROF_T0();
+    wx_composite = wx_mirror = false;
     draw_(r, indexed);
+    if (wx_composite) weather_encode();
     PROF_ADD(prof_draw);
 }
 static uint64_t prof_tp_;
@@ -5605,8 +5678,10 @@ static void draw_(CmdRec *r, bool indexed) {
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
         }
+        wx_composite = composite;
         if (mirror_draw(composite)) {
             vkey.flip_x = fkey.flip_x = true;
+            wx_mirror = true;
             pr = get_program(st.program, &vkey, &fkey);
             if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
             g_mirror_w = (float)st.rt.color[0]->width;
@@ -5639,6 +5714,17 @@ static void draw_(CmdRec *r, bool indexed) {
         if (last_hash) widescreen_backdrop_seen(last_hash);
         extern void widescreen_scene_ubo(const float *u, uint64_t size);  // (the camera's view-projection)
         if (st.ubuf[0][5].addr) widescreen_scene_ubo((const float *)(uintptr_t)st.ubuf[0][5].addr, st.ubuf[0][5].size);
+        // (the weather: the camera, and the depth it draws into - renderer.m says why the level model's too)
+        bool into_scene = st.rt.ncolor && st.rt.color[0] && st.rt.depth && st.rt.depth->width >= 640 &&
+                          st.rt.color[0]->width == st.rt.depth->width && renderer_format_is_depth(st.rt.depth->format);
+        uint64_t s4 = st.ubuf[0][4].addr ? st.ubuf[0][4].size : 0;
+        bool cam = st.ubuf[0][5].addr && st.ubuf[0][5].size == 320,
+             level = !cam && into_scene && (s4 == 912 || s4 == 928) && st.ubuf[0][1].addr && st.ubuf[0][1].size == 1024;
+        if (cam) weather_scene_camera((const float *)(uintptr_t)st.ubuf[0][5].addr, st.ubuf[0][5].size, renderer_exec_frame());
+        if (level) weather_scene_vp((const float *)(uintptr_t)st.ubuf[0][1].addr, renderer_exec_frame());
+        if ((cam && st.rt.depth && st.rt.depth->width >= 640 && renderer_format_is_depth(st.rt.depth->format)) || level)
+            wx_depth = st.rt.depth, wx_depth_frame = renderer_exec_frame(), wx_zn = st.depth_range[0][0],
+            wx_zf = st.depth_range[0][1], wx_dm1 = nvn_depth_mode() == 0;
     }
     if (g_debug_frame) debug_draw(pr, r, indexed);
     if (ct_on()) ct_draw(pr, "draw");
