@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <chrono>
 
 #include "imgui.h"
 #ifdef __APPLE__
@@ -30,6 +31,7 @@ uint64_t vk_imgui_texture_rgba(const void *rgba, int w, int h);
 #endif
 int dpad_items_slot(int d);
 int game_in_play(void);
+uint64_t renderer_present_count(void);
 bool world_on_screen(void);
 bool inventory_items_page_shown(void);
 }
@@ -144,17 +146,22 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
     float bx = (display.x - bw) * 0.5f, by = (display.y - bh) * 0.5f, u = bw / 1280;
     static float lx = 1e9f, ly;
     if (lx > 1e8f) {
-        lx = 558, ly = 182;
+        lx = 548, ly = 182;
         if (const char *e = getenv("LARECOMP_DPAD_POS")) sscanf(e, "%f,%f", &lx, &ly);
     }
-    // the Items page: left of its Y button (the same spot as the HUD's), 85% the size. 0.3 s from one to the other, eased.
-    static const float px = 370, py = 288, ps_ = 0.85f, fly = 0.3f;
-    static double t0 = -1;
+    // the Items page: left of its Y button (the same spot as the HUD's), 85% the size. 0.45 s from one to the other, eased.
+    static const float px = 358, py = 288, ps_ = 0.85f, fly = 0.45f;
+    static double t0 = -1e9;
     static float from, at;  // (0 the HUD's spot, 1 the Items page's)
     bool page = inventory_items_page_shown();
-    double now = ImGui::GetTime();
-    if (t0 < 0 || !any_item()) from = page ? 1 : 0, t0 = now - fly, g_page_was = page;  // (just there)
-    else if (page != g_page_was) from = at, t0 = now, g_page_was = page;
+    double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();  // (ImGui's clock
+                                                                                                      // stops while the drawing is reused)
+    if (t0 < -1e8 || !any_item()) from = page ? 1 : 0, t0 = now - fly, g_page_was = page;  // (just there)
+    else if (page != g_page_was) {
+        from = at, t0 = now, g_page_was = page;
+        LOG("[dpad] the D-pad flies %s (frame %llu)\n", page ? "to the Items page" : "back to the HUD",
+            (unsigned long long)renderer_present_count());
+    }
     float k = fminf(1, (float)(now - t0) / fly);
     k = k * k * (3 - 2 * k);
     at = from + ((page ? 1 : 0) - from) * k;
