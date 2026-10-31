@@ -1246,7 +1246,7 @@ void ui_window_init(void) {
     input_load_user_mappings();
     int win_w = 1280, win_h = 720;
     if (getenv("LARECOMP_WINDOW")) sscanf(getenv("LARECOMP_WINDOW"), "%dx%d", &win_w, &win_h);
-    SDL_WindowFlags wflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    SDL_WindowFlags wflags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_BORDERLESS;
     if (getenv("LARECOMP_HIDDEN")) wflags |= SDL_WINDOW_HIDDEN;
     {   // scripted test runs (user input ignored: runtime/hle/input.c input_user_blocked) open without taking the
         // keyboard focus from whatever the player is doing
