@@ -544,7 +544,7 @@ static void tab_display(void) {
                "Unlocked fills the window and shows more of the island on wide screens, up to ultrawide. Original keeps "
                "the game's 16:9 view with bars.");
     bool fs = g_settings.fullscreen;
-    if (opt_toggle("Fullscreen", &fs, false, "Fills the screen. You can also press F11, Alt+Enter or Cmd+Ctrl+F.")) {
+    if (!PLAT_IOS && opt_toggle("Fullscreen", &fs, false, "Fills the screen. You can also press F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
@@ -739,7 +739,7 @@ static void tab_quit(float scale, bool in_game) {
     if (!ask) {
         if (!in_game) opt_disable_next();  // (already on it)
         if (opt_action("Quit to start screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
-        if (opt_action("Quit to desktop", "", d2)) ask = 2;
+        if (!PLAT_IOS && opt_action("Quit to desktop", "", d2)) ask = 2;  // (iOS apps don't quit themselves)
     } else {
         if (opt_action(ask == 1 ? "Yes, quit to start screen" : "Yes, quit to desktop", "", ask == 1 ? d1 : d2)) {
             settings_save();
@@ -1037,7 +1037,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     ImGuiContext &g = *ImGui::GetCurrentContext();
     ImGuiWindow *root = ImGui::GetCurrentWindow()->RootWindow;
     static bool nav_in_page;  // (the frame before: the cursor on a control of the page - its child windows)
-    if (nav_in_page && g.NavJustMovedToId && g.NavWindow == root && !any_popup) g_focus_tab = -100, g_focus_frames = 0;
+    static ImGuiID tabs_win;  // (the tab bar's own scrolling child, when the tabs don't fit: part of the bar, not the page)
+    bool nav_on_bar = g.NavWindow && (g.NavWindow == root || g.NavWindow->ID == tabs_win);
+    if (nav_in_page && g.NavJustMovedToId && nav_on_bar && !any_popup) g_focus_tab = -100, g_focus_frames = 0;
     // The tabs: a row of our own pieces (the selected one orange), each a button the controller's cursor can stand on;
     // the selected tab's page under them
     if (g_tab_request != -2)
@@ -1051,19 +1053,34 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
     }
     {
         const PlasticTheme &pt = plastic_theme();
-        ImDrawList *dl = ImGui::GetWindowDrawList();
         float gap = 8 * scale, pad = 20 * scale, th = ImGui::GetFontSize() + 20 * scale;
         float tw[16], text_w[16], total = 0, avail = ImGui::GetContentRegionAvail().x - 4 * scale;
-        for (int k = 0; k < ntabs; k++) text_w[k] = ImGui::CalcTextSize(L(tabs[k].name)).x, total += text_w[k] + (k ? gap : 0);
-        if (total + 2 * pad * ntabs > avail) pad = fmaxf((avail - total) / (2 * ntabs), 3 * scale);  // (a narrow window: tighter)
-        // still too wide (long names: Russian, German): the names a little smaller
-        float tfs = ImGui::GetFontSize(), names = total - gap * (ntabs - 1), room = avail - gap * (ntabs - 1) - (2 * pad + 2 * scale) * ntabs;
-        if (names > room && names > 0) {
-            float k = fmaxf(room / names, 0.6f);
-            tfs *= k;
-            for (int i = 0; i < ntabs; i++) text_w[i] *= k;
+        for (int k = 0; k < ntabs; k++)  // (each tab also sits 2 px right of the cursor: counted, or the bar overflowed)
+            text_w[k] = ImGui::CalcTextSize(L(tabs[k].name)).x, total += text_w[k] + (k ? gap : 0) + 2 * scale;
+        // a narrow window: tighter tabs; still too wide: on a phone the bar scrolls sideways instead of squeezing them,
+        // on the desktop the names (long ones: Russian, German) a little smaller
+        const float min_pad = 12 * scale;
+        bool scroll = PLAT_IOS && total + 2 * min_pad * ntabs > avail;
+        if (scroll) pad = min_pad;
+        else if (total + 2 * pad * ntabs > avail) pad = fmaxf((avail - total) / (2 * ntabs), 3 * scale);
+        float tfs = ImGui::GetFontSize();
+        if (!scroll) {
+            float names = total - gap * (ntabs - 1) - 2 * scale * ntabs;
+            float room = avail - gap * (ntabs - 1) - (2 * pad + 2 * scale) * ntabs;
+            if (names > room && names > 0) {
+                float k = fmaxf(room / names, 0.6f);
+                tfs *= k;
+                for (int i = 0; i < ntabs; i++) text_w[i] *= k;
+            }
         }
         for (int k = 0; k < ntabs; k++) tw[k] = text_w[k] + 2 * pad;
+        if (scroll) {
+            ImGui::BeginChild("##tabs", ImVec2(avail + 4 * scale, th + 6 * scale), ImGuiChildFlags_NavFlattened,
+                              ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_NoBackground);
+            tabs_win = ImGui::GetCurrentWindow()->ID;
+        }
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        static int shown_sel = -99;  // (the selected tab brought into view once, when it changes)
         if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 8;  // (no Prelaunch in game: Controls, the first tab)
         for (int k = 0; k < ntabs; k++) {
             const Tab &t = tabs[k];
@@ -1086,9 +1103,11 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
                 // a few frames: the page's child window appearing makes ImGui pick its first widget once it's laid out
                 if (++g_focus_frames >= 4) g_focus_tab = -99, g_focus_frames = 0;
                 else g_focus_tab = t.id;
+                if (scroll) ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeX);
             }
             if (clicked && t.on) g_tab = t.id;
             bool sel = t.id == g_tab;
+            if (scroll && sel && shown_sel != t.id) shown_sel = t.id, ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeX);
             bool lit = (ImGui::IsItemFocused() && g.NavCursorVisible) || ImGui::IsItemHovered();
             ImVec4 col = sel ? pt.tab_sel : lit ? pt.row_mark : pt.tab;
             if (sel && lit) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);  // (the cursor on it: deeper)
@@ -1103,6 +1122,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
             else if (focused_tab == t.id) focused_tab = -99;
             ImGui::EndDisabled();
         }
+        if (scroll) ImGui::EndChild();
     }
     for (int k = 0; k < ntabs; k++) {
         const Tab &t = tabs[k];
@@ -1140,7 +1160,8 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         ImGui::EndChild();
     }
     opt_focus_first_left();  // (no page drawn: nothing took it)
-    nav_in_page = g.NavWindow && g.NavWindow != g.NavWindow->RootWindow && g.NavWindow->RootWindow == root;
+    nav_in_page = g.NavWindow && g.NavWindow != g.NavWindow->RootWindow && g.NavWindow->RootWindow == root &&
+                  g.NavWindow->ID != tabs_win;
     // (checks: fresh presses only - a held key's repeats come faster than a check's few frames)
     bool down1 = down && (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadDown, false) ||
                           ImGui::IsKeyPressed(ImGuiKey_GamepadLStickDown, false) || ImGui::IsKeyPressed(ImGuiKey_DownArrow, false));

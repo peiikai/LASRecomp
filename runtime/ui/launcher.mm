@@ -146,6 +146,25 @@ static void *update_thread(void *) {
             p = c ? c + 1 : p + strlen(p);
         }
     } else {
+#if PLAT_IOS
+        // (no curl to run on iOS)
+        @autoreleasepool {
+            NSMutableURLRequest *rq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@RELEASES_URL]
+                                                              cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                                                          timeoutInterval:15];
+            [rq setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+            [rq setValue:@"LASRecomp/" LARECOMP_VERSION forHTTPHeaderField:@"User-Agent"];
+            dispatch_semaphore_t done = dispatch_semaphore_create(0);
+            __block NSData *got = nil;
+            [[[NSURLSession sharedSession] dataTaskWithRequest:rq completionHandler:^(NSData *d, NSURLResponse *r, NSError *err) {
+                if (!err && [(NSHTTPURLResponse *)r statusCode] == 200) got = d;
+                dispatch_semaphore_signal(done);
+            }] resume];
+            dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+            if (!got) return NULL;
+            body.assign((const char *)got.bytes, std::min<size_t>(got.length, 8u << 20));
+        }
+#else
 #ifdef _WIN32
         const char *sr = getenv("SystemRoot");
         std::string curl = std::string(sr ? sr : "C:\\Windows") + "\\System32\\curl.exe";
@@ -165,6 +184,7 @@ static void *update_thread(void *) {
             fclose(f);
         }
         remove(out.c_str());
+#endif
     }
     std::string best;
     if (LARECOMP_EXPERIMENTAL_STAMP) {
@@ -1530,9 +1550,6 @@ static void prelaunch_tab(float sc) {
                                 "nintendo_udsg-r_std_003 for text, nintendo_udsg-r_org_zh-cn_003, nintendo_udsg-r_ext_zh-cn_003, "
                                 "nintendo_udjxh-db_zh-tw_003 and nintendo_udsg-r_ko_003 for Chinese and Korean, and "
                                 "nintendo_ext_003 for button icons. Both .bfttf and .ttf work."));
-#if PLAT_IOS
-    ImGui::TextDisabled("%s", L("They can also be put into a folder named fonts in LAS Recomp's folder in the Files app."));
-#endif
     ImGui::PopTextWrapPos();
     if (!g_font_msg.empty()) ImGui::TextWrapped("%s", g_font_msg.c_str());
     if (ImGui::Button(L("Import fonts"))) show_font_dialog();

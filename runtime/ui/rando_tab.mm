@@ -1502,7 +1502,7 @@ extern "C" void rando_tab_draw(float scale) {
         char n[16];
         snprintf(n, sizeof n, "%d", (int)g_seeds.size());
         bool open = opt_link(k_cat_name[c], NULL, c == CAT_SEEDS ? n : c == CAT_PRESETS ? cur_preset.c_str() : NULL);
-        bool clicked = ImGui::IsItemClicked();
+        bool clicked = ImGui::IsMouseReleased(ImGuiMouseButton_Left);  // (a button opens on the release, not the press)
         if (c == g_cat) take_focus(FOCUS_CAT);
         bool pick = (opt_item_nav_focused() && g_cat != c) || open;  // (moving down the list shows each)
         if (pick && g_cat != c)
