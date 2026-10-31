@@ -150,8 +150,8 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
         if (const char *e = getenv("LARECOMP_DPAD_POS")) sscanf(e, "%f,%f", &lx, &ly);
     }
     // the Items page: left of its Y button (the same spot as the HUD's), 60% the size: above the line under the page title.
-    // 0.32 s from one to the other, eased.
-    static const float px = 388, py = 304, ps_ = 0.6f, fly = 0.32f;
+    // 0.2 s from one to the other, eased.
+    static const float px = 388, py = 304, ps_ = 0.6f, fly = 0.2f;
     static double t0 = -1e9;
     static float from, at;  // (0 the HUD's spot, 1 the Items page's)
     bool page = inventory_items_page_shown();
