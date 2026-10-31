@@ -278,7 +278,10 @@ int plat_cpu_count(void) {
     return sched_getaffinity(0, sizeof set, &set) == 0 ? CPU_COUNT(&set) : 0;
 }
 
-void plat_thread_guest(int prio) { (void)prio; plat_thread_default_core(); }  // (the OS's default scheduling serves the game here)
+static void pcore_guest(void);
+// A guest thread: with big and little cores, on the big ones with the frame's other critical threads (pcore_guest);
+// otherwise the OS's default scheduling serves the game here
+void plat_thread_guest(int prio) { (void)prio; pcore_guest(); }
 
 // The frame's critical threads on the big cores of a big.LITTLE / hybrid CPU. The scheduler places a thread by its
 // recent load, so the game or render thread, idle for part of each frame, often lands on a little core: on an RK3588
@@ -351,6 +354,22 @@ static int pcore_process_cpus(void) {
 void plat_thread_default_core(void) {
     pthread_once(&pcore_once, pcore_init);
     if (pcore_n) pthread_setaffinity_np(pthread_self(), sizeof pcore_all, &pcore_all);
+}
+
+// The game's own threads join the big cores too: its frame work isn't only on the main thread (on an RK3588 the
+// busiest guest thread during play has Switch priority 32, the main thread 44, and a build that left the guest threads
+// free missed vblanks in 11-12 % of 2 s windows on a walking route, against 2 % with them on the A76s). On the Switch
+// the game owns its cores as well. LARECOMP_PCORE_GUEST=0: only the game / render / vsync threads.
+static void pcore_guest(void) {
+    pthread_once(&pcore_once, pcore_init);
+    if (!pcore_n) return;
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("LARECOMP_PCORE_GUEST");
+        on = !e || !*e || atoi(e) != 0;
+        fprintf(stderr, "[pcore] guest threads: %s\n", on ? "big cores" : "all cores (LARECOMP_PCORE_GUEST=0)");
+    }
+    pthread_setaffinity_np(pthread_self(), sizeof (on ? pcore_set : pcore_all), on ? &pcore_set : &pcore_all);
 }
 
 void plat_thread_perf_core(int role) {
