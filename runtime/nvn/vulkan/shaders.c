@@ -114,8 +114,25 @@ static uint32_t *no_contraction(uint32_t *spv, size_t *nwords) {
 // No spirv-opt by default: it rewrote the depth pre-pass and colour-pass vertex shaders differently enough that
 // their depths stopped matching (EQUAL test: black holes in foliage), and it was most of the compile time; the
 // driver optimises anyway. LARECOMP_VK_OPT=1 turns it back on (experiments).
+// Mali (ARM's driver): fragment and compute shaders are run through spirv-opt (performance). The translated pc-loop
+// shaders (a switch on a guest pc inside a loop, every guest register a function-scope variable, the SSY / PBK
+// stacks as dynamically indexed arrays) compiled at -O0 are pathological for Mali's compiler: the light-list loop
+// of the interiors' main pass (Marin & Tarin's house: one 1280x720 pass, 48 draws) took ~400-800 ms of GPU a frame
+// on a Mali-G610 (1.5 fps), 30 fps with it optimised. Vertex shaders stay -O0 (the depth pre-pass / EQUAL reason
+// above). LARECOMP_VK_OPT_FS=0/1 forces it off / on for any GPU; the optimised SPIR-V has its own cache entries.
+static bool opt_stage(int stage) {
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("LARECOMP_VK_OPT_FS");
+        on = e ? atoi(e) != 0 : g_vk.props.vendorID == 0x13B5;  // (ARM)
+        if (on) LOG("[vk] fragment / compute shaders optimised (spirv-opt)%s\n", e ? " (LARECOMP_VK_OPT_FS)" : ": Mali");
+    }
+    return getenv("LARECOMP_VK_OPT") || (on && stage != STAGE_VERTEX);
+}
+
 uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t *nwords) {
-    uint64_t h = src_hash(src, stage);
+    bool opt = opt_stage(stage);
+    uint64_t h = src_hash(src, stage) ^ (opt ? 0x9e3779b97f4a7c15ull : 0);
     static int nocache = -1;
     if (nocache < 0) nocache = getenv("LARECOMP_VK_NO_SPIRV_CACHE") != NULL;
     uint32_t *out = nocache ? NULL : cache_load(h, nwords);
@@ -124,7 +141,7 @@ uint32_t *vk_glsl_to_spirv(const char *src, int stage, const char *name, size_t 
     if (!comp) comp = shaderc_compiler_initialize();
     shaderc_compile_options_t o = shaderc_compile_options_initialize();
     shaderc_compile_options_set_target_env(o, shaderc_target_env_vulkan, shaderc_env_version_vulkan_1_3);
-    shaderc_compile_options_set_optimization_level(o, getenv("LARECOMP_VK_OPT") ? shaderc_optimization_level_performance
+    shaderc_compile_options_set_optimization_level(o, opt ? shaderc_optimization_level_performance
                                                                                   : shaderc_optimization_level_zero);
     shaderc_compilation_result_t r = shaderc_compile_into_spv(comp, src, strlen(src), kind_of(stage), name, "main", o);
     shaderc_compile_options_release(o);
