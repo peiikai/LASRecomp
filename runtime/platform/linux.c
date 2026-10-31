@@ -270,12 +270,98 @@ void plat_sleep_until_ns(uint64_t t) {
 
 // Real-time scheduling where the user may have it (rtkit / limits.conf), else just a higher priority: keeps the
 // vsync thread on time while the guest threads load every core.
+static int pcore_process_cpus(void);
 int plat_cpu_count(void) {
+    int n = pcore_process_cpus();  // (the process's cores, also from a thread held to the big ones)
+    if (n) return n;
     cpu_set_t set;
     return sched_getaffinity(0, sizeof set, &set) == 0 ? CPU_COUNT(&set) : 0;
 }
 
-void plat_thread_guest(int prio) { (void)prio; }  // (the OS's default scheduling serves the game here)
+void plat_thread_guest(int prio) { (void)prio; plat_thread_default_core(); }  // (the OS's default scheduling serves the game here)
+
+// The frame's critical threads on the big cores of a big.LITTLE / hybrid CPU. The scheduler places a thread by its
+// recent load, so the game or render thread, idle for part of each frame, often lands on a little core: on an RK3588
+// (4x Cortex-A55 + 4x A76) the game's main thread ran on an A55 most of the time and frames missed the 30 fps mode's
+// 33 ms. A core's class: its cpu_capacity (arm64, from the device tree), else its highest frequency. "Big" = every
+// class above the lowest (as Windows' efficiency classes), within the process affinity. LARECOMP_PCORE=0: off.
+static pthread_once_t pcore_once = PTHREAD_ONCE_INIT;
+static cpu_set_t pcore_set, pcore_all;  // the big cores; the process's own cores (plat_thread_default_core)
+static int pcore_n;  // 0: no selection (off, not hybrid, or the affinity allows only one class)
+
+static long cpu_sysfs_long(int cpu, const char *file) {
+    char p[96], b[32];
+    snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%d/%s", cpu, file);
+    FILE *f = fopen(p, "r");
+    if (!f) return -1;
+    long v = fgets(b, sizeof b, f) ? atol(b) : -1;
+    fclose(f);
+    return v;
+}
+
+static void pcore_init(void) {
+    const char *e = getenv("LARECOMP_PCORE");
+    if (e && *e && atoi(e) == 0) { fprintf(stderr, "[pcore] off (LARECOMP_PCORE=0): default scheduling\n"); return; }
+    cpu_set_t allowed;
+    if (sched_getaffinity(0, sizeof allowed, &allowed) != 0) return;
+    pcore_all = allowed;
+    long cls[CPU_SETSIZE];
+    const char *src = "cpu_capacity";
+    int ncpu = 0;
+    for (int c = 0; c < CPU_SETSIZE; c++) {
+        cls[c] = -1;
+        if (!CPU_ISSET(c, &allowed)) continue;
+        cls[c] = cpu_sysfs_long(c, "cpu_capacity");
+        ncpu++;
+    }
+    bool have = false;
+    for (int c = 0; c < CPU_SETSIZE; c++) have |= cls[c] > 0;
+    if (!have) {  // (no capacities: x86, or an arm64 kernel without them)
+        src = "highest frequency";
+        for (int c = 0; c < CPU_SETSIZE; c++)
+            if (CPU_ISSET(c, &allowed)) cls[c] = cpu_sysfs_long(c, "cpufreq/cpuinfo_max_freq");
+    }
+    long lo = -1, hi = -1;
+    for (int c = 0; c < CPU_SETSIZE; c++) {
+        if (cls[c] <= 0) continue;
+        if (lo < 0 || cls[c] < lo) lo = cls[c];
+        if (cls[c] > hi) hi = cls[c];
+    }
+    if (lo <= 0 || hi <= lo) {
+        fprintf(stderr, "[pcore] %d cores of one class (%s): default scheduling\n", ncpu, src);
+        return;
+    }
+    CPU_ZERO(&pcore_set);
+    char list[256] = "";
+    size_t n = 0;
+    for (int c = 0; c < CPU_SETSIZE; c++)
+        if (cls[c] > lo) {
+            CPU_SET(c, &pcore_set), pcore_n++;
+            if (n < sizeof list - 8) n += (size_t)snprintf(list + n, sizeof list - n, "%s%d", n ? "," : "", c);
+        }
+    fprintf(stderr, "[pcore] big.LITTLE / hybrid CPU (%s %ld..%ld): game/render/vsync threads on cores %s (%d of %d)\n",
+            src, lo, hi, list, pcore_n, ncpu);
+}
+
+static int pcore_process_cpus(void) {
+    pthread_once(&pcore_once, pcore_init);
+    return pcore_n ? CPU_COUNT(&pcore_all) : 0;
+}
+
+void plat_thread_default_core(void) {
+    pthread_once(&pcore_once, pcore_init);
+    if (pcore_n) pthread_setaffinity_np(pthread_self(), sizeof pcore_all, &pcore_all);
+}
+
+void plat_thread_perf_core(int role) {
+    pthread_once(&pcore_once, pcore_init);
+    if (!pcore_n) return;
+    bool ok = pthread_setaffinity_np(pthread_self(), sizeof pcore_set, &pcore_set) == 0;
+    static _Atomic int logged;  // (once per role: a reboot's new game thread applies the same, quietly)
+    static const char *const names[] = {"game", "render", "vsync"};
+    if (role < 0 || role > 2 || (atomic_fetch_or(&logged, 1 << role) & (1 << role))) return;
+    fprintf(stderr, "[pcore] %s thread: %s\n", names[role], ok ? "big cores" : "affinity refused (default scheduling)");
+}
 
 void plat_thread_realtime(uint64_t period_ns) {
     (void)period_ns;

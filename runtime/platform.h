@@ -53,12 +53,20 @@ int plat_cpu_count(void);  // logical cores this process may run on (its affinit
 void plat_thread_guest(int prio);  // a guest thread's host scheduling class from its Switch priority (lower = more urgent)
 uint64_t plat_thread_cpu_ns(void);  // the calling thread's CPU time so far (user + system; diagnostics)
 // The calling thread is one of the frame's critical threads: on Windows, no power throttling (EcoQoS) for it and, on a
-// hybrid CPU, a preference for the performance cores (selected CPU sets; LARECOMP_PCORE=0: off). Elsewhere a no-op.
+// hybrid CPU, a preference for the performance cores (selected CPU sets); on Linux with big and little cores (arm64
+// big.LITTLE, Intel hybrid), its affinity limited to the big ones. LARECOMP_PCORE=0: off. Elsewhere a no-op.
 enum { PLAT_PERF_GAME, PLAT_PERF_RENDER, PLAT_PERF_VSYNC };
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__linux__)
 void plat_thread_perf_core(int role);
 #else
 static inline void plat_thread_perf_core(int role) { (void)role; }
+#endif
+// The calling thread on all of the process's cores again (Linux: a thread inherits its creator's affinity, so threads
+// started by a critical thread would otherwise stay on the big cores too). Elsewhere a no-op.
+#ifdef __linux__
+void plat_thread_default_core(void);
+#else
+static inline void plat_thread_default_core(void) {}
 #endif
 
 // ---- process
