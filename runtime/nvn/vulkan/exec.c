@@ -3527,7 +3527,14 @@ static VkResult host_import_ptr(void *host, uint64_t size, VkBuffer *out_buf, Vk
 }
 // Heap bytes [off, off + size) as a buffer (a page-aligned range of the mapped heap).
 static bool host_import(uint64_t off, uint64_t size, VkBuffer *out_buf, VkDeviceMemory *out_mem, bool bda) {
-    return host_import_ptr((void *)(uintptr_t)(HEAP_BASE + off), size, out_buf, out_mem, bda) == VK_SUCCESS;
+    // (soft page write tracking: the kernel driver pins the pages for writing, which fails on a page the tracking
+    // protected read-only - Mali's kbase refused the whole import, at random when a query re-protected pages meanwhile.
+    // Queries hold off while the import pins: plat_os_write_begin / _end.)
+    plat_os_write_begin(HEAP_BASE + off, size);
+    bool ok = host_import_ptr((void *)(uintptr_t)(HEAP_BASE + off), size, out_buf, out_mem, bda) == VK_SUCCESS;
+    plat_os_write_end();
+    if (!ok) LOG("[vk] host import of %llu MB at heap +%llu MB refused\n", (unsigned long long)(size >> 20), (unsigned long long)(off >> 20));
+    return ok;
 }
 
 // One import of the whole heap, tried once at the start where it should fit but not by much (device.c
@@ -3846,6 +3853,15 @@ void backend_guest_heap_prepare(void) {
     if (!g_vk.host_import || getenv("LARECOMP_VK_NO_GMEM") || g_vk.props.vendorID == 0x10DE) return;
     gmem_userptr = true;
     plat_write_tracking_off(gc_lazy ? "the guest heap is imported in userptr chunks" : "the guest heap is a userptr import");
+    // ARM's Mali driver (kbase) pins an imported host allocation's pages and maps them in the GPU's own MMU: no MMU
+    // notifier, nothing checks the CPU's page table again at a submission, so changing the CPU's protection of the
+    // pages costs the GPU nothing (unlike amdgpu's userptr above). There the soft tracking (mprotect + SIGSEGV, as over
+    // the dma-buf heap) gives the storage write watch, and with it the GPU overlap, also on kernels without
+    // userfaultfd / PAGEMAP_SCAN (Rockchip's 6.1). Private anonymous pages keep their physical page across the
+    // protect / fault / unprotect cycle (an exclusive anonymous page is reused, not copied), so the GPU keeps reading
+    // what the CPU wrote. LARECOMP_SOFT_WRITE_TRACKING=1: the same over any userptr import (tests), =0: off.
+    const char *st = getenv("LARECOMP_SOFT_WRITE_TRACKING");
+    if (st ? atoi(st) != 0 : g_vk.props.vendorID == 0x13B5) plat_soft_write_tracking(HEAP_BASE, HEAP_BASE + HEAP_MAX);
 #endif
 }
 

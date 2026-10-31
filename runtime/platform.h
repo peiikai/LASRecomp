@@ -36,8 +36,14 @@ void plat_soft_write_tracking(uint64_t lo, uint64_t hi);
 // The OS is about to write [addr, addr+size) (a file read into guest memory): pages soft tracking protected are opened
 // and count as written first (a write by the OS on a protected page would fail instead of faulting)
 void plat_os_write(uint64_t addr, uint64_t size);
+// A kernel driver is about to pin [addr, addr+size) for writing (a host-pointer import): soft tracking opens the range and
+// protects nothing until plat_os_write_end
+void plat_os_write_begin(uint64_t addr, uint64_t size);
+void plat_os_write_end(void);
 #else
 static inline void plat_os_write(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
+static inline void plat_os_write_begin(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
+static inline void plat_os_write_end(void) {}
 #endif
 enum { PLAT_PROT_NONE = 0, PLAT_PROT_READ = 1, PLAT_PROT_RW = 3 };
 int plat_protect(uint64_t addr, uint64_t size, int prot);  // 0 on success
