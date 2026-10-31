@@ -120,13 +120,14 @@ extern "C" bool dpad_overlay_wanted(void) {
 }
 
 // (menu.mm's overlay reuse) what dpad_overlay_draw draws now, as text
-static bool g_flying;  // (the D-pad on its way to or from the Items page: a new drawing every frame)
+static bool g_flying;    // (the D-pad on its way to or from the Items page: a new drawing every frame)
+static bool g_page_was;  // (the Items page was up at the last drawing)
 
 extern "C" void dpad_overlay_key(char *out, size_t cap) {
     uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
-    static unsigned frame;
-    int n = g_flying ? snprintf(out, cap, "fly %u ", ++frame) : 0;
-    if (!g_flying) out[0] = 0;
+    static unsigned frame;  // (on the way, or the Items page opened / closed since the last drawing: draw it again)
+    bool page = inventory_items_page_shown();
+    int n = g_flying || page != g_page_was ? snprintf(out, cap, "fly %u ", ++frame) : snprintf(out, cap, "%d ", page);
     for (int d = 0; d < 4 && ps; d++) {
         int s = dpad_items_slot(d);
         n += snprintf(out + n, cap > (size_t)n ? cap - n : 0, "%s.%d ", s >= 0 ? icon_name(s, ps) : "-", s >= 0 ? item_count(s, ps) : 0);
@@ -148,13 +149,12 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
     }
     // the Items page: left of its Y button (the same spot as the HUD's), 85% the size. 0.3 s from one to the other, eased.
     static const float px = 370, py = 288, ps_ = 0.85f, fly = 0.3f;
-    static bool page_was;
     static double t0 = -1;
     static float from, at;  // (0 the HUD's spot, 1 the Items page's)
     bool page = inventory_items_page_shown();
     double now = ImGui::GetTime();
-    if (t0 < 0 || !any_item()) from = page ? 1 : 0, t0 = now - fly, page_was = page;  // (just there)
-    else if (page != page_was) from = at, t0 = now, page_was = page;
+    if (t0 < 0 || !any_item()) from = page ? 1 : 0, t0 = now - fly, g_page_was = page;  // (just there)
+    else if (page != g_page_was) from = at, t0 = now, g_page_was = page;
     float k = fminf(1, (float)(now - t0) / fly);
     k = k * k * (3 - 2 * k);
     at = from + ((page ? 1 : 0) - from) * k;
