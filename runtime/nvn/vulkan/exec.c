@@ -427,12 +427,25 @@ VkCommandBuffer vk_upload_cmd(void) {
 // don't: render targets are sampled in fragment / compute shaders). Mali-G610, Marin & Tarin's house: GPU frame (the
 // game's own counters) 14.8 -> 13.65 ms.
 static int split_barrier = -1;
-void vk_full_barrier(VkCommandBuffer cb) {
+// pass_start: the barrier at a render pass's start (begin_pass). There nothing reads fragment results from the
+// compute / transfer stages (dispatches and copies have barriers of their own, whose source scope still covers every
+// earlier pass), so fragment writes need to reach only the fragment stages: on Mali a fragment -> compute / transfer
+// dependency waits in the vertex / compute hardware slot, which held the next pass's vertex and tiling work until the
+// previous pass's fragment work was done (Arm's Mali best practices: srcStage ALL_GRAPHICS -> dstStage FRAGMENT
+// between render passes). LARECOMP_VK_PASS_BARRIER=0: the split barrier's full destination there too.
+static void vk_barrier_ex(VkCommandBuffer cb, bool pass_start);
+void vk_full_barrier(VkCommandBuffer cb) { vk_barrier_ex(cb, false); }
+static void vk_barrier_ex(VkCommandBuffer cb, bool pass_start) {
+    static int pass_barrier = -1;
+    if (pass_barrier < 0) {
+        const char *e = getenv("LARECOMP_VK_PASS_BARRIER");
+        pass_barrier = !e || atoi(e) != 0;
+    }
     if (split_barrier < 0) {
         const char *e = getenv("LARECOMP_VK_SPLIT_BARRIER");
         split_barrier = e ? atoi(e) != 0 : g_vk.props.vendorID == 0x13B5;
-        if (split_barrier) LOG("[vk] split pass barriers (fragment writes -> fragment / compute / transfer)%s\n",
-                               e ? " (LARECOMP_VK_SPLIT_BARRIER)" : ": Mali");
+        if (split_barrier) LOG("[vk] split pass barriers (fragment writes -> fragment / compute / transfer; at pass starts -> fragment%s)%s\n",
+                               pass_barrier ? "" : ": off", e ? " (LARECOMP_VK_SPLIT_BARRIER)" : ": Mali");
     }
     if (split_barrier) {
         const VkPipelineStageFlags2 frag = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
@@ -442,7 +455,7 @@ void vk_full_barrier(VkCommandBuffer cb) {
                                            VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT;
         VkMemoryBarrier2 mb[2] = {
             {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = frag, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-             .dstStageMask = frag | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+             .dstStageMask = pass_start && pass_barrier ? frag : frag | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
              .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT},
             {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = rest, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
              .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT}};
@@ -1400,7 +1413,7 @@ static void begin_pass(void) {
     }
     st.rt_dirty = false;
     VkCommandBuffer cb = vk_cmd();
-    vk_full_barrier(cb);  // passes, copies and dispatches see each other's results
+    vk_barrier_ex(cb, true);  // passes, copies and dispatches see each other's results
     {
         NvnTexture *t0n = st.rt.ncolor ? st.rt.color[0] : NULL;
         dl_note("pass %d color %ux%u fmt %#x depth %p", st.rt.ncolor, t0n ? t0n->width : 0, t0n ? t0n->height : 0, t0n ? t0n->format : 0,
