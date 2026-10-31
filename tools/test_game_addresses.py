@@ -73,22 +73,33 @@ sys.modules.pop('patches', None)
 select_version('v1_0_0')
 import patches  # noqa: E402
 patch_values, runtime_values = tables['v1_0_0']
+# (the fixture holds the default base's absolute addresses and outputs: at another LARECOMP_GUEST_BASE - the iOS
+# build's - the patch sites are checked to have moved with the base instead)
+from game_addresses import GUEST_BASE, SWITCH_BASE  # noqa: E402
+default_base = GUEST_BASE == SWITCH_BASE
 fixture = json.loads((ROOT/'tools/tests/patches_v1_0_0.json').read_text())
-assert set(patches.PATCHES) == {int(a, 16) for a in fixture['patches']}
-for address, expected in fixture['patches'].items():
-    address = int(address, 16)
-    gen = SimpleNamespace(base=address, nso=SimpleNamespace(image=struct.pack('<I', int(expected['word'], 16))))
-    code = patches.PATCHES[address](gen, address)
-    assert hashlib.sha256(code.encode()).hexdigest() == expected['sha256'], f'Patch output changed at {address:x}'
-assert hashlib.sha256(json.dumps(patches.HOOKS, sort_keys=True).encode()).hexdigest() == fixture['hooks_sha256']
-assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM:x}(c);'
+if default_base:
+    assert set(patches.PATCHES) == {int(a, 16) for a in fixture['patches']}
+    for address, expected in fixture['patches'].items():
+        address = int(address, 16)
+        gen = SimpleNamespace(base=address, nso=SimpleNamespace(image=struct.pack('<I', int(expected['word'], 16))))
+        code = patches.PATCHES[address](gen, address)
+        assert hashlib.sha256(code.encode()).hexdigest() == expected['sha256'], f'Patch output changed at {address:x}'
+    assert hashlib.sha256(json.dumps(patches.HOOKS, sort_keys=True).encode()).hexdigest() == fixture['hooks_sha256']
+else:
+    assert set(patches.PATCHES) == {int(a, 16) - SWITCH_BASE + GUEST_BASE for a in fixture['patches']}
+# (the generated code names its functions by the Switch address and writes every address as an offset from the base:
+# the same text at any base - runtime/cpu.h GUEST_ADDR)
+assert addr_text('f_@HAS_ITEM@(c);') == f'f_{ADDRESS.HAS_ITEM - GUEST_BASE + SWITCH_BASE:x}(c);'
+assert addr_text('c->x[30] = 0x@HAS_ITEM@ull;') == f'c->x[30] = GUEST_ADDR(0x{ADDRESS.HAS_ITEM - GUEST_BASE:x}ull);'
+assert addr_text('goto L_@HAS_ITEM@;') == f'goto L_{ADDRESS.HAS_ITEM:x};'
 try:
     addr_text('@UNKNOWN_ADDRESS@')
 except AttributeError:
     pass
 else:
     raise AssertionError('An unknown address name was accepted')
-assert all(a < 0x7004000000 for a in list(patches.PATCHES) + list(patches.HOOKS)), 'patch sites are main addresses'
+assert all(GUEST_BASE <= a < GUEST_BASE + 0x4000000 for a in list(patches.PATCHES) + list(patches.HOOKS)), 'patch sites are main addresses'
 # every version: the same patches and hooks, at that version's addresses
 for key in VERSIONS:
     select_version(key)
@@ -164,7 +175,8 @@ objs = []
 for i, (compiler, src, std) in enumerate(((cc, source, '-std=gnu11'), (cc, ROOT/'runtime/game_addresses.c', '-std=gnu11'),
                                          (cxx, ROOT/'runtime/game_release.cpp', '-std=c++17'))):
     obj = tmp/f'{i}.o'
-    subprocess.run(compiler+[std, '-Wall', '-Werror', '-Iruntime', '-c', str(src), '-o', str(obj)], cwd=ROOT, check=True)
+    subprocess.run(compiler+[std, '-Wall', '-Werror', '-Iruntime', f'-DLARECOMP_GUEST_BASE={GUEST_BASE:#x}',
+                            '-c', str(src), '-o', str(obj)], cwd=ROOT, check=True)
     objs.append(str(obj))
 subprocess.run(cxx+objs+['-o', str(exe)], cwd=ROOT, check=True)
 native = lambda *a: subprocess.check_output([str(exe), *map(str, a)], text=True).split()  # noqa: E731
@@ -279,7 +291,7 @@ for path in (ROOT/'runtime').rglob('*'):
     code = strip_c.sub('', path.read_text(encoding='utf-8'))
     assert not re.search(r'\bGA_(?!ADDR\b|VERSION\b|RELEASE\b|FIELD\b|AT\b)[A-Z]', code), f'{path}: use GA(NAME)'
     assert set(re.findall(r'\bGA(?:_FIELD)?\(([A-Z][A-Z0-9_]*)\)', code)) <= values.keys(), str(path)
-    for match in re.finditer(r'0x(700[0-9a-fA-F]{7})', code):
+    for match in re.finditer(r'0x(700[0-9a-fA-F]{7})', code):  # (guest_base.h: the Switch base the tables move from)
         assert int(match[1], 16) in (0x7000000000, 0x7004000000), str(path)
     assert not re.search(r'(?:MAIN_BASE|SDK_BASE)\s*\+\s*0x[0-9a-fA-F]+', code), str(path)
 tree = ast.parse((ROOT/'tools/patches.py').read_text(encoding='utf-8'))

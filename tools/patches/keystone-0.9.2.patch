@@ -1,0 +1,36 @@
+keystone 0.9.2 against today's CMake and an iOS target (tools/build_deps_macos.sh, tools/build_deps_ios.sh).
+Gaps in keystone's LLVM 3.x build files, not changes to keystone itself:
+- CMP0051 was removed in CMake 4: setting it to OLD is an error now.
+- -Wl,-z,defs is an ELF linker flag; the exemption lists Darwin and Windows but not iOS (CMAKE_SYSTEM_NAME=iOS).
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -24,7 +24,6 @@
+   # stripped everywhere that access the SOURCES property, so we just
+   # defer to the OLD behavior of not including generator expressions
+   # in the output for now.
+-  cmake_policy(SET CMP0051 OLD)
+ endif()
+ 
+ if (POLICY CMP0063)
+--- a/llvm/CMakeLists.txt
++++ b/llvm/CMakeLists.txt
+@@ -19,7 +19,6 @@
+   # stripped everywhere that access the SOURCES property, so we just
+   # defer to the OLD behavior of not including generator expressions
+   # in the output for now.
+-  cmake_policy(SET CMP0051 OLD)
+ endif()
+ 
+ if(CMAKE_VERSION VERSION_LESS 3.1.20141117)
+--- a/llvm/cmake/modules/HandleLLVMOptions.cmake
++++ b/llvm/cmake/modules/HandleLLVMOptions.cmake
+@@ -139,7 +139,7 @@
+ 
+ # Pass -Wl,-z,defs. This makes sure all symbols are defined. Otherwise a DSO
+ # build might work on ELF but fail on MachO/COFF.
+-if(NOT (${CMAKE_SYSTEM_NAME} MATCHES "Darwin" OR WIN32 OR CYGWIN OR
++if(NOT (${CMAKE_SYSTEM_NAME} MATCHES "Darwin" OR ${CMAKE_SYSTEM_NAME} MATCHES "iOS" OR WIN32 OR CYGWIN OR
+         ${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD" OR
+         ${CMAKE_SYSTEM_NAME} MATCHES "OpenBSD") AND
+    NOT LLVM_USE_SANITIZER)

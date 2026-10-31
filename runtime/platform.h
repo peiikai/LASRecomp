@@ -9,6 +9,14 @@
 #include "platform/win_compat.h"
 #elif defined(__linux__)
 #include "platform/linux_compat.h"
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+// PLAT_IOS: the iOS app (runtime/platform/ios.c): no child processes, no re-exec, no AppKit; data in Documents.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#define PLAT_IOS 1
+#else
+#define PLAT_IOS 0
 #endif
 
 #ifdef __cplusplus
@@ -18,6 +26,9 @@ extern "C" {
 // ---- guest address space
 // Claim [lo, hi) for the guest at exactly that address, readable/writable (pages may be backed lazily).
 bool plat_reserve_guest(uint64_t lo, uint64_t hi);
+// LARECOMP_DYNAMIC_BASE: claim `size` bytes for the guest wherever the process has room below 2^39 (guest addresses
+// are 39 bits) and return the base, 0 when nowhere fits (after saying where the process's room is: the log).
+uint64_t plat_place_guest(uint64_t size);
 // Make sure [addr, addr+size) inside the guest window is backed (before the OS itself writes there, e.g.
 // file reads); a no-op where the whole window is backed from the start.
 void plat_commit(uint64_t addr, uint64_t size);

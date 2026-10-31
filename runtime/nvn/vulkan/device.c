@@ -1237,6 +1237,9 @@ static void quick_exit_handler(void) {
 #endif
 }
 
+// the app in the background with the game paused (phones; runtime/kernel.c's hang watchdog asks): never here
+bool ui_in_background(void) { return false; }
+
 void ui_window_init(void) {
     if (window) return;
     atexit(quick_exit_handler);

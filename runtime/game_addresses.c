@@ -7,7 +7,15 @@
 
 #include "rt.h"
 
+// (the tables' Switch addresses placed at this build's guest base: runtime/guest_base.h. With LARECOMP_DYNAMIC_BASE
+// the base isn't a constant: the tables keep the Switch's addresses and the selected one is relocated into g_ga_rel
+// by game_version_select, which runs before any of them is read)
+#if LARECOMP_DYNAMIC_BASE
 #define GA_ADDR(name, value) .name = UINT64_C(value),
+static GameAddrs g_ga_rel;
+#else
+#define GA_ADDR(name, value) .name = GUEST_FROM_SWITCH(UINT64_C(value)),
+#endif
 static const GameAddrs ga_v1_0_0 = {
 #include "game_addresses/patches_v1_0_0.h"
 #include "game_addresses/runtime_v1_0_0.h"
@@ -80,7 +88,16 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
         return false;
     }
     g_version = v;
+#if LARECOMP_DYNAMIC_BASE
+    {
+        const uint64_t *from = (const uint64_t *)v->addrs;
+        uint64_t *to = (uint64_t *)&g_ga_rel;
+        for (size_t i = 0; i < sizeof g_ga_rel / sizeof(uint64_t); i++) to[i] = GUEST_FROM_SWITCH(from[i]);
+        g_ga = &g_ga_rel;
+    }
+#else
     g_ga = v->addrs;
+#endif
     char label[32];
     LOG("[game] version %s (main build ID %.16s, address table %s)\n",
         game_release_label(exefs, label, sizeof label), v->build_id, v->key);

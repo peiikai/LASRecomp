@@ -18,6 +18,8 @@ LAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'thir
 LAS = os.path.normpath(LAS)
 if getattr(sys, 'frozen', False):  # standalone helper (tools/rando/rando_gen.spec): LAS + tools/rando data in the bundle
     LAS = sys._MEIPASS
+elif os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RandomizerCore')):
+    LAS = os.path.dirname(os.path.abspath(__file__))  # the same flat layout, run from source (iOS: rando-gen/ in the app)
 
 
 # ---- minimal PySide6.QtCore stand-in: the core only uses QThread.run() and Signal.emit/connect

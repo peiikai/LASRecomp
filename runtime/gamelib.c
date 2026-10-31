@@ -41,9 +41,16 @@ static int candidates(const char *game_dir, char out[3][1100]) {
     const char *env = getenv("LARECOMP_GAME_LIB");
     if (env && *env) snprintf(out[n++], 1100, "%s", env);
     char exe_side[1024];
+#if PLAT_IOS
+    // the embedded framework (tools/bundle_ios.sh): the only place iOS runs code from
+    if (rt_resource("Frameworks/LASGame.framework/LASGame", NULL, exe_side, sizeof exe_side))
+        snprintf(out[n++], 1100, "%s", exe_side);
+    (void)game_dir;
+#else
     if (rt_resource(GAMELIB_NAME, NULL, exe_side, sizeof exe_side) && exists(exe_side))
         snprintf(out[n++], 1100, "%s", exe_side);
     if (game_dir) snprintf(out[n++], 1100, "%s/%s", game_dir, GAMELIB_NAME);
+#endif
     return n;
 }
 

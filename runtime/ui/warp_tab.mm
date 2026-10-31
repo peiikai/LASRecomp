@@ -32,7 +32,7 @@ static char g_last[160];
 
 static const char *current_level(void) {
     uint64_t ps = *(uint64_t *)(uintptr_t)GA(PLAYER_STATUS_PTR);
-    if (ps < 0x7000000000ull || ps >= 0x7400000000ull) return "";
+    if (ps - MAIN_BASE >= 0x0400000000ull) return "";
     const char *s = (const char *)(uintptr_t)ps;
     for (int i = 0; i < 0x40; i++) {
         if (!s[i]) return s;
@@ -183,7 +183,7 @@ extern "C" bool warp_tab_draw(float scale) {
         opt_shown_next();  // (the area is translated below: the count as it is)
         bool open = opt_link(L(kWarpSpots[a.first].area), NULL, v);
         ImGui::PopID();
-        bool clicked = ImGui::IsItemClicked();
+        bool clicked = ImGui::IsMouseReleased(ImGuiMouseButton_Left);  // (a button opens on the release, not the press)
         if (a.first == g_area && g_focus == FOCUS_AREA) g_focus = FOCUS_NONE, opt_focus_item();
         if ((opt_item_nav_focused() && g_area != a.first) || open) g_area = a.first;  // (moving down the list shows each)
         if (open && !clicked) g_focus = FOCUS_RIGHT;  // (A / Right: the cursor goes to its spots)

@@ -58,7 +58,7 @@ fi
 
 if [ ! -f "$P/lib/libkeystone.dylib" ]; then
     unpack keystone-0.9.2.tar.gz keystone
-    sed -i '' 's/cmake_policy(SET CMP0051 OLD)//' "$S/keystone/CMakeLists.txt" "$S/keystone/llvm/CMakeLists.txt"  # (CMake 4)
+    patch -s -p1 -d "$S/keystone" < tools/patches/keystone-0.9.2.patch
     cmake -S "$S/keystone" -B "$S/keystone/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" \
           -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN" -DCMAKE_OSX_ARCHITECTURES=arm64 -DBUILD_SHARED_LIBS=ON \
           -DBUILD_LIBS_ONLY=ON -DLLVM_TARGETS_TO_BUILD="AArch64" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

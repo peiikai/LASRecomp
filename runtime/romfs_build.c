@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -38,6 +39,7 @@ struct Dir {
     uint32_t off;  // entry offset in the directory table
 };
 
+static int by_string(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 static int by_name_dir(const void *a, const void *b) { return strcmp((*(Dir *const *)a)->name, (*(Dir *const *)b)->name); }
 static int by_name_file(const void *a, const void *b) { return strcmp((*(File *const *)a)->name, (*(File *const *)b)->name); }
 
@@ -116,6 +118,56 @@ static uint32_t align4(uint32_t x) { return (x + 3) & ~3u; }
 static uint64_t align16(uint64_t x) { return (x + 15) & ~15ull; }
 static void put32(uint8_t *p, uint32_t v) { memcpy(p, &v, 4); }
 static void put64(uint8_t *p, uint64_t v) { memcpy(p, &v, 8); }
+
+static bool exists(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0;
+}
+static bool is_dir(const char *path) {
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+static void find_game(const char *dir, int depth, char *exefs, size_t exefs_size, char *romfs, size_t romfs_size,
+                      bool *unusable) {
+    if (depth > 4 || (*exefs && *romfs)) return;
+    char p[2200], q[2200];
+    snprintf(p, sizeof p, "%s/main", dir), snprintf(q, sizeof q, "%s/main.npdm", dir);
+    if (!*exefs && exists(p) && exists(q)) snprintf(exefs, exefs_size, "%s", dir);
+    snprintf(p, sizeof p, "%s/region_common", dir);
+    if (!*romfs && is_dir(p)) snprintf(romfs, romfs_size, "%s", dir);
+    DIR *d = opendir(dir);
+    if (!d) return;
+    char **sub = NULL;
+    int n = 0, cap = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        const char *name = e->d_name;
+        if (name[0] == '.') continue;
+        size_t len = strlen(name);
+        const char *ext = len > 4 ? name + len - 4 : "";
+        static const char *const packages[] = {".xci", ".nsp", ".nca", ".nsz", ".xcz"};
+        for (size_t i = 0; i < sizeof packages / sizeof *packages; i++)
+            if (strcasecmp(ext, packages[i]) == 0 && unusable) *unusable = true;
+        snprintf(p, sizeof p, "%s/%s", dir, name);
+        if (strcmp(name, "region_common") != 0 && is_dir(p)) {
+            if (n == cap) sub = realloc(sub, sizeof *sub * (cap = cap ? cap * 2 : 16));
+            sub[n++] = strdup(p);
+        }
+    }
+    closedir(d);
+    qsort(sub, n, sizeof *sub, by_string);
+    for (int i = 0; i < n; i++) {
+        find_game(sub[i], depth + 1, exefs, exefs_size, romfs, romfs_size, unusable);
+        free(sub[i]);
+    }
+    free(sub);
+}
+
+void romfs_find_game(const char *dir, char *exefs, size_t exefs_size, char *romfs, size_t romfs_size, bool *unusable) {
+    exefs[0] = romfs[0] = 0;
+    find_game(dir, 0, exefs, exefs_size, romfs, romfs_size, unusable);
+}
 
 uint64_t romfs_dir_bytes(const char *dir) {
     Dir *t = scan(dir, "", NULL, 0);
@@ -280,6 +332,13 @@ static bool copy_dir(Dir *d, const char *dst, uint64_t *done, uint64_t total, vo
         if (!ok) return false;
     }
     return true;
+}
+
+bool romfs_copy_file(const char *src, const char *dst) {
+    struct stat st;
+    if (stat(src, &st) != 0) return false;
+    uint64_t done = 0;
+    return copy_file(src, dst, (uint64_t)st.st_size, &done, (uint64_t)st.st_size, NULL);
 }
 
 bool romfs_copy_tree(const char *src, const char *dst, void (*progress)(uint64_t, uint64_t)) {

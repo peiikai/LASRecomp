@@ -2,6 +2,7 @@
 # macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
+# iOS: `make PLATFORM=ios` on a Mac (see docs/ios.md): Metal renderer, the game code linked into the app.
 UNAME := $(shell uname -s)
 comma := ,
 ifneq ($(filter MINGW% MSYS% CYGWIN% Windows_NT,$(UNAME) $(OS)),)
@@ -9,7 +10,36 @@ PLATFORM := windows
 else ifeq ($(UNAME),Linux)
 PLATFORM := linux
 else
-PLATFORM := macos
+PLATFORM ?= macos
+endif
+
+# iOS: the same generated code, its own build dir; static SDL3 / FFmpeg from `make deps-ios` (tools/build_deps_ios.sh);
+# the game code is its own framework in the app. The guest window has no fixed address there (where an iOS process
+# has room differs by device and iOS version: runtime/guest_base.h), so the game code is built with the base chosen
+# at start-up (LARECOMP_DYNAMIC_BASE, runtime/cpu.h) - the desktops keep their compile-time base.
+IOS_BASEFLAG := -DLARECOMP_DYNAMIC_BASE=1
+IOS_MIN   ?= 16.0
+# the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
+PYV       ?= 3.13
+ifeq ($(PLATFORM),ios)
+# IOS_SIM=1: the iOS Simulator (arm64) instead of a device - the start screen and the embedded Python for CI (the
+# game itself is not run there); `make deps-ios-sim` first. Same sources, the simulator SDK and slice.
+ifdef IOS_SIM
+IOS_SDKNAME := iphonesimulator
+IOS_TRIPLE  := arm64-apple-ios$(IOS_MIN)-simulator
+IOS_SLICE   := ios-arm64_x86_64-simulator
+B         ?= build/ios-sim
+DEPS      ?= $(CURDIR)/build/deps-ios-sim
+else
+IOS_SDKNAME := iphoneos
+IOS_TRIPLE  := arm64-apple-ios$(IOS_MIN)
+IOS_SLICE   := ios-arm64
+B         ?= build/ios
+DEPS      ?= $(CURDIR)/build/deps-ios
+endif
+IOS_SDK   := $(shell xcrun --sdk $(IOS_SDKNAME) --show-sdk-path)
+CROSS     := -target $(IOS_TRIPLE) -isysroot $(IOS_SDK)
+BASEFLAG  := $(IOS_BASEFLAG)
 endif
 
 # Linux: ARCH (x86_64 / aarch64, default this machine's) picks the target, separately from PLATFORM. The generated code
@@ -32,14 +62,21 @@ endif
 B         ?= build
 MACOS_MIN ?=
 DEPS      ?=
+# GUEST_BASE: where the 12.5 GB guest window lives on the desktops (runtime/guest_base.h); the default suits macOS /
+# Windows / Linux. The generated code holds offsets from it (runtime/cpu.h GUEST_ADDR()), so it is the same at any base and
+# the generator always runs at the Switch's own addresses; only the runtime and the library's compile see the base.
+GUEST_BASE ?= 0x7000000000
+BASEFLAG  ?= $(if $(filter-out 0x7000000000,$(GUEST_BASE)),-DLARECOMP_GUEST_BASE=$(GUEST_BASE)ull)
 MINFLAG  := $(if $(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN))
 CC       := clang $(MINFLAG) $(CROSS)
 CXX      := clang++ $(MINFLAG) $(CROSS)
 IMGUI    := third_party/imgui
 # -mllvm -disable-licm-promotion: LLVM's LICM pass takes minutes on the few generated files that hold one giant function (main_404 / main_406:
 # 12 and 11 minutes at -O1 on a Steam Deck, 33 and 56 s without the promotion; the rest of the files cost the same). Keep in step with GAMELIB_CFLAGS
-# in runtime/gamebuild.c (the start screen's build of the same code).
-GENFLAGS := -O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -Iruntime
+# in runtime/gamebuild.c (the start screen's build of the same code). (GENFLAGS_BASE: the part every target shares - the iOS export's flags come
+# from it too, so the LICM flag reaches zig cc as well.)
+GENFLAGS_BASE := -O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -Iruntime
+GENFLAGS := $(GENFLAGS_BASE) $(BASEFLAG)
 
 # The game code (made by `make gen` from your own game files) is its own library next to the app (runtime/gamelib.h);
 # the app itself holds none of it
@@ -55,6 +92,10 @@ UI_SRC   := $(wildcard runtime/ui/*.mm)
 UI_OBJ   := $(patsubst runtime/%.mm,$(B)/rt/%.o,$(UI_SRC))
 IMGUI_OBJ := $(B)/imgui/imgui.o $(B)/imgui/imgui_draw.o $(B)/imgui/imgui_tables.o $(B)/imgui/imgui_widgets.o \
              $(B)/imgui/imgui_impl_sdl3.o
+# miniz (MIT; build/miniz, fetched by tools/fetch_miniz.sh): deflate and zip archives for runtime/zipfile.c (the iOS
+# kit and the .ipa it makes)
+MINIZ    := build/miniz
+MINIZ_OBJ := $(B)/third_party/miniz.o
 
 ifeq ($(PLATFORM),macos)
 SDL      := $(or $(DEPS),/opt/homebrew/opt/sdl3)
@@ -70,6 +111,29 @@ UIFLAGS  := -fobjc-arc
 GAMELIB  := $(B)/lasgame.dylib
 GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functions it calls: the app's own)
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
+else ifeq ($(PLATFORM),ios)
+EXE      := $(B)/lasrecomp
+# the embedded CPython (BeeWare's Python.xcframework, `make deps-ios`): the seed generator runs in-process
+PYFW     := $(DEPS)/Python.xcframework/$(IOS_SLICE)
+DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python$(PYV) -DLARECOMP_PY_VERSION='"$(PYV)"'
+# SDL3 static: the frameworks it uses; FFmpeg static (the LGPL subset). The game code is its own dylib, as on
+# macOS, embedded as Frameworks/LASGame.framework by tools/bundle_ios.sh (the app itself holds none of it);
+# -export_dynamic keeps the runtime functions it calls visible to dyld.
+LDFLAGS  := -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lavutil -lswscale -lbz2 -lz -liconv \
+            -F$(PYFW) -framework Python \
+            -Wl,-export_dynamic -Wl,-rpath,@executable_path/Frameworks \
+            -framework Foundation -framework UIKit -framework Metal $(if $(IOS_SIM),,-framework MetalFX) -framework QuartzCore \
+            -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers -framework CoreMedia \
+            -framework CoreVideo -framework AVFoundation -framework AudioToolbox -framework CoreAudio \
+            -framework CoreHaptics -framework GameController -framework CoreMotion -framework CoreBluetooth \
+            -framework OpenGLES -framework Security -framework CoreText
+BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_python.m runtime/platform/ios_picker.m
+BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
+IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
+UIFLAGS  := -fobjc-arc
+GAMELIB  := $(B)/lasgame.dylib
+GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup -install_name @rpath/LASGame.framework/LASGame
+GAMELIB_SHARED :=  # (never built on the device)
 else ifeq ($(PLATFORM),linux)
 EXE      := $(B)/lasrecomp
 DEPINC   := $(if $(DEPS),-I$(DEPS)/include)
@@ -140,12 +204,17 @@ GAMELIB_FULL_ID := $(GAMELIB_ID)-$(or $(GAMELIB_BUILD),unknown)
 GAMELIB_BASE_SRCS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/fetch_zig.sh
 GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELIB_SHARED)') | \
                      (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
+# The iOS library the start screen can build on any desktop (runtime/gamebuild.c GAMEBUILD_IOS): the id and flags of
+# `make PLATFORM=ios` - the base GENFLAGS with the start-up-chosen base, none of this host's additions (-march, -fPIC,
+# _FILE_OFFSET_BITS) - so the exported app's runtime accepts it whichever desktop built it
+GENFLAGS_IOS := $(GENFLAGS_BASE) $(IOS_BASEFLAG)
+GAMELIB_IOS_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS_IOS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 
 RT_OBJ   := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC)))
 # no path of this machine in what ships: debug info and __FILE__ name the checkout as "." (Windows: its C:/ form too)
 PATHMAP  := -ffile-prefix-map=$(CURDIR)=. $(if $(filter windows,$(PLATFORM)),-ffile-prefix-map=$(shell cygpath -m '$(CURDIR)')=.)
-RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(DEPINC) $(OSFLAGS) $(PATHMAP)
-CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(DEPINC) $(PATHMAP)
+RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(BASEFLAG) $(DEPINC) $(OSFLAGS) $(PATHMAP)
+CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(BASEFLAG) $(DEPINC) $(PATHMAP)
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 
@@ -162,7 +231,9 @@ $(B)/rt/gamelib.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"'
 $(B)/rt/gamebuild.o: $(GAMELIB_SRCS) $(GAMELIB_BASE_SRCS) Makefile
 $(B)/rt/gamebuild.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"' -DGAMELIB_BASE_ID='"$(GAMELIB_BASE_ID)"' \
                                 -DGAMELIB_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS)))"' \
-                                -DGAMELIB_SHARED='"$(GAMELIB_SHARED)"'
+                                -DGAMELIB_SHARED='"$(GAMELIB_SHARED)"' \
+                                -DGAMELIB_IOS_ID='"$(GAMELIB_IOS_ID)"' \
+                                -DGAMELIB_IOS_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS_IOS)))"'
 
 $(B)/rt/%.o: runtime/%.c $(RT_HDRS)
 	@mkdir -p $(dir $@)
@@ -201,7 +272,7 @@ $(B)/rt/%.o: runtime/%.m $(RT_HDRS)
 # linked to a temp file, then renamed over: a copy of the game still running keeps its (old) file - relinking in
 # place gets running copies killed by macOS (code signature of the changed pages). The temp file keeps the real name
 # (in a folder of its own): on Windows the import library records the name the game code library loads it by.
-$(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ)
+$(EXE): $(RT_OBJ) $(BACKEND_OBJ) $(UI_OBJ) $(IMGUI_OBJ) $(MINIZ_OBJ)
 	@mkdir -p $(dir $@)link
 	$(CXX) -o $(dir $@)link/$(notdir $@) $^ $(LDFLAGS)
 	mv -f $(dir $@)link/$(notdir $@) $@
@@ -228,9 +299,20 @@ $(B)/imgui/imgui_impl_metal.o: $(IMGUI)/backends/imgui_impl_metal.mm
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -fobjc-arc -c $< -o $@
 
+# (one recipe for both files: a rule with two targets runs it once per target under -j, and the script empties the
+# folder first - zipfile.o then compiled against a miniz.h that was being replaced)
+$(MINIZ)/.fetched: tools/fetch_miniz.sh
+	tools/fetch_miniz.sh
+$(B)/third_party/miniz.o: $(MINIZ)/.fetched
+	@mkdir -p $(dir $@)
+	$(CC) -O2 -g -fno-strict-aliasing -Wno-everything $(OSFLAGS) -c $(MINIZ)/miniz.c -o $@
+$(B)/rt/zipfile.o: $(MINIZ)/.fetched
+$(B)/rt/zipfile.o: RTFLAGS += -I$(MINIZ)
+
 # Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
+# (at the Switch's addresses: the output holds offsets from the base, the same for every platform and base)
 gen:
 	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
 	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
@@ -253,10 +335,35 @@ APP_MIN  := 15.0
 APP_B    := build/mac15
 deps:
 	MACOS_MIN=$(APP_MIN) tools/build_deps_macos.sh
+deps-ios:
+	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
+deps-ios-sim:
+	SIM=1 IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
+# iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-iOS.ipa, signed with TEAM_ID / PROFILE
+# (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
+ipa:
+	$(MAKE) PLATFORM=ios
+	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp build/ios/lasgame.dylib
 app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
 	MACOS_MIN=$(APP_MIN) tools/bundle_macos.sh $(APP_B)/lasrecomp
+# The iOS app without game code (build/ios-skeleton/LAS Recomp.app), and the release's iOS kit around it
+# (build/dist/LAS Recomp-<version>-iOS.laskit: a zip with the app as Payload/, a linker for each desktop, the Darwin
+# headers), which the start screen on any desktop completes with the library it builds there (runtime/iosexport.c).
+# Needs `make deps-ios`; the kit needs the four linkers (tools/fetch_lld.sh for each LLD_TARGET).
+ios-skeleton:
+	$(MAKE) PLATFORM=ios build/ios/lasrecomp
+	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
+ios-kit: ios-skeleton
+	tools/ios_kit.sh
+# The simulator app (build/ios-sim/LAS Recomp.app, no game code, ad-hoc signed) and its run of the embedded
+# Python's self-test (tools/test_ios_sim.sh): what CI does on a Mac runner. Needs `make deps-ios-sim`.
+ios-sim:
+	$(MAKE) PLATFORM=ios IOS_SIM=1 build/ios-sim/lasrecomp
+	SKELETON=1 IOS_SIM=1 APP="build/ios-sim/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) DEPS=build/deps-ios-sim tools/bundle_ios.sh build/ios-sim/lasrecomp
+ios-sim-test: ios-sim
+	tools/test_ios_sim.sh "build/ios-sim/LAS Recomp.app"
 
 # macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/LAS Recomp-<v>-macOS.dmg
 dmg: app

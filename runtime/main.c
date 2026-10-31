@@ -1,8 +1,13 @@
 // LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
+#include "platform.h"
+#if PLAT_IOS
+#include <SDL3/SDL_main.h>  // (iOS: main becomes SDL_main, run from SDL's UIApplication delegate)
+#endif
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -40,12 +45,22 @@ static void rtld_init_main(Cpu *c) { module_init(c, &g_modules[0]); }
 // LARECOMP_REEXEC_FORCE=1 (test): the first process skips the reservation once and starts again, as when the range is
 // taken (the new process has LARECOMP_REEXEC set and reserves normally).
 #define REEXEC_FORCED "forced by LARECOMP_REEXEC_FORCE"
+static bool g_guest_reserved;  // (iOS: a failure is final, but only the game needs the window - boot() reports it)
 __attribute__((constructor(101))) static void reserve_guest_space(void) {
     const char *force = getenv("LARECOMP_REEXEC_FORCE");
     bool forced = force && *force && strcmp(force, "0") && !getenv("LARECOMP_REEXEC");
     if (forced) setenv("LARECOMP_REEXEC_WHY", REEXEC_FORCED, 1);
-    else if (plat_reserve_guest(GUEST_LO, GUEST_HI)) return;
-    else setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
+    else {
+#if LARECOMP_DYNAMIC_BASE
+        // the window wherever the process has room; its base is what every guest address is relative to
+        uint64_t base = plat_place_guest(GUEST_HI - GUEST_LO);  // (a size: the base is still 0 here)
+        if (base) { guest_base_set(base); g_guest_reserved = true; return; }
+#else
+        if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { g_guest_reserved = true; return; }
+#endif
+        setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
+    }
+    if (PLAT_IOS) return;  // (no re-exec there: the start screen and the seed generator still run; the game can't)
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
     if (n >= 20) {
@@ -133,6 +148,12 @@ static void teardown(void) {
 }
 
 static void boot(const char *root) {
+    if (!g_guest_reserved) {
+        if (LARECOMP_DYNAMIC_BASE)
+            FATAL("no room for the guest's %llu MB in this process (the [vm] lines above)\n", (GUEST_HI - GUEST_LO) >> 20);
+        FATAL("guest address range %llx-%llx is not free: this device lays its address space out differently (the [vm] lines above)\n",
+              GUEST_LO, GUEST_HI);
+    }
     char exefs[1024], romfs[1024], npdm_path[1024];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
@@ -223,9 +244,14 @@ int main(int argc, char **argv) {
     bool no_launcher = nl && *nl && strcmp(nl, "0");
     bool skip_launcher = no_launcher || getenv("LARECOMP_INPUT");  // tests boot straight in
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
-    static char arg_root[1024];
+    static char arg_root[1024], arg_kit[1024];
+    bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <kit.laskit> [game files]: the iOS app, then exit
+            build_ios = true;
+            if (!realpath(argv[++i], arg_kit)) snprintf(arg_kit, sizeof arg_kit, "%s", argv[i]);
+        }
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
@@ -236,6 +262,14 @@ int main(int argc, char **argv) {
         menu_sfx_set_game_dir(root);
         menu_sfx_load_now();
     }
+#if !PLAT_IOS
+    if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
+        extern bool iosexport_run_cli(const char *kit, const char *game_dir);
+        return iosexport_run_cli(arg_kit, root) ? 0 : 1;
+    }
+#else
+    (void)build_ios;
+#endif
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");

@@ -420,6 +420,21 @@ static void open_pad(SDL_JoystickID id) {
     if (!pad) use_pad(id, "");
 }
 
+bool input_gamepad_connected(void) { return pad != NULL; }
+
+// touch screens: the on-screen controls (runtime/ui/touch_controls.mm, iOS)
+#if PLAT_IOS
+bool touch_handle_event(const SDL_Event *e);
+uint64_t touch_buttons(void);
+void touch_stick(int32_t *lx, int32_t *ly);
+void touch_pad_used(void);
+#else
+static bool touch_handle_event(const SDL_Event *e) { (void)e; return false; }
+static uint64_t touch_buttons(void) { return 0; }
+static void touch_stick(int32_t *lx, int32_t *ly) { *lx = *ly = 0; }
+static void touch_pad_used(void) {}
+#endif
+
 void input_handle_event(const SDL_Event *e) {
     static bool scanned;  // pads present at startup: their ADDED event may have gone to the start screen's loop
     if (!scanned) {
@@ -429,6 +444,7 @@ void input_handle_event(const SDL_Event *e) {
         for (int i = 0; ids && i < n; i++) open_pad(ids[i]);
         SDL_free(ids);
     }
+    if (touch_handle_event(e)) return;
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: {
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F9 && !e->key.repeat) g_debug_frame_request = 1;
@@ -441,6 +457,7 @@ void input_handle_event(const SDL_Event *e) {
     }
     case SDL_EVENT_GAMEPAD_ADDED:
         open_pad(e->gdevice.which);
+        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) touch_pad_used();  // (the touch controls hide)
         break;
     case SDL_EVENT_GAMEPAD_REMOVED: {
         SDL_Gamepad *g = SDL_GetGamepadFromID(e->gdevice.which);
@@ -465,6 +482,7 @@ void input_handle_event(const SDL_Event *e) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
         if (e->gbutton.down && e->gbutton.which != TEST_DEVICE && !host_test) use_pad(e->gbutton.which, " (switched)");
         if (pad && e->gbutton.which != TEST_DEVICE && e->gbutton.which != SDL_GetGamepadID(pad)) break;  // (another pad)
+        if (e->gbutton.down && !host_test) touch_pad_used();  // (the touch controls hide)
         if (!host_test || e->gbutton.which == TEST_DEVICE) {  // (the press as the event has it, before reading the pad)
             uint64_t b = pad_bits(e->gbutton.button);
             note_press(e->gbutton.down ? b : 0, e->gbutton.down ? 0 : b);
@@ -486,6 +504,8 @@ void input_handle_event(const SDL_Event *e) {
             }
         }
         recompute_pad();
+        // the controller in use (a stick or trigger well off centre - not drift; a press: above): the touch controls hide
+        if (abs(e->gaxis.value) > 12000) touch_pad_used();
         break;
     }
 }
@@ -738,11 +758,13 @@ void input_frame(uint64_t frame) {
     script_rx = rx;
     script_ry = ry;
 }
+// (touch_controls.mm, LARECOMP_TOUCH_SHOW_INPUT: the scripted presses drawn on the on-screen controls)
+void input_script_state(uint64_t *buttons, int32_t *lx, int32_t *ly) { *buttons = script_buttons, *lx = script_lx, *ly = script_ly; }
 
 extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or name entry up (it has the keys / pad)
 
 // Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
-uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons; }
+uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons | touch_buttons()) | script_buttons; }
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
@@ -786,7 +808,7 @@ static void fill_state(Cpu *c) {
         LOG("[input] watching controller object %llx\n", c->x[1] - 8);
     }
     bool menu = menu_input_captured();  // the overlay menu / name entry has the controls (typing there isn't for the game)
-    uint64_t held = key_buttons | pad_buttons;
+    uint64_t held = key_buttons | pad_buttons | touch_buttons();
     atomic_fetch_and(&press_unseen, ~held);  // (the game sees these now)
     static uint64_t tap, tap_frame;  // (pressed and released since the last poll: held for the rest of this frame)
     {
@@ -804,7 +826,9 @@ static void fill_state(Cpu *c) {
         if (g_inject_plus > 0) { until = renderer_present_count() + 10; g_inject_plus = 0; }
         if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
     }
-    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
+    int32_t tlx, tly;
+    touch_stick(&tlx, &tly);
+    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + tlx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly + tly) + script_ly);
     int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry);
     extern bool mirror_input(void);  // mirror mode, the world on screen (runtime/hle/mirror.c): left and right swap
     bool mirrored = !menu && mirror_input();

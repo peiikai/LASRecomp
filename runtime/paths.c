@@ -295,6 +295,9 @@ void rt_paths_init(void) {
     char root[1024];
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) snprintf(root, sizeof root, "%s", env);
+#if PLAT_IOS
+    else { extern const char *plat_ios_documents(void); snprintf(root, sizeof root, "%s", plat_ios_documents()); }
+#else
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
     else {
         snprintf(root, sizeof root, "%s", g_home);
@@ -318,6 +321,7 @@ void rt_paths_init(void) {
             }
         }
     }
+#endif
     mkdirs(root);
     char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
@@ -340,7 +344,7 @@ const char *rt_data_root(void) { return g_root; }
 bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     char c[4][1100] = {{0}};
     if (name) {
-        snprintf(c[0], sizeof c[0], "%s" SEP "%s", g_exe_dir, name);
+        snprintf(c[0], sizeof c[0], "%s" SEP "%s", g_exe_dir, name);  // (iOS: the .app is flat, this is the bundle)
         snprintf(c[1], sizeof c[1], "%s" SEP ".." SEP "Resources" SEP "%s", g_exe_dir, name);  // .app/Contents/Resources
     }
     if (dev_rel) {
@@ -466,6 +470,7 @@ const char *rt_data_root_fixed(void) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) return LN("Set by LARECOMP_DATA_ROOT.");
     if (g_dev) return LN("A source checkout uses its own folder.");
+    if (PLAT_IOS) return LN("The app's folder in Files (On My iPhone > LAS Recomp).");  // (the sandbox: nowhere else)
     return NULL;
 }
 

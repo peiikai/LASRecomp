@@ -1,8 +1,9 @@
-# LAS Recomp's release builds: the macOS arm64 .dmg (make dmg), the Windows x64 .zip (make dist) and the Linux
-# x86_64 / aarch64 AppImages (make appimage), each from the same commit, put on a DRAFT GitHub release with their
-# sha256s. It never publishes: a person reads the draft, writes the notes and publishes it. None of the files holds
-# game code or game files (the start screen builds the game code from the player's own game files); every build
-# checks that before its upload.
+# LAS Recomp's release builds: the macOS arm64 .dmg (make dmg), the Windows x64 .zip (make dist), the Linux
+# x86_64 / aarch64 AppImages (make appimage) and the iOS kit .laskit (make ios-kit: the iOS app without game code
+# plus the tools any of those desktops completes it with), each from the same commit, put on a DRAFT
+# GitHub release with their sha256s. It never publishes: a person reads the draft, writes the notes and publishes
+# it. None of the files holds game code or game files (the start screen builds the game code from the player's own
+# game files); every build checks that before its upload.
 # Run: gh workflow run release.yml --ref beta_5 -f tag=beta_5 -f ref=beta_5
 #   (--ref: the branch whose copy of this file runs - GitHub dispatches by name only from the default branch's copy,
 #   so until this file is on main, name a branch that has it)
@@ -83,10 +84,10 @@ jobs:
           fi
           # the platforms whose files ship: all for a release; a test build may name only the ones its fix targets
           PLATFORMS=${PLATFORMS//,/ }
-          if [ -z "${PLATFORMS// /}" ]; then PLATFORMS="macos windows linux linux-aarch64"
+          if [ -z "${PLATFORMS// /}" ]; then PLATFORMS="macos windows linux linux-aarch64 ios"
           elif [[ $TAG != test-* && $TAG != ci-test-* ]]; then echo "::error::platforms: only for test builds; a release ships all"; exit 1; fi
           for p in $PLATFORMS; do
-            case $p in macos|windows|linux|linux-aarch64) ;; *) echo "::error::platform '$p': macos, windows, linux or linux-aarch64"; exit 1 ;; esac
+            case $p in macos|windows|linux|linux-aarch64|ios) ;; *) echo "::error::platform '$p': macos, windows, linux, linux-aarch64 or ios"; exit 1 ;; esac
           done
           echo "platforms=$(echo $PLATFORMS)" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -181,7 +182,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: make git curl tar xz diffutils zip unzip
+          install: make git curl tar xz diffutils zip unzip patch
           pacboy: clang:p lld:p binutils:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p nasm:p
       - name: Deps cache
@@ -221,6 +222,77 @@ jobs:
         with:
           name: windows
           path: build/dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  # The iOS kit (tools/ios_kit.sh, one .laskit file): the app without game code (make ios-skeleton: Xcode's iOS SDK,
+  # so a Mac), the Mach-O linker for each desktop (tools/fetch_lld.sh, all four targets) and the compiler's Darwin
+  # headers (from the zig archive tools/fetch_zig.sh fetched: the same files for every host). The start screen on
+  # any desktop reads it as it is and writes the player's .ipa (runtime/iosexport.c).
+  ios:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - name: Packages
+        run: brew install ninja python@3.13
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh') }}
+      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+        run: make deps-ios
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Toolchain cache (the zig archive, the four lld archives)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-kit-tools-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: Linkers for every desktop, the compiler's headers
+        run: |
+          tools/fetch_zig.sh
+          for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows; do LLD_TARGET=$t tools/fetch_lld.sh; done
+      - name: Kit
+        run: make -j"$(sysctl -n hw.ncpu)" ios-kit
+      # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (the iOS game code is
+      # f_8..., at the iOS guest base), no game files; and the kit as the runtime reads it: the app under Payload/,
+      # no symlink entries in it (an iOS install drops them; zipinfo's 'l'), every host's linker in it
+      - name: No game code; the kit's layout
+        run: |
+          A="build/ios-skeleton/LAS Recomp.app"
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \); find "$A" -name 'lasgame*' -o -name 'LASGame' -type f)
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm +111 -o -name '*.dylib' -o -name '*.so' \) | while read -r f; do
+            if nm "$f" 2>/dev/null | grep -E ' _?f_[78]0' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+          K=$(ls build/dist/*-iOS.laskit)
+          zipinfo -1 "$K" | grep -q '^Payload/LAS Recomp.app/Info.plist$' || { echo "::error::no Payload/LAS Recomp.app in the kit"; exit 1; }
+          links=$(zipinfo "$K" | grep '^l.* Payload/' || true); [ -z "$links" ] || { echo "::error::symlink entries in the kit's app: $links"; exit 1; }
+          zipinfo -1 "$K" | grep -q '^Payload/LAS Recomp.app/Frameworks/keystone.libkeystone.framework/keystone.libkeystone$' || { echo "::error::keystone's framework missing from the kit"; exit 1; }
+          for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows; do
+            zipinfo -1 "$K" | grep -q "^lld/$t/bin/lld" || { echo "::error::no linker for $t in the kit"; exit 1; }
+          done
+          zipinfo -1 "$K" | grep -q '^include/any-darwin-any/stdlib.h$' && zipinfo -1 "$K" | grep -q '^libSystem.B.tbd$' || { echo "::error::headers / link stub missing"; exit 1; }
+          ls -la build/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iOS
+          path: build/dist/*-iOS.laskit
           if-no-files-found: error
           compression-level: 0
 
@@ -314,7 +386,7 @@ jobs:
           gh release edit "$TAG" --notes-file new.md
 
   release:
-    needs: [check, macos, windows, linux]
+    needs: [check, macos, windows, linux, ios]
     if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -335,11 +407,12 @@ jobs:
         run: |
           cd dist
           ls -la
-          [ "$(ls | wc -l)" = 4 ] || { echo "::error::expected 4 files"; exit 1; }
+          [ "$(ls | wc -l)" = 5 ] || { echo "::error::expected 5 files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
           for f in *; do
             case $f in *-macOS.dmg) p=macos ;; *-windows.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
-                        *-linux-aarch64.AppImage) p=linux-aarch64 ;; *) echo "::error::unknown file $f"; exit 1 ;; esac
+                        *-linux-aarch64.AppImage) p=linux-aarch64 ;; *-ios-skeleton.zip) p=ios ;;
+                        *) echo "::error::unknown file $f"; exit 1 ;; esac
             [[ " $PLATFORMS " == *" $p "* ]] || { echo "built, not shipped: $f"; rm "$f"; }
           done
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)
@@ -375,7 +448,7 @@ jobs:
 
   # (a release published on GitHub whose build failed: the "being built" line says so instead)
   failed:
-    needs: [check, macos, windows, linux, release]
+    needs: [check, macos, windows, linux, ios, release]
     if: failure() && github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:

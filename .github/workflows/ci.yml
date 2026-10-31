@@ -2,8 +2,10 @@
 # player's machine) builds on Linux, Linux aarch64, macOS, Windows and Windows on ARM, and the tests that need no game files or GPU run: the FP/SIMD
 # lowering against a CPU emulator (tools/test_simd.py, x86-64 Linux), the shader translator's GLSL against shaderc +
 # SPIRV-Tools (tools/test_translate.sh, Windows), its instruction semantics on the CPU (tools/test_translate_ops.sh,
-# Linux / macOS) and the same programs' Vulkan GLSL through spirv-val (tools/test_spirv_val.sh, Linux). Nothing is published. Feature tests that need no game files go in as steps here, not as workflows of
-# their own.
+# Linux / macOS), the same programs' Vulkan GLSL through spirv-val (tools/test_spirv_val.sh, Linux), the iOS
+# game-code build each desktop can do (tools/test_gamebuild_ios.py: the player's zig and the iOS skeleton's lld on a
+# fixture) and, its own job on a Mac, the iOS app and its skeleton (make ios-skeleton). Nothing is published.
+# Feature tests that need no game files go in as steps here, not as workflows of their own.
 name: CI
 on:
   pull_request:
@@ -106,6 +108,10 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Game address table at the iOS guest base
+        run: LARECOMP_GUEST_BASE=0x800000000 python3 tools/test_game_addresses.py
+      - name: iOS extension frameworks layout
+        run: python3 tools/test_ios_frameworks.py
       - name: Randomizer Field region table
         run: python3 tools/test_field_regions.py
       - name: Randomizer room shuffle ledges
@@ -124,6 +130,20 @@ jobs:
         run: |
           python3 -m venv tools/venv && tools/venv/bin/pip install -q unicorn capstone lz4
           tools/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
+      # the iOS game-code build from this desktop (runtime/gamebuild.c GAMEBUILD_IOS): the player's zig compiles
+      # a fixture for arm64 iOS, the iOS skeleton's lld links it (both fetched as the release does, archives cached)
+      - name: iOS toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: iOS game-code build (zig + lld, a fixture)
+        run: |
+          tools/fetch_zig.sh
+          tools/fetch_lld.sh
+          python3 tools/test_gamebuild_ios.py
 
 
   # Linux aarch64 (experimental builds): the same app build and tests natively on an arm64 runner. Left out: the
@@ -275,10 +295,90 @@ jobs:
           build/test-active-pad
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Game address table at the iOS guest base
+        run: LARECOMP_GUEST_BASE=0x800000000 python3 tools/test_game_addresses.py
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
+      - name: iOS toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: iOS game-code build (zig + lld, a fixture)
+        run: |
+          tools/fetch_zig.sh
+          tools/fetch_lld.sh
+          python3 tools/test_gamebuild_ios.py
+
+  # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
+  # the iOS skeleton zip ships (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
+  # SDL3 / FFmpeg / CPython and the generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that
+  # script's hash. Then the same app for the iOS Simulator (make ios-sim: the simulator SDK's deps, cached alike)
+  # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
+  # exercised in a real iOS process. The game is not run in the simulator (no game files; the macOS job runs it).
+  ios:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: brew install ninja python@3.13
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+        run: make deps-ios
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: App and skeleton build
+        run: make -j"$(sysctl -n hw.ncpu)" ios-skeleton
+      - name: Skeleton holds no game code; keystone's dylib is a link into Frameworks/
+        run: |
+          A="build/ios-skeleton/LAS Recomp.app"
+          [ ! -e "$A/Frameworks/LASGame.framework/LASGame" ] || { echo "::error::game library in the skeleton"; exit 1; }
+          if nm "$A/lasrecomp" | grep ' _f_8' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
+          links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the app (an iOS install drops them): $links"; exit 1; }
+          [ -f "$A/Frameworks/keystone.libkeystone.framework/keystone.libkeystone" ] || { echo "::error::keystone's framework missing"; exit 1; }
+          codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
+          du -sh "$A"
+      - name: Simulator deps cache
+        id: deps-sim
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios-sim
+            !build/deps-ios-sim/pyvenv
+          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+      - name: Simulator deps
+        run: make deps-ios-sim
+      - uses: actions/cache/save@v4
+        if: steps.deps-sim.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios-sim
+            !build/deps-ios-sim/pyvenv
+          key: ${{ steps.deps-sim.outputs.cache-primary-key }}
+      - name: Simulator app, the embedded Python's self-test in it
+        run: make -j"$(sysctl -n hw.ncpu)" ios-sim-test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-start-screen
+          path: build/ios-sim/start-screen.png
+          if-no-files-found: ignore
 
       - name: macOS launch smoke-test regressions
         run: python3 tools/test_macos_app_smoke.py
@@ -327,7 +427,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: make git python
+          install: make git python curl tar xz unzip patch
           pacboy: clang:p lld:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds
@@ -396,6 +496,18 @@ jobs:
         run: TT_GMEM_CHUNK_SHIFT=24 TT_GMEM_LAZY=1 TT_GMEM_FS_MISS=1 REF=HEAD tools/test_translate.sh 500 "$(nproc)" glsl
       - name: Vulkan synchronization failure regression
         run: python tools/test_vulkan_sync_errors.py
+      - name: iOS toolchain cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-tools-${{ runner.os }}-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: iOS game-code build (zig + lld, a fixture)
+        run: |
+          tools/fetch_zig.sh
+          tools/fetch_lld.sh
+          python tools/test_gamebuild_ios.py
 
   # Windows on ARM (experimental builds): the same app build and Windows tests natively on an ARM64 runner, MSYS2
   # CLANGARM64 as tools/setup_windows.ps1 sets it up there. Left out: the x86 SIMD rounding test (-mfma) and the shader
