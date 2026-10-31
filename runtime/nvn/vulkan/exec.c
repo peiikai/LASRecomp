@@ -418,7 +418,51 @@ VkCommandBuffer vk_upload_cmd(void) {
     return s->upload;
 }
 
-void vk_full_barrier(VkCommandBuffer cb) {
+// LARECOMP_VK_SPLIT_BARRIER=1 (default on Mali): the same barrier in two halves, so that the work after it may start
+// its vertex / tiling stages while the fragment work before it is still running (on a tiler such as Mali an
+// ALL_COMMANDS -> ALL_COMMANDS barrier at every pass drains the GPU: the next pass's geometry waits for the previous
+// pass's last fragment). Fragment-stage writes (attachments, fragment storage writes) are made visible to the
+// fragment / compute / transfer stages after; everything else (transfers, compute, geometry-stage reads) to all
+// stages, as before. Assumes no vertex shader reads what a previous pass's fragments wrote (the game's passes
+// don't: render targets are sampled in fragment / compute shaders). Mali-G610, Marin & Tarin's house: GPU frame (the
+// game's own counters) 14.8 -> 13.65 ms.
+static int split_barrier = -1;
+// pass_start: the barrier at a render pass's start (begin_pass). There nothing reads fragment results from the
+// compute / transfer stages (dispatches and copies have barriers of their own, whose source scope still covers every
+// earlier pass), so fragment writes need to reach only the fragment stages: on Mali a fragment -> compute / transfer
+// dependency waits in the vertex / compute hardware slot, which held the next pass's vertex and tiling work until the
+// previous pass's fragment work was done (Arm's Mali best practices: srcStage ALL_GRAPHICS -> dstStage FRAGMENT
+// between render passes). LARECOMP_VK_PASS_BARRIER=0: the split barrier's full destination there too.
+static void vk_barrier_ex(VkCommandBuffer cb, bool pass_start);
+void vk_full_barrier(VkCommandBuffer cb) { vk_barrier_ex(cb, false); }
+static void vk_barrier_ex(VkCommandBuffer cb, bool pass_start) {
+    static int pass_barrier = -1;
+    if (pass_barrier < 0) {
+        const char *e = getenv("LARECOMP_VK_PASS_BARRIER");
+        pass_barrier = !e || atoi(e) != 0;
+    }
+    if (split_barrier < 0) {
+        const char *e = getenv("LARECOMP_VK_SPLIT_BARRIER");
+        split_barrier = e ? atoi(e) != 0 : g_vk.props.vendorID == 0x13B5;
+        if (split_barrier) LOG("[vk] split pass barriers (fragment writes -> fragment / compute / transfer; at pass starts -> fragment%s)%s\n",
+                               pass_barrier ? "" : ": off", e ? " (LARECOMP_VK_SPLIT_BARRIER)" : ": Mali");
+    }
+    if (split_barrier) {
+        const VkPipelineStageFlags2 frag = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT |
+                                           VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        const VkPipelineStageFlags2 rest = VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT |
+                                           VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT |
+                                           VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT | VK_PIPELINE_STAGE_2_HOST_BIT;
+        VkMemoryBarrier2 mb[2] = {
+            {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = frag, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+             .dstStageMask = pass_start && pass_barrier ? frag : frag | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+             .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT},
+            {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = rest, .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+             .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT}};
+        VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 2, .pMemoryBarriers = mb};
+        rec_CmdPipelineBarrier2(cb, &di);  // (through the recorder, as the full barrier below)
+        return;
+    }
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT};
@@ -1369,7 +1413,7 @@ static void begin_pass(void) {
     }
     st.rt_dirty = false;
     VkCommandBuffer cb = vk_cmd();
-    vk_full_barrier(cb);  // passes, copies and dispatches see each other's results
+    vk_barrier_ex(cb, true);  // passes, copies and dispatches see each other's results
     {
         NvnTexture *t0n = st.rt.ncolor ? st.rt.color[0] : NULL;
         dl_note("pass %d color %ux%u fmt %#x depth %p", st.rt.ncolor, t0n ? t0n->width : 0, t0n ? t0n->height : 0, t0n ? t0n->format : 0,
@@ -3527,7 +3571,14 @@ static VkResult host_import_ptr(void *host, uint64_t size, VkBuffer *out_buf, Vk
 }
 // Heap bytes [off, off + size) as a buffer (a page-aligned range of the mapped heap).
 static bool host_import(uint64_t off, uint64_t size, VkBuffer *out_buf, VkDeviceMemory *out_mem, bool bda) {
-    return host_import_ptr((void *)(uintptr_t)(HEAP_BASE + off), size, out_buf, out_mem, bda) == VK_SUCCESS;
+    // (soft page write tracking: the kernel driver pins the pages for writing, which fails on a page the tracking
+    // protected read-only - Mali's kbase refused the whole import, at random when a query re-protected pages meanwhile.
+    // Queries hold off while the import pins: plat_os_write_begin / _end.)
+    plat_os_write_begin(HEAP_BASE + off, size);
+    bool ok = host_import_ptr((void *)(uintptr_t)(HEAP_BASE + off), size, out_buf, out_mem, bda) == VK_SUCCESS;
+    plat_os_write_end();
+    if (!ok) LOG("[vk] host import of %llu MB at heap +%llu MB refused\n", (unsigned long long)(size >> 20), (unsigned long long)(off >> 20));
+    return ok;
 }
 
 // One import of the whole heap, tried once at the start where it should fit but not by much (device.c
@@ -3846,6 +3897,15 @@ void backend_guest_heap_prepare(void) {
     if (!g_vk.host_import || getenv("LARECOMP_VK_NO_GMEM") || g_vk.props.vendorID == 0x10DE) return;
     gmem_userptr = true;
     plat_write_tracking_off(gc_lazy ? "the guest heap is imported in userptr chunks" : "the guest heap is a userptr import");
+    // ARM's Mali driver (kbase) pins an imported host allocation's pages and maps them in the GPU's own MMU: no MMU
+    // notifier, nothing checks the CPU's page table again at a submission, so changing the CPU's protection of the
+    // pages costs the GPU nothing (unlike amdgpu's userptr above). There the soft tracking (mprotect + SIGSEGV, as over
+    // the dma-buf heap) gives the storage write watch, and with it the GPU overlap, also on kernels without
+    // userfaultfd / PAGEMAP_SCAN (Rockchip's 6.1). Private anonymous pages keep their physical page across the
+    // protect / fault / unprotect cycle (an exclusive anonymous page is reused, not copied), so the GPU keeps reading
+    // what the CPU wrote. LARECOMP_SOFT_WRITE_TRACKING=1: the same over any userptr import (tests), =0: off.
+    const char *st = getenv("LARECOMP_SOFT_WRITE_TRACKING");
+    if (st ? atoi(st) != 0 : g_vk.props.vendorID == 0x13B5) plat_soft_write_tracking(HEAP_BASE, HEAP_BASE + HEAP_MAX);
 #endif
 }
 

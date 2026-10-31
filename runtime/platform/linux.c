@@ -160,10 +160,39 @@ void plat_os_write(uint64_t addr, uint64_t size) {
         if (atomic_load(&g_soft_state[p]) == SOFT_ARMED) soft_release(p);
 }
 
+// The kernel driver about to pin [addr, addr+size) for writing (a host-pointer import: Mali's kbase pins with write
+// access, which fails on a page soft tracking protected read-only - the whole import is refused). Queries stop
+// protecting (they report every page they cover as written meanwhile: the safe side), the ones already running are
+// waited out, and the range's protected pages are opened (counted written). plat_os_write_end: queries protect again.
+static _Atomic int g_soft_hold, g_soft_inflight;
+void plat_os_write_begin(uint64_t addr, uint64_t size) {
+    if (!g_soft_state) return;
+    atomic_fetch_add(&g_soft_hold, 1);
+    while (atomic_load(&g_soft_inflight)) sched_yield();
+    plat_os_write(addr, size);
+}
+void plat_os_write_end(void) {
+    if (g_soft_state) atomic_fetch_sub(&g_soft_hold, 1);
+}
+
 // plat_written_pages over soft tracking: protect the range's open pages first, then take the written marks, so a write
 // between the two is either already marked or faults after the protection.
+static int soft_written_pages_(uint64_t addr, uint64_t size, uint64_t *pages, int max);
 static int soft_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max) {
     if (addr < g_soft_lo || addr + size > g_soft_hi || max <= 0) return -1;
+    atomic_fetch_add(&g_soft_inflight, 1);
+    int n;
+    if (atomic_load(&g_soft_hold)) {  // (an import is pinning pages: protect nothing, every page counts as written)
+        // The marks stay set: the pages stay open meanwhile, so a CPU write to one now neither faults nor marks it; the
+        // first query after the hold arms the page and must still report it (once more: the safe side).
+        uint64_t first = (addr - g_soft_lo) / SOFT_PAGE, last = (addr + size - 1 - g_soft_lo) / SOFT_PAGE;
+        n = 0;
+        for (uint64_t p = first; p <= last && n < max; p++) { atomic_store(&g_soft_written[p], 1); pages[n++] = g_soft_lo + p * SOFT_PAGE; }
+    } else n = soft_written_pages_(addr, size, pages, max);
+    atomic_fetch_sub(&g_soft_inflight, 1);
+    return n;
+}
+static int soft_written_pages_(uint64_t addr, uint64_t size, uint64_t *pages, int max) {
     uint64_t first = (addr - g_soft_lo) / SOFT_PAGE, last = (addr + size - 1 - g_soft_lo) / SOFT_PAGE;
     for (uint64_t p = first; p <= last;) {  // runs of pages not protected: one mprotect each
         uint8_t st = atomic_load(&g_soft_state[p]);
