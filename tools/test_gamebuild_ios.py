@@ -68,6 +68,27 @@ for i in range(3):
 (out/f'{name}_table.c').write_text(f'int {name}_table(void) {{ return 3; }}\n')
 '''
 
+# The exported library's id and flags are those of `make PLATFORM=ios` from every desktop's Makefile branch: a host's
+# -march / -fPIC / _FILE_OFFSET_BITS in them made the app reject a Linux export as "built for another version"
+def make_vars(*assignments):
+    with tempfile.NamedTemporaryFile('w', suffix='.mk', delete=False) as f:
+        f.write('print-ios-vars:\n' + ''.join(f'\t$(info {v}=$({v}))\n' for v in
+                ('GAMELIB_ID', 'GENFLAGS', 'GAMELIB_IOS_ID', 'GENFLAGS_IOS')) + '\t@:\n')
+    try:
+        out = subprocess.run(['make', '-s', '-f', 'Makefile', '-f', f.name, *assignments, 'print-ios-vars'], cwd=ROOT,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=True).stdout
+    finally: os.unlink(f.name)
+    return {k: ' '.join(v.split()) for k, v in (line.split('=', 1) for line in out.splitlines() if '=' in line)}
+ios = make_vars('PLATFORM=ios')
+assert ios['GAMELIB_ID'] == ios['GAMELIB_IOS_ID'] and ios['GENFLAGS'] == ios['GENFLAGS_IOS'], ios
+for host in (('PLATFORM=macos',), ('PLATFORM=linux', 'ARCH=x86_64'), ('PLATFORM=linux', 'ARCH=aarch64'),
+             ('PLATFORM=windows', 'WINARCH=x86_64'), ('PLATFORM=windows', 'WINARCH=aarch64')):
+    v = make_vars(*host)
+    assert (v['GAMELIB_IOS_ID'], v['GENFLAGS_IOS']) == (ios['GAMELIB_ID'], ios['GENFLAGS']), (host, v, ios)
+# (gamebuild.c's own default, for a build without the Makefile's defines, is the same set)
+fallback = next(l for l in (ROOT/'runtime/gamebuild.c').read_text().splitlines() if l.startswith('#define GAMELIB_IOS_CFLAGS'))
+assert shlex.split(fallback.split(None, 2)[2])[0].split() == [f for f in ios['GENFLAGS'].split() if f != '-Iruntime'], fallback
+
 with tempfile.TemporaryDirectory() as temporary:
     tmp = Path(temporary).resolve()
     resources, game, skeleton = tmp/'resources', tmp/'game', tmp/'skeleton'
@@ -216,6 +237,11 @@ with tempfile.TemporaryDirectory() as temporary:
         def joined(a): return ' '.join(a).replace('\\', '/')
         compiles = [a for a in launched if '-c' in a]
         assert compiles and all('aarch64-ios' in joined(a) and f'ios-kit/{kit_id}/include' in joined(a) for a in compiles), compiles[0]
+        assert all('-DLARECOMP_DYNAMIC_BASE=1' in a and not any(f.startswith(('-march', '-fPIC', '-D_FILE_OFFSET_BITS')) for f in a)
+                   for a in compiles), compiles[0]
+        # (the generator: AArch64 inline asm for iOS, whatever this desktop lowers its own FP/SIMD to)
+        gens = [a for a in launched if a[0] == str(generator)]
+        assert gens and all(a[a.index('--simd') + 1] == 'asm' for a in gens if '--simd' in a) and all('--simd' in a for a in gens), gens
         link = next(a for a in launched if a[0].endswith('lld'+EXE))
         assert f'ios-kit/{kit_id}/lld' in joined(link[:1]) and link[1:3] == ['-flavor', 'darwin'] and '@rpath/LASGame.framework/LASGame' in link, link
         out = game/'lasgame-ios.dylib'

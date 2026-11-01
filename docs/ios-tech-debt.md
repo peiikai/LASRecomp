@@ -89,14 +89,14 @@ attribute, so the `removexattr` on the linker is gone too.
   next to the linker in the kit (`lld/<host>/`) the way `tools/zig_slim.sh` copies zig's `LICENSE`. miniz (MIT,
   build/miniz/LICENSE after tools/fetch_miniz.sh) belongs in that section too.
 - **Tests to add for what already broke once**, each found by hand on a device or a Linux box rather than by CI:
-  - the exported library's id equals the kit executable's on every desktop: `GAMELIB_IOS_ID` from the macOS,
-    Linux and Windows Makefile branches against `GAMELIB_ID` of `PLATFORM=ios` (a Linux export was rejected as
-    "built for another version": host `-march` / `-fPIC` leaked into the id), and the generator gets `--simd asm`
-    for iOS whatever the host (tools/test_gamebuild_ios.py can assert both from `launched`);
+  - ~~the exported library's id equals the kit executable's on every desktop~~: tools/test_gamebuild_ios.py reads
+    `GAMELIB_IOS_ID` / `GENFLAGS_IOS` from the macOS, Linux and Windows (x86-64 and aarch64) Makefile branches
+    against `PLATFORM=ios`'s, checks gamebuild.c's fallback flags against them, and from `launched`: no host flag in
+    the compiles, `--simd asm` to the generator;
   - the kit itself: release.yml checks its layout (Payload/, no symlink entries, keystone's framework, five linkers, headers,
-    stub); still unchecked: the executable's ad-hoc signature carries `increased-memory-limit` (ci.yml checks the
-    .app, not the kit) and `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction
-    (tools/test_gamebuild_ios.py links with it, which covers the host CI runs on);
+    stub) and the executable's signature carrying `increased-memory-limit`; still unchecked:
+    `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction (tools/test_gamebuild_ios.py
+    links with it, which covers the host CI runs on);
   - `plat_reserve_guest` on iOS without the entitlement fails with the `[vm]` diagnostics (needs a device: a
     manual checklist in docs/ios.md at least);
   - `build_deps_ios.sh` on a clean machine (the `_iphoneos.whl` glob broke only there); CI covers this now.

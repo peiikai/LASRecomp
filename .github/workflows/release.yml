@@ -288,6 +288,9 @@ jobs:
             zipinfo -1 "$K" | grep -q "^lld/$t/bin/lld" || { echo "::error::no linker for $t in the kit"; exit 1; }
           done
           zipinfo -1 "$K" | grep -q '^include/any-darwin-any/stdlib.h$' && zipinfo -1 "$K" | grep -q '^libSystem.B.tbd$' || { echo "::error::headers / link stub missing"; exit 1; }
+          # (the executable as the kit holds it: a sideloader keeps its entitlements, without them the guest window doesn't fit)
+          X=$(mktemp -d); unzip -q "$K" 'Payload/LAS Recomp.app/lasrecomp' -d "$X"
+          codesign -d --entitlements :- "$X/Payload/LAS Recomp.app/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::the kit's executable is signed without increased-memory-limit"; exit 1; }
           ls -la build/dist
       - uses: actions/upload-artifact@v4
         with:
