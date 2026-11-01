@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Our own message texts in every language the game has (the Escape Bottle, the Hint Sheet, the Labyrinth's wing
-names): the sentences are ours, written here per language; names of items and places come from the game's own message
+"""Our own message texts in every language the game has (the Escape Bottle, the Hint Sheet): the
+sentences are ours, written here per language; names of items and places come from the game's own message
 files of that language at generation time (UI.msbt ItemName_*, Glossary.msbt, Place.msbt), never stored here.
 
     lang_of(rel)                       'regionEU/EUde/message/System.msbt' -> 'de' (LANGS)
@@ -234,22 +234,6 @@ T = {
     },
     # a hint: '<item>: <where>' (the item red); where = the place, its detail in brackets
     'colon': {'ja': '：', 'zh_cn': '：', 'zh_tw': '：'},
-    'wing': {  # the Labyrinth: a wing's name (keysanity_text, the hints)
-        'en': 'Wing {n} of the labyrinth', 'de': 'Flügel {n} des Labyrinths', 'fr': 'Aile {n} du labyrinthe',
-        'fr_us': 'Aile {n} du labyrinthe', 'es': 'Ala {n} del laberinto', 'es_us': 'Ala {n} del laberinto',
-        'it': 'Ala {n} del labirinto', 'nl': 'Vleugel {n} van het labyrint', 'ru': 'Крыло {n} лабиринта',
-        'ja': '迷宮の 第{n}区画', 'ko': '미궁의 제{n}구역', 'zh_cn': '迷宫第{n}区', 'zh_tw': '迷宮第{n}區'},
-    # the Labyrinth: a wing's title (dungeon map, the title on entering): '<labyrinth> - <wing>'. The title font
-    # (ui/jpn_heading.bffnt) has few glyphs in Japanese / Chinese: the first choice it can draw is taken, none: the
-    # game's own title stays. Chinese: no number (that font has no digit but 1-3) - '迷宫' + the dungeon's own name
-    # ('{name}': no separator; user 2026-10-20)
-    'wing_title': {
-        'en': [('Labyrinth', 'Wing {n}')], 'de': [('Labyrinth', 'Flügel {n}')], 'fr': [('Labyrinthe', 'Aile {n}')],
-        'es': [('Laberinto', 'Ala {n}')], 'it': [('Labirinto', 'Ala {n}')], 'nl': [('Labyrint', 'Vleugel {n}')],
-        'ru': [('Лабиринт', 'Крыло {n}')],
-        'ja': [('迷宮', '第{n}区画'), ('ラビリンス', '{n}')],
-        'ko': [('미궁', '제{n}구역'), ('미로', '구간 {n}')],
-        'zh_cn': [('迷宫', '{name}')], 'zh_tw': [('迷宮', '{name}'), ('迷宫', '{name}')]},
 }
 # hint details (where an item lies inside a place)
 DETAIL = {
@@ -335,79 +319,3 @@ def fill(template, **parts):
 def tr(table, lang):
     """table[lang], American French / Spanish falling back to the European text, anything else to None."""
     return table.get(lang) or table.get(lang[:2]) or None
-
-
-def wing_name(n, lang):
-    return (tr(T['wing'], lang) or T['wing']['en']).format(n=n)
-
-
-# the wings' title labels in Place.msbt (wing n: the level it is built in - Color Dungeon = wing 0)
-TITLE_LABELS = {0: ('ClothesDungeon', 'ClothesDungeon_map'), **{n: (f'Lv{n}Dungeon', f'Lv{n}Dungeon_map')
-                                                                for n in range(1, 9)}}
-
-
-def wing_title(n, lang, game_title=b'', game_name=b'', glyphs=None):
-    """A wing's title as the game shows a dungeon's ('Level 2 - Bottle Grotto' -> 'Labyrinth - Wing 2'): the game's
-    own separator where its title is '<level> <sep> <name>' (English), else ' - '; glyphs: the characters the title
-    font has (the language's place names) - the first wording made of those."""
-    choices = tr(T['wing_title'], lang) or T['wing_title']['en']
-    t, nm = _clean(game_title).decode('utf-8', 'replace'), _clean(game_name).decode('utf-8', 'replace')
-    sep = ' - '
-    if nm and t.endswith(nm) and t != nm:
-        m = re.search(r'(\s*\S\s*)$', t[:-len(nm)])
-        sep = m.group(1) if m else sep
-    for lab, wing in choices:
-        name = nm.rstrip('\0')
-        if '{name}' in wing:  # (a name with the word in it already - the Color Dungeon, 衣服迷宫 - as it is)
-            out = name if any(w in name for w in ('迷宫', '迷宮')) else lab + wing.format(name=name)
-        else:
-            out = lab + sep + wing.format(n=n)
-        if glyphs is None or all(c in glyphs for c in out):
-            return out
-    return None
-
-
-def font_glyphs(path):
-    """The characters a .bffnt font has (its CMAP blocks: direct, table, scan)."""
-    import struct
-    d = open(path, 'rb').read()
-    out, i = set(), d.find(b'CMAP')
-    while i >= 0:
-        size, b, e, m = struct.unpack_from('<IIIH', d, i + 4)
-        if m == 0:
-            out |= {chr(c) for c in range(b, e + 1)}
-        elif m == 1:
-            out |= {chr(c) for k, c in enumerate(range(b, e + 1))
-                    if struct.unpack_from('<H', d, i + 24 + 2 * k)[0] != 0xFFFF}
-        elif m == 2:
-            n, = struct.unpack_from('<H', d, i + 24)
-            out |= {chr(struct.unpack_from('<I', d, i + 28 + 8 * k)[0]) for k in range(n)}
-        i = d.find(b'CMAP', i + 4)
-    return out
-
-
-def labyrinth_titles(out_dir, romfs):
-    """Labyrinth seeds: every language's Place.msbt dungeon titles (Lv<n>Dungeon, ClothesDungeon: the dungeon map's
-    title, the title on entering) name the wing instead ('Labyrinth - Wing 2'). -> files written"""
-    import glob
-    n = 0
-    for p in sorted(glob.glob(os.path.join(romfs, 'region*', '*', 'message', 'Place.msbt'))):
-        rel = os.path.relpath(p, romfs)
-        m = Msbt(kt._read(out_dir, romfs, rel))
-        game = Msbt(open(p, 'rb').read()).texts  # (the game's own titles)
-        lang = lang_of(rel)
-        region, folder = rel.replace('\\', '/').split('/')[:2]
-        font = os.path.join(romfs, region, folder.replace('_Validation', ''), 'ui', 'jpn_heading.bffnt')
-        if not os.path.exists(font):
-            font = os.path.join(romfs, 'region_common', 'ui', 'jpn_heading.bffnt')
-        glyphs = font_glyphs(font) if os.path.exists(font) else None
-        for w, (label, name) in TITLE_LABELS.items():
-            t = wing_title(w, lang, game[label], game.get(name, b''), glyphs) if label in game else None
-            if t:
-                m.set(label, t.encode() + b'\0')
-        out = os.path.join(out_dir, 'romfs', rel)
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        with open(out, 'wb') as f:
-            f.write(m.pack())
-        n += 1
-    return n

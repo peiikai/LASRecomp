@@ -387,12 +387,10 @@ def shutter_req(romfs, room, side):
     return _shutter_cache[key]
 
 
-def door_terms(types, n, entering=False, room_types=(), lock_id='', shutter=None, key_n=None):
+def door_terms(types, n, entering=False, room_types=(), lock_id='', shutter=None):
     """frozenset of requirement atoms for passing these door types, or None if impassable. entering: going INTO the
     room that owns the doors (else leaving it). A one-way door passes one way: out of the room with the 0x1A3 half,
-    into the room with the 0x1A4 half. shutter: what the owner's shutter on that side needs (shutter_req). key_n: the
-    dungeon whose small keys open locks (Labyrinth: the shared key, SHARED_KEY_N; the Nightmare-Key door stays its own
-    dungeon's)."""
+    into the room with the 0x1A4 half. shutter: what the owner's shutter on that side needs (shutter_req)."""
     req = set()
     for t in types:
         if t == 'shutter' and shutter:
@@ -405,7 +403,7 @@ def door_terms(types, n, entering=False, room_types=(), lock_id='', shutter=None
         if t in IMPASSABLE:
             return None
         if t == 'lock':
-            req.add(f'LOCK|{n if key_n is None else key_n}|{lock_id}')  # (-> key-Dn:k, by the worst-case key rule)
+            req.add(f'LOCK|{n}|{lock_id}')  # (-> key-Dn:k, by the worst-case key rule)
         elif t == 'bossdoor':
             req.add(f'nightmare-key-D{n}')
         elif DOOR_REQ.get(t):
@@ -500,15 +498,10 @@ def rooms_neighbour(room, side):
     return rooms.neighbour(room, side)
 
 
-def level_graph(cat, romfs, level, layout, jump_rows, openings, trace=None, key_n=None, flag_sink=None):
+def level_graph(cat, romfs, level, layout, jump_rows, openings, trace=None):
     """{cell: [(cell, frozenset req)]} directed edges; lock count. trace: a list getting (cell, side, slot, target)
-    for every edge through a doorway (inward_exits). key_n: see door_terms (Labyrinth: lock ids name the level too,
-    flag_sink collects the distinct locks). Rows into another level (Labyrinth) only mark their doorway as taken:
-    labyrinth_graph adds those edges."""
+    for every edge through a doorway (inward_exits)."""
     n = LEVELS[level][0]
-    kn = n if key_n is None else key_n
-    # (Labyrinth: lock ids name the level - a vanilla door's two halves moved into two levels get two flags there)
-    lv_tag = '' if key_n is None else level + ':'
     pos = {cell_pos(c, level): c for c in layout}
     edges = {c: [] for c in layout}
     flags = set()  # distinct locks: one per 'opened' flag (a vanilla door's two halves share it)
@@ -519,8 +512,6 @@ def level_graph(cat, romfs, level, layout, jump_rows, openings, trace=None, key_
     for room in set(layout.values()):
         flags.update(('block', b) for b in lock_blocks(romfs, room))
     locks = len(flags)
-    if flag_sink is not None:
-        flag_sink.update((level, f) for f in flags)
     import dungeon_gen
     # drop-down-only doorways (dungeon_gen.inward_only): Link comes in through them, never leaves by them - no edge
     # out (a ledge holding stairs: out from the rooms the stairs come from, see below)
@@ -531,16 +522,13 @@ def level_graph(cat, romfs, level, layout, jump_rows, openings, trace=None, key_
         if row[0] != level:
             continue
         cell, side, own = row[1], row[2], int(row[3])
-        if len(row) > 10 and row[10] != level:  # (into another level: labyrinth_graph)
-            jumped.add((cell, side, own))
-            continue
         target = row[5]  # (level, cell, side, own, partner, tcell, tside, ...)
         jumped.add((cell, side, own))
         if target not in layout:
             continue
         kind = inward.get((layout[cell], side, own))
         req = door_terms(own_doors(cat, layout[cell], side, own), n, room_types=cat[layout[cell]].get('types', ()),
-                         lock_id=f'{lv_tag}{lock_flag(romfs, layout[cell], side) or f"{cell}{side}{own}"}', key_n=key_n,
+                         lock_id=f'{lock_flag(romfs, layout[cell], side) or f"{cell}{side}{own}"}',
                          shutter=shutter_req(romfs, layout[cell], side))
         if req is not None and kind == 'arrival':
             via_stairs.append((cell, target, req))
@@ -567,12 +555,12 @@ def level_graph(cat, romfs, level, layout, jump_rows, openings, trace=None, key_
                 if (cell, side, slot) in jumped or (slot not in theirs and not home_pair):
                     continue
                 req_out = door_terms(own_doors(cat, room, side, slot), n, room_types=cat[room].get('types', ()),
-                                     lock_id=f'{lv_tag}{lock_flag(romfs, room, side) or f"{cell}{side}{slot}"}',
-                                     key_n=key_n, shutter=shutter_req(romfs, room, side))
+                                     lock_id=f'{lock_flag(romfs, room, side) or f"{cell}{side}{slot}"}',
+                                     shutter=shutter_req(romfs, room, side))
                 req_in = door_terms(own_doors(cat, layout[nb], OPP[side], slot), n, entering=True,
                                     room_types=cat[layout[nb]].get('types', ()),
-                                    lock_id=f'{lv_tag}{lock_flag(romfs, layout[nb], OPP[side]) or f"{nb}{OPP[side]}{slot}"}',
-                                    key_n=key_n, shutter=shutter_req(romfs, layout[nb], OPP[side]))
+                                    lock_id=f'{lock_flag(romfs, layout[nb], OPP[side]) or f"{nb}{OPP[side]}{slot}"}',
+                                    shutter=shutter_req(romfs, layout[nb], OPP[side]))
                 if req_out is None or req_in is None:
                     continue
                 kind = inward.get((room, side, slot))
@@ -583,7 +571,7 @@ def level_graph(cat, romfs, level, layout, jump_rows, openings, trace=None, key_
                     if trace is not None:
                         trace.append((cell, side, slot, nb))
     for cell, room in layout.items():  # leaving a room with keyhole blocks: they may guard the way (see lock_blocks)
-        bl = frozenset(f'LOCK|{kn}|{lv_tag}block{b}' for b in lock_blocks(romfs, room))
+        bl = frozenset(f'LOCK|{n}|block{b}' for b in lock_blocks(romfs, room))
         if bl:
             edges[cell] = [(t, r | bl) for t, r in edges[cell]]
     where = {room: cell for cell, room in layout.items()}  # (LINK_LEVELS: stairs / hole rooms may have moved)
@@ -635,7 +623,7 @@ def key_counts(edges, start):
     can be reached (and opened, wasting a key) without going through it. Safe for any order the player opens doors
     in; keys may sit behind earlier locks (the all-keys-before-any-lock rule made some layouts unfillable)."""
     locks = {a for outs in edges.values() for _, r in outs for a in r if a.startswith('LOCK|')}
-    starts = list(start) if isinstance(start, (list, set, frozenset, dict)) else [start]  # (Labyrinth: many)
+    starts = list(start) if isinstance(start, (list, set, frozenset, dict)) else [start]
     out = {}
     for L in locks:
         seen, todo, met = set(starts), list(starts), set()
@@ -686,12 +674,10 @@ def reach_terms(edges, start, base):
 
 
 # ---------------------------------------------------------------- applying it to LAS's logic
-def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra_locations=None, lab=None):
+def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra_locations=None):
     """Rewrites logic_defs / item_defs for the shuffled dungeons. extra_locations: {name: room} (pots...).
     Returns a summary string. Sets settings['dungeon-of'] (location -> 'Dn') and adds unreachable checks to
-    settings['excluded-locations']. lab: the Labyrinth (tools/rando/labyrinth.py) - {'arrivals': {door region: (level,
-    cell)}}: one graph across every dungeon (jump_rows hold the rows into other levels too), one shared small-key
-    counter (key-D{SHARED_KEY_N}). Eagle's Tower is a wing too (its rooms shuffled within it, one doorway out)."""
+    settings['excluded-locations']."""
     import dungeon_gen
     # (dungeon_gen names cells like rooms, 'Lv01TailCave_08D'; here cells are '08D')
     layouts = {lv: {c.rsplit('_', 1)[1]: room for c, room in L.items()} for lv, L in layouts.items()}
@@ -725,8 +711,6 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
                     c, r = cell_pos(cell, level)
                     dc, dr = STEP[d[0]]
                     boss_cell[level] = cell_name(c + dc, r + dr, level)
-        if lab:  # (one graph for every dungeon: below)
-            continue
         edges, locks = level_graph(cat, romfs, level, layout, jump_rows, dungeon_gen.openings)
         start = dungeon_gen.ENTRANCES[level].rsplit('_', 1)[1]
         terms = reach_terms(edges, start, region)
@@ -754,10 +738,6 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
             delta = locks - item_defs[f'key-D{n}']['quantity']
             item_defs[f'key-D{n}']['quantity'] = locks
             junk_delta[0] += delta
-    lab_info = {}
-    if lab:
-        lab_info = _apply_labyrinth(cat, romfs, layouts, jump_rows, logic_defs, item_defs, lab, cell_expr, cell_keys,
-                                    kcs, lock_count, junk_delta)
     # balance the pool (LAS: one item per location): take junk for keys added, give junk back for keys removed. Only
     # what no check could still claim as its vanilla content is taken (the Color Dungeon's rupees stay vanilla and
     # need their 5-rupee items: seed RapidBowWow994)
@@ -800,7 +780,7 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
                 n2 = falsify(parse(c), lambda a: bool(cell_tok.match(a)) and int(cell_tok.match(a).group(1)) in shuffled)
                 v[key] = show(n2) if n2 else 'nightmare-key-D0 & !nightmare-key-D0'  # (never)
     for k, v in logic_defs.items():
-        if v.get('type') in ('item', 'room') or lab:  # (Labyrinth: _apply_labyrinth did these)
+        if v.get('type') in ('item', 'room'):
             continue
         for key in ('condition-basic', 'condition-advanced', 'condition-glitched', 'condition-hell'):
             c = v.get(key)
@@ -859,15 +839,10 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
                 excluded.add(loc), absent.add(loc)
                 unused += 1
                 continue
-            if lab:
-                c2 = lab_info['kfix'](c2)
-            else:
-                c2 = re.sub(rf'key-D{n}:\d+', f'key-D{n}:{lock_count.get(n, 0)}' if lock_count.get(n) else '', c2)
-            v['condition-basic'] = re.sub(r'&\s*&', '&', c2).strip(' &') or ('labyrinth' if lab else LEVELS[hl][1])
+            c2 = re.sub(rf'key-D{n}:\d+', f'key-D{n}:{lock_count.get(n, 0)}' if lock_count.get(n) else '', c2)
+            v['condition-basic'] = re.sub(r'&\s*&', '&', c2).strip(' &') or LEVELS[hl][1]
             for key in ('condition-advanced', 'condition-glitched', 'condition-hell'):
                 v.pop(key, None)
-            if lab:  # (somewhere in the Labyrinth: its condition says where)
-                v['region'] = 'labyrinth'
             continue
         places = rooms_at.get(room, [])
         def with_blocks(p):  # a check in a room with keyhole blocks: they may guard it
@@ -876,7 +851,7 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
             if not e or not bl or p[0] not in kcs:
                 return e
             kc, n = kcs[p[0]]
-            k = max(kc.get(block_atom(n, p[0], b, lab), 1) for b in bl)
+            k = max(kc.get(f'LOCK|{n}|block{b}', 1) for b in bl)
             return f'({e}) & key-D{n}:{k}'
         reach = [with_blocks(p) for p in places if cell_expr.get(p)]
         ck = [cell_keys[p] for p in places if p in cell_keys]
@@ -893,16 +868,11 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
             p0 = next((p for p in places if p in cell_keys and cell_keys[p] == k), None)
             if bl and p0 and p0[0] in kcs:
                 kc0, n0 = kcs[p0[0]]
-                k = max([k] + [kc0.get(block_atom(n0, p0[0], b, lab), 1) for b in bl])
+                k = max([k] + [kc0.get(f'LOCK|{n0}|block{b}', 1) for b in bl])
             check_keys[loc] = k
         if not reach and any(p[1] == room.rsplit('_', 1)[1] and p[0] == room.rsplit('_', 1)[0] for p in places):
             fallback += 1  # a room at home the graph can't enter (no doorways: Bottle Grotto 03C, reached by a fall):
-            if lab:        # its vanilla condition, on the redefined cell regions
-                for key in ('condition-basic', 'condition-advanced', 'condition-glitched', 'condition-hell'):
-                    if v.get(key):
-                        v[key] = lab_info['kfix'](v[key])
-                v['region'] = f'labyrinth-wing-{LEVELS[room.rsplit("_", 1)[0]][0]}'
-            continue
+            continue       # its vanilla condition, on the redefined cell regions
         if not reach:
             excluded.add(loc), absent.add(loc)
             unused += 1
@@ -922,8 +892,6 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
             v.pop(key, None)  # (the vanilla tricks describe the vanilla layout)
         lvl0 = next((p for p in places if LEVELS[p[0]][0] == home), places[0])[0]
         dungeon_of[loc] = f'D{LEVELS[lvl0][0]}'
-        if lab:  # (its region: the wing it's in now - reached from anywhere in the Labyrinth)
-            v['region'] = f'labyrinth-wing-{LEVELS[lvl0][0]}'
         rewritten += 1
     # item locations the loop doesn't own (no room listed, not a dungeon name) that sit in a dungeon cell
     # (above-turtle-rock: "D8-4C")
@@ -944,29 +912,7 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
         rewritten += 1
     # can each dungeon be filled? (keysanity off: its keys go into its own checks.) Key j has to sit in a check that
     # needs at most j-1 keys - else the caller plans another layout
-    if lab and settings.get('keysanity', 'off') == 'off':
-        # Labyrinth: the small keys go anywhere in it (one shared counter), the other dungeon items into their own wing
-        ks, per_wing = [], {}
-        for loc, d in dungeon_of.items():
-            v = logic_defs.get(loc, {})
-            if loc in excluded or v.get('type') != 'item' or loc not in check_keys or vanilla_check(loc, v, settings):
-                continue
-            ks.append(check_keys[loc])
-            per_wing[d] = per_wing.get(d, 0) + 1
-        total = lab_info['total']
-        ks += [total] * sum(roomless_checks(settings).values())
-        ks.sort()
-        for j in range(1, total + 1):
-            if sum(1 for k in ks if k <= j - 1) < j:
-                settings['room-logic-unfillable'] = (f'labyrinth: key {j} of {total} has '
-                                                     f'{sum(1 for k in ks if k <= j - 1)} checks to go in')
-                break
-        else:
-            short = [d for d in sorted({f'D{LEVELS[lv][0]}' for lv in layouts})
-                     if per_wing.get(d, 0) < dungeon_items(settings)]
-            if short or len(ks) < total + SPARE_KEYS + dungeon_items(settings) * len(layouts):
-                settings['room-logic-unfillable'] = f'labyrinth: too few checks for the dungeon items ({short})'
-    elif settings.get('keysanity', 'off') == 'off':
+    if settings.get('keysanity', 'off') == 'off':
         need_k = {}  # 'Dn' -> [keys each check of the dungeon needs]
         for loc, d in dungeon_of.items():
             v = logic_defs.get(loc, {})
@@ -1000,9 +946,6 @@ def apply(cat, romfs, layouts, jump_rows, logic_defs, item_defs, settings, extra
                 logic_defs[k]['condition-basic'] = f'{roof} & hookshot & kill-evil-eagle'
                 for lv_ in ('advanced', 'glitched', 'hell'):
                     logic_defs[k].pop('condition-' + lv_, None)
-    if lab:
-        return (f'labyrinth of {len(layouts)} dungeons, {rewritten} checks rewritten, {unused} in unused rooms '
-                f'(excluded), {fallback} without a room (vanilla condition), {lab_info["total"]} small keys (shared)')
     return (f'{len(layouts)} dungeons, {rewritten} checks rewritten, {unused} in unused rooms (excluded), '
             f'{fallback} without a room (vanilla condition), locks {dict(sorted(lock_count.items()))}')
 
@@ -1130,255 +1073,3 @@ def fill_ok(cat, romfs, level, layout, rows, settings=None):
     ks += [total] * roomless_checks(settings).get(n, 0)
     return (all(sum(1 for k in ks if k <= j - 1) >= j for j in range(1, total + 1)) and
             len(ks) >= total + dungeon_items(settings))
-
-
-# ---------------------------------------------------------------- the Labyrinth (tools/rando/labyrinth.py)
-# Every dungeon is a wing of one shuffled dungeon: one graph across every level (doorway rows into another level carry
-# the target level, dungeon_gen.is_cross), every small key fits every lock (one shared counter: the pool's small keys
-# are all key-D{SHARED_KEY_N}, the worst-case key rule runs over the whole graph), Eagle's Tower is one node (kept whole:
-# its own vanilla logic inside, its locks counted as ET_LOCK atoms anyone may spend keys on).
-SHARED_KEY_N = 1
-# Spare small keys in the pool on top of one per lock (user 2026-10-19: 5). The logic keeps the worst-case rule - a
-# lock needs one key more than every other lock Link could open first - since a spare key can't stand in for a key the
-# player may have spent elsewhere; the spares make the counts reachable sooner (more keys to find), never lower them.
-SPARE_KEYS = int(os.environ.get('LARECOMP_LAB_SPARE_KEYS', 5))
-ET_LEVEL = 'Lv07EagleTower'
-ET_NODE = (ET_LEVEL, '08B')  # (its entrance: where its overworld door arrives and its doorway out leaves from)
-
-
-def block_atom(n, level, b, lab=None):
-    """The lock atom of a keyhole block (Labyrinth: lock ids name their level)."""
-    return f'LOCK|{n}|{level}:block{b}' if lab else f'LOCK|{n}|block{b}'
-
-
-def labyrinth_graph(cat, romfs, layouts, rows):
-    """-> ({node: [(node, frozenset req)]}, distinct locks): node = (level, short cell). layouts: {level: {'08D': room}}
-    (Eagle's Tower too); rows: door_jumps rows of every level, incl. rows into another level (11 fields)."""
-    import dungeon_gen
-    edges, flags = {}, set()
-    inward = dungeon_gen.inward_only(romfs) if romfs else {}
-    for level, L in layouts.items():
-        e, _ = level_graph(cat, romfs, level, L, rows, dungeon_gen.openings, key_n=SHARED_KEY_N, flag_sink=flags)
-        for c, outs in e.items():
-            edges[(level, c)] = [((level, t), r) for t, r in outs]
-    for row in rows:
-        if not (len(row) > 10 and row[10] != row[0]):
-            continue
-        src, dst = (row[0], row[1]), (row[10], row[5])
-        if src not in edges or dst not in edges or src == dst:
-            continue
-        req = frozenset()
-        if src != ET_NODE:  # (leaving Eagle's Tower by its doorway out, the game's own door: nothing in the way)
-            level, cell = src
-            room, n = layouts[level][cell], LEVELS[level][0]
-            if inward.get((room, row[2], int(row[3]))):
-                continue  # (a drop-down-only doorway: Link never leaves by it - as level_graph, the stairs case too)
-            req = door_terms(own_doors(cat, room, row[2], int(row[3])), n, room_types=cat[room].get('types', ()),
-                             lock_id=f'{level}:{lock_flag(romfs, room, row[2]) or f"{cell}{row[2]}{row[3]}"}',
-                             key_n=SHARED_KEY_N, shutter=shutter_req(romfs, room, row[2]))
-            if req is None:
-                continue
-            req |= frozenset(block_atom(SHARED_KEY_N, level, b, True) for b in lock_blocks(romfs, room))
-            req |= EXIT_REQ.get(room, frozenset())
-        edges[src].append((dst, req))
-    return edges, flags
-
-
-def keyed_terms(edges, starts, kc, total):
-    """reach_terms for the Labyrinth's big graph, with the worst-case key counts folded in on the way: a term is (atoms,
-    keys) - its locks only matter through the most keys any of them takes (resolve_keys), so terms differing only in
-    which locks they pass collapse into one (the plain sum-of-products blew up across nine wings). Worklist fixed point.
-    -> {node: (set of frozensets with key-D{SHARED_KEY_N}:k, fewest keys any way in without a Nightmare Key or None)}"""
-    from collections import deque
-    E = {}
-    for a, outs in edges.items():
-        E[a] = [(b, frozenset(x for x in r if not x.startswith('LOCK|')),
-                 min(max([kc.get(x, total) for x in r if x.startswith('LOCK|')] or [0]), total)) for b, r in outs]
-    req = {n: [] for n in edges}
-    for st, bases in starts.items():
-        req[st] = [(frozenset([b]), 0) for b in bases]
-    queue, inq = deque(starts), set(starts)
-    dropped = {}  # node -> terms cut by MAX_TERMS: never added again (they came back and went round for ever: the
-    # Labyrinth sweep's generator timeouts, seeds 5P29M- / 5Y0BF-)
-    while queue:
-        a = queue.popleft()
-        inq.discard(a)
-        for b, ea, ek in E[a]:
-            changed = False
-            for ta, tk in list(req[a]):
-                na, nk = ta | ea, max(tk, ek)
-                if any(oa <= na and ok <= nk for oa, ok in req[b]) or (na, nk) in dropped.get(b, ()):
-                    continue
-                req[b] = [(oa, ok) for oa, ok in req[b] if not (na <= oa and nk <= ok)] + [(na, nk)]
-                if len(req[b]) > MAX_TERMS:  # (keep the cheapest: stricter, never weaker)
-                    req[b] = sorted(req[b], key=lambda t: (len(t[0]), t[1], sorted(t[0])))
-                    dropped.setdefault(b, set()).update(req[b][MAX_TERMS:])
-                    req[b] = req[b][:MAX_TERMS]
-                changed = True
-            if changed and b not in inq:
-                inq.add(b)
-                queue.append(b)
-    out = {}
-    for n, ts in req.items():
-        terms = {ta | {f'key-D{SHARED_KEY_N}:{tk}'} if tk else ta for ta, tk in ts}
-        ks = [tk for ta, tk in ts if not any(x.startswith('nightmare-key') for x in ta)]
-        out[n] = (terms, min(ks) if ks else None)
-    return out
-
-
-def labyrinth_starts(arrivals):
-    """{node: [base atoms]}: where each overworld dungeon door arrives (its region's condition = reaching that door),
-    and Eagle's Tower's own door (its region copied to eagle-tower-door)."""
-    starts = {}
-    for region, (level, cell) in sorted(arrivals.items()):
-        starts.setdefault((level, cell), []).append(region)
-    starts.setdefault(ET_NODE, []).append('eagle-tower-door')
-    return starts
-
-
-def _graph_reach(edges, starts, skip=None):
-    seen, todo = set(starts), list(starts)
-    while todo:
-        a = todo.pop()
-        for b, r in edges.get(a, ()):
-            if b not in seen and not (skip and skip in r):
-                seen.add(b)
-                todo.append(b)
-    return seen
-
-
-def labyrinth_boss_ok(cat, edges, starts, layouts):
-    """boss_door_ok for the whole Labyrinth: what only wing n's boss door leads to is its boss arena, the instrument room
-    and what lies beyond them - nothing of any other wing."""
-    lr = json.load(open(os.path.join(HERE, 'location_rooms.json')))
-    full = _graph_reach(edges, starts)
-    for level, L in layouts.items():
-        n = LEVELS[level][0]
-        behind = full - _graph_reach(edges, starts, f'nightmare-key-D{n}')
-        if not behind:
-            continue
-        inst = (lr.get(f'D{n}-instrument') or {}).get('room')
-        allowed = set()
-        for cell, room in L.items():
-            if room == inst:
-                allowed.add((level, cell))
-            for d in cat.get(room, {}).get('doors', []):
-                if len(d) > 3 and d[2] == 'bossdoor':
-                    c, r = cell_pos(cell)
-                    allowed.add((level, cell_name(c + STEP[d[0]][0], r + STEP[d[0]][1])))
-        todo = [c for c in allowed if c in behind]
-        while todo:
-            a = todo.pop()
-            for b, _ in edges.get(a, []):
-                if b in behind and b not in allowed:
-                    allowed.add(b)
-                    todo.append(b)
-        if behind - allowed:
-            return False
-    return True
-
-
-def labyrinth_keys(edges, starts, flags):
-    """(worst-case key counts {lock atom: keys}, total small keys): one key per lock of the whole Labyrinth."""
-    kc = key_counts(edges, list(starts))
-    return kc, max(len(flags), len(kc))
-
-
-def labyrinth_fill_ok(cat, romfs, edges, starts, flags, layouts, settings):
-    """fill_ok for the whole Labyrinth (keysanity off): the shared small keys go into any of its checks - key j needs a
-    check that takes at most j-1 keys - and every wing keeps room for its own Nightmare Key, Map, Compass, Beak."""
-    kc, total = labyrinth_keys(edges, starts, flags)
-    node_k = {node: k for node, (_, k) in keyed_terms(edges, starts, kc, total).items() if k is not None}
-    lr = json.load(open(os.path.join(HERE, 'location_rooms.json')))
-    per_room = {}
-    for k, v in lr.items():
-        if v.get('room') and v.get('subtype') != 'boss' and not lr_vanilla(k, v, settings or {}):
-            per_room[v['room']] = per_room.get(v['room'], 0) + 1
-    where = {}
-    for level, L in layouts.items():
-        for cell, room in L.items():
-            where.setdefault(room, []).append((level, cell))
-    ks, per_wing = [], {}
-    for room, count in per_room.items():
-        cells = [p for p in where.get(room, ()) if p in node_k]
-        if not cells:
-            continue
-        k = min(node_k[p] for p in cells)
-        p0 = next(p for p in cells if node_k[p] == k)
-        bl = lock_blocks(romfs, room)
-        if bl:
-            k = max([k] + [kc.get(block_atom(SHARED_KEY_N, p0[0], b, True), 1) for b in bl])
-        ks += [k] * count
-        per_wing[LEVELS[p0[0]][0]] = per_wing.get(LEVELS[p0[0]][0], 0) + count
-    ks += [total] * sum(roomless_checks(settings or {}).values())
-    if not all(sum(1 for k in ks if k <= j - 1) >= j for j in range(1, total + 1)):
-        return False
-    need = dungeon_items(settings or {})
-    return all(per_wing.get(LEVELS[lv][0], 0) >= need for lv in layouts) and \
-        len(ks) >= total + SPARE_KEYS + need * len(layouts)
-
-
-def _apply_labyrinth(cat, romfs, layouts, jump_rows, logic_defs, item_defs, lab, cell_expr, cell_keys, kcs,
-                     lock_count, junk_delta):
-    """apply()'s Labyrinth part: the one graph, cell conditions, the shared small keys, Eagle's Tower's way in,
-    region nodes per wing. Returns info for the rest of apply()."""
-    import copy
-    starts = labyrinth_starts(lab['arrivals'])
-    edges, flags = labyrinth_graph(cat, romfs, layouts, jump_rows)
-    kc, total = labyrinth_keys(edges, starts, flags)
-    shuffled = {LEVELS[lv][0] for lv in layouts}
-
-    def kfix(c):
-        """Vanilla small-key counts -> the shared key: a shuffled dungeon's = every key (the worst case)."""
-        def sub(m):
-            return f'key-D{SHARED_KEY_N}:{total}' if int(m.group(1)) in shuffled else m.group(0)
-        return re.sub(r'(?<![\w-])key-D(\d)(:(\d+))?', sub, c)
-    for k, v in logic_defs.items():  # (vanilla conditions; the shuffled dungeons' checks and cells are rewritten later)
-        if v.get('type') in ('item', 'room'):
-            continue
-        for key in ('condition-basic', 'condition-advanced', 'condition-glitched', 'condition-hell', 'condition-trick'):
-            if v.get(key):
-                v[key] = kfix(v[key])
-    # Eagle's Tower: 'eagle-tower' was "at its door"; its door keeps that, the region becomes "inside it" (its entrance,
-    # from its door or through its doorway out, linked to another wing)
-    logic_defs['eagle-tower-door'] = copy.deepcopy(logic_defs['eagle-tower'])
-    res = {}
-    for node, (t, k) in keyed_terms(edges, starts, kc, total).items():
-        res[node] = t
-        cell_expr[node] = dnf_str(t)
-        if k is not None:
-            cell_keys[node] = k
-    for level in layouts:
-        n = LEVELS[level][0]
-        kcs[level] = (kc, SHARED_KEY_N)
-        lock_count[n] = total
-        for k, v in logic_defs.items():  # LAS's cell regions of this dungeon: "reach that cell of the new layout"
-            if v.get('type') == 'room' and re.match(rf'D{n}-\d\d?[A-P]$', k):
-                cell = k.split('-', 1)[1].rjust(3, '0')
-                v['condition-basic'] = cell_expr.get((level, cell)) or f'nightmare-key-D{n} & !nightmare-key-D{n}'
-                for key in ('condition-advanced', 'condition-glitched', 'condition-hell'):
-                    v.pop(key, None)  # (the vanilla tricks start from vanilla neighbour cells)
-    never = 'nightmare-key-D0 & !nightmare-key-D0'
-    logic_defs['eagle-tower'] = {'type': 'region', 'condition-basic': cell_expr.get(ET_NODE) or never}
-    # (checks known only as "somewhere in the Labyrinth": into it by any door)
-    logic_defs['labyrinth'] = {'type': 'region', 'condition-basic': ' | '.join(sorted({b for v in starts.values()
-                                                                                      for b in v}))}
-    own = {'eagle-tower', 'eagle-tower-door', 'labyrinth'}
-    for level in layouts:  # each wing's region (its checks' 'region'): reaching any of its cells
-        n = LEVELS[level][0]
-        alts = set()
-        for node, t in res.items():
-            if node[0] == level:
-                alts |= t
-        alts = {t for t in alts if not any(o < t for o in alts)}
-        alts = set(sorted(alts, key=lambda t: (len(t), sorted(t)))[:MAX_TERMS])
-        logic_defs[f'labyrinth-wing-{n}'] = {'type': 'region', 'condition-basic': dnf_str(alts) or never}
-        own.add(f'labyrinth-wing-{n}')
-    # small keys: one kind (any key opens any lock), one per lock of the whole Labyrinth + the spares
-    old = sum(item_defs[f'key-D{i}']['quantity'] for i in range(9) if f'key-D{i}' in item_defs)
-    for i in range(9):
-        if f'key-D{i}' in item_defs:
-            item_defs[f'key-D{i}']['quantity'] = 0
-    item_defs[f'key-D{SHARED_KEY_N}']['quantity'] = total + SPARE_KEYS
-    junk_delta[0] += total + SPARE_KEYS - old
-    return {'total': total, 'kfix': kfix, 'own': own}

@@ -343,14 +343,11 @@ PLACE = {'tarin': 'with Tarin in Mabe Village', 'marin': 'with Marin in Mabe Vil
 
 
 PLURAL = {'boots', 'flippers', 'bomb', 'bananas'}
-LABYRINTH = [False]  # (apply(): the seed's dungeons are wings of the Labyrinth - tools/rando/labyrinth.py)
 
 
 def dungeon_name(dn, lang='en', names=None):
-    """'Tail Cave' / the game's name in `lang`; Labyrinth: 'Wing 1 of the labyrinth'."""
+    """'Tail Cave' / the game's name in `lang`."""
     import loc_text as lt
-    if LABYRINTH[0]:
-        return lt.wing_name(int(dn[1]), lang)
     if lang == 'en':
         return DUNGEON[dn]
     return (names.place(lt.dungeon_label(dn)) if names else None) or DUNGEON[dn]
@@ -358,8 +355,6 @@ def dungeon_name(dn, lang='en', names=None):
 
 def item_phrase(item):
     m = re.match(r'^(key|nightmare-key|compass|map|stone-beak)-(D\d)$', item)
-    if m and LABYRINTH[0] and m.group(1) == 'key':  # (one shared counter: a key belongs to no wing)
-        return DUNGEON_ITEM['key']
     if m:
         return f'{DUNGEON_ITEM[m.group(1)]} for {dungeon_name(m.group(2))}'
     if item.startswith('soul-'):
@@ -625,8 +620,6 @@ def item_name(item, names, lang):
     m = re.match(r'^(key|nightmare-key|compass|map|stone-beak)-(D\d)$', item)
     if m:
         base = names.item(m.group(1)) or DUNGEON_ITEM[m.group(1)].split(' ', 1)[1].encode()
-        if LABYRINTH[0] and m.group(1) == 'key':
-            return base
         dn = dungeon_name(m.group(2), lang, names)
         return base + b' (' + (dn if isinstance(dn, bytes) else dn.encode()) + b')'
     if item.startswith('soul-'):
@@ -839,7 +832,6 @@ def apply(out_dir, romfs, settings, ent=None, logic_defs=None):
                 spot = (t.group(1), apple_trees.STAND['Field_' + t.group(1)])
             if spot and spot[1] is not None:
                 st['landmark'] = nearest(marks, *tile_xz(*spot))
-    LABYRINTH[0] = bool(settings.get('dungeon-labyrinth'))
     for st in steps_:  # (entrance rando: a shuffled house or cave is where its door is)
         door = door_of(st['loc'], logic_defs or {}, ent)
         if door:

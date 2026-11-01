@@ -210,11 +210,6 @@ def spoiler_keys():
     for d in sv.DPREFIX:
         for kind in ('small-key', 'nightmare-key', 'compass', 'map', 'stone-beak'):
             yield sv.pretty_item(f'{d}-{kind}'), 'spoiler_view.py', True
-    sv.LAB['dungeon-of'] = {}  # (a Labyrinth seed's: shared small keys, the rest per wing)
-    for d in sv.DPREFIX:
-        for kind in ('small-key', 'nightmare-key', 'compass', 'map', 'stone-beak'):
-            yield sv.pretty_item(f'{d}-{kind}'), 'spoiler_view.py', True
-    sv.LAB.clear()
     # every location the randomizer has (real seeds add the numbered digs, bushes and pots below)
     yml = os.path.join(ROOT, 'third_party', 'LAS-Randomizer', 'RandomizerCore', 'Data', 'locations.yml')
     if os.path.exists(yml):

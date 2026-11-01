@@ -111,7 +111,6 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 - Dungeon Room Shuffle: every dungeon is rebuilt from its own rooms each seed.
   - Coupled: going back through a door takes you back where you came from.
   - Decoupled: going back through a door takes you somewhere else.
-  - Labyrinth (planned): doors can lead into other dungeons.
   - The map can show how rooms connect as you explore.
 - A tracker on the pause menu's map shows how many checks are left in each area and whether you can reach them.
 - The inventory screen shows your keys, dungeon items, trade items and souls for each dungeon.

@@ -51,13 +51,6 @@ ITEMS = {'rooster': 'Flying Rooster (pet)', 'ghost': 'Ghost (pet)', 'marin-compa
          'medicine': 'Secret Medicine', 'bottle': 'Bottle', 'zol-trap': 'Trap!', 'bomb-capacity': 'Bomb bag upgrade',
          'arrow-capacity': 'Quiver upgrade', 'powder-capacity': 'Magic Powder upgrade', 'chamber-stone': 'Chamber Stone',
          'apple': 'Apple', 'green-apple': 'Green Apple'}
-LAB = {}  # (build(): a Labyrinth seed's labyrinth.json - dungeons are wings of one, keys shared; labyrinth.py)
-
-
-def wing(dn):
-    return f'Wing {dn[1:]}'
-
-
 JUNK = re.compile(r'^((pot-|dig-)?rupee-\d+|pot-heart|apple|green-apple|pot-arrows|pot-bombs|pot-powder|trap|zol-trap|arrows?(-\d+)?|bombs?-\d+|powder-\d+)$')
 
 
@@ -67,8 +60,6 @@ def pretty_item(it):
     if m:
         kind = {'small-key': 'Small Key', 'key': 'Small Key', 'nightmare-key': 'Nightmare Key', 'compass': 'Compass',
                 'map': 'Dungeon Map', 'stone-beak': 'Stone Beak', 'beak': 'Stone Beak'}[m.group(2)]
-        if LAB:  # (small keys: one shared counter; the rest belong to a wing)
-            return f'{kind} (shared)' if kind == 'Small Key' else f'{kind} ({wing(m.group(1))})'
         return f'{kind} ({DPREFIX[m.group(1)]})'
     m = re.match(r'^(small-key|key|nightmare-key|compass|map|stone-beak)-?(D\d)$', base)
     if m:
@@ -83,7 +74,7 @@ def pretty_loc(loc):
     m = re.match(r'^(D\d)-(.*)$', loc)
     if m:
         rest = m.group(2)
-        where = wing(LAB['dungeon-of'].get(loc, m.group(1))) if LAB else DPREFIX[m.group(1)]
+        where = DPREFIX[m.group(1)]
         pm = re.match(r'^pot-(\d\d[A-H])-(\d+)$', rest)
         if pm:
             return f'{where}: pot {pm.group(2)} in room {pm.group(1)}'
@@ -138,23 +129,6 @@ def build(seed_dir):
         return None
     S = parse_spoiler(sp)
     settings = json.load(open(os.path.join(seed_dir, 'settings.json'))) if os.path.exists(os.path.join(seed_dir, 'settings.json')) else {}
-    LAB.clear()
-    lp = os.path.join(seed_dir, 'labyrinth.json')
-    if settings.get('dungeon-labyrinth') and os.path.exists(lp):
-        LAB.update(json.load(open(lp)))
-        # the dungeons' sections become the wings' (dungeon-of: the wing each check is in now)
-        dsec = {v.split(' (')[0]: k for k, v in DUNGEONS.items()}
-        for n in range(9):
-            S.pop(f'wing-{n}', None)
-        for sec in list(DUNGEONS):
-            for l in S.pop(sec, []):
-                loc = l.split(':', 1)[0].strip()
-                dn = LAB['dungeon-of'].get(loc) or next((d for d, n in DPREFIX.items() if dsec[n] == sec), 'D0')
-                S.setdefault(f'wing-{dn[1:]}', []).append(l)
-        S.pop('dungeon-entrances', None)  # (all "x -> x": the Labyrinth's own doors are listed instead)
-        for n in sorted(S_ for S_ in list(S) if S_.startswith('wing-')):
-            S[n] = S.pop(n)
-        AREAS.update({f'wing-{n}': f'Wing {n}' for n in range(9)})
     loc_area, loc_item = {}, {}
     for sec, lines in S.items():
         if sec in AREAS:
@@ -224,17 +198,6 @@ def build(seed_dir):
         for l in S['dungeon-entrances']:
             a, b = [x.strip() for x in l.split('->')]
             out.append(f'- {DUNGEONS.get(a, a)} entrance leads into {DUNGEONS.get(b, b)}')
-    if LAB:  # (where each dungeon door leads, and Eagle's Tower's way out: its only link to the other wings)
-        out.append('')
-        out.append('# Dungeon entrances')
-        lv_wing = {v: k for k, v in LAB.get('wings', {}).items()}
-        for sec, a in sorted(LAB.get('arrivals', {}).items()):
-            out.append(f"- {DUNGEONS.get(sec, sec).split(' (')[0]}  ->  Wing {lv_wing.get(a[0], '?')} (Room {a[1]})")
-        et, w = LAB.get('eagle-tower') or {}, lv_wing.get('Lv07EagleTower', '7')
-        out.append(f"- Eagle's Tower  ->  Wing {w}")
-        if et.get('exit-leads-to'):
-            t = et['exit-leads-to']
-            out.append(f"- Wing {w} (Room {et['exit'][1]})  ->  Wing {lv_wing.get(t[0], '?')} (Room {t[1]})")
     ent = os.path.join(seed_dir, f'entrances_{seed}.txt')
     if os.path.exists(ent):
         out.append('')
