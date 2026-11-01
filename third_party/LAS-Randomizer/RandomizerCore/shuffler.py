@@ -789,67 +789,6 @@ class ItemShuffler(QtCore.QThread):
                 placements['indexes'][loc] = self.logic_defs[loc]['index']
                 indexes_available[placements[loc]].remove(placements['indexes'][loc])
         
-        # LAS Recomp Labyrinth (tools/rando/labyrinth.py): one shared small-key counter - with keysanity off the small
-        # keys go anywhere in the Labyrinth (any dungeon's check), before the per-dungeon items below
-        labyrinth = bool(self.settings.get('dungeon-labyrinth'))
-        lab_keys = labyrinth and self.settings.get('keysanity', 'off') == 'off'
-        if lab_keys and self.thread_active:
-            dungeon_of = self.settings.get('dungeon-of', {})
-            wing_of = lambda s: dungeon_of.get(s, s[:2] if len(s) >= 2 else '')
-            item_pool = [s for s in items if s.startswith('key-D')]
-            location_pool = [s for s in locations if re.match(r'D[0-8]$', wing_of(s))]
-            random.shuffle(location_pool)
-            # each wing keeps room for its own items (Nightmare Key, Map, Compass, Beak - those that stay in it)
-            stay = {'mc': ('map', 'compass'), 'mcb': ('map', 'compass', 'stone-beak'), 'stone-beak': ('stone-beak',)}.get(
-                self.settings['dungeon-items'], ())
-            stay_free = {'keys+nk': ('nightmare-key-',), 'all': ('nightmare-key-', 'map', 'compass', 'stone-beak')}.get(
-                self.settings.get('keysanity', 'off'), ())
-            pending = {}
-            for s in items:
-                if re.search(r'-D[0-8]$', s) and not s.startswith(('key-',) + stay + stay_free):
-                    pending[s[-2:]] = pending.get(s[-2:], 0) + 1
-            free = {}
-            for s in location_pool:
-                free[wing_of(s)] = free.get(wing_of(s), 0) + 1
-            placement_tracker = []
-            undos = 0  # (as below: a layout that goes round forever is given up)
-            while item_pool and self.thread_active:
-                item = item_pool[0]
-                first_location_tried = location_pool[0]
-                valid_placement = False
-                while not valid_placement and self.thread_active:
-                    w = wing_of(location_pool[0])
-                    placements[location_pool[0]] = item
-                    access = self.removeAccess(access, item)
-                    valid_placement = free[w] > pending.get(w, 0) and \
-                        self.canReachLocation(location_pool[0], placements, access, self.logic)
-                    if not valid_placement:
-                        access = self.addAccess(access, item)
-                        placements[location_pool[0]] = None
-                        location_pool.append(location_pool.pop(0))
-                        if location_pool[0] == first_location_tried:
-                            if not placement_tracker:
-                                raise RuntimeError(f"can't place {item} in the Labyrinth: no check is reachable without it")
-                            undos += 1
-                            if undos > 60:
-                                raise RuntimeError(f"can't place the Labyrinth's small keys: {undos} tries")
-                            undo_location = placement_tracker.pop(0)
-                            location_pool.append(undo_location)
-                            locations.append(undo_location)
-                            free[wing_of(undo_location)] += 1
-                            random.shuffle(location_pool)
-                            items.insert(0, placements[undo_location])
-                            item_pool.insert(0, placements[undo_location])
-                            access = self.addAccess(access, placements[undo_location])
-                            placements[undo_location] = None
-                            break
-                if valid_placement and self.thread_active:
-                    items.remove(item)
-                    item_pool.remove(item)
-                    locations.remove(location_pool[0])
-                    free[wing_of(location_pool[0])] -= 1
-                    placement_tracker.append(location_pool.pop(0))
-
         # Next, assign dungeon items into their own dungeons
         # Some may have been placed already because of forceVanilla so we need to factor that in
         dungeons = ['color-dungeon', 'tail-cave', 'bottle-grotto', 'key-cavern', 'angler-tunnel', 'catfish-maw', 'face-shrine', 'eagle-tower', 'turtle-rock']
@@ -874,8 +813,6 @@ class ItemShuffler(QtCore.QThread):
                        'all': ('key-', 'nightmare-key-', 'map', 'compass', 'stone-beak')}.get(ks, ())
             if ks_free:
                 item_pool = [s for s in item_pool if not s.startswith(ks_free)]
-            if labyrinth:  # (the shared small keys: placed above, or anywhere with keysanity)
-                item_pool = [s for s in item_pool if not s.startswith('key-')]
 
             # LAS Recomp dungeon room shuffle: a check belongs to the dungeon its room is in now (tools/rando/room_logic.py)
             dungeon_of = self.settings.get('dungeon-of', {})
@@ -1185,13 +1122,6 @@ class ItemShuffler(QtCore.QThread):
                     and placements[k][-2:-1] == 'D' and placements[k][-1].isdigit()]:
             n = int(placements[key][-1])
             if key.startswith('starting-'):  # (starting dungeon items: given on entering their dungeon)
-                continue
-            if self.settings.get('dungeon-labyrinth'):
-                # Labyrinth: small keys belong to no dungeon (the runtime's shared counter: index -1, the plain "Small
-                # Key" text); a map / compass / Nightmare Key / beak always names its wing, even inside it
-                # (keysanity_text: "... for Wing <n> of the labyrinth!")
-                if not placements[key].startswith('key-'):
-                    placements['indexes'][key] = 9 if n == 0 else n - 1
                 continue
             # (dungeon room shuffle: the dungeon the check's room is in now, not the one its name says)
             if self.settings.get('dungeon-of', {}).get(key, key[:2]) == f'D{n}':

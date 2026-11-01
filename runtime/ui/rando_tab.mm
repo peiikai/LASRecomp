@@ -136,7 +136,6 @@ struct GenOpts {
     bool digs = false;        // digsanity: every diggable overworld tile is a check (tools/rando/digs.py)
     bool shellsanity = false; // every Secret Seashell spot is a check (tools/rando/seashell_spots.py); off: vanilla
     int room_shuffle = 0;     // dungeon-room-shuffle: 0 off / 2 coupled / 3 decoupled (1: retired Coherent; dungeon_gen.py)
-    bool labyrinth = false;   // dungeon-labyrinth: with room shuffle, every dungeon a wing of one (tools/rando/labyrinth.py)
     bool pet_rooster = false, pet_ghost = false;  // pets in the pool (tools/rando/pets.py)
     bool pet_marin = false;   // Marin in the pool, the desert closed until she wakes the Walrus (open-desert off); she stays after
     int shopsanity = 0;       // off / vanilla prices / random prices (tools/rando/shopsanity.py)
@@ -161,6 +160,7 @@ struct GenOpts {
     bool apples = false;      // apples: Applesanity, 3 checks per apple tree (tools/rando/apple_trees.py)
     bool chest_looks = false; // chest-looks: a chest's colour shows what's inside (tools/rando/chest_looks.py)
     bool retired_key_rings = false;  // (the removed key rings: its seed ID bit stays, always off)
+    bool retired_labyrinth = false;  // (the removed Labyrinth: its seed ID bit stays, always off)
     bool hints = false;       // hints: owl statues and phone booths tell about the seed (tools/rando/seed_hints.py)
     bool rocks = false;       // rocks: every overworld rock hides an item (tools/rando/rocks.py)
     // fast-egg: the Egg's first drop lands at the boss, no maze (tools/rando/fast_egg.py). On for new seeds; seed IDs
@@ -220,9 +220,9 @@ static bool *opt_flags(GenOpts &o, int i) {  // the yes/no options, in ID order 
                  &o.digs, &o.miniboss_souls, &o.no_start_sword, &o.no_start_shield, &o.no_start_ocarina,
                  &o.tunic_upgrades, &o.shellsanity, &o.race, &o.random_cosmetics, &o.apples, &o.chest_looks,
                  &o.retired_key_rings, &o.hints, &o.rocks, &o.fast_egg, &o.compass_differs, &o.no_start_mambo,
-                 &o.weather_cycle, &o.labyrinth};
+                 &o.weather_cycle, &o.retired_labyrinth};
                  // (order after random_cosmetics: apples, chest_looks, key rings (retired), hints, rocks, fast_egg,
-                 // compass_differs, no_start_mambo, weather_cycle, labyrinth)
+                 // compass_differs, no_start_mambo, weather_cycle, labyrinth (retired))
     return i < (int)(sizeof f / sizeof *f) ? f[i] : NULL;
 }
 
@@ -319,6 +319,7 @@ static std::string seed_id_decode(const char *text, GenOpts &o) {
     if (t.room_shuffle == 1) t.room_shuffle = 2;
     if (t.miniboss_freq == 2) t.miniboss_freq = 3;  // (the retired 3x reads as All)
     t.retired_key_rings = false;
+    t.retired_labyrinth = false;
     o = t;
     return "";
 }
@@ -439,8 +440,7 @@ static void start_generation(void) {
     fprintf(f, "{\"seed\": \"%s\", \"logic\": \"basic\", \"dungeon-items\": \"%s\", \"traps\": \"%s\",\n", id,
             ditems[g_opts.dungeon_items], traps[g_opts.traps]);
     fprintf(f, " \"shuffle-instruments\": %s, \"shuffle-dungeons\": %s, \"randomize-enemies\": %s, \"randomize-music\": %s,\n",
-            g_opts.shuffle_instruments ? "true" : "false",
-            g_opts.shuffle_dungeons && !(g_opts.room_shuffle && g_opts.labyrinth) ? "true" : "false",
+            g_opts.shuffle_instruments ? "true" : "false", g_opts.shuffle_dungeons ? "true" : "false",
             g_opts.randomize_enemies ? "true" : "false", g_opts.randomize_music ? "true" : "false");
     fprintf(f, " \"open-mabe\": %s, \"fast-songs\": %s, \"OHKO\": %s, \"boss-cutscenes\": %s, \"create-spoiler\": %s,\n",
             g_opts.open_mabe ? "true" : "false", g_opts.fast_songs ? "true" : "false", g_opts.ohko ? "true" : "false",
@@ -485,7 +485,6 @@ static void start_generation(void) {
     }
     static const char *rs[] = {"off", "coupled", "coupled", "decoupled"};  // (1: retired Coherent, never written)
     fprintf(f, " \"dungeon-room-shuffle\": \"%s\",\n", rs[g_opts.room_shuffle]);
-    fprintf(f, " \"dungeon-labyrinth\": %s,\n", g_opts.room_shuffle && g_opts.labyrinth ? "true" : "false");
     static const char *shop[] = {"off", "vanilla", "random"};
     fprintf(f, " \"shopsanity\": \"%s\", \"trendsanity\": %s,\n", shop[g_opts.shopsanity], g_opts.trendsanity ? "true" : "false");
     fprintf(f, " \"stealing\": \"%s\",\n", !g_opts.shopsanity || g_opts.steal_needs_sword && !g_opts.no_stealing ? "normal"
@@ -762,18 +761,13 @@ static void rows_world(float scale) {
        // interiors + connector caves, tools/rando/las_headless.py), decoupled with them. (Tier 1, the old "dungeons only"
        // level, reads as the dungeon lever.)
         if (g_opts.entrances == 1) g_opts.shuffle_dungeons = true, g_opts.entrances = 0;
-        // (the Labyrinth decides where each dungeon door leads: dungeon entrances are off with it, greyed out)
-        bool lab = g_opts.room_shuffle && g_opts.labyrinth;
-        bool dungeons = g_opts.shuffle_dungeons && !lab, houses = g_opts.entrances >= 2, on = dungeons || houses;
-        if (opt_toggle("Entrance randomizer", &on, false, "Shuffles where entrances lead, with logic.")) {
-            if (lab) g_opts.entrances = on ? 2 : 0;  // (on: houses & caves, the dungeons' kind being taken)
-            else g_opts.shuffle_dungeons = on, g_opts.entrances = 0;  // (on: dungeon entrances, the usual choice)
-        }
+        bool dungeons = g_opts.shuffle_dungeons, houses = g_opts.entrances >= 2, on = dungeons || houses;
+        if (opt_toggle("Entrance randomizer", &on, false, "Shuffles where entrances lead, with logic."))
+            g_opts.shuffle_dungeons = on, g_opts.entrances = 0;  // (on: dungeon entrances, the usual choice)
         bool last = false;  // (an attempt to turn off the last kind)
         opt_indent(1);
-        if (!on || lab) opt_disable_next();
-        if (opt_toggle("Dungeon entrances", &dungeons, false, lab ? "Off with Labyrinth: it decides where dungeon doors lead."
-                                                                  : "Dungeon entrances lead into other dungeons.")) {
+        if (!on) opt_disable_next();
+        if (opt_toggle("Dungeon entrances", &dungeons, false, "Dungeon entrances lead into other dungeons.")) {
             if (!dungeons && !houses) last = true;
             else g_opts.shuffle_dungeons = dungeons;
         }
@@ -807,10 +801,6 @@ static void rows_world(float scale) {
         if (opt_choice("Dungeon room shuffle", &i, names, 3, 0,
                        "Experimental. Shuffles dungeon rooms, creating new layouts."))
             g_opts.room_shuffle = ids[i];
-        opt_indent(1);
-        if (!g_opts.room_shuffle) opt_disable_next();  // (either mode: it links the dungeons, the mode keeps its rules)
-        opt_toggle("Labyrinth", &g_opts.labyrinth, false, "All dungeons become wings of one big dungeon.");
-        opt_indent(-1);
     }
     {  // its doorway letters on the dungeon map (runtime/ui/chaos_overlay.mm; a player setting, not part of the seed):
        // on = as you explore, every pair once you have the map (CHAOS_LETTERS_MAP); off = none
@@ -1039,7 +1029,7 @@ static const OptName kOptNames[] = {  // (names the built-in presets use; inv: t
     {"enemy_minibosses", &GenOpts::enemy_minibosses}, {"miniboss_freq", nullptr, &GenOpts::miniboss_freq},
     {"boss_souls", &GenOpts::boss_souls}, {"miniboss_souls", &GenOpts::miniboss_souls}, {"no_buffs", &GenOpts::no_buffs},
     {"hints", &GenOpts::hints}, {"chest_looks", &GenOpts::chest_looks}, 
-    {"rocks", &GenOpts::rocks}, {"labyrinth", &GenOpts::labyrinth},
+    {"rocks", &GenOpts::rocks},
 };
 static const OptName *opt_by_name(const char *n) {
     for (const OptName &o : kOptNames) if (!strcmp(o.name, n)) return &o;
@@ -1063,7 +1053,7 @@ static const std::vector<Builtin> &builtins(void) {
         {"trendsanity", {0, 0, 0, 1}}, {"fishing", {0, 0, 0, 1}}, {"rapids", {0, 0, 0, 1}}, {"dampe", {0, 0, 0, 1}},
         {"trade", {0, 0, 0, 1}}, {"blupees", {0, 0, 0, 1}},
         {"entrance_dungeons", {0, 0, 1, 1}}, {"entrance_houses", {0, 0, 2, 2}}, {"decoupled", {0, 0, 0, 1}},
-        {"room_shuffle", {0, 0, 2, 3}}, {"labyrinth", {0, 0, 0, 0}}, {"shuffle_instruments", {0, 0, 1, 1}},
+        {"room_shuffle", {0, 0, 2, 3}}, {"shuffle_instruments", {0, 0, 1, 1}},
         {"open_mabe", {1, 0, 0, 0}}, {"randomize_enemies", {0, 0, 1, 1}}, {"enemy_mode", {0, 0, 0, 1}},
         {"enemy_minibosses", {0, 0, 0, 1}}, {"miniboss_freq", {0, 0, 0, 1}},
         {"boss_souls", {0, 0, 1, 1}}, {"miniboss_souls", {0, 0, 0, 1}}, {"no_buffs", {0, 0, 1, 1}},

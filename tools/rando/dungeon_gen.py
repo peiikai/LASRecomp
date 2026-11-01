@@ -1554,7 +1554,7 @@ def _jumpable(cat, room):
                                     if (room, s) not in PINNED)
 
 
-def _even_stubs(cat, romfs, levels, out, pool, used, extra, rng, flip=()):
+def _even_stubs(cat, romfs, levels, out, pool, used, extra, rng):
     """Coupled pairs doorway sides two by two: a dungeon with an odd number of free sides (chaos_stub_count) would
     leave one leading back into itself. Each such dungeon gets, in this order of preference:
       room  an unused room with an odd number of doorway sides, placed as a leftover (_place_room)
@@ -1562,10 +1562,9 @@ def _even_stubs(cat, romfs, levels, out, pool, used, extra, rng, flip=()):
       swap  a leftover of the dungeon makes room for an unused room (the leftover ends up unused)
       drop  a leftover without checks taken out again (it ends up unused)
       copy  a second copy of a room without checks (copy_fit) - write() gives it flags and actor keys of its own
-    flip: levels that need an odd count instead (the Labyrinth: its tower's way out pairs with one of them).
     Returns [(kind, room, level, cell)], None if a dungeon stays odd (the round is drawn again)."""
-    def odd(lv):  # (the wrong parity: odd, or even for a flip level)
-        return chaos_stub_count(cat, lv, out[lv]) % 2 != (lv in flip)
+    def odd(lv):
+        return chaos_stub_count(cat, lv, out[lv]) % 2 != 0
 
     def may_go(room, lv):
         return not room.startswith('Lv07EagleTower') or lv == 'Lv07EagleTower'  # (the tower's rooms stay in it)
@@ -1672,11 +1671,11 @@ def _even_stubs(cat, romfs, levels, out, pool, used, extra, rng, flip=()):
     return fixes
 
 
-def chaos_place(cat, sub, romfs, levels, rng, pool, shuffle=False, even=True, flip=()):
+def chaos_place(cat, sub, romfs, levels, rng, pool, shuffle=False, even=True):
     """Chaos placement for `levels` (plan(chaos=True) per dungeon, then every leftover room whose doorways can all jump
     into an empty cell): ({level: layout}, rooms used, _even_stubs fixes), or None when a dungeon can't be built or a
-    layout has a dead end. even: each dungeon an even number of free doorway sides (Coupled; flip: odd ones). The
-    doorways are paired afterwards (chaos_pairs; the Labyrinth: tools/rando/labyrinth.py)."""
+    layout has a dead end. even: each dungeon an even number of free doorway sides (Coupled). The
+    doorways are paired afterwards (chaos_pairs)."""
     order = sorted(levels, key=lambda lv: -len(anchors_of(cat, lv)))
     if shuffle:  # (later rounds: other orders)
         rng.shuffle(order)
@@ -1722,7 +1721,7 @@ def chaos_place(cat, sub, romfs, levels, rng, pool, shuffle=False, even=True, fl
             break
     # Coupled: every free doorway side needs a partner - a dungeon with an odd number of them gets one more (or
     # one fewer) room (user 2026-10-27: a doorway leading back into itself looked broken)
-    fixes = _even_stubs(cat, romfs, levels, out, pool, used, extra, random.Random(sub + '-even'), flip) if even else []
+    fixes = _even_stubs(cat, romfs, levels, out, pool, used, extra, random.Random(sub + '-even')) if even else []
     if fixes is None:
         return None
     # a doorway that can't jump (wide opening, one-way door...) needs its matching neighbour, else it leads
@@ -1789,19 +1788,8 @@ def plan_all_chaos(cat, seed, romfs, levels=None, rounds=None, madness=False, se
     return out, jumps
 
 
-def is_cross(row):
-    """A door_jumps row into another level (Labyrinth): (level, cell, side, own, partner, tcell, tside, depth, height,
-    lateral, tlevel) with tlevel != level."""
-    return len(row) > 10 and row[10] != row[0]
-
-
-LINKS_HEADER = ('# Labyrinth doorways into another level (tools/rando/labyrinth.py): level, cell, side, own centre, '
-                'partner centre, target cell, target side, landing depth, landing height, lateral, target level\n')
-
-
-def write_all(romfs, out, layouts, jumps=None, lab=None):
-    """Writes every generated dungeon; global flags numbered across all of them, one door_jumps.tsv. lab: the
-    Labyrinth's info (labyrinth.json; tools/rando/labyrinth.py): its arrival start points, overworld doors, tower exit."""
+def write_all(romfs, out, layouts, jumps=None):
+    """Writes every generated dungeon; global flags numbered across all of them, one door_jumps.tsv."""
     jumps_path = os.path.join(os.path.dirname(os.path.abspath(out)), 'door_jumps.tsv')
     open(jumps_path, 'w').close()
     if jumps is not None:  # Chaos: discovered doorway pairs are event flags 3800+ (runtime/hle/flags_ext.c)
@@ -1816,22 +1804,9 @@ def write_all(romfs, out, layouts, jumps=None, lab=None):
         used = [int(v['index']) for v in oead_tools.readSheet(sheet_path)['values']]
         start = max([start] + [u + 1 for u in used if u < 3800])  # (bushsanity's flags are 2048+ too)
     shared = FlagMap(next_global=start)
-    extra = {}
-    if lab:
-        import labyrinth
-        extra = labyrinth.starts(lab, jumps or ())
-    for lv, L in layouts.items():  # (Labyrinth rows to another level: labyrinth_links.tsv below, never door_jumps.tsv)
+    for lv, L in layouts.items():
         write(romfs, out, lv, L, ENTRANCES[lv], shared_flags=shared,
-              jumps=None if jumps is None else [j for j in jumps if j[0] == lv and not is_cross(j)],
-              extra_starts=extra.get(lv))
-    if lab:
-        labyrinth.write_doors(romfs, out, lab, jumps or ())
-    cross = [j for j in jumps or () if is_cross(j)]
-    if cross:  # Labyrinth (tools/rando/labyrinth.py): doorways leading into another dungeon's level
-        with open(os.path.join(os.path.dirname(os.path.abspath(out)), 'labyrinth_links.tsv'), 'w') as f:
-            f.write(LINKS_HEADER)
-            for j in cross:
-                f.write('\t'.join(map(str, j)) + '\n')
+              jumps=None if jumps is None else [j for j in jumps if j[0] == lv])
     # each cell's map page shift (level, cell, x, y): the Chaos letters draw only the open floor's doorways
     # (runtime/ui/chaos_overlay.mm)
     with open(os.path.join(os.path.dirname(os.path.abspath(out)), 'dungeon_map.tsv'), 'w') as f:
@@ -1877,8 +1852,7 @@ def _moved_starts(level, layout, starts):
     return out
 
 
-def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False, shared_flags=None, jumps=None,
-          extra_starts=None):
+def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False, shared_flags=None, jumps=None):
     rooms_list = []
     # camera zones use the target dungeon's own zone record (environment / lighting set / music): a zone naming
     # another dungeon's environment (e.g. 'Lv10Base') isn't loaded in this level and the load throws
@@ -1976,7 +1950,6 @@ def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False
     for cell in layout:
         x0, z0 = rooms.cell_origin(cell)
         starts.setdefault(cell, (x0 + 7.5, 0.0, z0 + 6.0, 0.0))
-    starts.update(extra_starts or {})  # (Labyrinth: arrivals at doorways, tools/rando/labyrinth.py starts)
     if level in LINK_LEVELS:
         # its own level file with only the player starts (moved rooms took theirs along) and the map objects
         # changed: rebuilt (areas, tree, zones), Eagle's Tower's crystal switch state no longer carried over from floor

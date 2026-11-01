@@ -737,7 +737,6 @@ void give_item_tick(Cpu *c, uint64_t frame) {
     pane_scan_tick(frame);
     { extern void doorjump_tick(uint64_t frame); doorjump_tick(frame); }
     { extern void weather_player_tick(Cpu *, uint64_t frame); weather_player_tick(c, frame); }  // (after doorjump: Link found)
-    { extern void labyrinth_game_tick(uint64_t frame); labyrinth_game_tick(frame); }  // (shared keys: labyrinth.c)
     { extern void pot_regrow_tick(uint64_t frame); pot_regrow_tick(frame); }  // (after doorjump: Link found)
     { extern void souls_tick(uint64_t frame); souls_tick(frame); }  // (boss / mini-boss souls: runtime/hle/souls.c)
     { extern void triforce_tick(void); triforce_tick(); }  // (Triforce hunt: the get message's flags, triforce.c)
