@@ -538,8 +538,12 @@ static void create_device(void) {
         maxwell_glsl_kil_late = !(k && *k && !atoi(k));
         maxwell_glsl_stack_mask = m && atoi(m);
         maxwell_glsl_no_fallthrough = nf && atoi(nf);
-        LOG("[vk] shader loops: discard %s, stack indices %s, fallthrough %s\n", maxwell_glsl_kil_late ? "after the loop" : "in place",
-            maxwell_glsl_stack_mask ? "masked" : "plain", maxwell_glsl_no_fallthrough ? "off" : "on");
+        const char *sr = getenv("LARECOMP_VK_STACK_REGS"), *fg = getenv("LARECOMP_VK_FS_GMEM");
+        maxwell_glsl_stack_regs = sr && atoi(sr);
+        maxwell_glsl_fs_gmem = fg ? atoi(fg) : 0;
+        LOG("[vk] shader loops: discard %s, stack indices %s, fallthrough %s, stacks %s\n", maxwell_glsl_kil_late ? "after the loop" : "in place",
+            maxwell_glsl_stack_mask ? "masked" : "plain", maxwell_glsl_no_fallthrough ? "off" : "on", maxwell_glsl_stack_regs ? "variables" : "arrays");
+        if (maxwell_glsl_fs_gmem) LOG("[vk] fragment shader global memory loads give 0xFFFFFFFF (%s)\n", maxwell_glsl_fs_gmem == 2 ? "read kept" : "not read");
     }
     vkGetDeviceQueue(g_vk.dev, g_vk.qfam, 0, &g_vk.queue);
     if (g_vk.vids) {

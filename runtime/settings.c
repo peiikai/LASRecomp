@@ -129,7 +129,7 @@ void settings_resolve_defaults(bool integrated) {
         g_settings.antialias == AA_SMAA ? "smaa" : "off");
 }
 
-// Test builds (test-388-grass, test-462-arc, test-462-arc-2): "diagnostic = <name>" in larecomp.ini turns one suspect off for the next start (the same
+// Test builds (test-388-grass, test-462-arc, test-462-arc-2..4): "diagnostic = <name>" in larecomp.ini turns one suspect off for the next start (the same
 // as its LARECOMP_* variable; one set by hand wins). Several names may be given, comma separated.
 static char g_diagnostic[128];
 static const struct { const char *name, *var, *val, *what; } k_diagnostics[] = {
@@ -156,6 +156,11 @@ static const struct { const char *name, *var, *val, *what; } k_diagnostics[] = {
     // (test-462-arc-3: a light loop needs well under 256 steps; a fragment shader that runs away stops there)
     {"guard_fs_off", "LARECOMP_VK_GUARD_FS", "100000", "fragment shader loops stop after 100000 steps (as before)"},
     {"guard_fs64", "LARECOMP_VK_GUARD_FS", "64", "fragment shader loops stop after 64 steps"},
+    // (test-462-arc-4: the lit fragment shaders' light loop - its body never runs, the light list read but not used,
+    // the shader stacks without indexed arrays)
+    {"lights_off", "LARECOMP_VK_FS_GMEM", "1", "fragment shaders don't read the light list (no lights)"},
+    {"lights_read", "LARECOMP_VK_FS_GMEM", "2", "fragment shaders read the light list but don't use it (no lights)"},
+    {"stack_regs", "LARECOMP_VK_STACK_REGS", "1", "shader stacks in variables, not arrays"},
 };
 static void diagnostic_apply(void) {
     char buf[128];

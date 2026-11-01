@@ -127,6 +127,13 @@ extern bool maxwell_gmem_fs_miss;
 //   continues instead of falling through.
 // The MSL output doesn't use them.
 extern bool maxwell_glsl_kil_late, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;
+// (test-462-arc-4) diagnostics for the lit fragment shaders' light loop:
+// - maxwell_glsl_stack_regs (LARECOMP_VK_STACK_REGS=1): the SSY / PBK / PCNT stacks as 8 named variables each (& 7u),
+//   no dynamically indexed array (a driver may put one in scratch memory);
+// - maxwell_glsl_fs_gmem (LARECOMP_VK_FS_GMEM): fragment shader global memory loads give 0xFFFFFFFF (the light list's
+//   end marker, so the light loop exits before its body): 1 without the read, 2 with the read kept.
+extern bool maxwell_glsl_stack_regs;
+extern int maxwell_glsl_fs_gmem;
 // (test-462-arc) The GLSL dispatcher loop (a shader with branches) stops after maxwell_glsl_guard steps
 // (LARECOMP_VK_GUARD_LIMIT; 100000 as before). With maxwell_glsl_guard_report a shader that reaches it counts one hit
 // in GGuard { uint n[GGUARD_SLOTS]; } at GGUARD_BINDING of its stage's set, in the slot maxwell_guard_slot gives its code

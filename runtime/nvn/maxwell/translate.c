@@ -28,6 +28,8 @@ uint32_t maxwell_gmem_chunk_shift;  // 0: one buffer for the whole heap (GLSL; s
 bool maxwell_gmem_lazy;
 bool maxwell_gmem_fs_miss;
 bool maxwell_glsl_kil_late = true, maxwell_glsl_stack_mask, maxwell_glsl_no_fallthrough;  // (shader.h, #462)
+bool maxwell_glsl_stack_regs;  // (shader.h, test-462-arc-4)
+int maxwell_glsl_fs_gmem;      // (shader.h, test-462-arc-4)
 uint32_t maxwell_glsl_guard = 100000, maxwell_glsl_guard_fs = 256;  // (test-462-arc-3: fragment loops stop at 256)
 bool maxwell_glsl_guard_report;
 static _Atomic uint64_t guard_names[GGUARD_SLOTS];
@@ -923,6 +925,18 @@ static void light_tiles_fix(Ctx *c, const uint64_t *code, size_t end, uint32_t p
     sp(&c->body, "    r%d = as_type<uint>(as_type<float>(r%d) * (as_type<float>(%s) * as_type<float>(%s) / as_type<float>(%s)));\n", d, d, a, h, w);  // (GLSL: as_type is rewritten)
 }
 
+// (maxwell_glsl_stack_regs, shader.h) a push / pop on stack `n` (ssy, pbk, pcnt) as 8 named variables, no indexed array
+static void stack_push(Ctx *c, const char *n, uint32_t v) {
+    sp(&c->body, "    { uint i_ = (%s_n++) & 7u;", n);
+    for (int k = 0; k < 8; k++) sp(&c->body, " %sif (i_ == %du) %s%d = %uu;", k ? "else " : "", k, n, k, v);
+    sp(&c->body, " }\n");
+}
+static void stack_pop(Ctx *c, const char *n, bool keep) {
+    sp(&c->body, keep ? "    { uint i_ = (%s_n - 1u) & 7u; pc = " : "    { uint i_ = (--%s_n) & 7u; pc = ", n);
+    for (int k = 0; k < 7; k++) sp(&c->body, "i_ == %du ? %s%d : ", k, n, k);
+    sp(&c->body, "%s7; } continue;\n", n);
+}
+
 static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
     char t[2048], u[2048];
     int d = (int)bits(w, 0, 8), a = (int)bits(w, 8, 8);
@@ -957,19 +971,25 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
         sp(&c->body, "    pc = %uu; continue;\n", target);
     } else if (OPM(0xe290000000000000ull, 0xfff0000000000020ull)) {  // SSY
         c->uses_branches = true;
-        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    ssy[(ssy_n++) & 15u] = %uu;\n" : "    ssy[ssy_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        if (c->glsl && maxwell_glsl_stack_regs) stack_push(c, "ssy", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        else sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    ssy[(ssy_n++) & 15u] = %uu;\n" : "    ssy[ssy_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
     } else if (OPM(0xe2a0000000000000ull, 0xfff0000000000020ull)) {  // PBK
         c->uses_branches = true;
-        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pbk[(pbk_n++) & 15u] = %uu;\n" : "    pbk[pbk_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        if (c->glsl && maxwell_glsl_stack_regs) stack_push(c, "pbk", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        else sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pbk[(pbk_n++) & 15u] = %uu;\n" : "    pbk[pbk_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
     } else if (OPM(0xe2b0000000000000ull, 0xfff0000000000020ull)) {  // PCNT
         c->uses_branches = true;
-        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pcnt[(pcnt_n++) & 15u] = %uu;\n" : "    pcnt[pcnt_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        if (c->glsl && maxwell_glsl_stack_regs) stack_push(c, "pcnt", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
+        else sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pcnt[(pcnt_n++) & 15u] = %uu;\n" : "    pcnt[pcnt_n++] = %uu;\n", norm_target((int64_t)pc + 8 + sbits(w, 20, 24)));
     } else if (OPM(0xf0f8000000000000ull, 0xfff8000000000000ull)) {  // SYNC
-        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = ssy[(--ssy_n) & 15u]; continue;\n" : "    pc = ssy[--ssy_n]; continue;\n");
+        if (c->glsl && maxwell_glsl_stack_regs) stack_pop(c, "ssy", false);
+        else sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = ssy[(--ssy_n) & 15u]; continue;\n" : "    pc = ssy[--ssy_n]; continue;\n");
     } else if (OPM(0xe340000000000000ull, 0xfff0000000000000ull)) {  // BRK
-        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = pbk[(--pbk_n) & 15u]; continue;\n" : "    pc = pbk[--pbk_n]; continue;\n");
+        if (c->glsl && maxwell_glsl_stack_regs) stack_pop(c, "pbk", false);
+        else sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = pbk[(--pbk_n) & 15u]; continue;\n" : "    pc = pbk[--pbk_n]; continue;\n");
     } else if (OPM(0xe350000000000000ull, 0xfff0000000000000ull)) {  // CONT
-        sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = pcnt[(pcnt_n - 1u) & 15u]; continue;\n" : "    pc = pcnt[pcnt_n - 1]; continue;\n");
+        if (c->glsl && maxwell_glsl_stack_regs) stack_pop(c, "pcnt", true);
+        else sp(&c->body, c->glsl && maxwell_glsl_stack_mask ? "    pc = pcnt[(pcnt_n - 1u) & 15u]; continue;\n" : "    pc = pcnt[pcnt_n - 1]; continue;\n");
     } else if (OPM(0xf0f0000000000000ull, 0xfff8000000000000ull) || OPM(0x50b0000000000000ull, 0xfff8000000000000ull) ||
                OPM(0xef98000000000000ull, 0xfff8000000000000ull)) {
         // DEPBAR / NOP / MEMBAR
@@ -1603,6 +1623,13 @@ static void emit_insn(Ctx *c, uint64_t w, uint32_t pc) {
                             sp(&c->body, "      if (ok) r%d = GMR(uint(ga >> 2) + %du); else r%d = 0u;\n", d + k, k, d + k);
                         }
                 }
+                // (maxwell_glsl_fs_gmem, shader.h) a fragment load gives 0xFFFFFFFF: 1 the read optimized out
+                // with it, 2 the read kept (a test the compiler can't fold, never true at run time)
+                if (c->stage == STAGE_FRAGMENT && maxwell_glsl_fs_gmem)
+                    for (int k = 0; k < (size < 4 ? 1 : nw); k++)
+                        if (d != RZ && d + k < RZ)
+                            sp(&c->body, maxwell_glsl_fs_gmem == 2 ? "      r%d = (r%d == 0x7FC0FFEEu && gl_FragCoord.x < -1.0) ? 0u : 0xFFFFFFFFu;\n"
+                                                                   : "      r%d = 0xFFFFFFFFu;\n", d + k, d + k);
             } else {
                 c->uses_gmem_store = true;
                 c->info->uses_gmem_store = true;  // (the draw marks the pages it stores to: vertex cache copies go stale)
@@ -2162,7 +2189,13 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     if (stage == STAGE_FRAGMENT && c->kil_late && info->uses_discard)
         sp(&s, kil_late ? "  bool kill_ = false;\n#define KIL_() kill_ = true\n" : "#define KIL_() discard\n");
     if (any_branch) {
-        sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
+        if (maxwell_glsl_stack_regs)
+            sp(&s, "  uint pc = 8u; uint ssy_n = 0u, pbk_n = 0u, pcnt_n = 0u;\n"
+                   "  uint ssy0 = 0u, ssy1 = 0u, ssy2 = 0u, ssy3 = 0u, ssy4 = 0u, ssy5 = 0u, ssy6 = 0u, ssy7 = 0u;\n"
+                   "  uint pbk0 = 0u, pbk1 = 0u, pbk2 = 0u, pbk3 = 0u, pbk4 = 0u, pbk5 = 0u, pbk6 = 0u, pbk7 = 0u;\n"
+                   "  uint pcnt0 = 0u, pcnt1 = 0u, pcnt2 = 0u, pcnt3 = 0u, pcnt4 = 0u, pcnt5 = 0u, pcnt6 = 0u, pcnt7 = 0u;\n");
+        else
+            sp(&s, "  uint pc = 8u; uint ssy[16]; uint ssy_n = 0u; uint pbk[16]; uint pbk_n = 0u; uint pcnt[16]; uint pcnt_n = 0u;\n");
         sp(&s, "  bool exit_now = false;\n");
         uint32_t glim = stage == STAGE_FRAGMENT && maxwell_glsl_guard_fs ? maxwell_glsl_guard_fs : maxwell_glsl_guard;
         sp(&s, "  uint guard = 0u;\n  for (; guard < %uu; guard++) {\n  switch (pc) {\n", glim);
