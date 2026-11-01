@@ -20,6 +20,7 @@
 #include "../pace.h"
 #include "../shader_prep.h"
 #include <pthread.h>
+#include <dirent.h>
 
 VkG g_vk;
 static SDL_Window *window;
@@ -316,12 +317,243 @@ static void *pipeline_cache_saver(void *a) {  // every 3 minutes, when it grew
     return NULL;
 }
 
+// ---- pipelines from our own stored binaries (VK_KHR_pipeline_binary, issue #509)
+// AMD's Windows driver keeps nothing of its own compile in our VkPipelineCache (vk_pipelines.bin stayed at 395 KB,
+// every launch compiled all pipelines again: 44-54 s). Where it's on (pb.on: AMD's drivers by default,
+// LARECOMP_VK_PIPELINE_BINARY=0 / =1 overrides), each pipeline's binaries are kept in cache/vk_binaries/<its key>.bin
+// and the next launch creates it from them. The file name is the driver's key for the pipeline's create info
+// (vkGetPipelineKeyKHR: shaders and state); the directory's tag adds this build, the translator, the GPU, the driver
+// and the driver's global key - another one empties it. Other drivers: VkPipelineCache only, as before.
+#define PBIN_DIR "cache/vk_binaries"
+#define PBIN_TAG "cache/vk_binaries.tag"
+#define PBIN_MAGIC 0x4250414cu  // "LAPB"
+#define PBIN_MAX 8              // binaries per pipeline (one per stage at most here)
+#ifdef VK_KHR_pipeline_binary
+static struct {
+    bool on;
+    PFN_vkGetPipelineKeyKHR get_key;
+    PFN_vkCreatePipelineBinariesKHR create;
+    PFN_vkDestroyPipelineBinaryKHR destroy;
+    PFN_vkGetPipelineBinaryDataKHR get_data;
+    PFN_vkReleaseCapturedPipelineDataKHR release;
+} pb;
+static _Atomic int pb_loaded, pb_saved, pb_failed;
+
+static void pb_path(char *out, size_t n, const VkPipelineBinaryKeyKHR *k) {
+    char hex[2 * VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR + 1] = "";
+    for (uint32_t i = 0; i < k->keySize && i < VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR; i++) snprintf(hex + 2 * i, 3, "%02x", k->key[i]);
+    snprintf(out, n, PBIN_DIR "/%s.bin", hex);
+}
+
+static void pb_clear_dir(void) {
+    DIR *d = opendir(PBIN_DIR);
+    if (!d) return;
+    struct dirent *e;
+    int n = 0;
+    char p[600];
+    while ((e = readdir(d))) {
+        size_t l = strlen(e->d_name);
+        if (l < 5 || strcmp(e->d_name + l - 4, ".bin")) continue;
+        snprintf(p, sizeof p, PBIN_DIR "/%s", e->d_name);
+        n += remove(p) == 0;
+    }
+    closedir(d);
+    if (n) LOG("[vk] pipeline binaries: removed %d from another build / GPU / driver\n", n);
+}
+
+// After the device: the functions, and the directory's tag (with the driver's global key)
+static void pb_setup(void) {
+#define PB_FN(f, name) (pb.f = (void *)vkGetDeviceProcAddr(g_vk.dev, name))
+    if (!PB_FN(get_key, "vkGetPipelineKeyKHR") || !PB_FN(create, "vkCreatePipelineBinariesKHR") ||
+        !PB_FN(destroy, "vkDestroyPipelineBinaryKHR") || !PB_FN(get_data, "vkGetPipelineBinaryDataKHR") ||
+        !PB_FN(release, "vkReleaseCapturedPipelineDataKHR")) {
+        LOG("[vk] pipeline binaries: functions missing; pipeline cache only\n");
+        pb.on = false;
+        return;
+    }
+#undef PB_FN
+    VkPipelineBinaryKeyKHR gk = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
+    if (pb.get_key(g_vk.dev, NULL, &gk) != VK_SUCCESS) {
+        LOG("[vk] pipeline binaries: no global key; pipeline cache only\n");
+        pb.on = false;
+        return;
+    }
+    char tag[700], base[512], hex[2 * VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR + 1] = "";
+    for (uint32_t i = 0; i < gk.keySize && i < VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR; i++) snprintf(hex + 2 * i, 3, "%02x", gk.key[i]);
+    pipeline_cache_tag(base, sizeof base);
+    snprintf(tag, sizeof tag, "%s, binary key %s", base, hex);
+    mkdir("cache", 0755);
+    mkdir(PBIN_DIR, 0755);
+    if (!shader_cache_tag_ok(PBIN_TAG, tag)) {
+        pb_clear_dir();
+        shader_cache_tag_write(PBIN_TAG, tag);
+    }
+}
+
+typedef union { VkGraphicsPipelineCreateInfo g; VkComputePipelineCreateInfo c; } AnyPipeCI;
+static VkResult pb_create_pipeline(AnyPipeCI *ci, bool compute, VkPipelineCache cache, VkPipeline *out) {
+    return compute ? vkCreateComputePipelines(g_vk.dev, cache, 1, &ci->c, NULL, out)
+                   : vkCreateGraphicsPipelines(g_vk.dev, cache, 1, &ci->g, NULL, out);
+}
+
+// The stored binaries for key k as handles (false: none, or unusable)
+static bool pb_load(const VkPipelineBinaryKeyKHR *k, VkPipelineBinaryKHR *bins, uint32_t *nbins) {
+    char path[600];
+    pb_path(path, sizeof path, k);
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *buf = sz > 16 ? malloc((size_t)sz) : NULL;
+    bool ok = buf && fread(buf, 1, (size_t)sz, f) == (size_t)sz;
+    fclose(f);
+    // u32 magic, u32 key size, key, u32 count; per binary: u32 key size, key, u64 data size, data
+    size_t at = 0, end = ok ? (size_t)sz : 0;
+#define PB_TAKE(dst, n) (at + (n) <= end ? (memcpy((dst), buf + at, (n)), at += (n), true) : false)
+    uint32_t magic = 0, ks = 0, n = 0;
+    uint8_t key[VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR];
+    ok = ok && PB_TAKE(&magic, 4) && magic == PBIN_MAGIC && PB_TAKE(&ks, 4) && ks == k->keySize &&
+         ks <= sizeof key && PB_TAKE(key, ks) && !memcmp(key, k->key, ks) && PB_TAKE(&n, 4) && n && n <= PBIN_MAX;
+    VkPipelineBinaryKeyKHR keys[PBIN_MAX];
+    VkPipelineBinaryDataKHR data[PBIN_MAX];
+    for (uint32_t i = 0; ok && i < n; i++) {
+        keys[i] = (VkPipelineBinaryKeyKHR){.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
+        uint64_t ds = 0;
+        ok = PB_TAKE(&keys[i].keySize, 4) && keys[i].keySize <= VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR &&
+             PB_TAKE(keys[i].key, keys[i].keySize) && PB_TAKE(&ds, 8) && ds && ds <= end - at;
+        if (ok) data[i] = (VkPipelineBinaryDataKHR){(size_t)ds, buf + at}, at += (size_t)ds;
+    }
+#undef PB_TAKE
+    if (ok) {
+        VkPipelineBinaryKeysAndDataKHR kd = {.binaryCount = n, .pPipelineBinaryKeys = keys, .pPipelineBinaryData = data};
+        VkPipelineBinaryCreateInfoKHR ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_CREATE_INFO_KHR, .pKeysAndDataInfo = &kd};
+        VkPipelineBinaryHandlesInfoKHR h = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_HANDLES_INFO_KHR,
+                                            .pipelineBinaryCount = n, .pPipelineBinaries = bins};
+        ok = pb.create(g_vk.dev, &ci, NULL, &h) == VK_SUCCESS;
+        *nbins = n;
+    }
+    free(buf);
+    if (!ok) remove(path);  // (damaged, or refused by the driver: captured again)
+    return ok;
+}
+
+// A pipeline created with CAPTURE_DATA: its binaries into the file for key k, then the captured data released
+static void pb_capture(VkPipeline p, const VkPipelineBinaryKeyKHR *k) {
+    VkPipelineBinaryCreateInfoKHR ci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_CREATE_INFO_KHR, .pipeline = p};
+    VkPipelineBinaryHandlesInfoKHR h = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_HANDLES_INFO_KHR};
+    VkPipelineBinaryKHR bins[PBIN_MAX];
+    uint32_t n = 0;
+    bool ok = pb.create(g_vk.dev, &ci, NULL, &h) == VK_SUCCESS && h.pipelineBinaryCount && h.pipelineBinaryCount <= PBIN_MAX;
+    if (ok) {
+        h.pPipelineBinaries = bins;
+        ok = pb.create(g_vk.dev, &ci, NULL, &h) == VK_SUCCESS;
+        n = ok ? h.pipelineBinaryCount : 0;
+    }
+    size_t total = 12 + k->keySize, cap = 0;
+    uint8_t *buf = NULL;
+    for (uint32_t i = 0; ok && i < n; i++) {
+        VkPipelineBinaryDataInfoKHR di = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_DATA_INFO_KHR, .pipelineBinary = bins[i]};
+        VkPipelineBinaryKeyKHR bk = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
+        size_t ds = 0;
+        ok = pb.get_data(g_vk.dev, &di, &bk, &ds, NULL) == VK_SUCCESS && ds;
+        if (!ok) break;
+        size_t need = total + 12 + bk.keySize + ds;
+        if (need > cap) {
+            cap = need * 2;
+            uint8_t *nb = realloc(buf, cap);
+            if (!nb) { ok = false; break; }
+            buf = nb;
+        }
+        uint8_t *w = buf + total;
+        uint64_t ds64 = ds;
+        memcpy(w, &bk.keySize, 4);
+        memcpy(w + 4, bk.key, bk.keySize);
+        memcpy(w + 4 + bk.keySize, &ds64, 8);
+        ok = pb.get_data(g_vk.dev, &di, &bk, &ds, w + 12 + bk.keySize) == VK_SUCCESS && ds == ds64;
+        total = need;
+    }
+    if (ok && n && buf) {
+        uint32_t magic = PBIN_MAGIC;
+        memcpy(buf, &magic, 4);
+        memcpy(buf + 4, &k->keySize, 4);
+        memcpy(buf + 8, k->key, k->keySize);
+        memcpy(buf + 8 + k->keySize, &n, 4);
+        char path[600];
+        pb_path(path, sizeof path, k);
+        if (shader_cache_write(path, buf, total)) atomic_fetch_add(&pb_saved, 1);
+    } else if (atomic_fetch_add(&pb_failed, 1) < 5) LOG("[vk] pipeline binaries: capture failed (%u binaries)\n", n);
+    free(buf);
+    for (uint32_t i = 0; i < n; i++) pb.destroy(g_vk.dev, bins[i], NULL);
+    VkReleaseCapturedPipelineDataInfoKHR ri = {.sType = VK_STRUCTURE_TYPE_RELEASE_CAPTURED_PIPELINE_DATA_INFO_KHR, .pipeline = p};
+    pb.release(g_vk.dev, &ri, NULL);
+}
+
+static VkResult pb_make(const void *info, bool compute, VkPipeline *out) {
+    AnyPipeCI ci;
+    if (compute) ci.c = *(const VkComputePipelineCreateInfo *)info;
+    else ci.g = *(const VkGraphicsPipelineCreateInfo *)info;
+    const void **pn = compute ? &ci.c.pNext : &ci.g.pNext;
+    VkPipelineCreateFlags flags = compute ? ci.c.flags : ci.g.flags;
+    const void *next = *pn;
+    VkPipelineCreateInfoKHR ki = {.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_INFO_KHR, .pNext = (void *)info};
+    VkPipelineBinaryKeyKHR k = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR};
+    if (pb.get_key(g_vk.dev, &ki, &k) != VK_SUCCESS || !k.keySize) return pb_create_pipeline(&ci, compute, g_vk.pcache, out);
+    VkPipelineBinaryKHR bins[PBIN_MAX];
+    uint32_t n = 0;
+    if (pb_load(&k, bins, &n)) {  // (a pipeline from binaries is created without a pipeline cache)
+        VkPipelineBinaryInfoKHR bi = {.sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_INFO_KHR, .pNext = next,
+                                      .binaryCount = n, .pPipelineBinaries = bins};
+        *pn = &bi;
+        VkResult r = pb_create_pipeline(&ci, compute, VK_NULL_HANDLE, out);
+        for (uint32_t i = 0; i < n; i++) pb.destroy(g_vk.dev, bins[i], NULL);
+        if (r == VK_SUCCESS) { atomic_fetch_add(&pb_loaded, 1); return r; }
+        if (atomic_fetch_add(&pb_failed, 1) < 5) LOG("[vk] pipeline binaries: creating from stored ones failed (%d); compiling\n", r);
+        char path[600];
+        pb_path(path, sizeof path, &k);
+        remove(path);
+    }
+    VkPipelineCreateFlags2CreateInfoKHR fl = {.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO_KHR, .pNext = next,
+                                              .flags = (VkPipelineCreateFlags2KHR)flags | VK_PIPELINE_CREATE_2_CAPTURE_DATA_BIT_KHR};
+    *pn = &fl;
+    VkResult r = pb_create_pipeline(&ci, compute, VK_NULL_HANDLE, out);
+    if (r == VK_SUCCESS) pb_capture(*out, &k);
+    else {  // (as before)
+        *pn = next;
+        r = pb_create_pipeline(&ci, compute, g_vk.pcache, out);
+    }
+    return r;
+}
+
+static void pb_log(void) {  // (vk_pipeline_cache_save: under its lock)
+    static int last[3] = {-1, -1, -1};
+    int l = atomic_load(&pb_loaded), s = atomic_load(&pb_saved), f = atomic_load(&pb_failed);
+    if (!pb.on || (l == last[0] && s == last[1] && f == last[2])) return;
+    last[0] = l, last[1] = s, last[2] = f;
+    LOG("[vk] pipeline binaries: %d pipelines from stored binaries, %d compiled and stored, %d failed\n", l, s, f);
+}
+#endif
+
+VkResult vk_create_graphics_pipeline(const VkGraphicsPipelineCreateInfo *ci, VkPipeline *out) {
+#ifdef VK_KHR_pipeline_binary
+    if (pb.on) return pb_make(ci, false, out);
+#endif
+    return vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, ci, NULL, out);
+}
+
+VkResult vk_create_compute_pipeline(const VkComputePipelineCreateInfo *ci, VkPipeline *out) {
+#ifdef VK_KHR_pipeline_binary
+    if (pb.on) return pb_make(ci, true, out);
+#endif
+    return vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, ci, NULL, out);
+}
+
 static void create_device(void) {
     uint32_t ne = 0;
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
     VkExtensionProperties *ep = calloc(ne, sizeof *ep);
     vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, ep);
-    const char *ext[16];
+    const char *ext[20];
     uint32_t n_ext = 0;
     ext[n_ext++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     g_vk.custom_border = has_ext(ep, ne, VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
@@ -343,6 +575,9 @@ static void create_device(void) {
 #endif
 #ifdef VK_EXT_extended_dynamic_state3
     bool eds3_ext = has_ext(ep, ne, VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME);
+#endif
+#ifdef VK_KHR_pipeline_binary
+    bool pbin_ext = has_ext(ep, ne, VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) && has_ext(ep, ne, VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
 #endif
 #ifdef __linux__
     // the guest heap as driver memory mapped at HEAP_BASE (exec.c backend_guest_heap_prepare)
@@ -380,6 +615,11 @@ static void create_device(void) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
     if (eds3_ext) have_eds3.pNext = have.pNext, have.pNext = &have_eds3;
 #endif
+#ifdef VK_KHR_pipeline_binary
+    VkPhysicalDevicePipelineBinaryFeaturesKHR have_pbin = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR};
+    VkPhysicalDeviceMaintenance5FeaturesKHR have_m5 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR};
+    if (pbin_ext) have_pbin.pNext = &have_m5, have_m5.pNext = have.pNext, have.pNext = &have_pbin;
+#endif
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &have);
     {   // what the driver offers for building pipelines (one line, for #92 reports)
         VkPhysicalDeviceDriverProperties drv = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
@@ -394,6 +634,10 @@ static void create_device(void) {
 #endif
 #ifndef VK_EXT_extended_dynamic_state3
         snprintf(eds3, sizeof eds3, "not in this build's headers");
+#endif
+#ifdef VK_KHR_pipeline_binary
+        VkPhysicalDevicePipelineBinaryPropertiesKHR pbp = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_PROPERTIES_KHR};
+        if (pbin_ext) pbp.pNext = pr.pNext, pr.pNext = &pbp;
 #endif
         vkGetPhysicalDeviceProperties2(g_vk.phys, &pr);
 #ifdef VK_EXT_graphics_pipeline_library
@@ -413,6 +657,26 @@ static void create_device(void) {
         LOG("[vk] driver %s %s; graphics pipeline library: %s; vertex input dynamic state: %s; extended dynamic state 3: %s\n",
             drv.driverName, drv.driverInfo, gpl, vids_ext ? (have_vids.vertexInputDynamicState ? "yes" : "no") : "no extension",
             eds3);
+#ifdef VK_KHR_pipeline_binary
+        // our own pipeline binaries (pb_make, #509): by default on AMD's drivers only, whose own cache kept nothing
+        // between launches; LARECOMP_VK_PIPELINE_BINARY=0 / =1 turns them off / on
+        const char *e = getenv("LARECOMP_VK_PIPELINE_BINARY");
+        bool amd = drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY || drv.driverID == VK_DRIVER_ID_AMD_OPEN_SOURCE;
+        bool can = pbin_ext && have_pbin.pipelineBinaries && have_m5.maintenance5;
+        pb.on = can && (e && *e ? atoi(e) != 0 : amd);
+        if (pbin_ext)
+            LOG("[vk] pipeline binaries: feature %s, internal cache %d (control %d, prefers it %d, precompiled %d), "
+                "compressed %d -> %s\n", have_pbin.pipelineBinaries ? "yes" : "no", pbp.pipelineBinaryInternalCache,
+                pbp.pipelineBinaryInternalCacheControl, pbp.pipelineBinaryPrefersInternalCache,
+                pbp.pipelineBinaryPrecompiledInternalCache, pbp.pipelineBinaryCompressedData,
+                pb.on ? "stored by us (cache/vk_binaries)" : !can ? "pipeline cache (not supported)" :
+                e && *e ? "pipeline cache (LARECOMP_VK_PIPELINE_BINARY=0)" : "pipeline cache (not an AMD driver)");
+        else if (e && atoi(e)) LOG("[vk] pipeline binaries: no VK_KHR_pipeline_binary; pipeline cache\n");
+        if (pb.on) {
+            ext[n_ext++] = VK_KHR_MAINTENANCE_5_EXTENSION_NAME;
+            ext[n_ext++] = VK_KHR_PIPELINE_BINARY_EXTENSION_NAME;
+        }
+#endif
     }
     {   // dynamic vertex input (exec.c): fewer pipelines; LARECOMP_VK_DYN_VERTEX=0 keeps the layout in each pipeline
         const char *e = getenv("LARECOMP_VK_DYN_VERTEX");
@@ -487,6 +751,13 @@ static void create_device(void) {
     VkPhysicalDeviceVertexInputDynamicStateFeaturesEXT en_vids = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_INPUT_DYNAMIC_STATE_FEATURES_EXT, .vertexInputDynamicState = VK_TRUE};
     if (g_vk.vids) en_vids.pNext = f.pNext, f.pNext = &en_vids;
+#ifdef VK_KHR_pipeline_binary
+    VkPhysicalDeviceMaintenance5FeaturesKHR en_m5 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+                                                     .maintenance5 = VK_TRUE};
+    VkPhysicalDevicePipelineBinaryFeaturesKHR en_pbin = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR,
+                                                         .pipelineBinaries = VK_TRUE, .pNext = &en_m5};
+    if (pb.on) en_m5.pNext = f.pNext, f.pNext = &en_pbin;
+#endif
 #ifdef VK_EXT_graphics_pipeline_library
     VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT en_gpl = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT, .graphicsPipelineLibrary = VK_TRUE};
@@ -564,6 +835,9 @@ static void create_device(void) {
     free(data);
     if (pc.initialDataSize) LOG("[vk] pipeline cache: loaded %zu bytes\n", pc.initialDataSize);
     pcache_saved = pc.initialDataSize;
+#ifdef VK_KHR_pipeline_binary
+    if (pb.on) pb_setup();
+#endif
     pthread_t t;  // (kept every few minutes while it grows, not only at a clean exit)
     pthread_create(&t, NULL, pipeline_cache_saver, NULL);
     pthread_detach(t);
@@ -585,6 +859,9 @@ void vk_pipeline_cache_save(void) {
         }
         free(data);
     }
+#ifdef VK_KHR_pipeline_binary
+    pb_log();
+#endif
     pthread_mutex_unlock(&lock);
 }
 
