@@ -639,6 +639,8 @@ uint64_t renderer_fence_seq(void) {
     return q;
 }
 
+static bool heap_noncoherent(void);       // (the heap's import is cached without HOST_COHERENT: below, with the snapshots)
+static void gw_inval_done(uint64_t done);  // (the GPU's writes into the heap, invalidated in the CPU's caches once done)
 void renderer_wait_seq(uint64_t seq) {
     if (!seq) return;
     pthread_mutex_lock(&seq_lock);
@@ -655,11 +657,13 @@ void renderer_wait_seq(uint64_t seq) {
             __atomic_fetch_add(&stat_deferred, 1, __ATOMIC_RELAXED);  // (the game thread; stats read on the render thread)
             wait_why = NULL;
             cq_resolve_done(done);  // (the game reads its timing counters now: what is complete so far)
+            gw_inval_done(done);
             return;
         }
         seq = w;
     }
     vk_wait_seq(seq);
+    gw_inval_done(vk_completed_seq());  // (non-coherent heap: the GPU's writes the game may read now)
 }
 
 // A descriptor set for the pending submission (record.c: the slot's pools, allocated in batches per layout). With
@@ -1419,6 +1423,7 @@ static void begin_pass(void) {
     st.rt_dirty = false;
     VkCommandBuffer cb = vk_cmd();
     vk_barrier_ex(cb, true);  // passes, copies and dispatches see each other's results
+    gw_inval_done(vk_completed_seq());  // (non-coherent heap: the GPU's finished writes)
     {
         NvnTexture *t0n = st.rt.ncolor ? st.rt.color[0] : NULL;
         dl_note("pass %d color %ux%u fmt %#x depth %p", st.rt.ncolor, t0n ? t0n->width : 0, t0n ? t0n->height : 0, t0n ? t0n->format : 0,
@@ -2903,6 +2908,32 @@ static Range sb_eff[6][16];        // the current draw's / dispatch's storage ta
 static bool sb_eff_on;
 static inline const Range *sbufs(int stage) { return sb_eff_on ? sb_eff[stage] : st.sbuf[stage]; }
 
+// ---- A heap import the CPU caches without coherency (Mali-G610 with Arm's driver: a host-pointer import can only be
+// memory type 1, HOST_VISIBLE | HOST_CACHED without HOST_COHERENT). What the CPU just wrote may still sit in its
+// caches when the GPU reads the heap - the overlap's snapshot copies are written right before the draws that read
+// them, so the GPU saw a slot's previous contents: grass and shadows flashing, objects vanishing for a frame (#526) -
+// and the CPU may keep stale lines of what the GPU wrote. There, every range the GPU reads from the heap is written
+// back first (DC CVAC: snapshot copies, bound storage ranges, vertex / index data read in place, the GPU's copies out
+// of the heap), and the ranges a storing shader binds are written back and invalidated (DC CIVAC) when it is
+// recorded - no dirty CPU line can land on its results later - and again once its submission is done (the game's
+// fence wait, each render pass start). Elsewhere (coherent imports: desktop GPUs) nothing changes.
+// LARECOMP_VK_CACHE_CLEAN=0 / 1: off / on whatever the memory type.
+static int heap_cc = -1;  // -1 not known yet (no import), 0 coherent, 1 not
+static void heap_note_type(uint32_t type) {  // (each heap import: the memory type it took)
+    VkPhysicalDeviceMemoryProperties mp;
+    vkGetPhysicalDeviceMemoryProperties(g_vk.phys, &mp);
+    int nc = type < mp.memoryTypeCount && !(mp.memoryTypes[type].propertyFlags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const char *e = getenv("LARECOMP_VK_CACHE_CLEAN");
+    if (e) nc = atoi(e) != 0;
+    if (heap_cc != nc) LOG("[vk] guest heap import: memory type %u, %s%s\n", type, nc ? "not coherent: CPU caches written back / invalidated around the GPU's use" : "coherent",
+                           e ? " (LARECOMP_VK_CACHE_CLEAN)" : "");
+    heap_cc = nc;
+}
+static bool heap_noncoherent(void) { return heap_cc > 0; }
+static inline void heap_clean(uint64_t addr, uint64_t size) {  // (before the GPU reads [addr, addr+size) of the heap)
+    if (heap_cc > 0 && addr && size) plat_cache_op(addr, size, false);
+}
+
 static uint64_t range_hash(uint64_t addr, uint64_t size) {
     const uint64_t *w = (const uint64_t *)(uintptr_t)addr;
     uint64_t h = 1469598103934665603ull, n = size / 8;
@@ -3026,6 +3057,7 @@ static uint64_t rs_copy_make(RangeState *e, uint64_t h) {
                     (unsigned long long)e->size, (unsigned long long)kept, (unsigned long long)renderer_exec_frame());
         }
     }
+    heap_clean(at, e->size);  // (with the GPU's kept bytes in)
     e->copy = at;
     if (keep) { e->pristine = at + e->size; memcpy((void *)(uintptr_t)e->pristine, src, e->size); }
     else e->pristine = 0;
@@ -3266,6 +3298,7 @@ static uint64_t snap_storage(uint64_t addr, uint64_t size, bool cs_slot) {
         uint64_t at = ring_take((size + 255) & ~255ull);
         if (!at) return addr;
         memcpy((void *)(uintptr_t)at, (const void *)(uintptr_t)addr, size);
+        heap_clean(at, size);
         stat_snap_bytes += size;
         stat_snap_copies++;
         return at;
@@ -3437,7 +3470,12 @@ static void snap_apply(int stage, uint32_t read_mask) {
     bool on = snap_on();
     for (int i = 0; i < 16; i++)
         if (st.sbuf[stage][i].addr && ((read_mask >> i) & 1)) bind_note(stage == 5 ? 3 : 2, st.sbuf[stage][i].addr, st.sbuf[stage][i].size);
-    if (!on) { sb_eff_on = false; return; }
+    if (!on) {
+        sb_eff_on = false;
+        if (heap_noncoherent())  // (the ranges read in place)
+            for (int i = 0; i < 16; i++) if ((read_mask >> i) & 1) heap_clean(st.sbuf[stage][i].addr, st.sbuf[stage][i].size);
+        return;
+    }
     sb_eff_on = true;
     memcpy(sb_eff[stage], st.sbuf[stage], sizeof sb_eff[stage]);
     for (int i = 0; i < 16; i++) {
@@ -3446,6 +3484,7 @@ static void snap_apply(int stage, uint32_t read_mask) {
         snap_slot_class = stage == 5 ? cs_slot_class(st.program->stages[5].code_addr, st_cs_stores, i) : -1;
         r->addr = snap_storage(r->addr, r->size, stage == 5);
         snap_slot_class = -1;
+        heap_clean(r->addr, r->size);  // (the copy or the original, whichever the stage reads)
     }
 }
 
@@ -3559,6 +3598,7 @@ static VkResult host_import_ptr(void *host, uint64_t size, VkBuffer *out_buf, Vk
     VkDeviceMemory mem;
     VkResult r = vkAllocateMemory(g_vk.dev, &ai, NULL, &mem);
     if (r != VK_SUCCESS) return r;
+    heap_note_type(ai.memoryTypeIndex);
     VkExternalMemoryBufferCreateInfo eb = {.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
                                            .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT};
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .pNext = &eb, .size = size,
@@ -3795,6 +3835,7 @@ static bool guest_heap_dmabuf(void) {
     VkDeviceMemory mem;
     VkResult r = vkAllocateMemory(g_vk.dev, &ai, NULL, &mem);
     if (r != VK_SUCCESS) { LOG("[vk] heap as driver memory: allocation failed (%d)\n", r); vkDestroyBuffer(g_vk.dev, buf, NULL); return false; }
+    heap_note_type((uint32_t)type);
     const char *why = NULL;
     if (placed) {
         why = vkBindBufferMemory(g_vk.dev, buf, mem, 0) != VK_SUCCESS ? "binding failed" : heap_map_placed(mem);
@@ -4383,6 +4424,8 @@ static void gc_frame(void) {
 
 // In lazy mode the heap-side offsets of a copy are in chunks: one vkCmdCopyBuffer per chunk piece. other = the GPU side.
 static void gmem_copy(VkCommandBuffer cb, VkBuffer other, const VkBufferCopy *cp, int n, bool to_heap) {
+    if (!to_heap && heap_noncoherent())  // (the GPU's copies out of the heap - the vertex cache, gfast - read memory)
+        for (int i = 0; i < n; i++) heap_clean(HEAP_BASE + cp[i].srcOffset, cp[i].size);
     if (!gc_lazy) {
         if (to_heap) rec_CmdCopyBuffer(cb, other, gmem_buf, (uint32_t)n, cp);
         else rec_CmdCopyBuffer(cb, gmem_buf, other, (uint32_t)n, cp);
@@ -4690,11 +4733,37 @@ static void vc_mark_gpu(uint64_t lo, uint64_t hi) {
     vc_epoch++;
 }
 
+// (non-coherent heap) the ranges a storing shader has bound: written back and invalidated when it is recorded and
+// again once its submission is done (see heap_note_type)
+#define GW_INV_MAX 8192
+static struct { uint64_t lo, hi, seq; } gw_inv[GW_INV_MAX];
+static int ngw_inv;
+static pthread_mutex_t gw_inv_lock = PTHREAD_MUTEX_INITIALIZER;
+static void gw_inval_add(uint64_t a, uint64_t sz) {
+    plat_cache_op(a, sz, true);
+    pthread_mutex_lock(&gw_inv_lock);
+    // (full - not seen in play: this range only gets the write-back above)
+    if (ngw_inv < GW_INV_MAX) gw_inv[ngw_inv].lo = a, gw_inv[ngw_inv].hi = a + sz, gw_inv[ngw_inv].seq = vk_pending_seq(), ngw_inv++;
+    pthread_mutex_unlock(&gw_inv_lock);
+}
+static void gw_inval_done(uint64_t done) {
+    if (!heap_noncoherent() || !ngw_inv) return;
+    pthread_mutex_lock(&gw_inv_lock);
+    int o = 0;
+    for (int i = 0; i < ngw_inv; i++) {
+        if (gw_inv[i].seq <= done) plat_cache_op(gw_inv[i].lo, gw_inv[i].hi - gw_inv[i].lo, true);
+        else gw_inv[o++] = gw_inv[i];
+    }
+    ngw_inv = o;
+    pthread_mutex_unlock(&gw_inv_lock);
+}
+
 // A storing shader (stage 0 / 1 / 5) may write any of its bound storage buffers.
 static void vc_mark_sbufs(int stage) {
     for (int i = 0; i < 16; i++) {
         uint64_t a = sbufs(stage)[i].addr, sz = sbufs(stage)[i].size;  // (overlap: the copy, where the shader wrote)
         if (a >= HEAP_BASE && sz && a - HEAP_BASE < HEAP_MAX) vc_mark_gpu(a - HEAP_BASE, a - HEAP_BASE + sz);
+        if (a >= HEAP_BASE && sz && a - HEAP_BASE < HEAP_MAX && heap_noncoherent()) gw_inval_add(a, sz);
     }
 }
 
@@ -4827,6 +4896,7 @@ static bool guest_direct(int kind, uint64_t addr, uint64_t size, VkBuffer *buf, 
         int k = (int)(o >> gc_shift);
         if ((int)((o + size - 1) >> gc_shift) != k || !gmem_covers(o, size)) return false;  // (crossing chunks: copied)
         if (vcache_lookup(addr, size, buf, off)) return true;
+        heap_clean(addr, size);
         *buf = gc[k].buf;
         *off = o - ((uint64_t)k << gc_shift);
         return true;
@@ -4834,6 +4904,7 @@ static bool guest_direct(int kind, uint64_t addr, uint64_t size, VkBuffer *buf, 
     if (addr + size > HEAP_BASE + gmem_size && kernel_heap_size() != gmem_tried) { gmem_tried = kernel_heap_size(); gmem_info(); }
     if (!gmem_buf || addr + size > HEAP_BASE + gmem_size) return false;
     if (vcache_lookup(addr, size, buf, off)) return true;
+    heap_clean(addr, size);  // (read in place)
     *buf = gmem_buf;
     *off = addr - HEAP_BASE;
     return true;
