@@ -200,6 +200,8 @@
 {"Bottom button", "Unterer Knopf"},
 {"Confirm button", "Bestätigen"},
 {"Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, Bottom button uses the bottom one like Xbox and PlayStation.", "Welcher Knopf in den Menüs von LAS Recomp bestätigt. Nintendo-Layout nutzt wie die Switch den rechten Knopf, Unterer Knopf wie Xbox und PlayStation den unteren."},
+{"Buttons match labels", "Knöpfe nach Aufdruck"},
+{"On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.", "Auf Xbox- und PlayStation-Controllern funktionieren A, B, X und Y wie aufgedruckt, der untere Knopf ist also A. Aus behält das Switch-Layout. Nintendo-Controller sind nicht betroffen."},
 // runtime/ui/difficulty.mm
 {"General", "Allgemein"},
 {"Language", "Sprache"},

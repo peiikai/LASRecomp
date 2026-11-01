@@ -200,6 +200,8 @@
 {"Bottom button", "아래 버튼"},
 {"Confirm button", "결정 버튼"},
 {"Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, Bottom button uses the bottom one like Xbox and PlayStation.", "LAS Recomp 메뉴에서 결정에 쓸 버튼입니다. Nintendo 배치는 Switch처럼 오른쪽 버튼을, 아래 버튼은 Xbox나 PlayStation처럼 아래쪽 버튼을 씁니다."},
+{"Buttons match labels", "버튼을 표기대로"},
+{"On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.", "Xbox와 PlayStation 컨트롤러에서 A, B, X, Y가 컨트롤러에 적힌 대로 작동해 아래 버튼이 A가 됩니다. 끄면 Switch 배치를 유지합니다. Nintendo 컨트롤러에는 영향이 없습니다."},
 // runtime/ui/difficulty.mm
 {"General", "일반"},
 {"Language", "언어"},

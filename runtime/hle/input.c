@@ -215,7 +215,7 @@ static void recompute_pad(void) {
     }
     uint64_t b = 0;
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (g_bind_pad[i] >= 0 && g_bind_pad[i] < PADB_HOST_COUNT && (host >> g_bind_pad[i] & 1)) b |= 1ull << i;
+        if ((unsigned)bind_pad_host(i) < PADB_HOST_COUNT && (host >> bind_pad_host(i) & 1)) b |= 1ull << i;
     pad_buttons = b;
     if (!pad || host_test) { pad_lx = test_lx, pad_ly = test_ly, pad_rx = pad_ry = 0; return; }
     pad_lx = SDL_GetGamepadAxis(pad, SDL_GAMEPAD_AXIS_LEFTX);
@@ -233,7 +233,7 @@ static _Atomic uint64_t tap_buttons;   // released while unseen: the game's next
 static uint64_t pad_bits(int host) {   // the game buttons bound to host button `host` (SDL button / PADB_*TRIGGER)
     uint64_t b = 0;
     for (int i = 0; i < BIND_PAD_COUNT; i++)
-        if (g_bind_pad[i] == host) b |= 1ull << i;
+        if (bind_pad_host(i) == host) b |= 1ull << i;
     return b;
 }
 static void note_press(uint64_t down, uint64_t up) {

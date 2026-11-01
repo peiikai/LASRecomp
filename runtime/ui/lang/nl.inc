@@ -200,6 +200,8 @@
 {"Bottom button", "Onderste knop"},
 {"Confirm button", "Bevestigknop"},
 {"Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, Bottom button uses the bottom one like Xbox and PlayStation.", "Met welke knop je bevestigt in de menu's van LAS Recomp. Nintendo-indeling gebruikt de rechterknop zoals op de Switch, Onderste knop gebruikt de onderste zoals bij Xbox en PlayStation."},
+{"Buttons match labels", "Knoppen volgens opdruk"},
+{"On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.", "Op Xbox- en PlayStation-controllers werken A, B, X en Y zoals op de controller staat, dus de onderste knop is A. Uit houdt de Switch-indeling. Nintendo-controllers veranderen niet."},
 // runtime/ui/difficulty.mm
 {"General", "Algemeen"},
 {"Language", "Taal"},
