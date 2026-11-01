@@ -15,8 +15,6 @@
 #include "../settings.h"
 
 extern int game_in_play(void);                 // runtime/hle/warp.c
-extern int cosmetics_seed_weather(void);       // runtime/cosmetics_seed.c
-extern bool cosmetics_seed_on(void);
 extern bool widescreen_frame_boxed(uint64_t frame);  // runtime/hle/widescreen.c (indoors: the interior backdrop)
 extern void input_rumble_pulse(uint16_t lo, uint16_t hi, uint32_t ms);  // runtime/hle/input.c
 
@@ -61,12 +59,6 @@ static bool g_outdoors;
 
 int weather_current(void) {
     if (weather_cycle_on()) return weather_cycle_kind(NULL);
-    static int seed_on, seed_w;
-    static uint64_t at;  // (the seed's pick: looked up once a second, it only changes with the seed)
-    uint64_t now = (uint64_t)time(NULL);
-    if (now != at) at = now, seed_on = cosmetics_seed_on(), seed_w = cosmetics_seed_weather();
-    if (seed_on && env_weather() < 0) return seed_w;  // (a seed with its own cosmetics: its weather, over the setting -
-                                                      // the row is locked)
     int s = setting();
     return s == WEATHER_RANDOM ? g_random : s;
 }
