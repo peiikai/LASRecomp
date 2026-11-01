@@ -357,19 +357,7 @@ bool opt_colour(const char *label, CosColour *c, int slot, const char *desc) {
     int prev = c->pick;
     const char *names[N_COL];
     for (int i = 0; i < N_COL; i++) names[i] = g_col_names[i];
-    char seed[96], hexs[16];
-    int sp = col_pick(c, slot);
-    uint32_t srgb = 0;  // (the seed's own colours are any colour: shown as #RRGGBB)
-    if (sp == COL_CUSTOM && col_seed_rgb(c, slot, &srgb))
-        snprintf(hexs, sizeof hexs, "#%06X", (unsigned)srgb), snprintf(seed, sizeof seed, L("Seed: %s"), hexs);
-    else if (col_seed_rgb(c, slot, &srgb)) snprintf(seed, sizeof seed, L("Seed: %s"), L(g_col_names[sp]));
-    else seed[0] = 0;
-    if (seed[0]) {  // (the seed's own colour: locked, greyed out)
-        opt_disable_next();
-        g_value_shown = true;
-        opt_action(label, seed, desc, true, true);
-        return false;
-    }
+    (void)slot;
     bool changed = opt_choice(label, &c->pick, names, N_COL, COL_DEFAULT, desc);
     if (g_collect) return false;
     if (changed && c->pick == COL_CUSTOM && prev != COL_CUSTOM)  // (Custom starts from the colour it was on)

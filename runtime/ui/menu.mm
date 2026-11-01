@@ -564,31 +564,28 @@ static void tab_display(void) {
     opt_end();
 }
 
-extern "C" bool cosmetics_seed_on(void);  // runtime/cosmetics_seed.c
-extern "C" bool weather_cycle_on(void);   // runtime/nvn/weather_cycle.c
+extern "C" bool cosmetics_seed_on(void);      // runtime/cosmetics_seed.c
+extern "C" void cosmetics_seed_apply(void);
+extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 
 // Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c), and recolours by draw (runtime/nvn/recolour*.c);
-// a seed made with "Random cosmetics" has its own, and the page is locked while it's played (rows greyed out, showing
-// the seed's): the player's own choices stay saved for another seed or vanilla
+// a seed made with "Random cosmetics" puts its own set into the rows the first time it's played (cosmetics_seed.c),
+// and they stay the player's to change: "Seed's look" puts the seed's back, "Default all" the game's own
 static void tab_cosmetics(void) {
     opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};
-    bool seed = cosmetics_seed_on();
-    if (seed) {
-        opt_disable_next();
-        opt_action("This seed picked your look. Commit to it!", "", NULL, false);
-    } else {
-        if (opt_button("Randomize all", "Picks a random color for everything below."))
-            for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
-        if (opt_button("Default all", "Puts everything on this page back to the game's normal look.")) {
-            for (CosColour *c : rows) c->pick = COL_DEFAULT;
-            g_settings.enemy_colours = 0;
-            g_settings.screen_filter = 0;
-            g_settings.weather = 0;
-        }
+    if (opt_button("Randomize all", "Picks a random color for everything below."))
+        for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
+    if (opt_button("Default all", "Puts everything on this page back to the game's normal look.")) {
+        for (CosColour *c : rows) c->pick = COL_DEFAULT;
+        g_settings.enemy_colours = 0;
+        g_settings.screen_filter = 0;
+        g_settings.weather = 0;
     }
+    if (cosmetics_seed_on() && opt_button("Seed's look", "Puts everything on this page back to this seed's look."))
+        cosmetics_seed_apply();
     opt_section("Colors");
     opt_colour("Tunic color", &g_settings.tunic, COL_SLOT_TUNIC, "Link's tunic color.");
     opt_colour("Heart color", &g_settings.hearts, COL_SLOT_HEARTS, "The color of the hearts on the HUD.");
@@ -603,14 +600,12 @@ static void tab_cosmetics(void) {
                                              LN("Cherry blossom"), LN("Mixed")};
         static const int preset[4][3] = {{COL_DEFAULT, COL_DEFAULT, COL_DEFAULT}, {2, 3, 3}, {10, 10, 10},
                                          {9, COL_DEFAULT, COL_DEFAULT}};
-        int cur = 4;  // (as shown: a row on Default shows the seed's colour, if it has its own)
+        int cur = 4;
         for (int i = 0; i < 4; i++)
-            if (col_pick(&g_settings.leaves, COL_SLOT_LEAVES) == preset[i][0] &&
-                col_pick(&g_settings.grass, COL_SLOT_GRASS) == preset[i][1] &&
-                col_pick(&g_settings.sand, COL_SLOT_SAND) == preset[i][2])
+            if (g_settings.leaves.pick == preset[i][0] && g_settings.grass.pick == preset[i][1] &&
+                g_settings.sand.pick == preset[i][2])
                 cur = i;
         int v = cur;
-        if (seed) opt_disable_next();
         if (opt_choice("Season", &v, names, 5, 0, "Sets the leaves, grass and sand colors below.") && v != cur) {
             if (v == 4) v = cur == 0 ? 3 : 0;  // (Mixed is never chosen: past the ends, back round)
             g_settings.leaves.pick = preset[v][0];
@@ -626,26 +621,19 @@ static void tab_cosmetics(void) {
     opt_colour("Wall color", &g_settings.walls, COL_SLOT_WALLS, "The overworld's cliff walls and ledges.");
     opt_colour("House color", &g_settings.houses, COL_SLOT_HOUSES, "The roofs of the village houses.");
     opt_section("Enemies");
-    {   // (a seed with its own cosmetics: "Seed", its enemies are per seed; and no screen filter)
-        const char *modes[N_ENEMY_COLOUR_MODES];
-        for (int i = 0; i < N_ENEMY_COLOUR_MODES; i++) modes[i] = g_enemy_colour_modes[i];
-        int shown = 0;
-        if (seed) modes[0] = LN("Seed"), opt_disable_next();
-        opt_choice("Enemy colors", seed ? &shown : &g_settings.enemy_colours, modes, N_ENEMY_COLOUR_MODES, 0,
-                   "Gives each kind of enemy a new color. Enemies whose color shows how strong they are keep theirs.");
-        opt_section("Screen");
-        if (seed) opt_disable_next();
-        opt_choice("Screen filter", seed ? &shown : &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
-                   "Puts a filter over the whole screen, HUD included.");
-    }
+    opt_choice("Enemy colors", &g_settings.enemy_colours, g_enemy_colour_modes, N_ENEMY_COLOUR_MODES, 0,
+               "Gives each kind of enemy a new color. Enemies whose color shows how strong they are keep theirs.");
+    opt_section("Screen");
+    opt_choice("Screen filter", &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
+               "Puts a filter over the whole screen, HUD included.");
 #ifdef __APPLE__  // (the Metal renderer draws it; Vulkan: not yet - the setting does nothing there)
-    {   // (a seed with its own cosmetics, or the seed's weather cycle: "Seed", the seed's weather - locked)
+    {   // (the seed's weather cycle: "Seed", the seed's weather - locked)
         const char *names[N_WEATHERS];
         for (int i = 0; i < N_WEATHERS; i++) names[i] = g_weathers[i];
         bool cycle = weather_cycle_on();
         int shown = 0;
-        if (seed || cycle) names[0] = LN("Seed"), opt_disable_next();
-        opt_choice("Weather", seed || cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
+        if (cycle) names[0] = LN("Seed"), opt_disable_next();
+        opt_choice("Weather", cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
                    cycle ? "This seed picked the weather. Commit to it!" : "Rain, snow, a storm or a blizzard on the overworld.");
     }
 #endif

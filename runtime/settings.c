@@ -197,6 +197,10 @@ void settings_load(void) {
             strlcpy(g_settings.rando_seed, val, sizeof g_settings.rando_seed);
             continue;
         }
+        if (!strcmp(key, "cosmetics_seed")) {
+            strlcpy(g_settings.cosmetics_seed, val, sizeof g_settings.cosmetics_seed);
+            continue;
+        }
         if (fields != 2) continue;
         if (!strcmp(key, "aspect")) g_settings.aspect = !strcmp(val, "original") ? ASPECT_ORIGINAL : ASPECT_UNLOCKED;
         else if (!strcmp(key, "fullscreen")) g_settings.fullscreen = atoi(val) != 0;
@@ -360,6 +364,7 @@ void settings_save(void) {
     fprintf(f, "enemy_colours = %s\n", k_enemy_colour_keys[g_settings.enemy_colours]);
     fprintf(f, "screen_filter = %s\n", k_screen_filter_keys[g_settings.screen_filter]);
     fprintf(f, "weather = %s\n", k_weather_keys[g_settings.weather]);
+    if (g_settings.cosmetics_seed[0]) fprintf(f, "cosmetics_seed = %s\n", g_settings.cosmetics_seed);
     bind_settings_save(f);
     fprintf(f, "rando_seed = %s\n", g_settings.rando_seed);
     if (g_settings.rando_options[0]) fprintf(f, "rando_options = %s\n", g_settings.rando_options);

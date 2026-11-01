@@ -2,9 +2,9 @@
 // made with it has its own set, picked from its seed (the same every time it's played): a fully random colour (any
 // hue, saturation and brightness) for each of the tunic, hearts, hair, skin, shield, leaves, grass, sand, water,
 // fences, walls and houses, enemy colours "per seed" and a weather (clear, rain, snow or storm: runtime/nvn/weather.c;
-// the screen filter stays off: it isn't a colour). Only while that seed is being played (never in vanilla), over
-// whatever the player chose: the Cosmetics tab is locked meanwhile (the player's own choices stay saved, and are back
-// in another seed or vanilla).
+// the screen filter off: it isn't a colour). The first time such a seed is played its set is copied into the Cosmetics
+// tab's rows (g_settings.cosmetics_seed remembers which seed did it), and from then on they are the player's own to
+// change; the tab's "Seed's look" copies them in again.
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -60,31 +60,45 @@ static void refresh_locked(void) {
     LOG("[cosmetics] seed's own cosmetics (%s)\n", dir);
 }
 
-static int seed_pick(int slot, uint32_t *rgb) {
-    pthread_mutex_lock(&g_lock);
-    refresh_locked();
-    int p = g_on && slot >= 0 && slot < COL_SLOTS ? COL_CUSTOM : COL_DEFAULT;
-    if (p) *rgb = g_rgb[slot];
-    pthread_mutex_unlock(&g_lock);
-    return p;
+// The seed's set -> the Cosmetics tab's rows (the weather's 0..3 are WEATHER_OFF..WEATHER_STORM)
+static void apply_locked(void) {
+    CosColour *rows[COL_SLOTS] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin,
+                                  &g_settings.shield, &g_settings.leaves, &g_settings.grass, &g_settings.sand,
+                                  &g_settings.water, &g_settings.fences, &g_settings.walls, &g_settings.houses};
+    for (int slot = 0; slot < COL_SLOTS; slot++) rows[slot]->pick = COL_CUSTOM, rows[slot]->rgb = g_rgb[slot];
+    g_settings.enemy_colours = 1;
+    g_settings.screen_filter = 0;
+    g_settings.weather = g_weather;
+    snprintf(g_settings.cosmetics_seed, sizeof g_settings.cosmetics_seed, "%s", g_dir);
+    LOG("[cosmetics] the seed's own cosmetics copied into the Cosmetics tab (%s)\n", g_dir);
 }
 
-// The seed has its own cosmetics (the Cosmetics tab is locked; enemy colours "per seed", no screen filter)
+static void check_locked(void) {
+    refresh_locked();
+    if (g_on && strcmp(g_settings.cosmetics_seed, g_dir)) apply_locked();  // (a seed played for the first time)
+}
+
+static void check(void) {
+    pthread_mutex_lock(&g_lock);
+    check_locked();
+    pthread_mutex_unlock(&g_lock);
+}
+
+// The seed being played (or PLAY's, on the start screen) has its own cosmetics
 bool cosmetics_seed_on(void) {
     pthread_mutex_lock(&g_lock);
-    refresh_locked();
+    check_locked();
     bool on = g_on;
     pthread_mutex_unlock(&g_lock);
     return on;
 }
 
-// The seed's own weather (0 clear, 1 rain, 2 snow, 3 storm), over the Weather row; 0 without one
-int cosmetics_seed_weather(void) {
+// "Seed's look": its set into the rows again
+void cosmetics_seed_apply(void) {
     pthread_mutex_lock(&g_lock);
     refresh_locked();
-    int w = g_on ? g_weather : 0;
+    if (g_on) apply_locked();
     pthread_mutex_unlock(&g_lock);
-    return w;
 }
 
-__attribute__((constructor)) static void install(void) { g_col_seed_pick = seed_pick; }
+__attribute__((constructor)) static void install(void) { g_col_seed_check = check; }
