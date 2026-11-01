@@ -116,6 +116,10 @@ extern bool maxwell_gmem_lazy;
 // runtime imports the bound storage buffers' chunks before the draw. true (LARECOMP_VK_GMEM_FS_MISS=1): every shader
 // counts, none declares early tests.
 extern bool maxwell_gmem_fs_miss;
+// (GLSL) The branch state machine's SSY / PBK / PCNT stacks: true (default) 16 named variables each, the index masked;
+// false (LARECOMP_VK_STACK_ARRAYS=1) arrays of 16. Intel's driver (Arc 140T, 101.9150) puts a dynamically indexed
+// array in scratch memory and hung the GPU (device lost) in the lit fragment shaders' light loop (#462).
+extern bool maxwell_glsl_stack_vars;
 // Lazy mode, vertex / fragment: the chunks under the draw's storage buffers (where the heap reads are) come as push
 // constants, GDirect { uvec4 gd[GMEM_DIRECT_MAX]; } (x = first word, y = words, 0: unused, z, w = device address), and
 // as storage buffers GDir<k> at GMEM_DIRECT_BINDING + k of the chunk set: an access in one is a compare and a plain

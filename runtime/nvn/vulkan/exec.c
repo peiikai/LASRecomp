@@ -1269,6 +1269,9 @@ void vk_exec_init(void) {
     // The heap's chunk / lazy decision now, on this thread, before the render thread and the build workers exist:
     // they read gc_shift / gc_lazy directly (a buffer copy can come before any shader was translated)
     gmem_chunk_shift();
+    const char *sa = getenv("LARECOMP_VK_STACK_ARRAYS");
+    maxwell_glsl_stack_vars = !(sa && atoi(sa));
+    if (!maxwell_glsl_stack_vars) LOG("[vk] shader branch stacks as arrays (LARECOMP_VK_STACK_ARRAYS)\n");
     // The command buffers of every slot, from the pool, before the recorder thread exists: from then on the pool and
     // the buffers are the recorder's (begun, recorded, ended and submitted in packet order)
     for (int i = 0; i < SUBS; i++) {
