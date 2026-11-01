@@ -257,7 +257,7 @@ jobs:
           tools/fetch_lld.sh
           python3 tools/test_gamebuild_ios.py
   macos:
-    runs-on: [self-hosted, macos-vm]  # (a fresh Tart VM per job on the maintainer's Mac, deleted after)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Packages
