@@ -2465,7 +2465,7 @@ static void build_pipeline(void *arg) {
     int bs = build_begin("pipeline vs/fs", k->prog->code[0] ? k->prog->code[0] : k->prog->prep_vh,
                          k->prog->code[1] ? k->prog->code[1] : k->prog->prep_fh);
     SLOW_FEEDBACK(c.pi);
-    VkResult r = vkCreateGraphicsPipelines(g_vk.dev, g_vk.pcache, 1, &c.pi, NULL, &pp->pipe);
+    VkResult r = vk_create_graphics_pipeline(&c.pi, &pp->pipe);
     SLOW_FEEDBACK_HIT();
     build_end(bs);
     if (r != VK_SUCCESS) {
@@ -5135,7 +5135,7 @@ static void build_compute(void *arg) {
                                                 .pSpecializationInfo = &spec},
                                       .layout = cp->p.layout};
     SLOW_FEEDBACK(ci);
-    VkResult r = vkCreateComputePipelines(g_vk.dev, g_vk.pcache, 1, &ci, NULL, &cp->pipe);
+    VkResult r = vk_create_compute_pipeline(&ci, &cp->pipe);
     SLOW_FEEDBACK_HIT();
     atomic_fetch_add(&stat_compiles, 1);
     atomic_store(&cp->p.state, r == VK_SUCCESS ? 1 : 2);
