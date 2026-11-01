@@ -200,6 +200,8 @@
 {"Bottom button", "下方按键"},
 {"Confirm button", "确认键"},
 {"Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, Bottom button uses the bottom one like Xbox and PlayStation.", "LAS Recomp菜单中用哪个键确认。“任天堂布局”和Switch一样用右侧按键，“下方按键”和Xbox、PlayStation一样用下方按键。"},
+{"Buttons match labels", "按键按标识"},
+{"On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.", "在Xbox和PlayStation手柄上，A、B、X、Y按手柄上的标识工作，所以下方按键是A。关闭时保持Switch的布局。不影响任天堂手柄。"},
 // runtime/ui/difficulty.mm
 {"General", "通用"},
 {"Language", "语言"},

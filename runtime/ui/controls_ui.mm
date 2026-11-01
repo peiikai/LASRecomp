@@ -130,7 +130,7 @@ static void watch_results(int fam, char *msg, size_t cap) {
     msg[0] = 0;
     if (kind == 2)
         snprintf(msg, cap, L("Swapped. %s is on %s now."), L(bind_input_name(rother)),
-                 L(rdev == BIND_DEV_PAD ? bind_pad_label(g_bind_pad[rother], fam) : bind_key_label(g_bind_key[rother])));
+                 L(rdev == BIND_DEV_PAD ? bind_pad_label(bind_pad_host(rother), fam) : bind_key_label(g_bind_key[rother])));
     if (kind == 1 || kind == 2 || kind == 5) settings_save();
 }
 
@@ -202,7 +202,7 @@ static void configure_inputs(float scale) {
             bool waiting = cd == dev && cs == b.slot;
             char val[64];
             if (waiting) snprintf(val, sizeof val, g_dev_pad ? L("Press a button...  %d") : L("Press a key...  %d"), (ms + 999) / 1000);
-            else snprintf(val, sizeof val, "%s", g_dev_pad ? bind_pad_label(g_bind_pad[b.slot], fam) : bind_key_label(g_bind_key[b.slot]));
+            else snprintf(val, sizeof val, "%s", g_dev_pad ? bind_pad_label(bind_pad_host(b.slot), fam) : bind_key_label(g_bind_key[b.slot]));
             // the same button / key on two inputs (a hand-edited larecomp.ini): red
             const int16_t *t = g_dev_pad ? g_bind_pad : g_bind_key;
             bool dup = false;
@@ -304,6 +304,9 @@ extern "C" void controls_tab_draw(float scale) {
                    "Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, "
                    "Bottom button uses the bottom one like Xbox and PlayStation.");
     }
+    opt_toggle("Buttons match labels", &g_settings.face_by_label, false,
+               "On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom "
+               "button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.");
 
     opt_end();
 }

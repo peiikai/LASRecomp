@@ -200,6 +200,8 @@
 {"Bottom button", "Botón inferior"},
 {"Confirm button", "Botón de confirmar"},
 {"Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, Bottom button uses the bottom one like Xbox and PlayStation.", "Qué botón confirma en los menús de LAS Recomp. Estilo Nintendo usa el botón derecho, como en Switch. Botón inferior usa el de abajo, como en Xbox y PlayStation."},
+{"Buttons match labels", "Botones según su letra"},
+{"On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.", "En mandos de Xbox y PlayStation, A, B, X e Y funcionan como indica el mando, así que el botón inferior es A. Desactivado mantiene la disposición de Switch. No afecta a los mandos de Nintendo."},
 // runtime/ui/difficulty.mm
 {"General", "General"},
 {"Language", "Idioma"},

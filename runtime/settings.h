@@ -55,6 +55,8 @@ typedef struct {
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports): runtime/nvn/texpatch.c
     int menu_confirm;    // MENU_CONFIRM_*: game layout (right confirms, bottom goes back) or the controller's convention
+    bool face_by_label;  // Xbox / PlayStation pads: the game's A/B/X/Y follow the buttons' labels, not the Switch's
+                         // positions (bottom = A, right = B, left = X, top = Y): runtime/hle/bindings.c bind_pad_host
     bool inv_keys;       // randomizer: show every dungeon's keys on the pause menu's Items page
     bool tracker;        // randomizer: check tracker on the pause menu's Map page
     int tracker_filters; // its filter bar (runtime/ui/tracker_overlay.mm bits), -1 = the defaults; no menu row
