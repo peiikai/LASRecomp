@@ -152,6 +152,67 @@ attribute, so the `removexattr` on the linker is gone too.
   it back; whether it ever does is to be checked), then rendering at the screen's own size on small devices.
   Measuring on a 4 GB device: a virtual iPhone ("Lime") can be given 4 GB, once it runs past the title screen
   (its paravirtual GPU has no BC formats).
+- **Textures on GPUs without BC, and the two copies of every texture, are one problem; the two answers worked out
+  so far don't fit together.** The facts first. Metal has the BC formats on Apple7 (A14) and later only; the
+  iPhones without them (8, X, XR / XS, 11, SE 2) are exactly the 3-4 GB ones, so whatever replaces BC there has to
+  save memory, not spend it. The game's textures (a scan of every BNTX in the 1565 bfres / arc / bntx files, all
+  mips): 16 824 BC textures, 3.66 GB - BC5 1.6 GB (4275, 3969 of them snorm normal maps), BC4 1.17 GB (7843
+  masks), BC1 0.8 GB (3946), BC3 82 MB, BC7 8.5 MB (22 models: the village houses' interiors, the library, some
+  enemies). No texture has an ASTC twin (the UI archives hold ASTC for some layout images and BC for others, never
+  both of one). An overworld scene holds ~350 textures; the game loads per area and frees on leaving (texture pool
+  slots emptied), and the CPU never writes into a BC texture after loading it (measured: the only CPU-written texture
+  is the R8 glyph cache; GPU writes go to uncompressed render targets) - our own texpatch does, re-encoding the
+  changed blocks to BC before upload.
+  Branch `ios-bc-decode` (not merged) decodes BC on the CPU into RGBA8 at upload (`runtime/nvn/bcdec.c`, every
+  format within 1 of the Apple GPU's own decoder, BC3 / BC4 / BC7 identical; the anchor tables and the 6-bit
+  interpolation weights were read back from the hardware). It gets Lime past the title screen and is correct, and it
+  is the wrong answer for the devices that need it: RGBA8 is 4-8x the BC size, ~6x over the game's mix, so the
+  `MTLTexture` half of the footprint goes from ~465 MB to ~2.8 GB in the overworld - on a phone with ~2 GB for the
+  app. The Android port does the same (`bcn.c` over third_party/bcdec, BC4 -> R8, BC5 -> RG8 snorm: 2-4x less than
+  our RGBA8 on masks and normals, worth taking regardless) and has the same problem on Mali / PowerVR.
+  What was measured for the compressed alternatives (all on real game textures, the Mac GPU as the reference):
+  - BC1 -> ASTC 4x4 is a bit rearrangement (same endpoints, same per-texel index: both decoders use the 6-bit
+    weights {0,21,43,64}), exact to +-1 - never 0, the two formats round the last step differently and the endpoints
+    are also texels, so no choice of endpoints fixes it - for 97% of the BC1 textures (the rest have 3-colour blocks
+    with the transparent index); 2x the BC1 size. BC4 8-step blocks the same way (42% of the BC4 textures are all
+    such blocks); 2x. BC3, BC5, BC7 have no direct form (independent channel palettes, multi-partition modes).
+  - astcenc 4x4 -medium: BC1 69.7 dB / max 1, BC3 71 dB / max 1, BC4 69.6 dB / max 2, BC5 59 dB / max 8 (normals
+    are the weak point); 6x6 for BC1 / BC4 gives size parity with BC at 52-54 dB / max 11-12. 70 Mtexel/s per M-series
+    core, so the whole game's 5.8 Gtexel is a minute on a phone - but BC5 snorm has no ASTC LDR form at all: an
+    offset into unorm and a `*2-1` in every shader that reads a normal map (the translator could add it by the
+    bound texture's format), which is the shader change decided against.
+  - EAC: `EAC_R11Unorm/Snorm` and `EAC_RG11Unorm/Snorm` exist on Lime (Apple5-class paravirtual GPU) and on the 15
+    Pro (probed, textures created and filled), 8 / 16 bytes a block like BC4 / BC5, signed natively - the way out for
+    the 12 000 masks and normals without touching shaders. No encoder written yet; the format is one-dimensional
+    (base, multiplier, one of 16 tables, 3-bit indices), the speed of a reasonable one is unknown and decides
+    whether it runs at upload (JIT) or needs a disk cache.
+  - Decoding BC in the shader (BC blocks in a uint texture, unpacked per fetch) keeps BC's size exactly, and costs
+    8 fetches + 8 block decodes + the filtering by hand per sample, at 7.5 samples a fragment on average (75
+    fragment shaders of an overworld run, 564 samples, peaks of 25-34); ruled out.
+  - Combined, the best mix found: BC1 -> ASTC 4x4 by transcode, BC3 / BC7 -> ASTC by astcenc (90 MB in all), BC4 ->
+    EAC R11, BC5 -> EAC RG11(Snorm): +17% GPU memory over BC, every format sampled in hardware, no shader change,
+    and a content-hash cache (the hash `upload_texture` already computes) so nothing is encoded twice - JIT with a
+    cache, an AOT pass being the same code run over romfs if first visits stutter. Vulkan would take the same module
+    at textures.c's unsupported-format branch, so Android gets it too.
+  Why the two don't fit yet: all of that reduces the `MTLTexture` copy, while the "4 GB devices" item above says the
+  big saving is the *guest* copy - releasing the game's block-linear bytes once the texture is on the GPU (the
+  other session's options: `madvise` / `PROT_NONE` with a fault handler that blits back on access, GPU-copy eviction,
+  GPU-side unpacking off the guest heap buffer). On an A14+ device the guest copy is BC and the GPU copy is BC; both
+  schemes stack and the footprint halves. On a pre-A14 device the GPU copy becomes the transcoded form, and then:
+  (1) a cache miss or an eviction needs the BC source back - from guest memory that was released, or from the disk
+  cache that must then hold *every* visited texture, not just the slow ones, which makes the cache mandatory rather
+  than an optimisation and makes its hash key (computed from guest bytes) unavailable when the guest bytes are
+  gone; (2) a fault-handler blit-back reconstructs BC from an `MTLTexture` that is now ASTC / EAC, which cannot be
+  undone exactly, so the hash changes and texpatch's re-encode no longer sees the original blocks; (3) encoding
+  at upload (JIT) holds BC source + decoded + encoded at once per texture for the duration, on the device with the
+  least headroom. None of these is unsolvable - keep the key as (file, offset) from the loader instead of a content
+  hash; evict only textures whose cache entry is on disk; encode from the file rather than from guest memory - but
+  each pulls the design away from "a transcode step inside `upload_texture`" towards a texture manager that owns
+  the source, and that is the design to make before writing the encoder: decide where the BC bytes of a loaded
+  texture live on a 4 GB phone (guest memory, disk cache, or nowhere because the file is the source), and derive
+  both the transcode and the guest-copy release from that. Until then the decoder branch stays unmerged and Lime
+  runs it from a local stash ("lime: dumb BC->RGBA8 decoder …": `git stash show -p --include-untracked stash@{N} |
+  patch -p1` over any tree, `patch -p1 -R` to take it off; three files, nothing else in it).
 - **`increased-memory-limit` changes the address space too, not only the memory limit.** Signed without it, an
   iPhone 15 Pro (iOS 26.5) gives the window a gap of 5.5 GB instead of 52 GB - the packed 5.25 GB layout fits with
   ~128 MB to spare - and plays the overworld at 60 fps with a 1.8-1.9 GB footprint. The comment in
