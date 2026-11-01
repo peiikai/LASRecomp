@@ -40,6 +40,11 @@ void plat_os_write(uint64_t addr, uint64_t size);
 // protects nothing until plat_os_write_end
 void plat_os_write_begin(uint64_t addr, uint64_t size);
 void plat_os_write_end(void);
+#else
+static inline void plat_os_write(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
+static inline void plat_os_write_begin(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
+static inline void plat_os_write_end(void) {}
+#endif
 // CPU data cache maintenance for memory a GPU reads or writes without snooping the CPU's caches (aarch64 Linux, where
 // EL0 may use DC CVAC / DC CIVAC; elsewhere nothing). Clean: what the CPU wrote reaches memory. Clean + invalidate:
 // also drops the lines, so the CPU's next read comes from memory (after the GPU wrote it).
@@ -58,11 +63,6 @@ static inline void plat_cache_op(uint64_t addr, uint64_t size, bool invalidate) 
     (void)addr; (void)size; (void)invalidate;
 #endif
 }
-#else
-static inline void plat_os_write(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
-static inline void plat_os_write_begin(uint64_t addr, uint64_t size) { (void)addr, (void)size; }
-static inline void plat_os_write_end(void) {}
-#endif
 enum { PLAT_PROT_NONE = 0, PLAT_PROT_READ = 1, PLAT_PROT_RW = 3 };
 int plat_protect(uint64_t addr, uint64_t size, int prot);  // 0 on success
 #define PLAT_PAGE 0x4000ull  // largest page size we deal with (macOS 16K; multiple of Windows' 4K)
