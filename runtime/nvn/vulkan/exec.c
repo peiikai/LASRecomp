@@ -1269,9 +1269,13 @@ void vk_exec_init(void) {
     // The heap's chunk / lazy decision now, on this thread, before the render thread and the build workers exist:
     // they read gc_shift / gc_lazy directly (a buffer copy can come before any shader was translated)
     gmem_chunk_shift();
+    // The branch stacks' form (shader.h maxwell_glsl_stack_vars): variables on Intel, arrays elsewhere (Mali's
+    // build of the variables form never finished, #526). LARECOMP_VK_STACK_ARRAYS=1 / =0 overrides. The caches key on
+    // the GLSL text (SPIR-V) and the driver's hash of the SPIR-V (pipelines), so the other form's binaries aren't reused.
     const char *sa = getenv("LARECOMP_VK_STACK_ARRAYS");
-    maxwell_glsl_stack_vars = !(sa && atoi(sa));
-    if (!maxwell_glsl_stack_vars) LOG("[vk] shader branch stacks as arrays (LARECOMP_VK_STACK_ARRAYS)\n");
+    maxwell_glsl_stack_vars = sa ? atoi(sa) == 0 : g_vk.props.vendorID == 0x8086;
+    LOG("[vk] shader branch stacks as %s (%s)\n", maxwell_glsl_stack_vars ? "variables" : "arrays",
+        sa ? "LARECOMP_VK_STACK_ARRAYS" : "default for this GPU");
     // The command buffers of every slot, from the pool, before the recorder thread exists: from then on the pool and
     // the buffers are the recorder's (begun, recorded, ended and submitted in packet order)
     for (int i = 0; i < SUBS; i++) {
