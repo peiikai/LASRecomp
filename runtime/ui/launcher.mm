@@ -1045,6 +1045,31 @@ static void sparkle(ImDrawList *dl, ImVec2 c, float r, float k, float spin) {
 }
 
 // split .. split_end: that part of the label in its own colour (PLAY's choice: Vanilla in vanilla cream)
+// A selected main-page item's look: a shadow band behind it (like the version corner's), feathered, with a warm glow
+// (at, sz: the item's text)
+static void menu_band(ImDrawList *dl, ImVec2 at, ImVec2 sz) {
+    float x0 = ImGui::GetWindowPos().x, x1 = at.x + sz.x * 0.75f, x2 = at.x + sz.x + sz.y * 3.5f;
+    float f = sz.y * 0.22f, y0 = at.y - f * 0.4f, y1 = y0 + f, y3 = at.y + sz.y + f * 0.2f, y2 = y3 - f;
+    if (PLAT_IOS) {  // (taller than PLAY's ‹ choice › boxes: the band frames them)
+        // (centred on the capitals' middle, as the boxes are - the line's middle is lower: room for descenders)
+        ImFont *fn = ImGui::GetFont();
+        const ImFontGlyph *gH = fn->FindGlyph('H');
+        float c = at.y + (gH ? (gH->Y0 + gH->Y1) * 0.5f * ImGui::GetFontSize() / fn->FontSize : sz.y * 0.5f);
+        float half = sz.y * 0.62f;
+        y1 = c - half, y2 = c + half, y0 = y1 - f, y3 = y2 + f;
+    }
+    ImU32 c = IM_COL32(6, 10, 34, 150), g = IM_COL32(255, 190, 80, 34), n = IM_COL32(6, 10, 34, 0), ng = IM_COL32(255, 190, 80, 0);
+    for (int pass = 0; pass < 2; pass++) {  // dark band, then the glow over it
+        ImU32 a = pass ? g : c, z = pass ? ng : n;
+        dl->AddRectFilledMultiColor(ImVec2(x0, y1), ImVec2(x1, y2), a, a, a, a);
+        dl->AddRectFilledMultiColor(ImVec2(x1, y1), ImVec2(x2, y2), a, z, z, a);
+        dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(x1, y1), z, z, a, a);  // (feathered top / bottom)
+        dl->AddRectFilledMultiColor(ImVec2(x1, y0), ImVec2(x2, y1), z, z, z, a);
+        dl->AddRectFilledMultiColor(ImVec2(x0, y2), ImVec2(x1, y3), a, a, z, z);
+        dl->AddRectFilledMultiColor(ImVec2(x1, y2), ImVec2(x2, y3), a, z, z, z);
+    }
+}
+
 static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, const char *split = NULL, ImU32 col2 = 0,
                       const char *split_end = NULL) {
     ImGui::PushFont(g_menu_small ? g_font_small : g_font_menu);
@@ -1062,20 +1087,7 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
     if (hovered) *hovered = hot;
     ImU32 col = !enabled ? IM_COL32(170, 175, 200, 140) : hot ? IM_COL32(255, 214, 64, 255) : IM_COL32(250, 250, 255, 255);
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    if (hot && enabled) {  // a shadow band behind the item (like the version corner's), feathered, with a warm glow
-        float x0 = ImGui::GetWindowPos().x, x1 = at.x + sz.x * 0.75f, x2 = at.x + sz.x + sz.y * 3.5f;
-        float f = sz.y * 0.22f, y0 = at.y - f * 0.4f, y1 = y0 + f, y3 = at.y + sz.y + f * 0.2f, y2 = y3 - f;
-        ImU32 c = IM_COL32(6, 10, 34, 150), g = IM_COL32(255, 190, 80, 34), n = IM_COL32(6, 10, 34, 0), ng = IM_COL32(255, 190, 80, 0);
-        for (int pass = 0; pass < 2; pass++) {  // dark band, then the glow over it
-            ImU32 a = pass ? g : c, z = pass ? ng : n;
-            dl->AddRectFilledMultiColor(ImVec2(x0, y1), ImVec2(x1, y2), a, a, a, a);
-            dl->AddRectFilledMultiColor(ImVec2(x1, y1), ImVec2(x2, y2), a, z, z, a);
-            dl->AddRectFilledMultiColor(ImVec2(x0, y0), ImVec2(x1, y1), z, z, a, a);  // (feathered top / bottom)
-            dl->AddRectFilledMultiColor(ImVec2(x1, y0), ImVec2(x2, y1), z, z, z, a);
-            dl->AddRectFilledMultiColor(ImVec2(x0, y2), ImVec2(x1, y3), a, a, z, z);
-            dl->AddRectFilledMultiColor(ImVec2(x1, y2), ImVec2(x2, y3), a, z, z, z);
-        }
-    }
+    if (hot && enabled) menu_band(dl, at, sz);
     ImU32 col_b = hot && enabled ? IM_COL32(255, 160, 50, 255) : col;
     if (split && enabled) {
         std::string head(label, split - label);
@@ -1093,6 +1105,97 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
     ImGui::EndDisabled();
     ImGui::PopFont();
     return clicked;
+}
+
+// Phones: the main page's items larger, PLAY's row as boxes a finger can hit - PLAY, then ‹ [the choice] ›; a tap on an
+// arrow or a sideways swipe on the row steps the choice (g_pick_step, read by the caller)
+static const float kPhoneMenu = 1.25f;
+static ImRect g_pick_rect;  // the ‹ choice › boxes as last drawn (the swipe's target)
+static int g_pick_step;     // -1 back, +1 on
+
+static void pick_swipe_event(const SDL_Event &e, ImVec2 ds) {
+    static float sx, sy;
+    static bool on;
+    float x = e.tfinger.x * ds.x, y = e.tfinger.y * ds.y;
+    if (e.type == SDL_EVENT_FINGER_DOWN) on = g_pick_rect.Contains(ImVec2(x, y)), sx = x, sy = y;
+    else if (e.type == SDL_EVENT_FINGER_UP && on) {  // (right to left: the next one, as a carousel)
+        float dx = x - sx, dy = y - sy;
+        if (fabsf(dx) > ds.y * 0.05f && fabsf(dx) > 2 * fabsf(dy)) g_pick_step = dx < 0 ? 1 : -1;
+        on = false;
+    } else if (e.type == SDL_EVENT_FINGER_CANCELED) on = false;
+}
+
+static bool phone_play_row(const char *pick, int choice, const std::vector<std::string> &choices, bool on, bool live,
+                           float win_w, bool *hov, ImVec2 *play_at, bool *focused_once) {
+    ImGui::SetWindowFontScale(kPhoneMenu);
+    ImGui::PushFont(g_font_menu);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImFont *f = ImGui::GetFont();
+    ImVec2 at = ImGui::GetCursorScreenPos();
+    float h = ImGui::GetFontSize(), pad = h * 0.4f, gap = h * 0.18f;
+    // (a capital's middle, down from the top of a line of that size: what the boxes and the name centre on)
+    const ImFontGlyph *gH = f->FindGlyph('H');
+    auto mid = [&](float size) { return gH ? (gH->Y0 + gH->Y1) * 0.5f * size / f->FontSize : size * 0.5f; };
+    float bh = h * 1.02f, cy = at.y + mid(h), y0 = cy - bh * 0.5f, y1 = cy + bh * 0.5f;
+    float pw = ImGui::CalcTextSize(L("PLAY")).x + pad;  // (PLAY bare, at the items' left edge; its target reaches the ‹)
+    float nroom = win_w * 0.9f - at.x - pw - 3 * gap - 2 * bh - 2 * pad;  // (a long name: smaller past 90% of the window)
+    float ntw = ImGui::CalcTextSize(pick).x, nsc = ntw > nroom ? fmaxf(nroom / ntw, 0.55f) : 1.0f;
+    ImVec2 pa(at.x, y0), pb(at.x + pw, y1), la(pb.x + gap, y0), lb(la.x + bh, y1);
+    ImVec2 na(lb.x + gap, y0), nb(na.x + ntw * nsc + 2 * pad, y1), ra(nb.x + gap, y0), rb(ra.x + bh, y1);
+    g_pick_rect = ImRect(la, rb);
+    bool many = choices.size() > 1;
+
+    if (!*focused_once) { ImGui::SetKeyboardFocusHere(); *focused_once = true; }
+    ImGui::SetCursorScreenPos(pa);
+    ImGui::BeginDisabled(!on);
+    ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));  // (the box's gold edge shows it)
+    bool pressed = ImGui::InvisibleButton("##play", ImVec2(pw, bh), ImGuiButtonFlags_EnableNav);
+    ImGui::PopStyleColor();
+    *hov = ImGui::IsItemFocused() || ImGui::IsItemHovered();
+    bool play_down = ImGui::IsItemActive();
+    ImGui::EndDisabled();
+
+    // the arrows' targets: their boxes and a margin (half the gap across, a third of a line up and down)
+    ImVec2 m = ImGui::GetIO().MousePos;
+    float ex = gap * 0.5f, ey = h * 0.33f;
+    auto in = [&](ImVec2 a, ImVec2 b) { return m.x >= a.x - ex && m.x <= b.x + ex && m.y >= a.y - ey && m.y <= b.y + ey; };
+    int under = live && many ? (in(la, lb) ? -1 : in(ra, rb) ? 1 : 0) : 0;
+    if (under && ImGui::IsMouseReleased(0)) g_pick_step = under;
+    if (!live || !many) g_pick_step = 0;
+    bool held = under && ImGui::IsMouseDown(0);
+
+    auto box = [&](ImVec2 a, ImVec2 b, bool lit, bool down) {
+        float r = bh * 0.28f;
+        dl->AddRectFilled(a, b, down ? IM_COL32(56, 104, 214, 215) : lit ? IM_COL32(34, 70, 170, 190) : IM_COL32(14, 30, 92, 165), r);
+        dl->AddRect(a, b, lit ? IM_COL32(255, 214, 64, 235) : IM_COL32(110, 170, 255, 160), r, 0, fmaxf(1.5f, h * 0.045f));
+    };
+    auto chevron = [&](ImVec2 a, ImVec2 b, int dir, bool lit) {
+        float c = (a.x + b.x) * 0.5f, u = bh * 0.19f;
+        ImVec2 pts[3] = {ImVec2(c - dir * u * 0.45f, cy - u), ImVec2(c + dir * u * 0.55f, cy), ImVec2(c - dir * u * 0.45f, cy + u)};
+        ImU32 col = !on || !many ? IM_COL32(170, 175, 200, 120) : lit ? IM_COL32(255, 236, 140, 255) : IM_COL32(255, 196, 64, 255);
+        dl->AddPolyline(pts, 3, col, 0, bh * 0.1f);
+    };
+    if (on && (*hov || play_down)) menu_band(dl, ImVec2(pa.x, at.y), ImVec2(ImGui::CalcTextSize(L("PLAY")).x, h));  // (behind the boxes)
+    box(la, lb, held && under < 0, held && under < 0);
+    box(na, nb, false, false);
+    box(ra, rb, held && under > 0, held && under > 0);
+    chevron(la, lb, -1, held && under < 0);
+    chevron(ra, rb, 1, held && under > 0);
+    *play_at = ImVec2(pa.x, at.y);
+    // (as menu_item draws SETTINGS: white, or gold to orange on its band when selected)
+    bool hot = on && (*hov || play_down);
+    ImU32 top = !on ? IM_COL32(170, 175, 200, 140) : hot ? IM_COL32(255, 214, 64, 255) : IM_COL32(250, 250, 255, 255);
+    ImU32 bottom = hot ? IM_COL32(255, 160, 50, 255) : top;
+    text_fx(dl, f, h, *play_at, top, bottom, L("PLAY"), on ? h * 0.05f : 0);
+    ImU32 nc = choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255);  // ("Vanilla" in vanilla cream)
+    float nh = h * nsc;
+    text_fx(dl, f, nh, ImVec2(na.x + pad, cy - mid(nh)), nc, nc, pick, nh * 0.05f);
+
+    ImGui::SetCursorScreenPos(at);
+    ImGui::Dummy(ImVec2(rb.x - at.x, h * 1.3f - ImGui::GetStyle().ItemSpacing.y));  // (SETTINGS' band clear of the boxes)
+    ImGui::PopFont();
+    ImGui::SetWindowFontScale(1.0f);
+    return pressed;
 }
 
 // Controllers, as in the in-game menu (runtime/ui/menu.mm): read straight from SDL, confirm / back as the Confirm
@@ -1783,6 +1886,7 @@ extern "C" void launcher_run(const char *root) {
             if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_MOTION ||
                 e.type == SDL_EVENT_FINGER_CANCELED) {
                 ImGuiIO &tio = ImGui::GetIO();
+                if (page == MAIN) pick_swipe_event(e, tio.DisplaySize);
                 tio.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
                 g_touch.event(&e, tio.DisplaySize.x, tio.DisplaySize.y, [&](float x, float y) { tio.AddMousePosEvent(x, y); },
                               [&](bool down) { tio.AddMouseButtonEvent(0, down); });
@@ -1939,13 +2043,25 @@ extern "C" void launcher_run(const char *root) {
                 else snprintf(pick, sizeof pick, "%s", L("Vanilla"));  // (choice 0 = Vanilla)
                 snprintf(label, sizeof label, "%s    \xe2\x80\xb9 %s \xe2\x80\xba", L("PLAY"), pick);
                 ImGui::SetCursorPosX(x0);
+                int arrow = 0;
+                static bool focused_once;
+                bool pressed;
+                ImVec2 play_at;
+#if PLAT_IOS
+                pressed = phone_play_row(pick, choice, choices, status.empty(),
+                                         status.empty() && !waiting && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId),
+                                         ds.x, &hov, &play_at, &focused_once);
+                if (g_pick_step) {  // (an arrow tapped or the choice swiped)
+                    choice = (choice + g_pick_step + (int)choices.size()) % (int)choices.size();
+                    g_pick_step = 0;
+                }
+#else
                 // a long seed name may run past the other items (to 80% of the window); beyond that the line shrinks
                 ImGui::PushFont(g_font_menu);
                 float fit = (ds.x * 0.8f - x0) / ImGui::CalcTextSize(label).x;
                 ImGui::PopFont();
                 if (fit < 1) ImGui::SetWindowFontScale(fit < 0.55f ? 0.55f : fit);
                 // the ‹ › arrows are clickable with the mouse: they cycle Vanilla / seeds instead of starting the game
-                int arrow = 0;
                 {
                     ImGui::PushFont(g_font_menu);
                     ImVec2 at = ImGui::GetCursorScreenPos();
@@ -1959,15 +2075,16 @@ extern "C" void launcher_run(const char *root) {
                     if (in_y && m.x >= rx - pad && m.x <= rx + aw + pad) arrow = 1;
                     ImGui::PopFont();
                 }
-                static bool focused_once;
                 if (!focused_once) { ImGui::SetKeyboardFocusHere(); focused_once = true; }
-                ImVec2 play_at = ImGui::GetCursorScreenPos();
+                play_at = ImGui::GetCursorScreenPos();
                 const char *name = strstr(label, "\xe2\x80\xb9") + 4, *name_end = strstr(label, " \xe2\x80\xba");
-                bool pressed = menu_item(label, status.empty(), &hov, name,
-                                         choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255),
-                                         name_end);  // (the choice keeps its colour when hovered: "Rando: <seed>" white,
-                                                     //  "Vanilla" vanilla cream; the arrows stay white)
+                pressed = menu_item(label, status.empty(), &hov, name,
+                                    choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255),
+                                    name_end);  // (the choice keeps its colour when hovered: "Rando: <seed>" white,
+                                                //  "Vanilla" vanilla cream; the arrows stay white)
+#endif
                 if (status.empty()) {  // PLAY twinkles now and then while the game is ready
+                    if (PLAT_IOS) ImGui::SetWindowFontScale(kPhoneMenu);
                     ImGui::PushFont(g_font_menu);
                     float w = ImGui::CalcTextSize(L("PLAY")).x, h = ImGui::CalcTextSize(L("PLAY")).y;
                     ImGui::PopFont();
@@ -2008,7 +2125,10 @@ extern "C" void launcher_run(const char *root) {
                 }
                 ImGui::SetCursorPosX(x0);
                 if (g_refocus == SETTINGS) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;  // (back from Settings: it
-                if (menu_item(L("SETTINGS"), true)) {                                             //  stays selected)
+                if (PLAT_IOS) ImGui::SetWindowFontScale(kPhoneMenu);
+                bool to_settings = menu_item(L("SETTINGS"), true);
+                ImGui::SetWindowFontScale(1.0f);
+                if (to_settings) {                                             //  stays selected)
                     static bool opened;
                     menu_tabs_focus(!opened);  // (first time this session: Prelaunch; later: the selected tab)
                     opened = true;
