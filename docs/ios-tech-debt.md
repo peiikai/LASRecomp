@@ -112,10 +112,15 @@ attribute, so the `removexattr` on the linker is gone too.
 - **No `docs/ios.md`.** The app has its own bundle id now (`com.peiikai.lasrecomp.ios`, tools/bundle_ios.sh; a
   sideloading tool rewrites it per team), but nothing documents the setup for a player: the kit, the export, the
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
-- **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
-  `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`. The
-  Home Screen quick action ("Metal HUD", `UIApplicationShortcutItems` in tools/bundle_ios.sh, read in
-  `ios_glue.m`'s scene delegate before `SDL_main`) is the one case done that way; `--play` could be a second one.
+- ~~**Launched from the home screen there are no arguments / environment**~~: the Home Screen quick actions are
+  the player's `--play` (`ios_glue.m`): "Play Vanilla" (static, Info.plist), then one dynamic item per seed (up to
+  two: iOS shows four in all), the seed PLAY would start first, then the newest, then "Metal HUD" - dynamic too,
+  since iOS puts static items before dynamic ones. A launch from one goes through the start screen's PLAY (the
+  first-launch questions, the shader preparation); in game it reboots on that seed. The seed items are rebuilt from
+  `rando/` (`rando_seed_there`: `settings.json` + `romfs/`, as the start screen's list) when the start screen
+  opens, when the Randomizer tab re-reads its list (a seed made, renamed or deleted) and when the app goes to the
+  background; a seed deleted through the Files app in between leaves the start screen up. `LARECOMP_*` stays
+  `devicectl`-only.
 - ~~**Left / right values have no touch gesture.**~~ A row's `◀ value ▶` arrows are tap targets (larger on the
   phone's cards, `option_rows.mm`), and the start page's seed choice is `‹ [choice] ›` buttons that also take a
   sideways swipe (`launcher.mm`). A swipe on an option row still scrolls rather than steps (touch_ui.h: a sideways

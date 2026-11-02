@@ -29,6 +29,7 @@ extern "C" {
 extern const char *g_romfs_dir;
 extern int g_start_screen;  // hle/warp.c
 void launcher_play_seed(const char *seed);  // ui/launcher.mm
+void plat_ios_shortcuts_sync(void);        // platform/ios_glue.m
 extern char g_window_shot_request[256];  // runtime/hle/hookshot.c (test shots)
 }
 
@@ -99,6 +100,9 @@ static void scan(void) {
     closedir(d);
     std::sort(g_seeds.begin(), g_seeds.end(), [](const Seed &a, const Seed &b) { return a.mtime > b.mtime; });
     g_scanned = true;
+#if PLAT_IOS
+    plat_ios_shortcuts_sync();  // (the Home Screen's seed quick actions: made, renamed or deleted here)
+#endif
 }
 
 // ---- generation (background process)

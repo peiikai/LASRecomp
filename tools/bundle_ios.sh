@@ -143,10 +143,9 @@ cat > "$APP/Info.plist" <<EOF
 	<key>ITSAppUsesNonExemptEncryption</key><false/>
 	<key>UIApplicationShortcutItems</key>
 	<array><dict>
-		<key>UIApplicationShortcutItemType</key><string>metal-hud</string>
-		<key>UIApplicationShortcutItemTitle</key><string>Metal HUD</string>
-		<key>UIApplicationShortcutItemSubtitle</key><string>Launch with the Metal Performance HUD</string>
-		<key>UIApplicationShortcutItemIconSymbolName</key><string>gauge.with.dots.needle.67percent</string>
+		<key>UIApplicationShortcutItemType</key><string>play-vanilla</string>
+		<key>UIApplicationShortcutItemTitle</key><string>Play Vanilla</string>
+		<key>UIApplicationShortcutItemIconSymbolName</key><string>play.fill</string>
 	</dict></array>
 	<key>NSLocalNetworkUsageDescription</key><string>LiveSplit: LAS Recomp connects to LiveSplit's Server on your computer to drive the timer.</string>
 EOF

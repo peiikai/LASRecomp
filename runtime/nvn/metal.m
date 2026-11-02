@@ -24,6 +24,7 @@
 #include "nvn.h"
 #include "rqueue.h"
 #include "../game_addresses.h"
+#include "../rando.h"
 #include "renderer.h"
 #include "pace.h"
 #include "texpatch.h"
@@ -1279,6 +1280,8 @@ static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
             LOG("[metal] in the background: game paused\n");
             input_rumble_stop();
             settings_save();
+            extern void plat_ios_shortcuts_sync(void);
+            plat_ios_shortcuts_sync();  // (the seed list as the Home Screen will offer it)
         }
     } else if ((e->type == SDL_EVENT_WILL_ENTER_FOREGROUND || e->type == SDL_EVENT_DID_ENTER_FOREGROUND) && atomic_load(&g_background)) {
         atomic_store(&g_background, false);
@@ -1692,6 +1695,25 @@ void backend_quit(void) {
     }
 }
 
+#if TARGET_OS_IPHONE
+// A Home Screen quick action while the game runs: its seed boots in place, as the Randomizer tab's Play (the seed
+// being played: nothing); one deleted since: the start screen
+static void quick_action_in_game(void) {
+    extern bool plat_ios_take_play_request(char *seed, size_t n);
+    char seed[128];
+    if (!plat_ios_take_play_request(seed, sizeof seed)) return;
+    if (!strcmp(seed, g_settings.rando_seed)) return;
+    if (seed[0] && !rando_seed_there(seed)) {
+        LOG("[metal] quick action: seed %s is gone\n", seed);
+        rt_request_reboot(RT_REBOOT_TITLE);
+        return;
+    }
+    LOG("[metal] quick action: playing %s\n", seed[0] ? seed : "vanilla");
+    rando_select(seed);
+    rt_request_reboot(RT_REBOOT_GAME);
+}
+#endif
+
 int ui_run(void) {
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
@@ -1704,6 +1726,9 @@ int ui_run(void) {
     atomic_store(&ui_ready, true);
     for (;;) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
+#if TARGET_OS_IPHONE
+        quick_action_in_game();
+#endif
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
             input_rumble_poll();

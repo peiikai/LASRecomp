@@ -154,6 +154,16 @@ void rando_select(const char *seed) {
     unsetenv("LARECOMP_RANDO_SEED");
 }
 
+bool rando_seed_there(const char *seed) {
+    if (!seed || !seed[0] || seed[0] == '.' || strchr(seed, '/') || strchr(seed, '\\')) return false;
+    char p[600];
+    struct stat sb;
+    snprintf(p, sizeof p, "rando/%s/settings.json", seed);
+    if (stat(p, &sb) || !S_ISREG(sb.st_mode)) return false;
+    snprintf(p, sizeof p, "rando/%s/romfs", seed);
+    return !stat(p, &sb) && S_ISDIR(sb.st_mode);
+}
+
 uint32_t rando_word(uint64_t addr) {
     rando_init();
     for (int i = 0; i < nwords; i++)

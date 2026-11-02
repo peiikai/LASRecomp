@@ -693,6 +693,7 @@ static void memory_notice(float s, float w) {
     ImGui::EndChild();
 }
 
+
 // ------------------------------------------------------------------ the user's own Nintendo fonts (not shipped)
 // runtime/hle/pl.c loads fonts/ first, else a close substitute of the requested language. Import copies recognized
 // files only: the console's own names for the shared fonts (Standard, Chinese Simplified / its Ext, Chinese
@@ -871,6 +872,10 @@ extern "C" void launcher_play_seed(const char *seed) {
     g_play_seed = seed ? seed : "";
     g_play_seed_req = true;
 }
+#if PLAT_IOS
+extern "C" bool plat_ios_take_play_request(char *seed, size_t n);  // runtime/platform/ios_glue.m (quick actions)
+extern "C" void plat_ios_shortcuts_sync(void);
+#endif
 static float g_menu_gap = 0.35f;  // space under each item, in line heights
 
 // The first PLAY ever (settings.menu_tip_seen): a note on opening the LAS Recomp menu in game (it isn't obvious),
@@ -1713,6 +1718,8 @@ extern "C" void launcher_run(const char *root) {
     menu_sfx_set_game_dir(root);
 #if !PLAT_IOS
     ios_export_wire();
+#else
+    plat_ios_shortcuts_sync();  // (seeds added or deleted through the Files app since the last run)
 #endif
     static bool update_checked;  // (once per launch, not again after a "Title screen" reboot)
     if (!update_checked && !getenv("LARECOMP_NO_UPDATE_CHECK")) {
@@ -1892,18 +1899,30 @@ extern "C" void launcher_run(const char *root) {
             status = check_game_files(g_root);
             if (!status.empty()) { g_bg = 0; bind_capture_cancel(); settings_save(); page = SETUP; }
         }
-        if (g_play_seed_req) {  // the Randomizer tab's Play: that seed, then PLAY as if pressed (first-launch questions)
+#if PLAT_IOS
+        if (char qs[128]; plat_ios_take_play_request(qs, sizeof qs)) launcher_play_seed(qs);
+#endif
+        // the Randomizer tab's Play or a Home Screen quick action: that seed, then PLAY as if pressed (first-launch
+        // questions); a seed deleted since leaves the start screen as it is
+        if (g_play_seed_req) {
             g_play_seed_req = false;
             seeds = list_seeds();
             choices = {"Vanilla"};
             choices.insert(choices.end(), seeds.begin(), seeds.end());
-            choice = 0;
+            int want = g_play_seed.empty() ? 0 : -1;
             for (size_t i = 0; i < seeds.size(); i++)
-                if (seeds[i] == g_play_seed) choice = (int)i + 1;
-            bind_capture_cancel();
-            settings_save();
-            page = MAIN;
-            g_play_pending = true;
+                if (seeds[i] == g_play_seed) want = (int)i + 1;
+            if (want < 0) {
+                fprintf(stderr, "[launcher] play: seed \"%s\" is gone\n", g_play_seed.c_str());
+            } else if (!status.empty() || g_busy) {  // (a quick action before the game files are set up)
+                fprintf(stderr, "[launcher] play: the game files aren't ready\n");
+            } else {
+                choice = want;
+                bind_capture_cancel();
+                settings_save();
+                page = MAIN;
+                g_play_pending = true;
+            }
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
