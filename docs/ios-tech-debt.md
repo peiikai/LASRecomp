@@ -98,8 +98,17 @@ attribute, so the `removexattr` on the linker is gone too.
     `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction (tools/test_gamebuild_ios.py
     links with it, which covers the host CI runs on);
   - `plat_reserve_guest` on iOS without the entitlement fails with the `[vm]` diagnostics (needs a device: a
-    manual checklist in docs/ios.md at least);
+    manual checklist in docs/ios.md at least). The start screen now tells the player the signature lacks
+    `increased-memory-limit` (`plat_ios_memory_entitled`, `LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1` for the no case on
+    any desktop), which covers the message, not the placement failure;
   - `build_deps_ios.sh` on a clean machine (the `_iphoneos.whl` glob broke only there); CI covers this now.
+- **The kit's fifth linker (Windows on ARM, `aarch64-windows`) has never linked on that host.** `fetch_lld.sh` takes
+  it from Rust's `aarch64-pc-windows-msvc` rustc (the same system-DLL-only imports as the x64 one, checked here);
+  the `windows-arm64` CI job runs `test_gamebuild_ios.py` with it, which is the proof once that job is green.
+- **The iOS strings have no translations.** Upstream's menus are in 11 languages (`runtime/ui/lang/*.inc`,
+  `tools/menu_strings.py check`); the ~29 strings the port adds (touch controls, the kit page, the Files picker, the
+  entitlement warning) show in English everywhere. `tools/menu_strings.py missing <code>` lists them; nothing in CI
+  asks for them.
 
 ## Everything else
 
@@ -107,20 +116,22 @@ attribute, so the `removexattr` on the linker is gone too.
   sideloading tool rewrites it per team), but nothing documents the setup for a player: the kit, the export, the
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
 - **Launched from the home screen there are no arguments / environment** (`--play`, `LARECOMP_*` only through
-  `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`.
-- **Left / right values have no touch gesture.** A row of `opt_choice` / `opt_int` / `opt_slider`
-  ([runtime/ui/option_rows.mm](../runtime/ui/option_rows.mm): render resolution, upscaler, volume...) changes by
-  d-pad / arrow keys; a tap is "A", which steps forward and wraps - so going back one value on a phone means tapping
-  through the whole list. Options: a horizontal swipe on the row (touch_ui.h already tells a drag from a tap; a
-  sideways one could step instead of scroll), or `‹` / `›` hit areas at the row's ends (the value already draws
-  arrows there on a controller). The Android port's card layout puts the arrows on the right for the same reason.
+  `devicectl … launch`): a settings entry ("skip the start screen") would be the user-facing form of `--play`. The
+  Home Screen quick action ("Metal HUD", `UIApplicationShortcutItems` in tools/bundle_ios.sh, read in
+  `ios_glue.m`'s scene delegate before `SDL_main`) is the one case done that way; `--play` could be a second one.
+- ~~**Left / right values have no touch gesture.**~~ A row's `◀ value ▶` arrows are tap targets (larger on the
+  phone's cards, `option_rows.mm`), and the start page's seed choice is `‹ [choice] ›` buttons that also take a
+  sideways swipe (`launcher.mm`). A swipe on an option row still scrolls rather than steps (touch_ui.h: a sideways
+  drag only moves strips made to scroll that way); the arrows are enough.
 - **SDL 3.4.18 is patched for iOS 27** ([tools/patches/SDL3-3.4.18-ios27-orientation.patch](../tools/patches/SDL3-3.4.18-ios27-orientation.patch),
   SDL's own commits ca97578 and 2ee7eb6 from its release-3.4.x branch): on iOS 27 `statusBarOrientation` is a no-op,
   so SDL took the window for portrait, kept its view at 393x852 under a landscape 852x393 window, and the game drew
   into the top-left of the screen (SDL issue 16436; an iPhone 15 Pro on 27.0.1). The patch goes once
   `tools/build_deps_ios.sh` moves to SDL 3.4.20 or later, where both are in.
-- **Untested on iPad and on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number.
-  Run so far on an iPhone 15 Pro and a virtual iPhone 17 Pro (vphone "Lime", iOS 26.6), both at 60 fps.
+- **Untested on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number. Run so far on
+  an iPhone 15 Pro and a virtual iPhone 17 Pro (vphone "Lime", iOS 26.6), both at 60 fps. iPad: the UI takes the
+  monitor's scale there and the touch controls 0.6 of the phone's size (`plat_ios_tablet`, `23f3ee7`), set from a
+  simulator's screen - the game itself has not run on an iPad.
 - **The window is one 5.25 GB piece, placed where the process has room - and iOS 27 may have none.** Where an iOS
   process has free address space differs by device and version: on iOS 26 the gap above `0x3_0000_0000` (an 8 GB
   iPhone 15 Pro and a 16 GB iPhone 17 Pro alike, 58 GB of address space with or without
@@ -240,6 +251,8 @@ Taken:
   file select ("Tap to start", "Tap a file to play", in `touch_controls.mm`).
 - `larecomp.ini` written to `.tmp` then renamed, and saved when the app goes to the background (with the game paused
   there, `metal.m`).
+- `option_rows.mm` as cards on phones (`ae914a6`: the name, its description under it, the value and its arrows on
+  the right, moved below when wide), and the tab bar scrolling sideways when the tabs don't fit.
 - BRX reading only its jump table (upstream took it from the same source: #237, `brx_table_labels`), and the rscale
   table only for shaders that use it (Metal had it already: `uses_rscale`).
 
@@ -247,16 +260,14 @@ Still open, in order of value for iOS:
 
 **Touch and phone UI**
 - One shared condition instead of `PLAT_IOS`: the touch code is behind `PLAT_IOS` here and `__ANDROID__` there.
-- `option_rows.mm` as one column of cards on phones (the name, its description under it, the value with its arrows
-  on the right) instead of rows with the description in a pane beside them - small to read and to touch.
 - Side bars filled with the picture's blurred edges (`4d234da`, Video > Side bars) for interiors at the phone's
   aspect; Metal side to write.
 
 **Input**
-- `input.c` controller choice (`ef11b46`): the best-ranked pad wins (a known type > sticks + face buttons > anything),
-  and the one whose button is pressed becomes the one read. Ours still opens the first one listed and keeps it (the
-  "controller in use" check there only hides the touch controls). On iOS a keyboard / mouse receiver or Siri Remote
-  listed as a gamepad has the same effect as on Android.
+- ~~`input.c` controller choice (`ef11b46`)~~: upstream's beta_6 has the second half (`8a0797f`, #455: the pad whose
+  button or stick moves becomes the one read; a stick well off centre while the game's own is at rest counts). The
+  ranking by type (a known type > sticks + face buttons > anything) is not in it: a keyboard / mouse receiver or
+  Siri Remote listed first is the game's pad until a real one is touched, which on iOS is one press.
 
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library
