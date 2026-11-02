@@ -259,8 +259,6 @@ Still open, in order of value for iOS:
 
 **Touch and phone UI**
 - One shared condition instead of `PLAT_IOS`: the touch code is behind `PLAT_IOS` here and `__ANDROID__` there.
-- Side bars filled with the picture's blurred edges (`4d234da`, Video > Side bars) for interiors at the phone's
-  aspect; Metal side to write.
 
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library
@@ -276,16 +274,15 @@ Still open, in order of value for iOS:
   resolution targets (`output_scale.c`): not needed on an A17 at 60 fps; right for older devices and throttling.
   Upstream's `28a68f8` (steady 30 fps on machines at the edge) covers part of this already.
 
-**Widescreen**
-- Interiors and dungeons rendered wide and filling the phone's aspect instead of a 16:9 box (`78f5a53`, `1bb9ea3`,
-  and `40bff76` keeping their framing with the unlocked aspect): directly applicable to 19.5:9 iPhones; the Metal half
-  of it is to write (`renderer.m` had +67 lines in #91).
-
 **Shaders (Maxwell translator, shared)**
 - BRX window labelling (`4988c41`, from the mamcjr port): a BRX whose table can't be read labels only the window
   between it and the join of the PBK / SSY around it, not every instruction (`brx_table_labels` returning false still
   does `memset(label, 1, end)`) - an SSAO pass 20 ms -> under 1 on Adreno; Metal compiles the same translated source,
   so check the same pass on the A17.
+
+**Tried and declined**: interiors at the phone's aspect (`78f5a53`, `1bb9ea3`, `40bff76`) and side bars of the
+picture's blurred edges (`4d234da`) - both ported to Metal and checked on 1.0.0 / 1.0.1 / 1.1.0, not worth it (the
+wide interiors cost a fifth of the render's lines at 19.5:9); kept on the branch `ios-wide-interiors-bars`.
 
 **Not applicable to iOS**: Vulkan / Turnip / SGSR, BC decode on the CPU, pre-rotated swapchain, frame generation (A17
 holds 60 natively), on-device build and extraction (no spawn, no keys), root power modes, `PlayService`; the render
