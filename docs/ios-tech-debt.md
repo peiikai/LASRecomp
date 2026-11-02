@@ -90,10 +90,9 @@ attribute, so the `removexattr` on the linker is gone too.
     `GAMELIB_IOS_ID` / `GENFLAGS_IOS` from the macOS, Linux and Windows (x86-64 and aarch64) Makefile branches
     against `PLATFORM=ios`'s, checks gamebuild.c's fallback flags against them, and from `launched`: no host flag in
     the compiles, `--simd asm` to the generator;
-  - the kit itself: release.yml checks its layout (Payload/, no symlink entries, keystone's framework, five linkers, headers,
-    stub) and the executable's signature carrying `increased-memory-limit`; still unchecked:
-    `lld/<host>/bin/lld -flavor darwin --version` runs on each host after extraction (tools/test_gamebuild_ios.py
-    links with it, which covers the host CI runs on);
+  - ~~the kit itself~~: release.yml checks its layout (Payload/, no symlink entries, keystone's framework, five
+    linkers, headers, stub) and the executable's signature carrying `increased-memory-limit`; each host's linker
+    runs in tools/test_gamebuild_ios.py on the five CI jobs;
   - `plat_reserve_guest` on iOS without the entitlement fails with the `[vm]` diagnostics (needs a device: a
     manual checklist in docs/ios.md at least). The start screen now tells the player the signature lacks
     `increased-memory-limit` (`plat_ios_memory_entitled`, `LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1` for the no case on
