@@ -1649,6 +1649,7 @@ void ui_window_init(void) {
     else rt_window_size(&win_w, &win_h);
     // LARECOMP_HIDDEN=1: never shown (automated test runs render off screen without taking the user's focus)
     SDL_WindowFlags wflags = SDL_WINDOW_METAL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (PLAT_IOS) wflags |= SDL_WINDOW_BORDERLESS;  // (SDL hides the status bar only for a borderless / fullscreen window)
     if (getenv("LARECOMP_HIDDEN")) wflags |= SDL_WINDOW_HIDDEN;
     window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());

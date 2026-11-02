@@ -16,6 +16,9 @@ __attribute__((constructor)) static void hook_shortcut_launch(void) {
     if (m) g_sdl_will_connect = method_setImplementation(m, (IMP)will_connect);
 }
 
+// A tablet (iPad): the UI's phone enlargement isn't wanted on its screen.
+bool plat_ios_tablet(void) { return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad; }
+
 // The app's Documents folder (shared through Files / Finder with UIFileSharingEnabled): the data root.
 const char *plat_ios_documents(void) {
     static char path[1024];

@@ -1109,7 +1109,12 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
 
 // Phones: the main page's items larger, PLAY's row as boxes a finger can hit - PLAY, then ‹ [the choice] ›; a tap on an
 // arrow or a sideways swipe on the row steps the choice (g_pick_step, read by the caller)
-static const float kPhoneMenu = 1.25f;
+#if PLAT_IOS
+extern "C" bool plat_ios_tablet(void);  // runtime/platform/ios_glue.m
+#else
+static bool plat_ios_tablet(void) { return false; }
+#endif
+static const float kPhoneMenu = PLAT_IOS && !plat_ios_tablet() ? 1.25f : 1.0f;  // (a tablet: a monitor's size)
 static ImRect g_pick_rect;  // the ‹ choice › boxes as last drawn (the swipe's target)
 static int g_pick_step;     // -1 back, +1 on
 
@@ -1296,8 +1301,9 @@ static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centr
     // (the start screen's DisplaySize is in points, as SDL's safe area)
     float sl, st, sr, sb;
     safe_insets(&sl, &st, &sr, &sb);
-    *sc *= 1.35f;
-    ImGui::GetIO().FontGlobalScale *= 1.35f;
+    const float phone = plat_ios_tablet() ? 1.0f : 1.35f;  // (a tablet's screen is a monitor's size: no enlargement)
+    *sc *= phone;
+    ImGui::GetIO().FontGlobalScale *= phone;
     // (centred on the screen: the wider side inset on both sides - the notch is on one side only in landscape)
     float sx = fmaxf(sl, sr), sy = fmaxf(st, sb);
     *w = ds.x - 2 * sx - 2 * 12 * *sc, *h = ds.y - 2 * sy - 2 * 12 * *sc;

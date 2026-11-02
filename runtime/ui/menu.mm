@@ -78,9 +78,11 @@ static std::vector<QEvent> q_events;
 static float g_pixel_density = 1;
 static int g_win_px_w = 1, g_win_px_h = 1;  // (touch positions come normalized)
 static std::atomic<int> g_safe_l{0}, g_safe_t{0}, g_safe_r{0}, g_safe_b{0};  // insets, pixels (phones: notch, home bar)
-// Phones: the menu a third larger than on a 1080-line monitor (a 6.5" screen held at arm's length: rows to touch)
+// Phones: the menu a third larger than on a 1080-line monitor (a 6.5" screen held at arm's length: rows to touch);
+// a tablet's screen is a monitor's size at arm's length: the monitor's scale
 #if PLAT_IOS
-static const float kUi = 1.35f;
+extern "C" bool plat_ios_tablet(void);  // runtime/platform/ios_glue.m
+static const float kUi = plat_ios_tablet() ? 1.0f : 1.35f;
 #else
 static const float kUi = 1.0f;
 #endif
