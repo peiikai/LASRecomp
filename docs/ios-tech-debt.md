@@ -82,12 +82,9 @@ the symlink entries that replaced them are both gone - keystone's library is pre
 folder picked instead of the file gets a message saying so. Files the runtime writes itself carry no quarantine
 attribute, so the `removexattr` on the linker is gone too.
 
-- **rust-lld isn't in the README's "License" section.** It lists the Zig compiler's LLVM / Clang / LLD (Apache 2.0
-  with LLVM exceptions), but the kit ships a second linker: LLD built by the Rust project (Apache 2.0 with LLVM
-  exceptions as well, plus on Linux `libLLVM.so` under the same), fetched from Rust's release archives. Add it to
-  the list (with the Rust release it comes from, as the Zig entry names its version), and ship LLVM's `LICENSE.TXT`
-  next to the linker in the kit (`lld/<host>/`) the way `tools/zig_slim.sh` copies zig's `LICENSE`. miniz (MIT,
-  build/miniz/LICENSE after tools/fetch_miniz.sh) belongs in that section too.
+- ~~**rust-lld isn't in the README's "License" section.**~~ It is, with miniz, in the text and the components table
+  (Rust 1.91.0 / LLVM 21.1.2, miniz 3.0.2). `tools/fetch_lld.sh` writes `lld/<host>/LICENSE.TXT` (Apache-2.0 + the
+  LLVM exception, both texts from the same Rust archive), and the kit carries `miniz-LICENSE.txt`.
 - **Tests to add for what already broke once**, each found by hand on a device or a Linux box rather than by CI:
   - ~~the exported library's id equals the kit executable's on every desktop~~: tools/test_gamebuild_ios.py reads
     `GAMELIB_IOS_ID` / `GENFLAGS_IOS` from the macOS, Linux and Windows (x86-64 and aarch64) Makefile branches

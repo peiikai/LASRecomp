@@ -41,5 +41,8 @@ if [ -n "$DYLIB" ]; then
     mkdir -p "$OUT/lib"
     tar -xJf "$DL/$NAME" -O "$IN/lib/$DYLIB" > "$OUT/lib/$DYLIB"
 fi
+# LLVM's license: Apache-2.0 with the LLVM exception, as the Rust release ships the two texts
+{ tar -xJf "$DL/$NAME" -O "$IN/share/doc/rust/licenses/Apache-2.0.txt"; echo
+  tar -xJf "$DL/$NAME" -O "$IN/share/doc/rust/licenses/LLVM-exception.txt"; } > "$OUT/LICENSE.TXT"
 # (the runtime calls `lld -flavor darwin`, runtime/gamebuild.c: no ld64.lld link, which a zip for Windows can't hold)
 echo "$OUT: lld (rust $VER) for $TARGET, $(du -sh "$OUT" | cut -f1)"

@@ -4,8 +4,8 @@
 # It is a zip (read in place by the runtime, never unpacked by the player) holding:
 #   Payload/LAS Recomp.app/  the app without game code (tools/bundle_ios.sh SKELETON=1); the .ipa is these entries
 #                            copied as they are plus Frameworks/LASGame.framework
-#   lld/<arch>-<os>/         the Mach-O linker for each desktop (tools/fetch_lld.sh: rust-lld, bin/ + lib/); the
-#                            runtime extracts its host's set once (<data>/ios-kit/<kit id>/)
+#   lld/<arch>-<os>/         the Mach-O linker for each desktop (tools/fetch_lld.sh: rust-lld, bin/ + lib/ +
+#                            LICENSE.TXT); the runtime extracts its host's set once (<data>/ios-kit/<kit id>/)
 #   include/any-darwin-any/  zig's Darwin libc headers (the bundled zig compiles for iOS with these; its own copy
 #                            is trimmed to the host's, tools/fetch_zig.sh)
 #   libSystem.B.tbd          the libSystem stub the link needs (runtime/platform/ios-sdk)
@@ -19,7 +19,7 @@ VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher
 [ -x "$APP/lasrecomp" ] || { echo "no $APP (make ios-skeleton)"; exit 1; }
 [ -e "$APP/Frameworks/LASGame.framework/LASGame" ] && { echo "$APP holds game code"; exit 1; }
 for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows aarch64-windows; do
-    [ -d "build/lld/$t/bin" ] || { echo "no build/lld/$t (LLD_TARGET=$t tools/fetch_lld.sh)"; exit 1; }
+    [ -d "build/lld/$t/bin" ] && [ -f "build/lld/$t/LICENSE.TXT" ] || { echo "no build/lld/$t (LLD_TARGET=$t tools/fetch_lld.sh)"; exit 1; }
 done
 
 STAGE=build/ios-kit
@@ -49,14 +49,16 @@ the executable's signature, where those tools read it. On the device, put your e
 in the app's Documents through the Files app or Finder.
 
 Contents: Payload/LAS Recomp.app (the app without game code), lld/ (the linker for each desktop OS, from Rust's
-rust-lld: Apache-2.0 with LLVM exception), include/ (zig's Darwin C headers: MIT / Apple's APSL), libSystem.B.tbd
-(the link stub).
+rust-lld: Apache-2.0 with LLVM exception, lld/<os>/LICENSE.TXT), include/ (zig's Darwin C headers: MIT / Apple's
+APSL), libSystem.B.tbd (the link stub). LAS Recomp reads and writes the zip files with miniz (MIT,
+miniz-LICENSE.txt).
 EOT
+cp build/miniz/LICENSE "$STAGE/miniz-LICENSE.txt"
 mkdir -p build/dist
 OUT="build/dist/LAS Recomp-$VERSION-iOS.laskit"
 rm -f "$OUT"
 # (no symlinks in the app: an iOS install drops them; -y would keep any as entries) -X: no extra fields beyond the modes
 [ -z "$(find "$STAGE/Payload" -type l)" ] || { echo "symlinks in the app: $(find "$STAGE/Payload" -type l)"; exit 1; }
-(cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt)
+(cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt miniz-LICENSE.txt)
 rm -rf "$STAGE"
 echo "$OUT ($(du -h "$OUT" | cut -f1))"
