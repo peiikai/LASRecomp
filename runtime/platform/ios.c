@@ -1,6 +1,7 @@
 // iOS host layer (runtime/platform.h): macOS's Mach / POSIX pieces, minus what an iOS app can't do (start
 // processes, re-exec itself, show an alert from any thread). The data folder is the app's Documents (runtime/paths.c),
 // visible in Files with UIFileSharingEnabled: game files, saves, seeds and the log go there.
+#include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <mach-o/dyld.h>
@@ -8,6 +9,7 @@
 #include <mach/mach_time.h>
 #include <mach/thread_policy.h>
 #include <mach/vm_map.h>
+#include <os/proc.h>
 #include <pthread.h>
 #include <pthread/qos.h>
 #include <signal.h>
@@ -78,6 +80,43 @@ void plat_system_info(PlatSysInfo *si) {
 
 bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
 
+// 1 / 0: the signature has / lacks com.apple.developer.kernel.increased-memory-limit, -1: unreadable. Without it the
+// game may still start (the window fits on some devices), but iOS ends the app at a much lower footprint.
+// SecTask is in Security.framework but not in the iOS SDK's headers. LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1 (test): 0.
+static int entitlement_value(CFTypeRef (*value)(CFTypeRef, CFStringRef, CFErrorRef *), CFTypeRef task, CFStringRef key) {
+    CFTypeRef v = value(task, key, NULL);
+    if (!v) return 0;
+    int r = CFGetTypeID(v) == CFBooleanGetTypeID() ? CFBooleanGetValue((CFBooleanRef)v) : 1;
+    CFRelease(v);
+    return r;
+}
+int plat_ios_memory_entitled(void) {
+    static int r = -2;
+    if (r != -2) return r;
+    if (getenv("LARECOMP_TEST_NO_MEMORY_ENTITLEMENT")) return r = 0;
+    r = -1;
+    void *sec = dlopen("/System/Library/Frameworks/Security.framework/Security", RTLD_NOW);
+    CFTypeRef (*create)(CFAllocatorRef) = sec ? (CFTypeRef (*)(CFAllocatorRef))dlsym(sec, "SecTaskCreateFromSelf") : NULL;
+    CFTypeRef (*value)(CFTypeRef, CFStringRef, CFErrorRef *) =
+        sec ? (CFTypeRef (*)(CFTypeRef, CFStringRef, CFErrorRef *))dlsym(sec, "SecTaskCopyValueForEntitlement") : NULL;
+    CFTypeRef task = create && value ? create(NULL) : NULL;
+    if (!task) return r;
+    r = entitlement_value(value, task, CFSTR("com.apple.developer.kernel.increased-memory-limit"));
+    if (r == 0 && entitlement_value(value, task, CFSTR("application-identifier")) == 0) r = -1;  // (nothing readable)
+    CFRelease(task);
+    return r;
+}
+
+// What iOS lets the app use before it ends it: what is left plus what is in use (the jetsam limit itself can't be read:
+// memorystatus_control is EPERM in the sandbox). It rises once iOS turns Game Mode on. 0: not reported.
+uint64_t plat_ios_memory_limit(void) {
+    uint64_t avail = os_proc_available_memory();
+    task_vm_info_data_t vi;
+    mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT;
+    if (!avail || task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) != KERN_SUCCESS) return 0;
+    return avail + vi.phys_footprint;
+}
+
 // stdout / stderr -> lasrecomp.log in Documents (five backups, posix_log.h), unless LARECOMP_LOG_STDERR is set
 // (Xcode / devicectl console runs).
 void plat_init(void) {
@@ -87,6 +126,10 @@ void plat_init(void) {
         session_log_open(dir, g_log_path, sizeof g_log_path);
         if (g_vm_report_len) fputs(g_vm_report, stderr);
     }
+    int ent = plat_ios_memory_entitled();
+    fprintf(stderr, "[memory] limit %llu MB (available + footprint), device %lld MB, increased-memory-limit %s\n",
+            (unsigned long long)(plat_ios_memory_limit() >> 20), (long long)(sysctl_int("hw.memsize") >> 20),
+            ent > 0 ? "yes" : ent == 0 ? "NO" : "unknown");
     // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
     // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
     if (getenv("LARECOMP_IOS_PYTEST")) {  // the embedded Python's self-test (ios_python.m): its log lines, then on
