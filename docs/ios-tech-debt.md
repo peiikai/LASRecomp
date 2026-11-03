@@ -36,16 +36,14 @@ Done (kept here as the record of what the build now guarantees):
   checks its log and compares the seed it generated with the same seed generated here, file by file.
 
 Still open:
-- **The generator's modules are reset by hand** before each run (`sys.modules` entries whose `__file__` or
-  `__path__` is under `rando-gen/`, plus the `PySide6` stubs) because the "process" is really a thread in one
-  interpreter. Verified by the self-test, which now generates the seed twice in one interpreter and compares: 291
-  identical files. The check found two bugs in the reset on its first run - the bundle path differs between
-  `NSBundle` (`/var/containers/…`) and the importer (`/private/var/containers/…`), so no module matched and
-  nothing was reset; and `RandomizerCore.Tools` is a namespace package (no `__init__.py`, so no `__file__`) that
-  survived and handed out the old `event_tools` with its `AutoEvent` counter - a second seed in one session got
-  different event files than the desktop gives for the same seed string. Module-level state in a C extension
-  (oead, quicktex, keystone) would still survive, none is known; a sub-interpreter (`Py_NewInterpreter`) or a fresh
-  `Py_Initialize` per run would make it impossible if pybind11 modules allow it.
+- ~~**The generator's modules are reset by hand**~~: each run is a sub-interpreter of its own
+  (`Py_NewInterpreter` / `Py_EndInterpreter` in `ios_python.m`, the legacy kind: shared GIL, the main config's
+  `sys.path` and hash seed), so nothing a run imports or changes reaches the next - no `sys.modules` list to keep
+  right (the hand reset had needed two fixes: `/var` vs `/private/var` paths, and the `RandomizerCore.Tools`
+  namespace package keeping `event_tools`' `AutoEvent` counter). oead and quicktex (pybind11 3.1) are multi-phase
+  modules and load per interpreter; Pillow's are single-phase, which the legacy kind allows. Kill raises
+  `KeyboardInterrupt` through a thread state of the run's interpreter. Verified on Lime: self-test ok, two runs
+  in two interpreters 291 identical files, the seed equal to the Mac's.
 - ~~**Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`.~~ Verified: seed
   `pytest` (`{"seed": "pytest", "create-spoiler": true}`) generated on the Mac (`PYTHONHASHSEED=0`, the randomizer's
   venv, Python 3.13.7) and on an iPhone17,1 (embedded Python 3.13.16) gives 290 byte-identical files (`flags.tsv`,
