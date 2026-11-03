@@ -430,7 +430,9 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
         if (c == C_STICK) {  // the base comes to the thumb (kept on screen) - or stays where it is (Fixed)
             float r = g_ctl[C_STICK].r;
             if (!g_settings.touch_stick_fixed)
-                g_stick_cx = clampf(x, r, g_w * 0.42f), g_stick_cy = clampf(y, g_h * 0.30f + r * 0.5f, g_h - r);
+                // (a whole radius plus a thumb's width clear of the edges: a base at the rim left no room to push
+                // the knob out that way)
+                g_stick_cx = clampf(x, r * 1.45f, g_w * 0.42f), g_stick_cy = clampf(y, g_h * 0.30f + r * 0.5f, g_h - r * 1.45f);
             stick_to(x, y);
         } else if (c == C_MENU) {
             g_menu_down = true;
