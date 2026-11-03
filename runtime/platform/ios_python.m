@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "../platform.h"
 
@@ -354,4 +355,40 @@ void plat_ios_python_selftest(void) {
     strcat(src2, cmp);
     if (plat_ios_python_run(src2, err, sizeof err)) fprintf(stderr, "[py] second-run compare FAILED: %s\n", err);
     free(src2);
+
+    // the Randomizer tab's Cancel: a third run killed a second in, then a small script in a new interpreter after it
+    char script[1100], dir[1100], req[1100], log[1100], after[1100];
+    snprintf(script, sizeof script, "%s/rando-gen/las_headless.py", plat_ios_bundle_dir());
+    snprintf(dir, sizeof dir, "%s/pytest-kill", plat_ios_documents());
+    snprintf(req, sizeof req, "%s/request.json", dir);
+    snprintf(log, sizeof log, "%s/generate.log", dir);
+    snprintf(after, sizeof after, "%s/after.py", dir);
+    [[NSFileManager defaultManager] removeItemAtPath:@(dir) error:nil];
+    mkdir(dir, 0755);
+    FILE *f = fopen(req, "w");
+    if (f) fputs("{\"seed\": \"pytest\", \"create-spoiler\": true}\n", f), fclose(f);
+    f = fopen(after, "w");
+    if (f) fputs("import sys\nprint('PySide6' in sys.modules)\nsys.exit(3)\n", f), fclose(f);
+    const char *argv[] = {script, romfs, dir, req, NULL};
+    PlatProc p = plat_spawn(argv, log, false);
+    usleep(1000 * 1000);
+    uint64_t t0 = plat_now_ns();
+    plat_proc_kill(p);
+    unsigned long long kill_ms = (plat_now_ns() - t0) / 1000000;
+    bool killed = false;
+    if ((f = fopen(log, "r"))) {
+        char line[512];
+        while (fgets(line, sizeof line, f)) killed |= !strcmp(line, "killed\n");
+        fclose(f);
+    }
+    const char *argv2[] = {after, NULL};
+    char log2[1100];
+    snprintf(log2, sizeof log2, "%s/after.log", dir);
+    PlatProc q = plat_spawn(argv2, log2, false);
+    int rc = q ? plat_proc_wait(q, true) : 255;
+    char out[16] = "";
+    if ((f = fopen(log2, "r"))) { if (!fgets(out, sizeof out, f)) out[0] = 0; fclose(f); }
+    bool fresh = !strcmp(out, "False\n");  // (the killed run's PySide6 stubs not in the next interpreter)
+    fprintf(stderr, "[py] kill: %s (stopped in %llu ms, next run exit %d, %s)\n", killed && rc == 3 && fresh ? "ok" : "FAILED",
+            kill_ms, rc, fresh ? "a fresh interpreter" : "state left over");
 }

@@ -43,7 +43,8 @@ Still open:
   namespace package keeping `event_tools`' `AutoEvent` counter). oead and quicktex (pybind11 3.1) are multi-phase
   modules and load per interpreter; Pillow's are single-phase, which the legacy kind allows. Kill raises
   `KeyboardInterrupt` through a thread state of the run's interpreter. Verified on Lime: self-test ok, two runs
-  in two interpreters 291 identical files, the seed equal to the Mac's.
+  in two interpreters 291 identical files, the seed equal to the Mac's, a run killed a second in stops in 13 ms
+  and the next starts in a fresh interpreter.
 - ~~**Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`.~~ Verified: seed
   `pytest` (`{"seed": "pytest", "create-spoiler": true}`) generated on the Mac (`PYTHONHASHSEED=0`, the randomizer's
   venv, Python 3.13.7) and on an iPhone17,1 (embedded Python 3.13.16) gives 290 byte-identical files (`flags.tsv`,
