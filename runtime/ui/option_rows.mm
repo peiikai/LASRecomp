@@ -104,7 +104,7 @@ void opt_begin(const char *id, float scale) {
     g_row_h = 1.9f, g_listed = false;
     g_desc_max_last = g_desc_max, g_desc_max = 0;
     if (g_page != id) g_page = id, g_desc_shown.clear(), g_desc_max_last = 0, g_desc_w = 0;
-    g_cards = PLAT_IOS && !g_split_pages.count(id);
+    g_cards = PLAT_TOUCH && !g_split_pages.count(id);
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float pane_w = g_cards ? avail.x : avail.x * 0.48f;
     {   // the rows' pane: a recessed well
@@ -140,7 +140,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
     const char *desc = L(desc_en);
     const char *label_shown = g_label_shown ? label : L(label);
     // (phones: a row with a description is a card wherever it is - a two-pane page's left rows too)
-    bool lr = arrows || g_lr_row, cards = g_cards || g_list_cards || (PLAT_IOS && desc && *desc);
+    bool lr = arrows || g_lr_row, cards = g_cards || g_list_cards || (PLAT_TOUCH && desc && *desc);
     g_lr_row = false;
     g_value_shown = g_label_shown = false;
     if (g_collect) {
@@ -524,7 +524,7 @@ static void right_begin(const char *id, ImGuiWindowFlags flags) {
 }
 
 void opt_desc_text(void) {
-    if (PLAT_IOS) return;  // (phones: each card has its own)
+    if (PLAT_TOUCH) return;  // (phones: each card has its own)
     // after opt_list_begin's rows: a row of the right pane hovered wins, then the left's hovered, the right's selected,
     // the left's selected (other pages: the left's, as left_end picked)
     if (g_listed) {
@@ -586,7 +586,7 @@ void opt_list_begin(void) {
     float desc = (g_desc_max_last > line * 2 ? g_desc_max_last : line * 2) + 14 * g_scale +
                  2 * ImGui::GetStyle().ItemSpacing.y + 4 * g_scale;
     float maxh = avail - desc > avail * 0.35f ? avail - desc : avail * 0.35f;
-    if (PLAT_IOS) {  // (the descriptions are in the cards: the list has the whole pane)
+    if (PLAT_TOUCH) {  // (the descriptions are in the cards: the list has the whole pane)
         g_list_cards = true;
         ImGui::BeginChild("##list", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 10 * g_scale));

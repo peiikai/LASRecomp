@@ -21,7 +21,7 @@ extern "C" {
 int input_pad_family(void);              // runtime/hle/input.c
 SDL_JoystickID input_active_pad(void);   // runtime/hle/input.c: the controller the game reads (0: none yet)
 void input_apply_background(void);
-#if PLAT_IOS
+#if PLAT_TOUCH
 bool touch_edit_available(void);  // touch_controls.mm (the on-screen controls)
 void touch_edit_begin(void);
 void touch_layout_reset(void);
@@ -199,7 +199,7 @@ static void configure_inputs(float scale) {
         bind_reset(dev);
     }
     // (the cursor or the mouse on a row with a description: it shows on the right instead of the bindings)
-    bool desc_right = !PLAT_IOS && (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;  // (phones: in its card)
+    bool desc_right = !PLAT_TOUCH && (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;  // (phones: in its card)
     opt_split();
     if (desc_right) {
         opt_desc_text();
@@ -272,7 +272,7 @@ extern "C" void controls_tab_draw(float scale) {
 
     opt_begin("##controls", scale);
     opt_section("Inputs");
-    if (opt_link("Configure inputs", PLAT_IOS ? "Set the buttons for the game. The on-screen menu button, or Home or "
+    if (opt_link("Configure inputs", PLAT_TOUCH ? "Set the buttons for the game. The on-screen menu button, or Home or "
                                                 "Back + Start on a controller, always open this menu."
                                               : "Set the buttons and keys for the game. F1, Esc, Home or Back + Start always "
                                                 "open this menu.")) {
@@ -280,7 +280,7 @@ extern "C" void controls_tab_draw(float scale) {
         g_sub = true, g_focus = FOCUS_DEVICE, g_in_right = false;
     }
     take_focus(FOCUS_CONFIGURE);
-    if (!PLAT_IOS && opt_toggle("Allow background inputs", &g_settings.bg_input, false,
+    if (!PLAT_TOUCH && opt_toggle("Allow background inputs", &g_settings.bg_input, false,
                    "Controllers keep working while another window is in front. macOS may ask for Input Monitoring "
                    "permission."))
         input_apply_background();
@@ -322,7 +322,7 @@ extern "C" void controls_tab_draw(float scale) {
                "On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom "
                "button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.");
 
-#if PLAT_IOS
+#if PLAT_TOUCH
     opt_section("Touch controls");
     {
         static const char *const modes[] = {"Auto (no controller)", "Always", "Off"};

@@ -1,6 +1,6 @@
 // (touch screens only: compiled empty elsewhere - the Makefile builds every runtime/ui/*.mm)
 #include "../platform.h"
-#if PLAT_IOS
+#if PLAT_TOUCH
 // On-screen controls for touch screens (phones, tablets), drawn as translucent blue bubbles with the game's own item
 // icons on them (a white badge names the Switch button), a compass-rose stick and a larger A. Settings > Controls >
 // Touch controls: Auto / Always / Off - Auto hides them while a controller is in use (it then plays as on the Switch)
@@ -23,7 +23,6 @@
 // back, cancels or saves. Each control: settings touch_ctl_<name> = x, y (share of the screen), size, hidden.
 // A quick tap still reaches the game (a button is held at least 80 ms). LARECOMP_TOUCH_SHOW_INPUT=1 (videos, tests):
 // scripted input (LARECOMP_INPUT) lights the buttons and moves the stick as a thumb would.
-#import <UIKit/UIKit.h>
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <atomic>
@@ -103,7 +102,7 @@ static float g_bar_x[6], g_bar_y, g_bar_w[6], g_bar_h;
 
 static void defaults(float w, float h) {
     // (a tablet's screen is far taller than a thumb's reach: the layout a phone's size there, measured on an iPad)
-    static const float device = [UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad ? 0.6f : 1.0f;
+    static const float device = plat_tablet() ? 0.6f : 1.0f;
     float s = h * device * clampf(g_settings.touch_size, 0.6f, 1.6f);
     float br = 0.074f * s, gap = 0.135f * s;  // face buttons: a diamond, A the largest
     float fx = w - 0.27f * s, fy = h - 0.30f * s;
@@ -702,4 +701,4 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font) {
         }
     }
 }
-#endif  // PLAT_IOS
+#endif  // PLAT_TOUCH

@@ -422,8 +422,8 @@ static void open_pad(SDL_JoystickID id) {
 
 bool input_gamepad_connected(void) { return pad != NULL; }
 
-// touch screens: the on-screen controls (runtime/ui/touch_controls.mm, iOS)
-#if PLAT_IOS
+// touch screens: the on-screen controls (runtime/ui/touch_controls.mm)
+#if PLAT_TOUCH
 bool touch_handle_event(const SDL_Event *e);
 uint64_t touch_buttons(void);
 void touch_stick(int32_t *lx, int32_t *ly);

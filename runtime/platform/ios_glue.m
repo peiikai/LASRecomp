@@ -104,7 +104,7 @@ void plat_ios_shortcuts_sync(void) {
 }
 
 // A tablet (iPad): the UI's phone enlargement isn't wanted on its screen.
-bool plat_ios_tablet(void) { return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad; }
+bool plat_tablet(void) { return UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad; }
 
 // The app's Documents folder (shared through Files / Finder with UIFileSharingEnabled): the data root.
 const char *plat_ios_documents(void) {

@@ -80,12 +80,7 @@ static int g_win_px_w = 1, g_win_px_h = 1;  // (touch positions come normalized)
 static std::atomic<int> g_safe_l{0}, g_safe_t{0}, g_safe_r{0}, g_safe_b{0};  // insets, pixels (phones: notch, home bar)
 // Phones: the menu a third larger than on a 1080-line monitor (a 6.5" screen held at arm's length: rows to touch);
 // a tablet's screen is a monitor's size at arm's length: the monitor's scale
-#if PLAT_IOS
-extern "C" bool plat_ios_tablet(void);  // runtime/platform/ios_glue.m
-static const float kUi = plat_ios_tablet() ? 1.0f : 1.35f;
-#else
-static const float kUi = 1.0f;
-#endif
+static const float kUi = PLAT_TOUCH && !plat_tablet() ? 1.35f : 1.0f;
 
 static void push(const QEvent &e) {
     pthread_mutex_lock(&q_lock);
@@ -108,7 +103,7 @@ extern "C" void menu_test_open(void) {
 }
 
 void menu_tabs_focus(bool first_tab);
-#if PLAT_IOS
+#if PLAT_TOUCH
 extern "C" void touch_reset(void);  // touch_controls.mm (on-screen controls)
 extern "C" bool touch_visible(void);
 extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font);
@@ -284,12 +279,12 @@ bool menu_handle_event(const SDL_Event *e) {
     }
     case SDL_EVENT_MOUSE_MOTION:
         if (!capturing()) return false;
-        if (PLAT_IOS && e->motion.which == SDL_TOUCH_MOUSEID) return true;  // (the finger itself: FINGER below)
+        if (PLAT_TOUCH && e->motion.which == SDL_TOUCH_MOUSEID) return true;  // (the finger itself: FINGER below)
         { QEvent q = {}; q.kind = QEvent::MOUSE_POS; q.x = e->motion.x * g_pixel_density; q.y = e->motion.y * g_pixel_density; push(q); }
         return true;
     case SDL_EVENT_MOUSE_BUTTON_DOWN: case SDL_EVENT_MOUSE_BUTTON_UP:
         if (!capturing()) return false;
-        if (PLAT_IOS && e->button.which == SDL_TOUCH_MOUSEID) return true;
+        if (PLAT_TOUCH && e->button.which == SDL_TOUCH_MOUSEID) return true;
         {
             QEvent q = {};
             q.kind = QEvent::MOUSE_BUTTON;
@@ -300,10 +295,10 @@ bool menu_handle_event(const SDL_Event *e) {
         return true;
     case SDL_EVENT_MOUSE_WHEEL:
         if (!capturing()) return false;
-        if (PLAT_IOS && e->wheel.which == SDL_TOUCH_MOUSEID) return true;
+        if (PLAT_TOUCH && e->wheel.which == SDL_TOUCH_MOUSEID) return true;
         { QEvent q = {}; q.kind = QEvent::WHEEL; q.x = e->wheel.x; q.y = e->wheel.y; push(q); }
         return true;
-#if PLAT_IOS
+#if PLAT_TOUCH
     case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_CANCELED:
         if (!capturing()) return false;
         {   // touch screens (touch_ui.h, on the render thread: drain_events)
@@ -345,7 +340,7 @@ void menu_apply_window_requests(void *win) {
     SDL_Window *w = (SDL_Window *)win;
     g_pixel_density = SDL_GetWindowPixelDensity(w);
     SDL_GetWindowSizeInPixels(w, &g_win_px_w, &g_win_px_h);
-#if PLAT_IOS
+#if PLAT_TOUCH
     {   // the safe area (points -> pixels): the menu keeps out of the notch and the home indicator
         SDL_Rect sa;
         int ww, wh;
@@ -575,7 +570,7 @@ static void tab_display(void) {
                "Unlocked fills the window and shows more of the island on wide screens, up to ultrawide. Original keeps "
                "the game's 16:9 view with bars.");
     bool fs = g_settings.fullscreen;
-    if (!PLAT_IOS && opt_toggle("Fullscreen", &fs, false, "Fills the screen. You can also press F11, Alt+Enter or Cmd+Ctrl+F.")) {
+    if (!PLAT_TOUCH && opt_toggle("Fullscreen", &fs, false, "Fills the screen. You can also press F11, Alt+Enter or Cmd+Ctrl+F.")) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
@@ -774,7 +769,7 @@ static void tab_quit(float scale, bool in_game) {
     if (!ask) {
         if (!in_game) opt_disable_next();  // (already on it)
         if (opt_action("Quit to start screen", "", in_game ? d1 : "You're on the start screen.")) ask = 1;
-        if (!PLAT_IOS && opt_action("Quit to desktop", "", d2)) ask = 2;  // (iOS apps don't quit themselves)
+        if (!PLAT_TOUCH && opt_action("Quit to desktop", "", d2)) ask = 2;  // (a phone app has no quit: the home gesture)
     } else {
         if (opt_action(ask == 1 ? "Yes, quit to start screen" : "Yes, quit to desktop", "", ask == 1 ? d1 : d2)) {
             settings_save();
@@ -920,7 +915,7 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
     static bool was_open, was_pad;
     bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
     was_open = true, was_pad = pad;
-    if (PLAT_IOS && !pad) {
+    if (PLAT_TOUCH && !pad) {
         // a phone without a controller: big keys on the screen to tap (the system keyboard over the game was easy to
         // miss and had no way to confirm); a hardware keyboard still types into them
         int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big, true, true);
@@ -1108,7 +1103,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float)) {
         // a narrow window: tighter tabs; still too wide: on a phone the bar scrolls sideways instead of squeezing them,
         // on the desktop the names (long ones: Russian, German) a little smaller
         const float min_pad = 12 * scale;
-        bool scroll = PLAT_IOS && total + 2 * min_pad * ntabs > avail;
+        bool scroll = PLAT_TOUCH && total + 2 * min_pad * ntabs > avail;
         if (scroll) pad = min_pad;
         else if (total + 2 * pad * ntabs > avail) pad = fmaxf((avail - total) / (2 * ntabs), 3 * scale);
         float tfs = ImGui::GetFontSize();
@@ -1409,7 +1404,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                                                       IM_COL32(0, 0, 0, (int)(plastic_theme().dim * 255)));
         float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;  // (all the height: a slim margin)
         ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
-#if PLAT_IOS
+#if PLAT_TOUCH
         {   // phones: the whole safe area (the notch and the home indicator left out), centred on the screen: the
             // wider side inset on both sides (the notch is on one side only in landscape)
             float sx = fmaxf(g_safe_l, g_safe_r), sy = fmaxf(g_safe_t, g_safe_b);

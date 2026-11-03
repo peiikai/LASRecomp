@@ -18,9 +18,20 @@
 #else
 #define PLAT_IOS 0
 #endif
+// PLAT_TOUCH: a phone or tablet - a touch screen and no desktop around the window (runtime/ui/touch_ui.h, the
+// on-screen controls, the menus as cards in the safe area, no Quit / Fullscreen). iOS today; an Android port would
+// be the second.
+#define PLAT_TOUCH PLAT_IOS
 
 #ifdef __cplusplus
 extern "C" {
+#endif
+
+// A tablet (PLAT_TOUCH): a monitor-sized screen at arm's length - the phone's enlargement of the menus isn't wanted
+#if PLAT_TOUCH
+bool plat_tablet(void);
+#else
+static inline bool plat_tablet(void) { return false; }
 #endif
 
 // ---- guest address space

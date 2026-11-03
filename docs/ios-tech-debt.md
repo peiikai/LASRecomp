@@ -128,7 +128,7 @@ attribute, so the `removexattr` on the linker is gone too.
   `tools/build_deps_ios.sh` moves to SDL 3.4.20 or later, where both are in.
 - **Untested on devices with less than 8 GB**; the 5.5 GB measured ceiling is an iPhone 15 Pro number. Run so far on
   an iPhone 15 Pro and a virtual iPhone 17 Pro (vphone "Lime", iOS 26.6), both at 60 fps. iPad: the UI takes the
-  monitor's scale there and the touch controls 0.6 of the phone's size (`plat_ios_tablet`, `23f3ee7`), set from a
+  monitor's scale there and the touch controls 0.6 of the phone's size (`plat_tablet`, `23f3ee7`), set from a
   simulator's screen - the game itself has not run on an iPad.
 - **The window is one 5.25 GB piece, placed where the process has room - and iOS 27 may have none.** Where an iOS
   process has free address space differs by device and version: on iOS 26 the gap above `0x3_0000_0000` (an 8 GB
@@ -257,7 +257,13 @@ Taken:
 Still open, in order of value for iOS:
 
 **Touch and phone UI**
-- One shared condition instead of `PLAT_IOS`: the touch code is behind `PLAT_IOS` here and `__ANDROID__` there.
+- ~~One shared condition instead of `PLAT_IOS`~~: `PLAT_TOUCH` ([runtime/platform.h](../runtime/platform.h), `PLAT_IOS`
+  today) gates what any phone needs - touch_ui.h's finger events, the on-screen controls and their Controls rows, the
+  menus as cards in the safe area and at the phone's scale, the OSK without a pad, no Quit / Fullscreen / background
+  inputs, the Switch-style prompts while the touch controls show - and `plat_tablet()` is the one platform call in
+  it. `PLAT_IOS` keeps the sandbox (Documents, the Files picker, no spawn, the framework-only library, the packed
+  layout, the entitlement notice, the quick actions, the update check over NSURLSession). An Android port makes
+  `PLAT_TOUCH` true too and implements `plat_tablet`; the pickers stay `plat_ios_*` until it exists.
 
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library

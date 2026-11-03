@@ -1082,7 +1082,7 @@ static void sparkle(ImDrawList *dl, ImVec2 c, float r, float k, float spin) {
 static void menu_band(ImDrawList *dl, ImVec2 at, ImVec2 sz) {
     float x0 = ImGui::GetWindowPos().x, x1 = at.x + sz.x * 0.75f, x2 = at.x + sz.x + sz.y * 3.5f;
     float f = sz.y * 0.22f, y0 = at.y - f * 0.4f, y1 = y0 + f, y3 = at.y + sz.y + f * 0.2f, y2 = y3 - f;
-    if (PLAT_IOS) {  // (taller than PLAY's ‹ choice › boxes: the band frames them)
+    if (PLAT_TOUCH) {  // (taller than PLAY's ‹ choice › boxes: the band frames them)
         // (centred on the capitals' middle, as the boxes are - the line's middle is lower: room for descenders)
         ImFont *fn = ImGui::GetFont();
         const ImFontGlyph *gH = fn->FindGlyph('H');
@@ -1141,12 +1141,7 @@ static bool menu_item(const char *label, bool enabled, bool *hovered = NULL, con
 
 // Phones: the main page's items larger, PLAY's row as boxes a finger can hit - PLAY, then ‹ [the choice] ›; a tap on an
 // arrow or a sideways swipe on the row steps the choice (g_pick_step, read by the caller)
-#if PLAT_IOS
-extern "C" bool plat_ios_tablet(void);  // runtime/platform/ios_glue.m
-#else
-static bool plat_ios_tablet(void) { return false; }
-#endif
-static const float kPhoneMenu = PLAT_IOS && !plat_ios_tablet() ? 1.25f : 1.0f;  // (a tablet: a monitor's size)
+static const float kPhoneMenu = PLAT_TOUCH && !plat_tablet() ? 1.25f : 1.0f;  // (a tablet: a monitor's size)
 static ImRect g_pick_rect;  // the ‹ choice › boxes as last drawn (the swipe's target)
 static int g_pick_step;     // -1 back, +1 on
 
@@ -1316,7 +1311,7 @@ static SDL_Window *g_launcher_win;
 // The window's safe area insets (the notch / Dynamic Island, the home indicator), in the start screen's points; 0 off iOS
 static void safe_insets(float *l, float *t, float *r, float *b) {
     *l = *t = *r = *b = 0;
-#if PLAT_IOS
+#if PLAT_TOUCH
     SDL_Rect sa;
     int ww, wh;
     if (SDL_GetWindowSafeArea(g_launcher_win, &sa) && SDL_GetWindowSize(g_launcher_win, &ww, &wh) && ww > 0)
@@ -1329,11 +1324,11 @@ static void safe_insets(float *l, float *t, float *r, float *b) {
 static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centre) {
     *sc = ds.y / 1080.0f, *w = fminf(ds.x * 0.9f, 1500 * *sc), *h = ds.y - 2 * 18 * *sc;  // (all the height: a slim margin)
     *centre = ImVec2(ds.x * 0.5f, ds.y * 0.5f);
-#if PLAT_IOS
+#if PLAT_TOUCH
     // (the start screen's DisplaySize is in points, as SDL's safe area)
     float sl, st, sr, sb;
     safe_insets(&sl, &st, &sr, &sb);
-    const float phone = plat_ios_tablet() ? 1.0f : 1.35f;  // (a tablet's screen is a monitor's size: no enlargement)
+    const float phone = plat_tablet() ? 1.0f : 1.35f;  // (a tablet's screen is a monitor's size: no enlargement)
     *sc *= phone;
     ImGui::GetIO().FontGlobalScale *= phone;
     // (centred on the screen: the wider side inset on both sides - the notch is on one side only in landscape)
@@ -1928,7 +1923,7 @@ extern "C" void launcher_run(const char *root) {
         while (SDL_PollEvent(&e)) {
             input_cursor_event(&e);  // (pad / key: the cursor hides; ImGui's backend leaves it so, below)
             if (page == SETTINGS && bind_capture_event(&e)) continue;  // (waiting for a new binding: controls_ui.mm)
-#if PLAT_IOS
+#if PLAT_TOUCH
             // touch screens: the finger events go through touch_ui.h (taps click, drags scroll); the mouse events SDL
             // makes from the same touches (SDL_TOUCH_MOUSEID) would press on touch-down - dropped
             if (((e.type == SDL_EVENT_MOUSE_MOTION) && e.motion.which == SDL_TOUCH_MOUSEID) ||
@@ -2099,7 +2094,7 @@ extern "C" void launcher_run(const char *root) {
                 static bool focused_once;
                 bool pressed;
                 ImVec2 play_at;
-#if PLAT_IOS
+#if PLAT_TOUCH
                 pressed = phone_play_row(pick, choice, choices, status.empty(),
                                          status.empty() && !waiting && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId),
                                          ds.x, &hov, &play_at, &focused_once);
@@ -2136,7 +2131,7 @@ extern "C" void launcher_run(const char *root) {
                                                 //  "Vanilla" vanilla cream; the arrows stay white)
 #endif
                 if (status.empty()) {  // PLAY twinkles now and then while the game is ready
-                    if (PLAT_IOS) ImGui::SetWindowFontScale(kPhoneMenu);
+                    if (PLAT_TOUCH) ImGui::SetWindowFontScale(kPhoneMenu);
                     ImGui::PushFont(g_font_menu);
                     float w = ImGui::CalcTextSize(L("PLAY")).x, h = ImGui::CalcTextSize(L("PLAY")).y;
                     ImGui::PopFont();
@@ -2177,7 +2172,7 @@ extern "C" void launcher_run(const char *root) {
                 }
                 ImGui::SetCursorPosX(x0);
                 if (g_refocus == SETTINGS) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;  // (back from Settings: it
-                if (PLAT_IOS) ImGui::SetWindowFontScale(kPhoneMenu);
+                if (PLAT_TOUCH) ImGui::SetWindowFontScale(kPhoneMenu);
                 bool to_settings = menu_item(L("SETTINGS"), true);
                 ImGui::SetWindowFontScale(1.0f);
                 if (to_settings) {                                             //  stays selected)
@@ -2191,9 +2186,9 @@ extern "C" void launcher_run(const char *root) {
                     if (g_refocus == SETUP) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;
                     if (menu_item(L("SET UP GAME FILES"), !busy)) page = SETUP;
                 }
-#if !PLAT_IOS
+#if !PLAT_TOUCH
                 ImGui::SetCursorPosX(x0);
-                if (menu_item(L("QUIT"), true)) exit(0);  // (iOS apps have no quit: the home gesture)
+                if (menu_item(L("QUIT"), true)) exit(0);  // (a phone app has no quit: the home gesture)
 #endif
                 g_menu_gap = 0.35f;
             } else if (page == SETTINGS && menu_preview_frame(ds.y / 1080.0f, g_font_small, g_font_menu)) {

@@ -324,7 +324,7 @@ static int prompt_style(void) {
     if (p == PROMPTS_XBOX) return STYLE_XBOX;
     if (p == PROMPTS_PLAYSTATION) return STYLE_PS;
     if (p == PROMPTS_NINTENDO) return STYLE_NINTENDO;
-#if PLAT_IOS
+#if PLAT_TOUCH
     // (Auto: while the on-screen controls are up the player presses those - Switch letters - not the controller's)
     extern bool touch_visible(void);  // runtime/ui/touch_controls.mm
     if (touch_visible()) return STYLE_NINTENDO;
