@@ -324,6 +324,11 @@ static int prompt_style(void) {
     if (p == PROMPTS_XBOX) return STYLE_XBOX;
     if (p == PROMPTS_PLAYSTATION) return STYLE_PS;
     if (p == PROMPTS_NINTENDO) return STYLE_NINTENDO;
+#if PLAT_IOS
+    // (Auto: while the on-screen controls are up the player presses those - Switch letters - not the controller's)
+    extern bool touch_visible(void);  // runtime/ui/touch_controls.mm
+    if (touch_visible()) return STYLE_NINTENDO;
+#endif
     extern int input_pad_family(void);  // runtime/hle/input.c: the controller SDL reports
     int f = input_pad_family();
     return f == 1 ? STYLE_XBOX : f == 2 ? STYLE_PS : STYLE_NINTENDO;
