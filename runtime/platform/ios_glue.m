@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 
 #include "../paths.h"
+#include "../platform.h"
 #include "../rando.h"
 #include "../settings.h"
 

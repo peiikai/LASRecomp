@@ -43,6 +43,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 #include "platform.h"
+#include "platform/ios_sdl.h"  // (iOS: SDL's file dialogs and SDL_OpenURL as the Files app's)
 #include "paths.h"
 #include "gamebuild.h"
 #include "build_cache.h"
@@ -569,37 +570,15 @@ static void SDLCALL picked(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 
-// The folder picker: SDL's dialog, or on iOS the Files app's (runtime/platform/ios_picker.m: SDL has none there)
-#if PLAT_IOS
-extern "C" void plat_ios_pick_folder(SDL_Window *, void (*)(void *, const char *), void *);
-extern "C" void plat_ios_pick_files(SDL_Window *, const char *, void (*)(void *, const char *const *), void *);
-extern "C" void plat_ios_open_documents(void);
-extern "C" void plat_ios_bookmark_hold(const char *path);    // runtime/platform/ios_bookmark.m
-extern "C" bool plat_ios_folder_is_cloud(const char *path);
-extern "C" const char *plat_ios_documents(void);             // runtime/platform/ios_glue.m
-#endif
-static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *win) {
-#if PLAT_IOS
-    struct Relay { SDL_DialogFileCallback cb; void *ud; };
-    static Relay relay;
-    relay = {cb, ud};
-    plat_ios_pick_folder(win, [](void *r, const char *path) {
-        const char *files[] = {path, NULL};  // ("": a cancel, as SDL's empty list)
-        ((Relay *)r)->cb(((Relay *)r)->ud, *path ? files : files + 1, -1);
-    }, &relay);
-#else
-    SDL_ShowOpenFolderDialog(cb, ud, win, NULL, false);
-#endif
-}
-
-// ------------------------------------------------------------------ OneDrive (Windows)
-// A data root inside a OneDrive folder uploads every game file to the player's OneDrive: a warning on the start screen
-// with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep here
-// (settings.onedrive_kept). Checked once per launch on the current data root (plat_onedrive_synced); the
-// size in the background: the data root's own once set up, before that the picked game files (or a typical copy) plus
-// what the setup adds. LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system.
+// ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on iOS)
+// A data root inside a synced folder uploads every game file to the player's cloud drive: a warning on the start
+// screen with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep
+// here (settings.onedrive_kept). Checked once per launch on the current data root (plat_cloud_synced); the size in
+// the background: the data root's own once set up, before that the picked game files (or a typical copy) plus what
+// the setup adds. LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
 #define GAME_FILES_GB 6.3   // exefs + romfs, as players bring them
 #define SETUP_ADDS_GB 0.4   // the built game code and its kept pieces (0.23, a beta_5 setup), shader caches
+static const char *g_onedrive_name;        // the service's name (the English text names it); NULL: not synced
 static int g_onedrive = -1;                // -1: not checked yet
 static std::atomic<double> g_od_gb{-1};    // the estimate (-1: not known yet)
 static std::atomic<int> g_od_job;
@@ -644,9 +623,9 @@ static int onedrive_notice(float s, float w, bool ready) {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  This folder is synced by OneDrive"));
-    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your OneDrive."),
-                       fmax(1.0, gb));
+    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_onedrive_name);
+    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your %s."),
+                       fmax(1.0, gb), g_onedrive_name);
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 4 * s));
     int r = 0;
@@ -666,14 +645,12 @@ static int onedrive_notice(float s, float w, bool ready) {
 static void onedrive_keep(void) {
     g_settings.onedrive_kept = true;
     settings_save();
-    fprintf(stderr, "[launcher] OneDrive warning: kept here\n");
+    fprintf(stderr, "[launcher] %s warning: kept here\n", g_onedrive_name);
 }
 
 // iOS: signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but iOS
 // ends it at a much lower footprint. Shown on the start screen until OK, every launch (runtime/platform/ios.c).
-#if PLAT_IOS
-extern "C" int plat_ios_memory_entitled(void);
-#else
+#if !PLAT_IOS
 static int plat_ios_memory_entitled(void) { return getenv("LARECOMP_TEST_NO_MEMORY_ENTITLEMENT") ? 0 : 1; }
 #endif
 static bool g_memory_ok_seen;
@@ -875,10 +852,6 @@ extern "C" void launcher_play_seed(const char *seed) {
     g_play_seed = seed ? seed : "";
     g_play_seed_req = true;
 }
-#if PLAT_IOS
-extern "C" bool plat_ios_take_play_request(char *seed, size_t n);  // runtime/platform/ios_glue.m (quick actions)
-extern "C" void plat_ios_shortcuts_sync(void);
-#endif
 static float g_menu_gap = 0.35f;  // space under each item, in line heights
 
 // The first PLAY ever (settings.menu_tip_seen): a note on opening the LAS Recomp menu in game (it isn't obvious),
@@ -1292,7 +1265,7 @@ static bool launcher_pad_event(const SDL_Event &e) {
 // Returns when PLAY is chosen (seed stored in g_settings.rando_seed); QUIT exits.
 // Settings' first tab, on the start screen only: the extracted game files (size, delete) and the user's own Switch
 // fonts (import / back to the substitute)
-// Open a folder in Finder / Explorer (relative paths are in the data root, the working directory)
+// Open a folder in Finder / Explorer / the Files app (relative paths are in the data root, the working directory)
 static void reveal_folder(const std::string &dir) {
     std::string path = dir;
     bool abs = !path.empty() && (path[0] == '/' || path[0] == '\\' || (path.size() > 1 && path[1] == ':'));
@@ -1471,8 +1444,7 @@ enum { DF_NONE, DF_ASK, DF_MOVING, DF_FAILED, DF_RESTART };
 static int g_df;                  // (main thread)
 static std::string g_df_pick;     // the folder picked (g_lock: the dialog calls back on any thread)
 static RtDataTarget g_df_t;
-static bool g_df_onedrive;        // the folder picked is synced by OneDrive too (Windows)
-static bool g_df_cloud;           // the folder picked is a cloud provider's (iOS: iCloud Drive, Google Drive...)
+static const char *g_df_cloud;    // the folder picked is synced to a cloud drive too (its name; NULL: not)
 static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 moved, -1 failed
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
@@ -1483,7 +1455,9 @@ static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_P
 static std::string data_root_shown(void) {
 #if PLAT_IOS
     std::string root = rt_data_root();
-    if (root == plat_ios_documents()) return L("The app's folder in Files (On My iPhone > LAS Recomp).");
+    char docs[PATH_MAX];  // (rt_data_root is getcwd's /private/var/...; Documents comes as /var/...)
+    if (root == (realpath(plat_ios_documents(), docs) ? docs : plat_ios_documents()))
+        return L("The app's folder in Files (On My iPhone > LAS Recomp).");
     size_t a = root.rfind('/');
     return a == std::string::npos ? root : root.substr(a + 1);
 #else
@@ -1497,15 +1471,11 @@ static void SDLCALL picked_data(void *, const char *const *files, int) {
     g_df_pick = files[0];
     pthread_mutex_unlock(&g_lock);
 }
-static void choose_data_folder(void) { show_folder_dialog(picked_data, NULL, g_launcher_win); }
+static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
 static void show_font_dialog(void) {
     static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
     font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
-#if PLAT_IOS
-    plat_ios_pick_files(g_launcher_win, font_f[0].pattern, [](void *, const char *const *files) { picked_fonts(NULL, files, -1); }, NULL);
-#else
     SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
-#endif
 }
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
 static void *df_move_thread(void *) {
@@ -1536,10 +1506,7 @@ static void data_folder_popup(float s) {
         plat_ios_bookmark_hold(pick.c_str());  // (readable past the picker's own scope: the move, the bookmark)
 #endif
         rt_data_target(pick.c_str(), &g_df_t);
-        g_df_onedrive = !g_df_t.refuse[0] && plat_onedrive_synced(g_df_t.path);
-#if PLAT_IOS
-        g_df_cloud = !g_df_t.refuse[0] && plat_ios_folder_is_cloud(g_df_t.path);
-#endif
+        g_df_cloud = g_df_t.refuse[0] ? NULL : plat_cloud_synced(g_df_t.path);
         g_df = DF_ASK;
         ImGui::OpenPopup("##datafolder");
     }
@@ -1564,11 +1531,7 @@ static void data_folder_popup(float s) {
     };
     if (g_df == DF_ASK) {
         ImGui::TextDisabled("%s", t.path);
-        if (g_df_onedrive) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("This folder is synced by OneDrive too."));
-        if (g_df_cloud)
-            ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s",
-                               L("This folder is in a cloud drive. Its files may not be on this device, and the game may be "
-                                 "slow or fail to read them. A folder on this iPhone or on an external drive works best."));
+        if (g_df_cloud) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("This folder is synced by %s too."), g_df_cloud);
         ImGui::Spacing();
         if (t.refuse[0]) {
             ImGui::TextColored(red, "%s", t.refuse);
@@ -1646,11 +1609,7 @@ static void prelaunch_tab(float sc) {
 #else
     const char *show = LN("Show in Finder");
 #endif
-#if PLAT_IOS
-    if (opt_action(show, "", "Opens the folder with LAS Recomp's copy of the game files.")) plat_ios_open_documents();  // (ios_picker.m)
-#else
     if (opt_action(show, "", "Opens the folder with LAS Recomp's copy of the game files.")) reveal_folder(g_root);
-#endif
     static bool shot_del = getenv("LARECOMP_LAUNCHER_SHOT") && strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":askdelete");
     if (shot_del) confirm_delete = true, shot_del = false;  // (test: :askdelete)
     if (!confirm_delete) {
@@ -1891,8 +1850,9 @@ extern "C" void launcher_run(const char *root) {
     }
     if (g_onedrive < 0) {  // (once per launch: a "Title screen" reboot keeps it)
         const char *t = getenv("LARECOMP_TEST_ONEDRIVE");
-        g_onedrive = t ? atoi(t) != 0 : plat_onedrive_synced(rt_data_root());
-        if (g_onedrive) fprintf(stderr, "[launcher] the data folder is synced by OneDrive%s: %s\n",
+        g_onedrive_name = t ? (atoi(t) != 0 ? "OneDrive" : NULL) : plat_cloud_synced(rt_data_root());
+        g_onedrive = g_onedrive_name != NULL;
+        if (g_onedrive) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_onedrive_name,
                                 g_settings.onedrive_kept ? " (kept there)" : "", rt_data_root());
     }
     // the shader preparation of every later start: in the background (first setups and updates do theirs above)
@@ -2374,7 +2334,7 @@ extern "C" void launcher_run(const char *root) {
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
-                        show_folder_dialog(picked, NULL, win);
+                        SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
                     check_left_of_value(src_v);
                     first_row();
                     opt_section("Set up");
@@ -2539,7 +2499,7 @@ extern "C" void launcher_run(const char *root) {
                 int r = onedrive_notice(s, w, status.empty());
                 if (r == 1) onedrive_keep();
                 else if (r == 2) choose_data_folder();
-            } else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (iOS has no OneDrive: the same place)
+            } else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (the same place, when there is no cloud warning)
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
                 memory_notice(s, w);

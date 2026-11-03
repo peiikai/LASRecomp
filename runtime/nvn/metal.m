@@ -1280,7 +1280,6 @@ static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
             LOG("[metal] in the background: game paused\n");
             input_rumble_stop();
             settings_save();
-            extern void plat_ios_shortcuts_sync(void);
             plat_ios_shortcuts_sync();  // (the seed list as the Home Screen will offer it)
         }
     } else if ((e->type == SDL_EVENT_WILL_ENTER_FOREGROUND || e->type == SDL_EVENT_DID_ENTER_FOREGROUND) && atomic_load(&g_background)) {
@@ -1699,7 +1698,6 @@ void backend_quit(void) {
 // A Home Screen quick action while the game runs: its seed boots in place, as the Randomizer tab's Play (the seed
 // being played: nothing); one deleted since: the start screen
 static void quick_action_in_game(void) {
-    extern bool plat_ios_take_play_request(char *seed, size_t n);
     char seed[128];
     if (!plat_ios_take_play_request(seed, sizeof seed)) return;
     if (!strcmp(seed, g_settings.rando_seed)) return;

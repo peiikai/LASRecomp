@@ -301,4 +301,4 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
-bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
+const char *plat_cloud_synced(const char *dir) { (void)dir; return NULL; }

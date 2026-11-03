@@ -27,8 +27,6 @@ static bool g_up;
 static char g_error[512];
 static PyThreadState *g_main_state;
 
-const char *plat_ios_bundle_dir(void);
-
 static bool init_python(void) {
     if (g_up) return true;
     const char *bundle = plat_ios_bundle_dir();
@@ -304,7 +302,6 @@ void plat_ios_python_selftest(void) {
     // then the generator itself as a "process", on a default seed, like the Rando tab does (Documents/pytest-seed/),
     // and once more into pytest-seed2/: the second run is a second sub-interpreter in the same process, and must give
     // the same files (state left in a C extension across interpreters would show here)
-    extern const char *plat_ios_documents(void);
     char romfs[1100];
     snprintf(romfs, sizeof romfs, "%s/extracted/romfs", plat_ios_documents());
     struct stat st;

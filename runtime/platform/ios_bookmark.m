@@ -3,10 +3,10 @@
 // nothing on the next launch). A bookmark is made while the picker's security scope is held (one made outside it
 // reads back this run and resolves to nothing from the next launch on), and checked to resolve again before it is
 // kept. Resolving one opens its security scope, held until the process ends (the game reads and writes there
-// throughout); a bookmark the system calls stale is rewritten by the caller.
+// throughout); a bookmark the system calls stale is rewritten by the caller. Declared in runtime/platform.h.
 #import <Foundation/Foundation.h>
-#include <stdbool.h>
 #include <stdio.h>
+#include "../platform.h"
 
 static NSURL *g_held;  // the folder under security-scoped access (the data folder in use, or the last one tried)
 
@@ -62,13 +62,13 @@ void plat_ios_bookmark_hold(const char *path) {
 }
 
 // A folder in iCloud Drive: its files may not be on the device, and a write there is a sync. The start screen
-// warns. (Other providers - Google Drive, Dropbox - look just like On My iPhone from here: all of them are folders
-// under some app group's File Provider Storage; no warning for those.)
-bool plat_ios_folder_is_cloud(const char *path) {
+// warns, as it does for OneDrive on Windows. (Other providers - Google Drive, Dropbox - look just like On My iPhone
+// from here: all of them are folders under some app group's File Provider Storage; no warning for those.)
+const char *plat_cloud_synced(const char *dir) {
     @autoreleasepool {
-        NSURL *u = [NSURL fileURLWithPath:@(path) isDirectory:YES];
+        NSURL *u = [NSURL fileURLWithPath:@(dir) isDirectory:YES];
         NSNumber *ubi = nil;
         [u getResourceValue:&ubi forKey:NSURLIsUbiquitousItemKey error:nil];
-        return ubi.boolValue;
+        return ubi.boolValue ? "iCloud Drive" : NULL;
     }
 }

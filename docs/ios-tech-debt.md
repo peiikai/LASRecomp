@@ -124,9 +124,10 @@ attribute, so the `removexattr` on the linker is gone too.
   opens the scope for the process's life. A bookmark the system calls stale is rewritten; one that doesn't resolve,
   or resolves into Files' Recently Deleted (`.Trash`: a bookmark follows its folder there), is the desktop's
   "isn't available" box - Try again / Use the default folder / Quit. The bookmark is bound to the team + bundle id,
-  so a resign by the same team keeps it. Left: an iCloud Drive folder gets a warning only (the files may not be on
-  the device; no `NSFileCoordinator` around the game's reads), other providers (Google Drive, Dropbox) aren't told
-  apart from On My iPhone - all of them are `File Provider Storage` folders.
+  so a resign by the same team keeps it. Left: an iCloud Drive folder gets the OneDrive warning only
+  (`plat_cloud_synced`; the files may not be on the device; no `NSFileCoordinator` around the game's reads), other
+  providers (Google Drive, Dropbox) aren't told apart from On My iPhone - all of them are `File Provider Storage`
+  folders.
 - ~~**Left / right values have no touch gesture.**~~ A row's `◀ value ▶` arrows are tap targets (larger on the
   phone's cards, `option_rows.mm`), and the start page's seed choice is `‹ [choice] ›` buttons that also take a
   sideways swipe (`launcher.mm`). A swipe on an option row still scrolls rather than steps (touch_ui.h: a sideways
@@ -252,8 +253,11 @@ Taken:
 - `runtime/ui/touch_controls.mm`, the reworked one (`8b272b8`): only what the game uses right now, the game's own
   item icons, taps on its own screens, the layout editor (saved as `touch_ctl_<name>`), hidden while a controller is
   in use; the `input.c` hook and the Controls-tab settings (`touch_mode`, `touch_opacity`, `touch_size`).
-- The launcher's "no setup on this platform" structure, as iOS branches (`PLAT_IOS`: no build, the folder picker by
-  `runtime/platform/ios_picker.m`), and DejaVu Sans for the overlay text.
+- The launcher's "no setup on this platform" structure, as iOS branches (`PLAT_IOS`: no build), and DejaVu Sans
+  for the overlay text. The Files picker is not a branch: `runtime/platform/ios_sdl.h` renames `SDL_ShowOpenFolderDialog`
+  / `SDL_ShowOpenFileDialog` / `SDL_OpenURL` to UIKit ones (`ios_picker.m`, SDL's signatures and callback form), so
+  the start screen's calls are the desktop's; `platform.h` declares the rest of the iOS-only calls (`plat_ios_*`) and
+  `plat_cloud_synced` names the service (OneDrive on Windows, iCloud Drive on iOS) for the one warning.
 - The phone menu scale (`d9e0d71`: the menu and the start screen's panels a third larger, in the safe area), the
   on-screen keyboard's touch form for the name entry (`bc8cfd8`, `osk.mm`), and the tap hints on the title and the
   file select ("Tap to start", "Tap a file to play", in `touch_controls.mm`).
@@ -273,7 +277,8 @@ Still open, in order of value for iOS:
   inputs, the Switch-style prompts while the touch controls show - and `plat_tablet()` is the one platform call in
   it. `PLAT_IOS` keeps the sandbox (Documents, the Files picker, no spawn, the framework-only library, the packed
   layout, the entitlement notice, the quick actions, the update check over NSURLSession). An Android port makes
-  `PLAT_TOUCH` true too and implements `plat_tablet`; the pickers stay `plat_ios_*` until it exists.
+  `PLAT_TOUCH` true too and implements `plat_tablet`; SDL's dialogs it would shim as `ios_sdl.h` does, or SDL has
+  them there.
 
 **Runtime performance (shared; measure on the phone before taking)**
 - `rt_dispatch` dcache inside `Cpu` instead of `__thread` (`cpu.h` / `dispatch.c`): their motive was dlopen'ed-library

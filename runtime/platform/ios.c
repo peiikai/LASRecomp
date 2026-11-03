@@ -29,8 +29,6 @@
 #include "posix_log.h"
 
 void rt_crash_explain(char *out, size_t n, const char *log_path);  // runtime/crash_explain.c
-const char *plat_ios_documents(void);                             // runtime/platform/ios_glue.m
-const char *plat_ios_os_version(void);                            // ("26.0.1")
 
 static mach_timebase_info_data_t tb;
 static char g_log_path[1024];
@@ -77,8 +75,6 @@ void plat_system_info(PlatSysInfo *si) {
     si->ram = (uint64_t)sysctl_int("hw.memsize");
     si->package = ".ipa";
 }
-
-bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
 
 // 1 / 0: the signature has / lacks com.apple.developer.kernel.increased-memory-limit, -1: unreadable. Without it the
 // game may still start (the window fits on some devices), but iOS ends the app at a much lower footprint.

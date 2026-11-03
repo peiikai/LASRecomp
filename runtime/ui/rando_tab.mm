@@ -24,12 +24,12 @@
 extern "C" {
 #include "../hle.h"
 #include "../paths.h"
+#include "../platform.h"
 #include "../rando.h"
 #include "../settings.h"
 extern const char *g_romfs_dir;
 extern int g_start_screen;  // hle/warp.c
 void launcher_play_seed(const char *seed);  // ui/launcher.mm
-void plat_ios_shortcuts_sync(void);        // platform/ios_glue.m
 extern char g_window_shot_request[256];  // runtime/hle/hookshot.c (test shots)
 }
 

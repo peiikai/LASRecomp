@@ -135,8 +135,7 @@ static void default_home(char *root, size_t n) {
     if (xdg && *xdg == '/') snprintf(root, n, "%s/lasrecomp", xdg);
     else snprintf(root, n, "%s/.local/share/lasrecomp", home && *home ? home : "/tmp");
 #elif PLAT_IOS
-    extern const char *plat_ios_documents(void);  // (the app's folder in Files; the pointer file lives there too)
-    snprintf(root, n, "%s", plat_ios_documents());
+    snprintf(root, n, "%s", plat_ios_documents());  // (the app's folder in Files; the pointer file lives there too)
 #else
     const char *home = getenv("HOME");
     snprintf(root, n, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
@@ -209,14 +208,9 @@ static bool in_app(const char *p) {
 #endif
 }
 
-#if PLAT_IOS
-// (iOS: a path outside the sandbox grants nothing on the next launch; the pointer file holds the folder's bookmark,
-// runtime/platform/ios_bookmark.m, base64 on its one line)
-bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
-int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
-#endif
-
-// The data folder a pointer file names (false: none, or it points into the app)
+// The data folder a pointer file names (false: none, or it points into the app). iOS: a path outside the sandbox
+// grants nothing on the next launch; the pointer file holds the folder's bookmark (plat_ios_bookmark_*), base64 on
+// its one line.
 static bool pointer_root(const char *home, char *out, size_t n) {
     char p[1100];
     join(p, sizeof p, home, POINTER_FILE);
