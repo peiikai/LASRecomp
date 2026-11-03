@@ -134,6 +134,9 @@ static void default_home(char *root, size_t n) {
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     if (xdg && *xdg == '/') snprintf(root, n, "%s/lasrecomp", xdg);
     else snprintf(root, n, "%s/.local/share/lasrecomp", home && *home ? home : "/tmp");
+#elif PLAT_IOS
+    extern const char *plat_ios_documents(void);  // (the app's folder in Files; the pointer file lives there too)
+    snprintf(root, n, "%s", plat_ios_documents());
 #else
     const char *home = getenv("HOME");
     snprintf(root, n, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
@@ -206,11 +209,26 @@ static bool in_app(const char *p) {
 #endif
 }
 
+#if PLAT_IOS
+// (iOS: a path outside the sandbox grants nothing on the next launch; the pointer file holds the folder's bookmark,
+// runtime/platform/ios_bookmark.m, base64 on its one line)
+bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
+int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
+#endif
+
 // The data folder a pointer file names (false: none, or it points into the app)
 static bool pointer_root(const char *home, char *out, size_t n) {
     char p[1100];
     join(p, sizeof p, home, POINTER_FILE);
+#if PLAT_IOS
+    char b64[8192];  // (a bookmark runs to a few thousand characters: far more than a path)
+    if (!read_line(p, b64, sizeof b64)) return false;
+    int r = plat_ios_bookmark_resolve(b64, out, n);
+    if (r == 0) { fprintf(stderr, "[paths] %s: the data folder's bookmark doesn't resolve\n", p); out[0] = 0; return true; }
+    if (r < 0 && plat_ios_bookmark_make(out, b64, sizeof b64)) write_line(p, b64);  // (stale: the system asks for a rewrite)
+#else
     if (!read_line(p, out, n)) return false;
+#endif
     if (in_app(out)) {
         fprintf(stderr, "[paths] %s points into the app (%s): ignored\n", p, out);
         return false;
@@ -295,18 +313,19 @@ void rt_paths_init(void) {
     char root[1024];
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) snprintf(root, sizeof root, "%s", env);
-#if PLAT_IOS
-    else { extern const char *plat_ios_documents(void); snprintf(root, sizeof root, "%s", plat_ios_documents()); }
-#else
+#if !PLAT_IOS
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
+#endif
     else {
         snprintf(root, sizeof root, "%s", g_home);
         char ptr[1024];
         while (pointer_root(g_home, ptr, sizeof ptr)) {  // another folder chosen on the start screen
-            if (is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
+            if (ptr[0] && is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
             char msg[1400];
-            snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
-                     "connected, connect it and try again.", ptr);
+            if (!ptr[0]) snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available any more.\n\nIf it's on a "
+                                  "drive that isn't connected, connect it and try again.");  // (iOS: no path to show)
+            else snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
+                          "connected, connect it and try again.", ptr);
             const SDL_MessageBoxButtonData b[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Try again"},
                                                   {0, 1, "Use the default folder"},
                                                   {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"}};
@@ -321,7 +340,6 @@ void rt_paths_init(void) {
             }
         }
     }
-#endif
     mkdirs(root);
     char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
@@ -470,7 +488,6 @@ const char *rt_data_root_fixed(void) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) return LN("Set by LARECOMP_DATA_ROOT.");
     if (g_dev) return LN("A source checkout uses its own folder.");
-    if (PLAT_IOS) return LN("The app's folder in Files (On My iPhone > LAS Recomp).");  // (the sandbox: nowhere else)
     return NULL;
 }
 
@@ -702,7 +719,13 @@ static bool point_to(const char *to) {
     if (same_dir(to, g_home)) return remove(p) == 0 || !exists(p);
     if (!resolve(to, r, sizeof r)) return false;
     mkdirs(g_home);
+#if PLAT_IOS
+    char b64[8192];
+    if (!plat_ios_bookmark_make(r, b64, sizeof b64)) return false;
+    return write_line(p, b64);
+#else
     return write_line(p, r);
+#endif
 }
 
 // A folder to use: created if needed, writable, with no unfinished copy or old move notes in it

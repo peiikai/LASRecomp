@@ -574,6 +574,9 @@ static void SDLCALL picked(void *, const char *const *files, int) {
 extern "C" void plat_ios_pick_folder(SDL_Window *, void (*)(void *, const char *), void *);
 extern "C" void plat_ios_pick_files(SDL_Window *, const char *, void (*)(void *, const char *const *), void *);
 extern "C" void plat_ios_open_documents(void);
+extern "C" void plat_ios_bookmark_hold(const char *path);    // runtime/platform/ios_bookmark.m
+extern "C" bool plat_ios_folder_is_cloud(const char *path);
+extern "C" const char *plat_ios_documents(void);             // runtime/platform/ios_glue.m
 #endif
 static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *win) {
 #if PLAT_IOS
@@ -1464,15 +1467,29 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
 
 // ------------------------------------------------------------------ the data folder (runtime/paths.h): another one
 // picked (Settings > Prelaunch, the Game Files window), the data moved there or a fresh start, then a restart there
-enum { DF_NONE, DF_ASK, DF_MOVING, DF_FAILED };
+enum { DF_NONE, DF_ASK, DF_MOVING, DF_FAILED, DF_RESTART };
 static int g_df;                  // (main thread)
 static std::string g_df_pick;     // the folder picked (g_lock: the dialog calls back on any thread)
 static RtDataTarget g_df_t;
 static bool g_df_onedrive;        // the folder picked is synced by OneDrive too (Windows)
+static bool g_df_cloud;           // the folder picked is a cloud provider's (iOS: iCloud Drive, Google Drive...)
 static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 moved, -1 failed
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
+
+// The data folder as the player knows it: its path; on iOS the app's own folder by its name in Files (its sandbox
+// path means nothing), another one by its name (the rest is the provider's container)
+static std::string data_root_shown(void) {
+#if PLAT_IOS
+    std::string root = rt_data_root();
+    if (root == plat_ios_documents()) return L("The app's folder in Files (On My iPhone > LAS Recomp).");
+    size_t a = root.rfind('/');
+    return a == std::string::npos ? root : root.substr(a + 1);
+#else
+    return rt_data_root();
+#endif
+}
 
 static void SDLCALL picked_data(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
@@ -1480,7 +1497,7 @@ static void SDLCALL picked_data(void *, const char *const *files, int) {
     g_df_pick = files[0];
     pthread_mutex_unlock(&g_lock);
 }
-static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
+static void choose_data_folder(void) { show_folder_dialog(picked_data, NULL, g_launcher_win); }
 static void show_font_dialog(void) {
     static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
     font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
@@ -1497,9 +1514,13 @@ static void *df_move_thread(void *) {
 }
 static void df_restart(void) {
     unsetenv("LARECOMP_LAUNCHER_DATA_PICK");
+#if PLAT_IOS
+    g_df = DF_RESTART;  // (no exec on iOS: the app ends on OK, the player opens it again)
+#else
     rt_paths_restart();
     snprintf(g_df_err, sizeof g_df_err, "%s", LN("Couldn't restart LAS Recomp. Start it again to use the new folder."));
     g_df = DF_FAILED;
+#endif
 }
 
 // The question / the move's progress, in front of everything (called at the start screen's top level)
@@ -1511,11 +1532,19 @@ static void data_folder_popup(float s) {
     bool busy = g_busy;
     pthread_mutex_unlock(&g_lock);
     if (!pick.empty() && g_df == DF_NONE && !busy) {
+#if PLAT_IOS
+        plat_ios_bookmark_hold(pick.c_str());  // (readable past the picker's own scope: the move, the bookmark)
+#endif
         rt_data_target(pick.c_str(), &g_df_t);
         g_df_onedrive = !g_df_t.refuse[0] && plat_onedrive_synced(g_df_t.path);
+#if PLAT_IOS
+        g_df_cloud = !g_df_t.refuse[0] && plat_ios_folder_is_cloud(g_df_t.path);
+#endif
         g_df = DF_ASK;
         ImGui::OpenPopup("##datafolder");
     }
+    ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));  // (centred as it shrinks)
     if (!ImGui::BeginPopupModal("##datafolder", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
         return;
     const RtDataTarget &t = g_df_t;
@@ -1536,6 +1565,10 @@ static void data_folder_popup(float s) {
     if (g_df == DF_ASK) {
         ImGui::TextDisabled("%s", t.path);
         if (g_df_onedrive) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("This folder is synced by OneDrive too."));
+        if (g_df_cloud)
+            ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s",
+                               L("This folder is in a cloud drive. Its files may not be on this device, and the game may be "
+                                 "slow or fail to read them. A folder on this iPhone or on an external drive works best."));
         ImGui::Spacing();
         if (t.refuse[0]) {
             ImGui::TextColored(red, "%s", t.refuse);
@@ -1578,6 +1611,10 @@ static void data_folder_popup(float s) {
         ImGui::TextDisabled("%s", t.path);
         if (r == 1) df_restart();
         else if (r == -1) g_df = DF_FAILED;
+    } else if (g_df == DF_RESTART) {
+        ImGui::TextUnformatted(L("LAS Recomp needs to restart to use the new folder. It closes now; open it again."));
+        ImGui::Spacing();
+        if (ImGui::Button(L("OK"), bw)) { fflush(stderr); exit(0); }
     } else {
         ImGui::TextColored(red, "%s", L_line(g_df_err).c_str());  // (English: here or runtime/paths.c)
         ImGui::Text(L("Your data is still in %s"), rt_data_root());
@@ -1649,14 +1686,13 @@ static void prelaunch_tab(float sc) {
         ios_export_prelaunch(busy);
     }
 #endif
-    {   // where all of it is kept (as the setup window's Storage row); iOS: the app's own, the sandbox path means
-        // nothing to a player
+    {   // where all of it is kept (as the setup window's Storage row)
         const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
         std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                        (PLAT_IOS ? fixed : rt_data_root()) + (fixed && !PLAT_IOS ? std::string("\n\n") + fixed : "");
+                        data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
         opt_section("Storage");
         if (fixed) opt_disable_next();
-        if (opt_action("Data folder", PLAT_IOS ? "" : "Change...", d.c_str(), true)) choose_data_folder();
+        if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
     }
     opt_section("Game font");
     import_fonts();
@@ -2379,10 +2415,10 @@ extern "C" void launcher_run(const char *root) {
                         if (opt_action("Cancel", "", "Keeps the game files.", true)) g_confirm_delete = false;
                     }
                 }
-                if (!ios_page && !PLAT_IOS) {  // where all of it is kept: another folder (a bigger drive)
+                if (!ios_page) {  // where all of it is kept: another folder (a bigger drive)
                     const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
                     std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                                    rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
+                                    data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
                     opt_section("Storage");
                     if (busy || fixed) opt_disable_next();
                     if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();

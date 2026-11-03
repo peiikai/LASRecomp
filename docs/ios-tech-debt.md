@@ -116,6 +116,17 @@ attribute, so the `removexattr` on the linker is gone too.
   opens, when the Randomizer tab re-reads its list (a seed made, renamed or deleted) and when the app goes to the
   background; a seed deleted through the Files app in between leaves the start screen up. `LARECOMP_*` stays
   `devicectl`-only.
+- ~~**The data folder is the sandbox's Documents only**~~: Settings › Prelaunch › Data folder › Change... takes any
+  folder the Files picker grants (On My iPhone, an external drive, another app's folder) with the desktop's Use it /
+  Move / Start fresh, then asks for a relaunch (no exec on iOS: OK ends the app). `Documents/data_root.txt` holds
+  the folder's security-scoped bookmark (`runtime/platform/ios_bookmark.m`; a path outside the sandbox grants
+  nothing on the next launch), made under the picker's scope and checked to resolve back; resolving it on launch
+  opens the scope for the process's life. A bookmark the system calls stale is rewritten; one that doesn't resolve,
+  or resolves into Files' Recently Deleted (`.Trash`: a bookmark follows its folder there), is the desktop's
+  "isn't available" box - Try again / Use the default folder / Quit. The bookmark is bound to the team + bundle id,
+  so a resign by the same team keeps it. Left: an iCloud Drive folder gets a warning only (the files may not be on
+  the device; no `NSFileCoordinator` around the game's reads), other providers (Google Drive, Dropbox) aren't told
+  apart from On My iPhone - all of them are `File Provider Storage` folders.
 - ~~**Left / right values have no touch gesture.**~~ A row's `◀ value ▶` arrows are tap targets (larger on the
   phone's cards, `option_rows.mm`), and the start page's seed choice is `‹ [choice] ›` buttons that also take a
   sideways swipe (`launcher.mm`). A swipe on an option row still scrolls rather than steps (touch_ui.h: a sideways
@@ -241,8 +252,8 @@ Taken:
 - `runtime/ui/touch_controls.mm`, the reworked one (`8b272b8`): only what the game uses right now, the game's own
   item icons, taps on its own screens, the layout editor (saved as `touch_ctl_<name>`), hidden while a controller is
   in use; the `input.c` hook and the Controls-tab settings (`touch_mode`, `touch_opacity`, `touch_size`).
-- The launcher's "no setup on this platform" structure, as iOS branches (`PLAT_IOS`: no build, no data-folder move,
-  the folder picker by `runtime/platform/ios_picker.m`), and DejaVu Sans for the overlay text.
+- The launcher's "no setup on this platform" structure, as iOS branches (`PLAT_IOS`: no build, the folder picker by
+  `runtime/platform/ios_picker.m`), and DejaVu Sans for the overlay text.
 - The phone menu scale (`d9e0d71`: the menu and the start screen's panels a third larger, in the safe area), the
   on-screen keyboard's touch form for the name entry (`bc8cfd8`, `osk.mm`), and the tap hints on the title and the
   file select ("Tap to start", "Tap a file to play", in `touch_controls.mm`).
