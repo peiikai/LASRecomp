@@ -127,12 +127,12 @@ attribute, so the `removexattr` on the linker is gone too.
   so a resign by the same team keeps it. Left: an iCloud Drive folder gets the OneDrive warning only
   (`plat_cloud_synced`; the files may not be on the device; no `NSFileCoordinator` around the game's reads), other
   providers (Google Drive, Dropbox) aren't told apart from On My iPhone - all of them are `File Provider Storage`
-  folders. A move's notes (`.lasrecomp_move_from` / `_to`) hold paths, not bookmarks: killed mid-copy, the
-  unfinished copy in an outside folder stays until that folder is picked again; killed after the switch, the old
-  outside copy is never emptied. A move in the background freezes with the app (no `beginBackgroundTask`). The log
-  stays in Documents (visible even with the drive gone). Untested: an external drive. Checked on an iPhone 15 Pro:
-  Move from Documents, a non-empty folder (data in its `LAS Recomp`), another folder picked with the data in iCloud
-  Drive, the trash, the quick actions from the new root.
+  folders. A move's notes (`.lasrecomp_move_from` / `_to`) hold the other folder's bookmark, as the pointer file
+  does, so an interrupted move is finished or undone at the next start wherever its folders are. A move in the
+  background freezes with the app (no `beginBackgroundTask`). The log stays in Documents, unlike the desktop (it is
+  there even when the chosen folder isn't). Untested: an external drive, a move killed halfway. Checked on an
+  iPhone 15 Pro: Move from Documents and from one outside folder to another, a non-empty folder (data in its
+  `LAS Recomp`), another folder picked with the data in iCloud Drive, the trash, the quick actions from the new root.
 - ~~**Left / right values have no touch gesture.**~~ A row's `◀ value ▶` arrows are tap targets (larger on the
   phone's cards, `option_rows.mm`), and the start page's seed choice is `‹ [choice] ›` buttons that also take a
   sideways swipe (`launcher.mm`). A swipe on an option row still scrolls rather than steps (touch_ui.h: a sideways

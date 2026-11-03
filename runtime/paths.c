@@ -170,6 +170,25 @@ static bool write_line(const char *path, const char *line) {
     return ok;
 }
 
+// A move's note naming the other folder. iOS: its bookmark - a path outside the sandbox grants nothing next launch
+static bool write_note(const char *note, const char *dir) {
+#if PLAT_IOS
+    char b64[8192];
+    if (plat_ios_bookmark_make(dir, b64, sizeof b64)) return write_line(note, b64);
+#endif
+    return write_line(note, dir);
+}
+static bool read_note(const char *note, char *out, size_t n) {
+#if PLAT_IOS
+    char line[8192];
+    if (!read_line(note, line, sizeof line)) return false;
+    if (line[0] == '/') return (size_t)snprintf(out, n, "%s", line) < n;  // (a path: the folder had no bookmark)
+    return plat_ios_bookmark_resolve(line, out, n) != 0;
+#else
+    return read_line(note, out, n);
+#endif
+}
+
 static void join(char *out, size_t n, const char *dir, const char *name) { snprintf(out, n, "%s" SEP "%s", dir, name); }
 
 // a and b are the same folder, or one is inside the other (unresolvable: treated as overlapping)
@@ -273,16 +292,16 @@ static void remove_partial(const char *dir) {
 static void finish_moves(const char *root, void (*progress)(int, double)) {
     char note[1100], other[1024], p[1100], back[1024];
     join(note, sizeof note, root, NOTE_TO);
-    if (read_line(note, other, sizeof other)) {
+    if (read_note(note, other, sizeof other)) {
         join(p, sizeof p, other, MARK_PARTIAL);
         bool partial = exists(p);
         join(p, sizeof p, other, NOTE_FROM);
-        bool ours = partial || (read_line(p, back, sizeof back) && same_dir(back, root));
+        bool ours = partial || (read_note(p, back, sizeof back) && same_dir(back, root));
         if (ours && !overlap(root, other)) remove_partial(other);
         remove(note);
     }
     join(note, sizeof note, root, NOTE_FROM);
-    if (read_line(note, other, sizeof other)) {
+    if (read_note(note, other, sizeof other)) {
         if (!overlap(root, other) && is_dir(other)) {
             fprintf(stderr, "[paths] removing the old copy of the data in %s\n", other);
             join(p, sizeof p, other, NOTE_TO);
@@ -764,7 +783,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     Move m = {progress, 0, entries_size(from), 0, err, n, malloc(MOVE_BUF), malloc(MOVE_BUF)};
     join(p, sizeof p, abs_to, MARK_PARTIAL);
     join(q, sizeof q, from, NOTE_TO);
-    bool ok = m.buf && m.buf2 && write_line(p, from) && write_line(q, abs_to);
+    bool ok = m.buf && m.buf2 && write_line(p, from) && write_note(q, abs_to);
     if (!ok) move_fail(&m, "Couldn't write to", abs_to);
     fprintf(stderr, "[paths] moving the data (%.2f GB) from %s to %s\n", m.total / 1e9, from, abs_to);
     for (int step = 0; step < 2 && ok; step++) {  // copy, then check every file of the copy
@@ -783,7 +802,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     // folder. Until the switch the old folder is the one in use, and its note undoes the copy at the next start.
     if (ok) {
         join(q, sizeof q, abs_to, NOTE_FROM);
-        ok = write_line(q, from) && remove(p) == 0;
+        ok = write_note(q, from) && remove(p) == 0;
         if (!ok) move_fail(&m, "Couldn't write to", abs_to);
     }
     if (ok && !point_to(abs_to)) ok = false, snprintf(err, n, LN("Couldn't save the data folder's location in %s."), g_home);
