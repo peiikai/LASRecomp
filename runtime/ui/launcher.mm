@@ -1502,9 +1502,6 @@ static void data_folder_popup(float s) {
     bool busy = g_busy;
     pthread_mutex_unlock(&g_lock);
     if (!pick.empty() && g_df == DF_NONE && !busy) {
-#if PLAT_IOS
-        plat_ios_bookmark_hold(pick.c_str());  // (readable past the picker's own scope: the move, the bookmark)
-#endif
         rt_data_target(pick.c_str(), &g_df_t);
         g_df_cloud = g_df_t.refuse[0] ? NULL : plat_cloud_synced(g_df_t.path);
         g_df = DF_ASK;

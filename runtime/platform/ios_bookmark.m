@@ -8,12 +8,12 @@
 #include <stdio.h>
 #include "../platform.h"
 
-static NSURL *g_held;  // the folder under security-scoped access (the data folder in use, or the last one tried)
+// The folders resolved under security-scoped access, never given up: the data folder in use is read throughout
+static NSMutableSet<NSString *> *g_held;
 
 static void hold(NSURL *u) {
-    if (g_held && [g_held.path isEqualToString:u.path]) return;
-    if (g_held) [g_held stopAccessingSecurityScopedResource];
-    g_held = [u startAccessingSecurityScopedResource] ? u : nil;
+    if (!g_held) g_held = [NSMutableSet set];
+    if (![g_held containsObject:u.path] && [u startAccessingSecurityScopedResource]) [g_held addObject:u.path];
 }
 
 // The bookmark of `path` (a folder the picker granted), base64 in out; false when the system refuses one or it
@@ -53,12 +53,6 @@ int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n) {
         snprintf(path, n, "%s", u.path.fileSystemRepresentation);
         return stale ? -1 : 1;
     }
-}
-
-// The last folder the picker granted stays readable (ios_picker.m drops its scope at the next pick): held here
-// until the process ends, as the data folder's would be.
-void plat_ios_bookmark_hold(const char *path) {
-    @autoreleasepool { hold([NSURL fileURLWithPath:@(path) isDirectory:YES]); }
 }
 
 // A folder in iCloud Drive: its files may not be on the device, and a write there is a sync. The start screen

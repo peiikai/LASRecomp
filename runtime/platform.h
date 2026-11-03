@@ -188,11 +188,10 @@ bool plat_ios_take_play_request(char *seed, size_t n);
 void plat_ios_shortcuts_sync(void);
 // The data folder's security-scoped bookmark (runtime/paths.c's pointer file holds it, base64): made under the
 // picker's scope and checked to resolve back; resolve opens the folder's scope for the process's life - 1 resolved,
-// 0 not a bookmark / gone / in the trash, -1 resolved but stale (rewrite it). hold: a picked folder kept readable past
-// the picker's own scope (the move, the bookmark).
+// 0 not a bookmark / gone / in the trash, -1 resolved but stale (rewrite it). A picked folder stays readable through
+// the picker's own scope until the next pick (the move, the bookmark).
 bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
 int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
-void plat_ios_bookmark_hold(const char *path);
 #endif
 
 #ifdef __cplusplus
