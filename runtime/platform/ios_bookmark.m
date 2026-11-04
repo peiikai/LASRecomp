@@ -72,6 +72,52 @@ const char *plat_cloud_synced(const char *dir) {
     }
 }
 
+static NSString *shown_name(NSURL *u) {
+    NSString *name = nil;
+    [u getResourceValue:&name forKey:NSURLLocalizedNameKey error:nil];
+    return name.length ? name : u.lastPathComponent;
+}
+
+// Where `path` is, as the Files app names it: root "" for On My iPhone, else the place's own name (iCloud Drive,
+// a drive, a server's share), and the folders below it joined by " › ". The names come from heuristics on the path
+// (measured on iOS 26: only those places' roots have a localized name differing from the one on disk); false when
+// none fits.
+bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, size_t restn) {
+    @autoreleasepool {
+        char real[PATH_MAX], docs[PATH_MAX];
+        if (!realpath(path, real)) snprintf(real, sizeof real, "%s", path);  // (a folder still to be made)
+        if (!realpath(plat_ios_documents(), docs)) snprintf(docs, sizeof docs, "%s", plat_ios_documents());
+        NSArray<NSString *> *parts = [NSURL fileURLWithPath:@(real)].pathComponents;
+        NSArray<NSString *> *dparts = [NSURL fileURLWithPath:@(docs)].pathComponents;
+        NSUInteger from = NSNotFound;  // the first part shown under the root
+        NSString *top = nil;           // the root's name ("": this device)
+        NSMutableArray *shown = [NSMutableArray array];
+        NSUInteger fps = [parts indexOfObject:@"File Provider Storage"];
+        if (parts.count >= dparts.count && [[parts subarrayWithRange:NSMakeRange(0, dparts.count)] isEqualToArray:dparts]) {
+            // (the app's Documents: Files shows it as a folder named after the app)
+            [shown addObject:NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?: @"LAS Recomp"];
+            top = @"", from = dparts.count;
+        } else if (fps != NSNotFound) {
+            top = @"", from = fps + 1;
+        } else {
+            for (NSUInteger i = parts.count; i-- > 1;) {
+                NSString *p = parts[i];
+                if ([p isEqualToString:@"Library"] || [p isEqualToString:@"Containers"]) break;  // (the user's home: no place)
+                NSString *dir = [NSString pathWithComponents:[parts subarrayWithRange:NSMakeRange(0, i + 1)]];
+                NSString *name = nil;
+                [[NSURL fileURLWithPath:dir isDirectory:YES] getResourceValue:&name forKey:NSURLLocalizedNameKey error:nil];
+                if (name.length && ![name isEqualToString:p]) { top = name, from = i + 1; break; }
+            }
+        }
+        if (!top) return false;
+        for (NSUInteger i = from; i < parts.count; i++)
+            [shown addObject:shown_name([NSURL fileURLWithPath:[NSString pathWithComponents:[parts subarrayWithRange:NSMakeRange(0, i + 1)]]])];
+        snprintf(root, rn, "%s", top.UTF8String);
+        snprintf(rest, restn, "%s", [shown componentsJoinedByString:@" \u203a "].UTF8String);
+        return true;
+    }
+}
+
 // A file under dir (iCloud) the system has offloaded: the game would wait for each as it reads it
 bool plat_ios_cloud_offloaded(const char *dir) {
     @autoreleasepool {

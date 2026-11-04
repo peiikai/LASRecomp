@@ -1454,20 +1454,19 @@ static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
 
-// The data folder as the player knows it: its path; on iOS the app's own folder by its name in Files (its sandbox
-// path means nothing), another one by its name (the rest is the provider's container)
-static std::string data_root_shown(void) {
+// A folder as the player knows it: its path; on iOS as Files names it ("iCloud Drive › LASData"), the full path
+// when the place isn't recognized
+static std::string folder_shown(const char *path) {
 #if PLAT_IOS
-    std::string root = rt_data_root();
-    char docs[PATH_MAX];  // (rt_data_root is getcwd's /private/var/...; Documents comes as /var/...)
-    if (root == (realpath(plat_ios_documents(), docs) ? docs : plat_ios_documents()))
-        return L("The app's folder in Files (On My iPhone > LAS Recomp).");
-    size_t a = root.rfind('/');
-    return a == std::string::npos ? root : root.substr(a + 1);
+    char root[256], rest[1024];
+    if (!plat_ios_folder_place(path, root, sizeof root, rest, sizeof rest)) return path;
+    const char *top = root[0] ? root : plat_tablet() ? L("On My iPad") : L("On My iPhone");
+    return rest[0] ? std::string(top) + " \xe2\x80\xba " + rest : top;
 #else
-    return rt_data_root();
+    return path;
 #endif
 }
+static std::string data_root_shown(void) { return folder_shown(rt_data_root()); }
 
 static void SDLCALL picked_data(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
@@ -1531,7 +1530,7 @@ static void data_folder_popup(float s) {
         else g_df = DF_FAILED;
     };
     if (g_df == DF_ASK) {
-        ImGui::TextDisabled("%s", t.path);
+        ImGui::TextDisabled("%s", folder_shown(t.path).c_str());
         if (g_df_cloud) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("This folder is synced by %s too."), g_df_cloud);
         ImGui::Spacing();
         if (t.refuse[0]) {
@@ -1572,7 +1571,7 @@ static void data_folder_popup(float s) {
         int r = g_df_result, k = g_df_step;
         ImGui::Text("%s", r == 1 ? L("Restarting...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
         ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
-        ImGui::TextDisabled("%s", t.path);
+        ImGui::TextDisabled("%s", folder_shown(t.path).c_str());
         if (r == 1) df_restart();
         else if (r == -1) g_df = DF_FAILED;
     } else if (g_df == DF_RESTART) {
@@ -1581,7 +1580,7 @@ static void data_folder_popup(float s) {
         if (ImGui::Button(L("OK"), bw)) { fflush(stderr); exit(0); }
     } else {
         ImGui::TextColored(red, "%s", L_line(g_df_err).c_str());  // (English: here or runtime/paths.c)
-        ImGui::Text(L("Your data is still in %s"), rt_data_root());
+        ImGui::Text(L("Your data is still in %s"), data_root_shown().c_str());
         ImGui::Spacing();
         close = ImGui::Button(L("OK"), bw) || esc;
     }
@@ -1850,6 +1849,7 @@ extern "C" void launcher_run(const char *root) {
         if (!status.empty()) { g_bg = 0; page = SETUP; }
     }
     if (g_onedrive < 0) {  // (once per launch: a "Title screen" reboot keeps it)
+        if (PLAT_IOS) fprintf(stderr, "[launcher] data folder shown as: %s\n", data_root_shown().c_str());
         const char *t = getenv("LARECOMP_TEST_ONEDRIVE");
         g_onedrive_name = t ? (atoi(t) != 0 ? "OneDrive" : NULL) : plat_cloud_synced(rt_data_root());
         g_onedrive = g_onedrive_name != NULL;

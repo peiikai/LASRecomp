@@ -193,6 +193,8 @@ void plat_ios_shortcuts_sync(void);
 bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
 int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
 bool plat_ios_cloud_offloaded(const char *dir);  // an iCloud file under dir isn't on the device (read waits for it)
+// Where path is as Files names it: root "" (this device) or a place's name, and the folders under it; false: unknown
+bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, size_t restn);
 #endif
 
 #ifdef __cplusplus
