@@ -50,12 +50,19 @@ static void perform_shortcut(id self, SEL sel, UIWindowScene *scene, UIApplicati
     qa_request(item);
     done(YES);
 }
+// (SDL's own class and method: src/video/uikit/SDL_uikitappdelegate.m, SDLUIKitSceneDelegate's
+//  scene:willConnectToSession:options:, SDL 3.4.18. A rename there must not pass as "no quick actions": the app ends
+//  at launch, and tools/test_ios_sim.sh finds no log.)
 __attribute__((constructor)) static void hook_shortcut_launch(void) {
     Class cls = objc_getClass("SDLUIKitSceneDelegate");
     Method m = class_getInstanceMethod(cls, @selector(scene:willConnectToSession:options:));
-    if (m) g_sdl_will_connect = method_setImplementation(m, (IMP)will_connect);
-    class_addMethod(cls, @selector(windowScene:performActionForShortcutItem:completionHandler:), (IMP)perform_shortcut,
-                    "v@:@@@?");
+    if (!m) { fprintf(stderr, "FATAL: SDL's SDLUIKitSceneDelegate scene:willConnectToSession:options: not found\n"); abort(); }
+    g_sdl_will_connect = method_setImplementation(m, (IMP)will_connect);
+    if (!class_addMethod(cls, @selector(windowScene:performActionForShortcutItem:completionHandler:), (IMP)perform_shortcut,
+                         "v@:@@@?")) {
+        fprintf(stderr, "FATAL: SDL's scene delegate has windowScene:performActionForShortcutItem: of its own now\n");
+        abort();
+    }
 }
 
 // The dynamic items, rebuilt from rando/ whenever its list may have changed (the start screen opening, the
