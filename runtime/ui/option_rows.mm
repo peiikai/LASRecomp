@@ -7,9 +7,8 @@
 #include <stdlib.h>
 #include <string>
 #include <unordered_map>
-#include <vector>
-
 #include <unordered_set>
+#include <vector>
 
 #include "imgui.h"
 #include "imgui_internal.h"  // (SetKeyOwner, NavCursorVisible)

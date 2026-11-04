@@ -90,6 +90,7 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
     g_version = v;
 #if LARECOMP_DYNAMIC_BASE
     {
+        _Static_assert(sizeof(GameAddrs) % sizeof(uint64_t) == 0, "GameAddrs holds only uint64_t fields");
         const uint64_t *from = (const uint64_t *)v->addrs;
         uint64_t *to = (uint64_t *)&g_ga_rel;
         for (size_t i = 0; i < sizeof g_ga_rel / sizeof(uint64_t); i++) to[i] = GUEST_FROM_SWITCH(from[i]);

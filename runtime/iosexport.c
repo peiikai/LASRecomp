@@ -159,9 +159,9 @@ bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size
         return false;
     }
     struct stat st;
-    stat(o->out_ipa, &st);
+    double mb = stat(o->out_ipa, &st) == 0 ? (double)st.st_size / 1e6 : 0;
     LOG("[iosexport] %s (%.0f MB, %d entries from the kit + the library) in %.0fs\n", o->out_ipa,
-        (double)st.st_size / 1e6, copied, (double)(plat_now_ns() - t0) / 1e9);
+        mb, copied, (double)(plat_now_ns() - t0) / 1e9);
     if (o->progress) o->progress(1, "Done");
     return true;
 }

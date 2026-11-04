@@ -36,19 +36,24 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 // (svcMapMemory targets, a few at a time). Only GUEST_BASE reaches the generated code; these sizes are the
 // runtime's own, so changing them doesn't invalidate a built library.
 #include "guest_base.h"
+// (each region's offset from GUEST_BASE: constants, so the layout is checked below whether the base is one or not)
 #if PLAT_IOS                                          // (packed: the modules end at +0x5000000, main 29 MB, sdk 13 MB)
-#define GUEST_HI         (GUEST_BASE + 0x0150000000ull)  // 5.25 GB
-#define HLE_BASE         (GUEST_BASE + 0x0008000000ull)
-#define HEAP_BASE        (GUEST_BASE + 0x0018000000ull)
-#define GUEST_STACK_BASE (GUEST_BASE + 0x00E8000000ull)
+#define GUEST_HI_OFF     0x0150000000ull                 // 5.25 GB
+#define HLE_OFF          0x0008000000ull
+#define HEAP_OFF         0x0018000000ull
+#define GUEST_STACK_OFF  0x00E8000000ull
 #define ALIAS_SIZE       0x0020000000ull                 // 512 MB
 #else
-#define GUEST_HI         (GUEST_BASE + 0x0320000000ull)  // 12.5 GB
-#define HLE_BASE         (GUEST_BASE + 0x0080000000ull)
-#define HEAP_BASE        (GUEST_BASE + 0x0240000000ull)
-#define GUEST_STACK_BASE (GUEST_BASE + 0x0200000000ull)
+#define GUEST_HI_OFF     0x0320000000ull                 // 12.5 GB
+#define HLE_OFF          0x0080000000ull
+#define HEAP_OFF         0x0240000000ull
+#define GUEST_STACK_OFF  0x0200000000ull
 #define ALIAS_SIZE       0x0100000000ull
 #endif
+#define GUEST_HI         (GUEST_BASE + GUEST_HI_OFF)
+#define HLE_BASE         (GUEST_BASE + HLE_OFF)
+#define HEAP_BASE        (GUEST_BASE + HEAP_OFF)
+#define GUEST_STACK_BASE (GUEST_BASE + GUEST_STACK_OFF)
 #define GUEST_LO     GUEST_BASE
 #define HLE_SIZE     0x0000100000ull
 #define TLS_BASE     (HLE_BASE + 0x0001000000ull)
@@ -57,6 +62,11 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 #define HLE_HEAP_SIZE 0x000E000000ull
 #define ALIAS_BASE   (GUEST_HI - ALIAS_SIZE)          // alias region (svcMapMemory targets)
 #define HEAP_MAX     0x00D0000000ull   // 3.25 GB
+_Static_assert(HLE_OFF + 0x0001000000ull + TLS_SIZE <= HLE_OFF + 0x0002000000ull &&
+               HLE_OFF + 0x0002000000ull + HLE_HEAP_SIZE <= HEAP_OFF, "the HLE regions overlap");
+#if PLAT_IOS  // (packed end to end: the heap, then the stacks (kernel.h checks their end), then the alias region)
+_Static_assert(HEAP_OFF + HEAP_MAX <= GUEST_STACK_OFF, "the heap runs into the stacks");
+#endif
 
 // ---- loader.c
 typedef struct Module {

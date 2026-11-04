@@ -161,7 +161,7 @@ bool zip_file_id(const char *path, char out[17]) {
     FILE *f = fopen(path, "rb");
     if (!f) return false;
     uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-    static uint8_t buf[1 << 16];
+    uint8_t buf[1 << 16];
     uint8_t tail[128];
     size_t used = 0, got;
     uint64_t total = 0;
