@@ -1,6 +1,8 @@
 // iOS host layer (runtime/platform.h): macOS's Mach / POSIX pieces, minus what an iOS app can't do (start
 // processes, re-exec itself, show an alert from any thread). The data folder is the app's Documents (runtime/paths.c),
 // visible in Files with UIFileSharingEnabled: game files, saves, seeds and the log go there.
+// The shared pieces (timers, the thread policies, symbols, the crash handler, plat_remove_tree) are macos.c's: a
+// change there is carried over here by hand.
 #include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
 #include <execinfo.h>
@@ -267,8 +269,9 @@ void plat_thread_realtime(uint64_t period_ns) {
         .constraint = (uint32_t)(period / 4),
         .preemptible = 1,
     };
-    thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&pol,
-                      THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+    kern_return_t kr = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&pol,
+                                         THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+    if (kr != KERN_SUCCESS) fprintf(stderr, "[plat] real-time thread policy refused: %d\n", (int)kr);
 }
 
 // As on macOS: the kernel drops the time-constraint policy of a thread that overruns its budget; set again when gone.
@@ -334,9 +337,11 @@ void plat_print_backtrace(void) {
 static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     ucontext_t *uc = ctx;
     static volatile int depth;
-    if (sig == SIGABRT && depth++ > 0) { signal(SIGABRT, SIG_DFL); abort(); }
+    if (sig == SIGABRT && depth++ > 0) { signal(SIGABRT, SIG_DFL); abort(); }  // (nested: just die - the report
+                                                                               // itself aborting looped, 5.7 GB log)
     uint64_t fa = (uint64_t)si->si_addr;
     uint64_t pc = uc->uc_mcontext->__ss.__pc, lr = uc->uc_mcontext->__ss.__lr;
+    { extern uint64_t g_fault_lr; g_fault_lr = lr; }
     if (rt_fault_watch(fa, pc)) return;
     char what[32];
     snprintf(what, sizeof what, "signal %d", sig);
@@ -360,6 +365,6 @@ void plat_crash_handler_install(void) {
 #include <ftw.h>
 static int rm_entry(const char *path, const struct stat *sb, int flag, struct FTW *ftw) {
     (void)sb, (void)flag, (void)ftw;
-    return remove(path);
+    return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already, as macos.c)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
