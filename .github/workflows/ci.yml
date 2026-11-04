@@ -257,7 +257,8 @@ jobs:
           tools/fetch_lld.sh
           python3 tools/test_gamebuild_ios.py
   macos:
-    runs-on: macos-15
+    # (a fresh Tart VM per job on the maintainer's Mac, deleted after; forks have none: GitHub's macOS 15)
+    runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
     steps:
       - uses: actions/checkout@v4
       - name: Packages

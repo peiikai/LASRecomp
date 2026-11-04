@@ -98,7 +98,8 @@ jobs:
   macos:
     needs: check
     if: needs.check.outputs.skip != 'true'
-    runs-on: macos-15
+    # (a fresh Tart VM per job on the maintainer's Mac, deleted after; macOS 15. Forks have none: GitHub's macOS 15)
+    runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
     steps:
       - uses: actions/checkout@v4
         with:
