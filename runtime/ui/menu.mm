@@ -583,10 +583,12 @@ static void tab_display(void) {
         if (opt_preview("Remove blur", &rb, oo, 2, 0, "Turns off the tilt-shift blur at the top and bottom of the screen."))
             g_settings.blur_removal = rb;
     }
-    opt_toggle("Pause on focus lost", &g_settings.pause_unfocused, false,
-               "The game pauses while its window isn't in front.");
-    opt_toggle("Remember window size", &g_settings.remember_window, false,
-               "The window opens at the size it was when you quit.");
+    if (!PLAT_TOUCH) {  // (a phone's window is the screen, and the app in the background is paused anyway)
+        opt_toggle("Pause on focus lost", &g_settings.pause_unfocused, false,
+                   "The game pauses while its window isn't in front.");
+        opt_toggle("Remember window size", &g_settings.remember_window, false,
+                   "The window opens at the size it was when you quit.");
+    }
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)
