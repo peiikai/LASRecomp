@@ -192,6 +192,7 @@ void plat_ios_shortcuts_sync(void);
 // the picker's own scope until the next pick (the move, the bookmark).
 bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
 int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
+bool plat_ios_cloud_offloaded(const char *dir);  // an iCloud file under dir isn't on the device (read waits for it)
 #endif
 
 #ifdef __cplusplus

@@ -125,7 +125,10 @@ attribute, so the `removexattr` on the linker is gone too.
   or resolves into Files' Recently Deleted (`.Trash`: a bookmark follows its folder there), is the desktop's
   "isn't available" box - Try again / Use the default folder / Quit. The bookmark is bound to the team + bundle id,
   so a resign by the same team keeps it. Left: an iCloud Drive folder gets the OneDrive warning only
-  (`plat_cloud_synced`; the files may not be on the device; no `NSFileCoordinator` around the game's reads), other
+  (`plat_cloud_synced`, named by `NSURLUbiquitousItemContainerDisplayNameKey`) with a Keep Downloaded hint, and
+  a system box at launch when any of its files is offloaded (`plat_ios_cloud_offloaded`): a read of an offloaded file
+  waits for its download (measured: the menu sounds 7.4 s instead of 10 ms; no read failed). No `NSFileCoordinator`
+  around the game's reads, no download ahead of the game; other
   providers (Google Drive, Dropbox) aren't told apart from On My iPhone - all of them are `File Provider Storage`
   folders. A move's notes (`.lasrecomp_move_from` / `_to`) hold the other folder's bookmark, as the pointer file
   does, so an interrupted move is finished or undone at the next start wherever its folders are. A move in the
