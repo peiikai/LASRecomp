@@ -357,7 +357,7 @@ jobs:
   # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
   # exercised in a real iOS process. The game is not run in the simulator (no game files; the macOS job runs it).
   ios:
-    runs-on: macos-15
+    runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
     steps:
       - uses: actions/checkout@v4
       - name: Packages
