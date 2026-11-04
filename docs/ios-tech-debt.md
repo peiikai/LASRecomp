@@ -36,15 +36,16 @@ Done (kept here as the record of what the build now guarantees):
   checks its log and compares the seed it generated with the same seed generated here, file by file.
 
 Still open:
-- ~~**The generator's modules are reset by hand**~~: each run is a sub-interpreter of its own
-  (`Py_NewInterpreter` / `Py_EndInterpreter` in `ios_python.m`, the legacy kind: shared GIL, the main config's
-  `sys.path` and hash seed), so nothing a run imports or changes reaches the next - no `sys.modules` list to keep
-  right (the hand reset had needed two fixes: `/var` vs `/private/var` paths, and the `RandomizerCore.Tools`
-  namespace package keeping `event_tools`' `AutoEvent` counter). oead and quicktex (pybind11 3.1) are multi-phase
-  modules and load per interpreter; Pillow's are single-phase, which the legacy kind allows. Kill raises
-  `KeyboardInterrupt` through a thread state of the run's interpreter. Verified on Lime: self-test ok, two runs
-  in two interpreters 291 identical files, the seed equal to the Mac's, a run killed a second in stops in 13 ms
-  and the next starts in a fresh interpreter.
+- **The generator's modules are reset by hand** (`ios_python.m`'s runner drops every module under `rando-gen`,
+  by real path, and the PySide6 stubs from `sys.modules` before a run; the C extensions stay loaded). A
+  sub-interpreter per run was tried (b2013266) and taken back in the PR review: oead and quicktex are pybind11
+  modules without `multiple_interpreters` support - CPython's legacy kind let them in, but their types and
+  pybind11's internals are process-wide, each `Py_EndInterpreter` left them behind, and CPython tightens the
+  rules with every version. The reset needs its two cases kept right (`/var` vs `/private/var` paths, the
+  `RandomizerCore.Tools` namespace package); the self-test's kill check (a run killed a second in, then
+  `after.py` must not see PySide6) covers them. `build_deps_ios.sh` pins pybind11 at what oead vendors and fails
+  when the two modules' `__pybind11_internals_vN` differ. Verified on Lime: self-test ok, two runs 291 identical
+  files, the seed equal to the Mac's, kill in 7 ms.
 - ~~**Reproducibility relies on `hash_seed = 0`** mirroring the other platforms' `PYTHONHASHSEED=0`.~~ Verified: seed
   `pytest` (`{"seed": "pytest", "create-spoiler": true}`) generated on the Mac (`PYTHONHASHSEED=0`, the randomizer's
   venv, Python 3.13.7) and on an iPhone17,1 (embedded Python 3.13.16) gives 290 byte-identical files (`flags.tsv`,
