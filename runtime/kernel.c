@@ -114,7 +114,7 @@ typedef struct { uint64_t addr, size; uint32_t type, perm; } Region;
 static Region regions[1024];
 static int nregions;
 static uint64_t heap_size;
-static uint64_t tls_next = TLS_BASE;
+static uint64_t tls_used;  // (slots handed out, bytes from TLS_BASE)
 uint64_t kernel_heap_size(void) { return heap_size; }  // bytes from HEAP_BASE set by SetHeapSize
 // Writable guest data regions (heap, mapped/physical memory, module .data): for debug/runtime memory scans.
 int kernel_data_regions(uint64_t *addr, uint64_t *size, int max) {
@@ -216,8 +216,8 @@ static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int
     t->cpu.thread = t;
     pthread_mutex_lock(&g_klock);  // (two guest threads may create threads at once: one id and TLS slot each)
     t->id = next_thread_id++;
-    t->tlr = tls_next;
-    tls_next += 0x200;
+    t->tlr = TLS_BASE + tls_used;
+    tls_used += 0x200;
     t->cpu.tpidrro = t->tlr;
     t->anext = g_threads;
     g_threads = t;
@@ -225,18 +225,28 @@ static KThread *thread_new(uint64_t entry, uint64_t arg, uint64_t stack_top, int
     return t;
 }
 
+// Guest recursion runs on the host stack, so give every guest thread a lot of it. The game runs ~40 threads at once;
+// on iOS that much address space doesn't fit next to the guest window (the kernel's own reserves leave only a few
+// gaps, see runtime/rt.h), and pthread_create starts failing with EAGAIN. 16 MB is far more than the game ever uses.
+#if PLAT_IOS
+#define GUEST_HOST_STACK (16ull << 20)
+#else
+#define GUEST_HOST_STACK (256ull << 20)
+#endif
+
 static void thread_start(KThread *t) {
 #ifdef _WIN32
-    t->host = guest_thread_create(thread_main, t, 256u << 20);
+    t->host = guest_thread_create(thread_main, t, (unsigned)GUEST_HOST_STACK);
     if (!t->host) FATAL("Could not create a game thread.\n");
     t->started = true;
 #else
     pthread_attr_t attr;
     pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, 256ull << 20);  // guest recursion runs on the host stack
+    pthread_attr_setstacksize(&attr, GUEST_HOST_STACK);
     t->started = true;
-    pthread_create(&t->host, &attr, thread_main, t);
+    int err = pthread_create(&t->host, &attr, thread_main, t);
     pthread_attr_destroy(&attr);
+    if (err) FATAL("Could not create a game thread (%s).\n", strerror(err));
 #endif
 }
 
@@ -977,14 +987,18 @@ void kernel_dump_threads(const char *prefix) {
 // thread with its kernel wait and guest frames, and the kernel trace. At most 6 dumps per run.
 static bool (*hang_check_fn)(uint64_t limit_ns, char *why, size_t n);
 static void (*hang_state_fn)(const char *prefix);
+static bool (*hang_paused_fn)(void);  // the game deliberately stopped (iOS: the app in the background): no dump
 void kernel_hang_hooks(bool (*check)(uint64_t limit_ns, char *why, size_t n), void (*state)(const char *prefix)) {
     __atomic_store_n(&hang_state_fn, state, __ATOMIC_RELEASE);
     __atomic_store_n(&hang_check_fn, check, __ATOMIC_RELEASE);
 }
+void kernel_hang_paused_hook(bool (*paused)(void)) { __atomic_store_n(&hang_paused_fn, paused, __ATOMIC_RELEASE); }
 static void *hang_watch(void *arg) {
     uint64_t s = (uint64_t)(uintptr_t)arg, dumped_since = 0;
     for (int dumps = 0; dumps < 6;) {
         sleep(1);
+        bool (*paused)(void) = __atomic_load_n(&hang_paused_fn, __ATOMIC_ACQUIRE);
+        if (paused && paused()) continue;  // (every wait is long then: not a hang)
         char why[256];
         int n = 0;
         pthread_mutex_lock(&g_klock);
@@ -1029,7 +1043,7 @@ void kernel_reset(void) {
     memset(handles, 0, sizeof handles);
     nregions = 0;
     heap_size = 0;
-    tls_next = TLS_BASE;
+    tls_used = 0;
     next_thread_id = 0x50;
     g_rt_unwind = 0;
     pthread_mutex_unlock(&g_klock);

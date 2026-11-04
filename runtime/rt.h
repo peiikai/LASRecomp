@@ -26,22 +26,47 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 #define FATAL(...) (rt_fatal_msg(__VA_ARGS__), rt_fatal_trace())  // (runtime/crash_explain.c keeps the line)
 
 // ---- address space layout (guest addresses == host addresses)
-// macOS reserves 0x2_0000_0000-0x70_0000_0000, and guest addresses must fit in 39 bits, so the
-// guest lives in a 12.5 GB window at 0x70_0000_0000 claimed at startup (see main.c).
-#define GUEST_LO     0x7000000000ull
-#define GUEST_HI     0x7320000000ull
-#define MAIN_BASE    0x7000000000ull
-#define SDK_BASE     0x7004000000ull
-#define HLE_BASE     0x7080000000ull   // fake addresses for host-implemented functions
+// The guest lives in a window claimed at startup (see main.c), at GUEST_BASE (runtime/guest_base.h):
+// 0x70_0000_0000 by default (macOS reserves 0x2_0000_0000-0x70_0000_0000; guest addresses must fit in 39 bits).
+// The desktops keep the Switch's own 12.5 GB spacing. An iOS process has 58 GB of address space but only a few
+// free gaps of a few GB each - the kernel's reserves sit in the middle, and where differs by device and iOS
+// version - so there the regions are packed into 5.5 GB: the heap the game asks for (GetInfo 6 reports 3.2 GB, so
+// HEAP_MAX stays), the modules and the host's guest-visible memory, a GB of thread stacks (the game spreads them
+// over whatever GetInfo 14/15 reports: 38 stacks over 965 MB on a desktop run) and 512 MB of alias region
+// (svcMapMemory targets, a few at a time). Only GUEST_BASE reaches the generated code; these sizes are the
+// runtime's own, so changing them doesn't invalidate a built library.
+#include "guest_base.h"
+// (each region's offset from GUEST_BASE: constants, so the layout is checked below whether the base is one or not)
+#if PLAT_IOS                                          // (packed: the modules end at +0x5000000, main 29 MB, sdk 13 MB)
+#define GUEST_HI_OFF     0x0150000000ull                 // 5.25 GB
+#define HLE_OFF          0x0008000000ull
+#define HEAP_OFF         0x0018000000ull
+#define GUEST_STACK_OFF  0x00E8000000ull
+#define ALIAS_SIZE       0x0020000000ull                 // 512 MB
+#else
+#define GUEST_HI_OFF     0x0320000000ull                 // 12.5 GB
+#define HLE_OFF          0x0080000000ull
+#define HEAP_OFF         0x0240000000ull
+#define GUEST_STACK_OFF  0x0200000000ull
+#define ALIAS_SIZE       0x0100000000ull
+#endif
+#define GUEST_HI         (GUEST_BASE + GUEST_HI_OFF)
+#define HLE_BASE         (GUEST_BASE + HLE_OFF)
+#define HEAP_BASE        (GUEST_BASE + HEAP_OFF)
+#define GUEST_STACK_BASE (GUEST_BASE + GUEST_STACK_OFF)
+#define GUEST_LO     GUEST_BASE
 #define HLE_SIZE     0x0000100000ull
-#define TLS_BASE     0x7090000000ull
+#define TLS_BASE     (HLE_BASE + 0x0001000000ull)
 #define TLS_SIZE     0x0000100000ull
-#define HLE_HEAP     0x7092000000ull   // guest-visible memory owned by host code
+#define HLE_HEAP     (HLE_BASE + 0x0002000000ull)     // guest-visible memory owned by host code
 #define HLE_HEAP_SIZE 0x000E000000ull
-#define ALIAS_BASE   0x7100000000ull   // alias region (svcMapMemory targets)
-#define ALIAS_SIZE   0x0100000000ull
-#define HEAP_BASE    0x7240000000ull
+#define ALIAS_BASE   (GUEST_HI - ALIAS_SIZE)          // alias region (svcMapMemory targets)
 #define HEAP_MAX     0x00D0000000ull   // 3.25 GB
+_Static_assert(HLE_OFF + 0x0001000000ull + TLS_SIZE <= HLE_OFF + 0x0002000000ull &&
+               HLE_OFF + 0x0002000000ull + HLE_HEAP_SIZE <= HEAP_OFF, "the HLE regions overlap");
+#if PLAT_IOS  // (packed end to end: the heap, then the stacks (kernel.h checks their end), then the alias region)
+_Static_assert(HEAP_OFF + HEAP_MAX <= GUEST_STACK_OFF, "the heap runs into the stacks");
+#endif
 
 // ---- loader.c
 typedef struct Module {

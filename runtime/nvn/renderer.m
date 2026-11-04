@@ -2033,6 +2033,8 @@ static void bind_textures(int stage, ShaderInfo *si) {
                 extern int texpatch_heart_kind(int id);
                 extern bool texpatch_is_item_cursor(int id);
                 int id = renderer_texpatch_of(e->tex);
+                extern void texpatch_note_draw(int id);
+                texpatch_note_draw(id);
                 if (!draw_bottle) draw_bottle = texpatch_bottle_kind(id);
                 if (texpatch_bottle_kind(id) == 1) {  // the Hint Sheet: the dungeon map's icon in place (hint_sheet.c)
                     extern bool hint_sheet_icon_draw(const float *ui, uint32_t ui_size);
@@ -5286,8 +5288,11 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         }
         bool up = !up_nearest && (dw > sw || dh > sh);
         id<MTLTexture> sdepth = s;
-        if (s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8)
-            sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
+        bool packed_ds = s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
+#if !TARGET_OS_IPHONE
+        packed_ds |= s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8;  // (macOS only; iOS never makes one)
+#endif
+        if (packed_ds) sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
         float r[4] = {(float)sx0 / s.width, (float)sy0 / s.height, (float)sw / s.width, (float)sh / s.height};
         [e setRenderPipelineState:pipe];
         [e setDepthStencilState:always];

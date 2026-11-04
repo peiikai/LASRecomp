@@ -11,7 +11,7 @@
 #include "../rando.h"
 #include "../settings.h"
 
-#define MAIN_BASE 0x7000000000ull
+// MAIN_BASE comes from rt.h (via hle.h) / runtime/guest_base.h
 
 // 360-degree movement: main+0xded9f0 (tools/patches.py SNAP_DIR_SITE) turns the stick vector (s1 = x, s2 = y) into
 // one of 8 directions, returned in w0 as an angle (full turn = 2^32, 0 = down, 2^30 = right). With the setting on

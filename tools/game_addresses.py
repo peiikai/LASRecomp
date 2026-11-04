@@ -7,15 +7,27 @@ alongside them.
 
 ADDRESS is empty until a version is selected (select_version / select_build_id): the patch tables in patches.py are
 built from it on import, so select first. An unknown build ID is an error: there is no fallback table.
+
+The tables hold the Switch's addresses (main at 0x70_0000_0000); LARECOMP_GUEST_BASE in the environment moves
+them to the build's guest base, as -DLARECOMP_GUEST_BASE does for the runtime (runtime/guest_base.h).
 """
+import os
 from pathlib import Path
 import re
 import sys
 from types import SimpleNamespace
 
+SWITCH_BASE = 0x7000000000
+GUEST_BASE = int(os.environ.get('LARECOMP_GUEST_BASE', '0x7000000000'), 0)
+
 
 class UnknownGameVersion(Exception):
     pass
+
+
+def from_switch(a):
+    """A table address at the build's guest base (sizes, below the window, as they are)."""
+    return a - SWITCH_BASE + GUEST_BASE if a >= SWITCH_BASE else a
 
 
 def load_table(path):
@@ -26,7 +38,7 @@ def load_table(path):
         match = re.fullmatch(r'GA_ADDR\(([A-Z][A-Z0-9_]*),\s+(0x[0-9a-f]+)\)', line)
         if not match or match[1] in values:
             raise ValueError(f'Invalid or duplicate game-address definition: {line}')
-        values[match[1]] = int(match[2], 16)
+        values[match[1]] = from_switch(int(match[2], 16))
     if not values:
         raise ValueError('Empty game-address table')
     return values
@@ -88,5 +100,13 @@ def select_build_id(build_id):
 
 
 def addr_text(code):
-    """Expand @NAME@ as hex digits inside generated-C addresses, symbols or labels."""
+    """Expand @NAME@ in generated C by its role: `0x@NAME@ull` (a value) becomes GUEST_ADDR(<offset from the guest base>), as
+    the generator writes every address (runtime/cpu.h); `f_@NAME@` (a function's name) its Switch address, as the
+    generator names them; `L_@NAME@` (a label in the function) the address at the build's base."""
+    def value(m):
+        return f'GUEST_ADDR(0x{getattr(ADDRESS, m[1]) - GUEST_BASE:x}ull)'
+    def name(m):
+        return f'f_{getattr(ADDRESS, m[1]) - GUEST_BASE + SWITCH_BASE:x}'
+    code = re.sub(r'0x@([A-Z][A-Z0-9_]*)@ull', value, code)
+    code = re.sub(r'f_@([A-Z][A-Z0-9_]*)@', name, code)
     return re.sub(r'@([A-Z][A-Z0-9_]*)@', lambda m: f'{getattr(ADDRESS, m[1]):x}', code)

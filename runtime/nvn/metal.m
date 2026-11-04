@@ -4,9 +4,17 @@
 #include "ui/menu.h"
 // Metal renderer for the NVN layer: window, textures, command execution, presentation.
 #include <sys/stat.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
+#import <UIKit/UIKit.h>
+#else
 #import <AppKit/AppKit.h>
+#endif
 #import <Metal/Metal.h>
+#if __has_include(<MetalFX/MetalFX.h>)  // (not in the iOS Simulator SDK)
 #import <MetalFX/MetalFX.h>
+#define HAVE_METALFX 1
+#endif
 #include "output_scale.h"
 #import <QuartzCore/CAMetalLayer.h>
 #include <SDL3/SDL.h>
@@ -16,6 +24,7 @@
 #include "nvn.h"
 #include "rqueue.h"
 #include "../game_addresses.h"
+#include "../rando.h"
 #include "renderer.h"
 #include "pace.h"
 #include "texpatch.h"
@@ -932,6 +941,12 @@ static void save_png(id<MTLTexture> tex, const char *path) { renderer_save_textu
 
 // MetalFX spatial upscaling (Video tab "Upscaler" = MetalFX). metalfx_upscale() decides (and sets up the scaler for
 // this input / output size); metalfx_encode() runs it and returns the upscaled image.
+#ifndef HAVE_METALFX
+static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in, float fx, float fy, double ow_d, double oh_d) {
+    (void)cb; (void)in; (void)fx; (void)fy; (void)ow_d; (void)oh_d;
+    return nil;
+}
+#else
 static id<MTLFXSpatialScaler> g_fx;
 static id<MTLTexture> g_fx_out;
 static NSUInteger g_fx_iw, g_fx_ih, g_fx_ow, g_fx_oh;
@@ -967,6 +982,7 @@ static id<MTLTexture> metalfx_upscale(id<MTLCommandBuffer> cb, id<MTLTexture> in
     }
     return g_fx && g_fx_out ? g_fx_out : nil;
 }
+#endif
 // SMAA 1x (Video tab "Anti-aliasing"; third_party/smaa, MIT; as runtime/nvn/vulkan/shaders.c / exec.c): luma edges ->
 // blending weights -> neighbourhood blending, at the game image's size, before the present / MetalFX. The reference
 // SMAA.hlsl has no Metal mode: it is built through its SMAA_CUSTOM_SL porting macros, with a few textual fixes for
@@ -1119,12 +1135,17 @@ static id<MTLTexture> smaa_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in, fl
 }
 
 static id<MTLTexture> metalfx_encode(id<MTLCommandBuffer> cb, id<MTLTexture> in, float fx, float fy) {
+#ifdef HAVE_METALFX
     g_fx.colorTexture = in;
     g_fx.inputContentWidth = (NSUInteger)lround(in.width * fx);
     g_fx.inputContentHeight = (NSUInteger)lround(in.height * fy);
     g_fx.outputTexture = g_fx_out;
     [g_fx encodeToCommandBuffer:cb];
     return g_fx_out;
+#else
+    (void)cb; (void)fx; (void)fy;
+    return in;  // (never reached: metalfx_upscale() returned nil)
+#endif
 }
 
 
@@ -1245,6 +1266,44 @@ void renderer_save_game_texture(NvnTexture *t, id<MTLTexture> tex, const char *p
 static double last_fps_time;
 
 void backend_present(NvnTexture *t);
+
+#if TARGET_OS_IPHONE
+// ---- the app in the background (iOS): no drawing (a Metal drawable there is a crash), and the game waits in its next
+// present - it pauses where it is, no CPU, no battery - until the app is in front again. The settings are saved on
+// the way out: iOS ends backgrounded apps without exit(), so the exit handlers never run.
+// (SDL 3 never queues these events: they reach an event watcher only, on the main thread as UIKit posts them)
+static atomic_bool g_background;
+static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
+    (void)ud;
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND || e->type == SDL_EVENT_DID_ENTER_BACKGROUND) {
+        if (!atomic_exchange(&g_background, true)) {
+            LOG("[metal] in the background: game paused\n");
+            input_rumble_stop();
+            settings_save();
+            plat_ios_shortcuts_sync();  // (the seed list as the Home Screen will offer it)
+        }
+    } else if ((e->type == SDL_EVENT_WILL_ENTER_FOREGROUND || e->type == SDL_EVENT_DID_ENTER_FOREGROUND) && atomic_load(&g_background)) {
+        atomic_store(&g_background, false);
+        LOG("[metal] in the foreground: game resumed\n");
+    }
+    return true;
+}
+// the start screen's own loop (runtime/ui/launcher.mm): no drawing in the background
+bool ui_in_background(void) { return atomic_load(&g_background); }
+static void background_watch_install(void) {
+    SDL_AddEventWatch(background_watch, NULL);
+    extern void kernel_hang_paused_hook(bool (*)(void));
+    kernel_hang_paused_hook(ui_in_background);  // (the kernel's hang watchdog: a backgrounded game isn't hung)
+}
+static void wait_foreground(void) {  // (the presenting thread)
+    while (atomic_load(&g_background)) SDL_Delay(50);
+}
+#else
+static void background_watch_install(void) {}
+static void wait_foreground(void) {}
+bool ui_in_background(void) { return false; }
+#endif
+
 // Present the last frame again (the game thread waits in a host dialog, e.g. the software keyboard): the overlay
 // keeps drawing and taking input.
 void backend_represent(void) {
@@ -1258,6 +1317,7 @@ void backend_represent(void) {
 static int g_presents_inflight;  // present command buffers committed and not yet completed (each holds a drawable)
 void backend_present_now(NvnTexture *t, uint64_t frame) {
     if (rq_stopping()) return;  // quitting: no drawable after the window closed (#40, as Vulkan)
+    wait_foreground();  // (iOS: the app in the background - the game pauses here)
     extern void renderer_submit(void);
     extern void renderer_texture_will_read(NvnTexture *t);
     renderer_texture_will_read(t);  // (a recorded clear of the image becomes its pass first)
@@ -1591,9 +1651,11 @@ void ui_window_init(void) {
     else rt_window_size(&win_w, &win_h);
     // LARECOMP_HIDDEN=1: never shown (automated test runs render off screen without taking the user's focus)
     SDL_WindowFlags wflags = SDL_WINDOW_METAL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+    if (PLAT_IOS) wflags |= SDL_WINDOW_BORDERLESS;  // (SDL hides the status bar only for a borderless / fullscreen window)
     if (getenv("LARECOMP_HIDDEN")) wflags |= SDL_WINDOW_HIDDEN;
     window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
+    background_watch_install();  // (iOS: the app in the background pauses the game)
     rt_window_icon(window);
     rt_window_remember(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows
@@ -1607,7 +1669,9 @@ void ui_window_init(void) {
     // The display's vsync stays on: without it frames show as soon as they're done, which tears (seen on a 5120x1440
     // display), for ~2-3 fps near the limit at most (the game paces itself to vi.c's emulated 60 Hz vsync, and the two
     // clocks drift). LARECOMP_DISPLAY_SYNC=0: off (tests).
+#if !TARGET_OS_IPHONE
     layer.displaySyncEnabled = !getenv("LARECOMP_DISPLAY_SYNC") || atoi(getenv("LARECOMP_DISPLAY_SYNC")) != 0;
+#endif  // (iOS: always synced to the display)
     layer.framebufferOnly = getenv("LARECOMP_WINDOW_SHOT") ? NO : YES;
 }
 
@@ -1630,6 +1694,24 @@ void backend_quit(void) {
     }
 }
 
+#if TARGET_OS_IPHONE
+// A Home Screen quick action while the game runs: its seed boots in place, as the Randomizer tab's Play (the seed
+// being played: nothing); one deleted since: the start screen
+static void quick_action_in_game(void) {
+    char seed[128];
+    if (!plat_ios_take_play_request(seed, sizeof seed)) return;
+    if (!strcmp(seed, g_settings.rando_seed)) return;
+    if (seed[0] && !rando_seed_there(seed)) {
+        LOG("[metal] quick action: seed %s is gone\n", seed);
+        rt_request_reboot(RT_REBOOT_TITLE);
+        return;
+    }
+    LOG("[metal] quick action: playing %s\n", seed[0] ? seed : "vanilla");
+    rando_select(seed);
+    rt_request_reboot(RT_REBOOT_GAME);
+}
+#endif
+
 int ui_run(void) {
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
@@ -1642,6 +1724,9 @@ int ui_run(void) {
     atomic_store(&ui_ready, true);
     for (;;) {
         if (rt_reboot_requested()) return rt_reboot_requested();  // (runtime/main.c tears the game down)
+#if TARGET_OS_IPHONE
+        quick_action_in_game();
+#endif
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
             input_rumble_poll();

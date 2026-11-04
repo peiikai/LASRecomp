@@ -1810,3 +1810,13 @@
 {"Configure the smoothing of jagged edges. SMAA keeps textures sharp.", "Stelt het gladmaken van gekartelde randen in. SMAA houdt texturen scherp."},
 {"Configure the shape of the picture. Unlocked fills the window, Original keeps 16:9.", "Stelt de vorm van het beeld in. Ontgrendeld vult het venster, Origineel houdt 16:9."},
 {"Apply", "Toepassen"},
+// iOS
+{"In the Files app, touch and hold the data folder and choose Keep Downloaded, so its files stay on this iPhone.", "Houd in Bestanden de gegevensmap ingedrukt en kies Gedownload houden, zodat de bestanden op deze iPhone blijven."},
+{"!  This folder is synced by %s", "!  Deze map wordt gesynchroniseerd door %s"},
+{"About %.0f GB of game files will upload to your %s.", "Ongeveer %.0f GB aan spelbestanden wordt naar je %s geüpload."},
+{"On My iPad", "Op mijn iPad"},
+{"On My iPhone", "Op mijn iPhone"},
+{"This folder is synced by %s too.", "Deze map wordt ook door %s gesynchroniseerd."},
+{"LAS Recomp needs to restart to use the new folder. It closes now; open it again.", "LAS Recomp moet opnieuw starten om de nieuwe map te gebruiken. Het sluit nu; open het opnieuw."},
+{"Open in Files", "Open in Bestanden"},
+{"Some of LAS Recomp's files aren't on this iPhone. They download as the game reads them, so it may be very slow or close.", "Sommige bestanden van LAS Recomp staan niet op deze iPhone. Ze worden gedownload zodra het spel ze leest, dus het kan erg traag zijn of sluiten."},

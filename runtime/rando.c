@@ -23,7 +23,6 @@
 #include "hle.h"
 #include "settings.h"
 
-#define MAIN_BASE 0x7000000000ull
 #define WORD_TAB 256
 
 static struct { uint64_t addr; uint32_t word; } words[WORD_TAB];
@@ -153,6 +152,16 @@ void rando_select(const char *seed) {
     strlcpy(g_settings.rando_seed, seed ? seed : "", sizeof g_settings.rando_seed);
     settings_save();
     unsetenv("LARECOMP_RANDO_SEED");
+}
+
+bool rando_seed_there(const char *seed) {
+    if (!seed || !seed[0] || seed[0] == '.' || strchr(seed, '/') || strchr(seed, '\\')) return false;
+    char p[600];
+    struct stat sb;
+    snprintf(p, sizeof p, "rando/%s/settings.json", seed);
+    if (stat(p, &sb) || !S_ISREG(sb.st_mode)) return false;
+    snprintf(p, sizeof p, "rando/%s/romfs", seed);
+    return !stat(p, &sb) && S_ISDIR(sb.st_mode);
 }
 
 uint32_t rando_word(uint64_t addr) {

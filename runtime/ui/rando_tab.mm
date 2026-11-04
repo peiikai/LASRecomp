@@ -24,6 +24,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../paths.h"
+#include "../platform.h"
 #include "../rando.h"
 #include "../settings.h"
 extern const char *g_romfs_dir;
@@ -99,6 +100,9 @@ static void scan(void) {
     closedir(d);
     std::sort(g_seeds.begin(), g_seeds.end(), [](const Seed &a, const Seed &b) { return a.mtime > b.mtime; });
     g_scanned = true;
+#if PLAT_IOS
+    plat_ios_shortcuts_sync();  // (the Home Screen's seed quick actions: made, renamed or deleted here)
+#endif
 }
 
 // ---- generation (background process)
@@ -404,6 +408,10 @@ static std::string clean_name(const char *in) {  // a seed name as a folder name
 static std::vector<std::string> generator_cmd(void) {
     if (const char *g = getenv("LARECOMP_RANDO_GEN")) return {g};
     char p[1024], s[1024];  // (runtime/paths.h: <exe dir>/rando-gen/, <exe dir>/../Resources/rando-gen/, the source tree)
+#if PLAT_IOS
+    // the script itself: plat_spawn runs it in the embedded Python (runtime/platform/ios_python.m)
+    if (rt_resource("rando-gen/las_headless.py", NULL, p, sizeof p)) return {p};
+#endif
     if (rt_resource("rando-gen/rando-gen" PLAT_EXE_SUFFIX, NULL, p, sizeof p)) return {p};
     if (rt_resource(NULL, "third_party/LAS-Randomizer/" PLAT_VENV_PYTHON, p, sizeof p) &&
         rt_resource(NULL, "tools/rando/las_headless.py", s, sizeof s)) return {p, s};
@@ -1471,7 +1479,7 @@ extern "C" void rando_tab_draw(float scale) {
         char n[16];
         snprintf(n, sizeof n, "%d", (int)g_seeds.size());
         bool open = opt_link(k_cat_name[c], NULL, c == CAT_SEEDS ? n : c == CAT_PRESETS ? cur_preset.c_str() : NULL);
-        bool clicked = ImGui::IsItemClicked();
+        bool clicked = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);  // (the row fires on the release)
         if (c == g_cat) take_focus(FOCUS_CAT);
         bool pick = (opt_item_nav_focused() && g_cat != c) || open;  // (moving down the list shows each)
         if (pick && g_cat != c)
