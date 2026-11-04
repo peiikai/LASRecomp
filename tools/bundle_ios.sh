@@ -26,7 +26,7 @@ LIB=${2:-$(dirname "$EXE")/lasgame.dylib}
 SKELETON=${SKELETON:-}
 APP=${APP:-build/ios/LAS Recomp.app}
 BUNDLE_ID=${BUNDLE_ID:-com.peiikai.lasrecomp.ios}
-IOS_MIN=${IOS_MIN:?the Makefile's IOS_MIN (run as make ipa / ios-skeleton)}
+IOS_MIN=${IOS_MIN:?the Makefile sets IOS_MIN - run as make ipa / ios-skeleton}
 if [ -n "${IOS_SIM:-}" ]; then
     [ -n "$SKELETON" ] || { echo "IOS_SIM=1 needs SKELETON=1 (no game code in the simulator)"; exit 1; }
     PLATFORM_NAME=iphonesimulator; PLATFORM_KEY=iPhoneSimulator; PYSLICE_NAME=ios-arm64_x86_64-simulator

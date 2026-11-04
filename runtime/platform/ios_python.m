@@ -7,8 +7,11 @@
 // plat_spawn (runtime/platform.h) here runs a Python script as a thread that behaves like the process the other
 // platforms start: argv[0] ends in .py, the rest is its sys.argv, its stdout / stderr go to log_path, sys.exit(n) is
 // its exit code (an uncaught exception: 1, with the traceback in the log), plat_proc_wait / plat_proc_kill work on
-// it. A fresh start each time, as a process would have: each run is a sub-interpreter of its own (Py_NewInterpreter,
-// ended with the run), so no module, class attribute or counter of one run is seen by the next.
+// it. One interpreter for the app's life: a fresh start for the generator's own code each time, as a process would
+// have, comes from dropping its modules from sys.modules before a run (the runner below). Not a sub-interpreter per
+// run: oead and quicktex are pybind11 modules without multiple_interpreters support - CPython's legacy kind let
+// them in, but their types and pybind11's internals are the process's, and each Py_EndInterpreter left them behind
+// for the next; the C extensions are imported once and reused, which they are made for.
 #import <Foundation/Foundation.h>
 #include <Python.h>
 #include <dlfcn.h>
@@ -127,7 +130,6 @@ typedef struct {
     pthread_t thread;
     _Atomic int exit_code;        // -1 while running
     _Atomic unsigned long tid;    // Python's thread id (for the interrupt), 0 before it runs
-    PyInterpreterState *interp;   // its sub-interpreter while it runs (read and written under the GIL)
     char **argv;                  // script path first
     char *log;
     bool append;
@@ -143,10 +145,23 @@ static const char *RUNNER =
     "        os.write(self.fd, s.encode('utf-8', 'replace')); return len(s)\n"
     "    def flush(self): pass\n"
     "    def isatty(self): return False\n"
-    "def _run(argv, log_path, append):\n"
+    "def _run(argv, log_path, append, gen_dir):\n"
     "    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC), 0o644)\n"
     "    out = _FdOut(fd)\n"
-    "    cwd = os.getcwd()\n"
+    "    saved = (sys.argv, sys.stdout, sys.stderr, os.getcwd())\n"
+    "    # a fresh import of the generator's own modules, as a new process would have (by real path: the bundle is\n"
+    "    # /var/containers/... to NSBundle and /private/var/containers/... to the importer). Namespace packages\n"
+    "    # (RandomizerCore.Tools has no __init__.py) have no __file__, only __path__; left in place one would hand\n"
+    "    # out its old submodules as attributes - with event_tools' AutoEvent counter where the last run left it.\n"
+    "    # The PySide6 stubs the generator puts in go too. The C extensions (oead, quicktex, PIL...) stay loaded.\n"
+    "    gen_dir = os.path.realpath(gen_dir) + os.sep\n"
+    "    def under(m):\n"
+    "        paths = [getattr(m, '__file__', None)] + list(getattr(m, '__path__', None) or [])\n"
+    "        return any(p and os.path.realpath(p).startswith(gen_dir) for p in paths)\n"
+    "    # (chosen first, removed after: a namespace __path__ recomputes itself through its parent in sys.modules)\n"
+    "    drop = [name for name, m in list(sys.modules.items()) if under(m) or name == 'PySide6' or name.startswith('PySide6.')]\n"
+    "    for name in drop: del sys.modules[name]\n"
+    "    if drop: out.write('(%d of the generator\\'s modules re-imported)\\n' % len(drop))\n"
     "    sys.argv, sys.stdout, sys.stderr = list(argv), out, out\n"
     "    code = 0\n"
     "    try:\n"
@@ -161,8 +176,8 @@ static const char *RUNNER =
     "    except BaseException:\n"
     "        out.write(traceback.format_exc()); code = 1\n"
     "    finally:\n"
-    "        sys.stdout = sys.stderr = _FdOut(2)\n"
-    "        try: os.chdir(cwd)\n"  // (the working directory is the process's: the data root)
+    "        sys.argv, sys.stdout, sys.stderr = saved[0], saved[1], saved[2]\n"
+    "        try: os.chdir(saved[3])\n"  // (the working directory is the process's: the data root)
     "        except OSError: pass\n"
     "        os.close(fd)\n"
     "    return code\n";
@@ -170,34 +185,28 @@ static const char *RUNNER =
 static void *proc_main(void *arg) {
     PyProc *p = arg;
     PyGILState_STATE gs = PyGILState_Ensure();
-    PyThreadState *main_ts = PyThreadState_Get();
-    PyThreadState *sub = Py_NewInterpreter();  // (the legacy kind: shared GIL, the main config's sys.path / hash seed)
+    atomic_store(&p->tid, PyThread_get_thread_ident());
     int code = 1;
-    if (!sub) {
-        PyThreadState_Swap(main_ts);
-        fprintf(stderr, "[py] no sub-interpreter for %s\n", p->argv[0]);
-    } else {
-        p->interp = PyThreadState_GetInterpreter(sub);
-        atomic_store(&p->tid, PyThread_get_thread_ident());
-        PyObject *globals = PyModule_GetDict(PyImport_AddModule("__main__"));
+    PyObject *globals = PyModule_GetDict(PyImport_AddModule("__main__"));
+    PyObject *run = PyDict_GetItemString(globals, "_run");
+    if (!run) {
         PyObject *r = PyRun_String(RUNNER, Py_file_input, globals, globals);
         Py_XDECREF(r);
-        PyObject *run = PyDict_GetItemString(globals, "_run");
-        if (run) {
-            int n = 0;
-            while (p->argv[n]) n++;
-            PyObject *argv = PyList_New(n);
-            for (int i = 0; i < n; i++) PyList_SET_ITEM(argv, i, PyUnicode_FromString(p->argv[i]));
-            r = PyObject_CallFunction(run, "OsO", argv, p->log, p->append ? Py_True : Py_False);
-            if (r) { code = (int)PyLong_AsLong(r); Py_DECREF(r); }
-            else PyErr_Print();
-            Py_DECREF(argv);
-        } else {
-            PyErr_Print();
-        }
-        p->interp = NULL;
-        Py_EndInterpreter(sub);
-        PyThreadState_Swap(main_ts);
+        run = PyDict_GetItemString(globals, "_run");
+    }
+    if (run) {
+        int n = 0;
+        while (p->argv[n]) n++;
+        PyObject *argv = PyList_New(n);
+        for (int i = 0; i < n; i++) PyList_SET_ITEM(argv, i, PyUnicode_FromString(p->argv[i]));
+        char gen_dir[1100];
+        snprintf(gen_dir, sizeof gen_dir, "%s/rando-gen", plat_ios_bundle_dir());
+        PyObject *r = PyObject_CallFunction(run, "OsOs", argv, p->log, p->append ? Py_True : Py_False, gen_dir);
+        if (r) { code = (int)PyLong_AsLong(r); Py_DECREF(r); }
+        else PyErr_Print();
+        Py_DECREF(argv);
+    } else {
+        PyErr_Print();
     }
     PyGILState_Release(gs);
     atomic_store(&p->exit_code, code);
@@ -260,13 +269,7 @@ void plat_proc_kill(PlatProc h) {
     unsigned long tid = atomic_load(&p->tid);
     if (atomic_load(&p->exit_code) < 0 && tid) {  // KeyboardInterrupt at its next bytecode (the runner reports 137)
         PyGILState_STATE gs = PyGILState_Ensure();
-        if (p->interp) {  // (SetAsyncExc looks in the current interpreter's threads: a thread state of the run's)
-            PyThreadState *t = PyThreadState_New(p->interp), *prev = PyThreadState_Swap(t);
-            PyThreadState_SetAsyncExc(tid, PyExc_KeyboardInterrupt);
-            PyThreadState_Clear(t);
-            PyThreadState_Swap(prev);
-            PyThreadState_Delete(t);
-        }
+        PyThreadState_SetAsyncExc(tid, PyExc_KeyboardInterrupt);
         PyGILState_Release(gs);
     }
     pthread_join(p->thread, NULL);
@@ -300,8 +303,8 @@ void plat_ios_python_selftest(void) {
     char err[512];
     if (plat_ios_python_run(src, err, sizeof err)) { fprintf(stderr, "[py] selftest FAILED: %s\n", err); return; }
     // then the generator itself as a "process", on a default seed, like the Rando tab does (Documents/pytest-seed/),
-    // and once more into pytest-seed2/: the second run is a second sub-interpreter in the same process, and must give
-    // the same files (state left in a C extension across interpreters would show here)
+    // and once more into pytest-seed2/: the second run in the same interpreter must give the same files (state
+    // left in a module across runs would show here)
     char romfs[1100];
     snprintf(romfs, sizeof romfs, "%s/extracted/romfs", plat_ios_documents());
     struct stat st;
@@ -353,7 +356,7 @@ void plat_ios_python_selftest(void) {
     if (plat_ios_python_run(src2, err, sizeof err)) fprintf(stderr, "[py] second-run compare FAILED: %s\n", err);
     free(src2);
 
-    // the Randomizer tab's Cancel: a third run killed a second in, then a small script in a new interpreter after it
+    // the Randomizer tab's Cancel: a third run killed a second in, then a small script after it
     char script[1100], dir[1100], req[1100], log[1100], after[1100];
     snprintf(script, sizeof script, "%s/rando-gen/las_headless.py", plat_ios_bundle_dir());
     snprintf(dir, sizeof dir, "%s/pytest-kill", plat_ios_documents());
@@ -383,9 +386,12 @@ void plat_ios_python_selftest(void) {
     snprintf(log2, sizeof log2, "%s/after.log", dir);
     PlatProc q = plat_spawn(argv2, log2, false);
     int rc = q ? plat_proc_wait(q, true) : 255;
-    char out[16] = "";
-    if ((f = fopen(log2, "r"))) { if (!fgets(out, sizeof out, f)) out[0] = 0; fclose(f); }
-    bool fresh = !strcmp(out, "False\n");  // (the killed run's PySide6 stubs not in the next interpreter)
+    char out[16] = "", line[128];
+    if ((f = fopen(log2, "r"))) {  // (its last line: the runner's own note comes first)
+        while (fgets(line, sizeof line, f)) snprintf(out, sizeof out, "%s", line);
+        fclose(f);
+    }
+    bool fresh = !strcmp(out, "False\n");  // (the killed run's PySide6 stubs dropped before the next run)
     fprintf(stderr, "[py] kill: %s (stopped in %llu ms, next run exit %d, %s)\n", killed && rc == 3 && fresh ? "ok" : "FAILED",
-            kill_ms, rc, fresh ? "a fresh interpreter" : "state left over");
+            kill_ms, rc, fresh ? "the generator's modules dropped" : "state left over");
 }

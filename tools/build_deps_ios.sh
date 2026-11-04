@@ -7,7 +7,7 @@
 # Needs: Xcode (iOS SDK), cmake and ninja (brew), a host python of the embedded version PYV (brew python@<PYV>).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MIN=${IOS_MIN:?the Makefile's IOS_MIN (run as make deps-ios)}
+MIN=${IOS_MIN:?the Makefile sets IOS_MIN - run as make deps-ios}
 if [ -n "${SIM:-}" ]; then
     SDKNAME=iphonesimulator; MINFLAG="-mios-simulator-version-min=$MIN"; SLICENAME=ios-arm64_x86_64-simulator; TAG=ios-sim
 else
@@ -90,9 +90,14 @@ HOSTPY=${HOSTPY:-$(command -v python$PYV || true)}
 [ -x "$HOSTPY" ] || { echo "a host python$PYV is needed to cross-build the Python packages (brew install python@$PYV)"; exit 1; }
 HOSTPYV=$("$HOSTPY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
 [ "$HOSTPYV" = "$PYV" ] || { echo "$HOSTPY is Python $HOSTPYV, the embedded one is $PYV: wheels would carry the wrong ABI"; exit 1; }
+# pybind11: oead builds against the copy in its sdist (lib/pybind11), quicktex against the venv's (its pyproject's
+# ~=2.10 is bypassed by --no-build-isolation). The two must agree: a pybind11 module only sees the types of modules
+# built with the same internals version (__pybind11_internals_vN), and the runtime passes oead's objects to nothing
+# else today, but a mismatch is checked below all the same. 3.1.0 is what oead 1.3.0 vendors.
+PYBIND11=3.1.0
 if [ ! -x "$P/pyvenv/bin/python" ]; then  # the cross venv: pip builds wheels for iOS from it
     "$HOSTPY" -m venv "$P/pyvenv"
-    "$P/pyvenv/bin/pip" install -q --upgrade pip setuptools wheel "scikit-build-core>=0.10" "setuptools-scm>=8" pybind11
+    "$P/pyvenv/bin/pip" install -q --upgrade pip setuptools wheel "scikit-build-core>=0.10" "setuptools-scm>=8" "pybind11==$PYBIND11"
     "$P/pyvenv/bin/python" "$SLICE/platform-config/arm64-$SDKNAME/make_cross_venv.py" "$P/pyvenv"
 fi
 EXT=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')  # .cpython-313-iphoneos.so
@@ -141,6 +146,8 @@ mkdir -p "$P/wheels"
 OEAD_WHL=oead-1.3.0-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
 if [ ! -f "$P/wheels/$OEAD_WHL" ]; then
     unpack oead-1.3.0.tar.gz oead-$TAG
+    v=$(grep -E '^#define PYBIND11_VERSION_(MAJOR|MINOR|PATCH) ' "$S/oead-$TAG/lib/pybind11/include/pybind11/detail/common.h" | awk '{print $3}' | paste -sd. -)
+    [ "$v" = "$PYBIND11" ] || { echo "oead vendors pybind11 $v, the venv has $PYBIND11: move PYBIND11 in tools/build_deps_ios.sh"; exit 1; }
     (cd "$S/oead-$TAG" && git init -q && PATH="$SLICE/bin:$PATH" IPHONEOS_DEPLOYMENT_TARGET=$MIN \
         SETUPTOOLS_SCM_PRETEND_VERSION=1.3.0 CMAKE_GENERATOR=Ninja CFLAGS="$MAPFLAGS" CXXFLAGS="$MAPFLAGS" \
         "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
@@ -191,6 +198,9 @@ if [ ! -f "$SP/oead$EXT" ]; then
     unzip -qo "$P/wheels/$QUICKTEX_WHL" -d "$SP" && rm -rf "$SP/quicktex/cli"  # (_quicktex: a top-level module)
     rm -rf "$SP"/*.dist-info "$SP"/oead-stubs
 fi
+# (every pybind11 module in site-packages on one internals version: oead's and quicktex's)
+tags=$(for so in "$SP/oead$EXT" "$SP/_quicktex$EXT"; do strings "$so" | grep -o '__pybind11_internals_v[0-9]*' | sort -u | head -1; done | sort -u)
+[ "$(echo "$tags" | wc -l | tr -d ' ')" = 1 ] && [ -n "$tags" ] || { echo "the pybind11 modules disagree on their internals: $tags"; exit 1; }
 
 echo "build/deps-$TAG ready ($SDKNAME $MIN):"
 ls -la "$P"/lib/*.a "$P"/lib/libkeystone.0.dylib
