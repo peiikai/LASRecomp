@@ -265,6 +265,8 @@ echo "$IPA ($(du -h "$IPA" | cut -f1))"
 if [ -n "${DEVICE:-}" ]; then
     xcrun devicectl device install app --device "$DEVICE" "$APP"
     xcrun devicectl device process launch --device "$DEVICE" --terminate-existing "$BUNDLE_ID"
-    echo "log: Documents/lasrecomp.log (Files app, or: xcrun devicectl device copy from --device $DEVICE" \
-         "--domain-type appDataContainer --domain-identifier $BUNDLE_ID --source Documents/lasrecomp.log --destination .)"
+    echo "log: lasrecomp.log in the data folder (Files app; with the data folder elsewhere, launch with" \
+         "--environment-variables '{\"LARECOMP_LOG_DOCUMENTS\":\"1\"}' to keep it in Documents), or: xcrun devicectl device" \
+         "copy from --device $DEVICE --domain-type appDataContainer --domain-identifier $BUNDLE_ID" \
+         "--source Documents/lasrecomp.log --destination ."
 fi

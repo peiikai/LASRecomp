@@ -132,10 +132,12 @@ attribute, so the `removexattr` on the linker is gone too.
   providers (Google Drive, Dropbox) aren't told apart from On My iPhone - all of them are `File Provider Storage`
   folders. A move's notes (`.lasrecomp_move_from` / `_to`) hold the other folder's bookmark, as the pointer file
   does, so an interrupted move is finished or undone at the next start wherever its folders are. A move in the
-  background freezes with the app (no `beginBackgroundTask`). The log stays in Documents, unlike the desktop (it is
-  there even when the chosen folder isn't). Untested: an external drive, a move killed halfway. Checked on an
-  iPhone 15 Pro: Move from Documents and from one outside folder to another, a non-empty folder (data in its
-  `LAS Recomp`), another folder picked with the data in iCloud Drive, the trash, the quick actions from the new root.
+  background freezes with the app (no `beginBackgroundTask`). The log is in the data folder, as on the desktop
+  (Documents when the chosen one isn't there); `LARECOMP_LOG_DOCUMENTS=1` keeps it in Documents, where `devicectl`
+  reaches it. Untested: a move killed halfway. Checked on an iPhone 15 Pro: Move from Documents and from one
+  outside folder to another, a non-empty folder (data in its `LAS Recomp`), another folder picked with the data in
+  iCloud Drive, the trash, the quick actions from the new root, a USB drive (Transcend) as the data folder; an SMB
+  share on Lime.
 - ~~**Left / right values have no touch gesture.**~~ A row's `◀ value ▶` arrows are tap targets (larger on the
   phone's cards, `option_rows.mm`), and the start page's seed choice is `‹ [choice] ›` buttons that also take a
   sideways swipe (`launcher.mm`). A swipe on an option row still scrolls rather than steps (touch_ui.h: a sideways

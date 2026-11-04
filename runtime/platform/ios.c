@@ -25,6 +25,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "../paths.h"
 #include "../platform.h"
 #include "posix_log.h"
 
@@ -113,11 +114,14 @@ uint64_t plat_ios_memory_limit(void) {
     return avail + vi.phys_footprint;
 }
 
-// stdout / stderr -> lasrecomp.log in Documents (five backups, posix_log.h), unless LARECOMP_LOG_STDERR is set
-// (Xcode / devicectl console runs).
+// stdout / stderr -> lasrecomp.log in the data folder, as on the desktop (five backups, posix_log.h; Documents when
+// the chosen one isn't there), unless LARECOMP_LOG_STDERR is set (Xcode / devicectl console runs).
+// LARECOMP_LOG_DOCUMENTS=1: in Documents whatever the data folder (where devicectl can pull it from).
 void plat_init(void) {
-    const char *dir = plat_ios_documents();
-    if (!getenv("LARECOMP_LOG_STDERR") && dir && *dir) {
+    char dir[1024];
+    if (getenv("LARECOMP_LOG_DOCUMENTS") || !rt_data_root_early(dir, sizeof dir))
+        snprintf(dir, sizeof dir, "%s", plat_ios_documents());
+    if (!getenv("LARECOMP_LOG_STDERR") && dir[0]) {
         mkdir(dir, 0755);
         session_log_open(dir, g_log_path, sizeof g_log_path);
         if (g_vm_report_len) fputs(g_vm_report, stderr);
