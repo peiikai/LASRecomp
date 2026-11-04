@@ -22,6 +22,11 @@
 // on-screen controls, the menus as cards in the safe area, no Quit / Fullscreen). iOS today; an Android port would
 // be the second.
 #define PLAT_TOUCH PLAT_IOS
+// LARECOMP_IOSEXPORT: the iOS export is in this app (runtime/iosexport.c, the Makefile's IOSEXPORT: the desktops
+// unless told otherwise; never the iOS app).
+#ifndef LARECOMP_IOSEXPORT
+#define LARECOMP_IOSEXPORT (!PLAT_IOS)
+#endif
 
 #ifdef __cplusplus
 extern "C" {

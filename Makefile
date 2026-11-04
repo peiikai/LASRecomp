@@ -18,6 +18,8 @@ endif
 # has room differs by device and iOS version: runtime/guest_base.h), so the game code is built with the base chosen
 # at start-up (LARECOMP_DYNAMIC_BASE, runtime/cpu.h) - the desktops keep their compile-time base.
 IOS_BASEFLAG := -DLARECOMP_DYNAMIC_BASE=1
+# the oldest iOS the app runs on: the one place it's spelled (tools/build_deps_ios.sh, tools/bundle_ios.sh and the
+# start screen's iOS game-code build, runtime/gamebuild.c, all take it from here)
 IOS_MIN   ?= 16.0
 # the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
 PYV       ?= 3.13
@@ -92,10 +94,19 @@ UI_SRC   := $(wildcard runtime/ui/*.mm)
 UI_OBJ   := $(patsubst runtime/%.mm,$(B)/rt/%.o,$(UI_SRC))
 IMGUI_OBJ := $(B)/imgui/imgui.o $(B)/imgui/imgui_draw.o $(B)/imgui/imgui_tables.o $(B)/imgui/imgui_widgets.o \
              $(B)/imgui/imgui_impl_sdl3.o
-# miniz (MIT; build/miniz, fetched by tools/fetch_miniz.sh): deflate and zip archives for runtime/zipfile.c (the iOS
-# kit and the .ipa it makes)
+# The iOS export (the start screen's "Recomp for iOS": runtime/iosexport.c, runtime/ui/ios_export_ui.mm, --build-ios)
+# is in the desktop apps unless IOSEXPORT=0: it reads the kit and writes the .ipa with miniz (MIT; build/miniz,
+# fetched by tools/fetch_miniz.sh - the one fetch a plain `make` does), through runtime/zipfile.c. Not in the iOS app.
+IOSEXPORT ?= $(if $(filter ios,$(PLATFORM)),0,1)
 MINIZ    := build/miniz
+EXPORTFLAG := -DLARECOMP_IOSEXPORT=$(IOSEXPORT)
+ifeq ($(IOSEXPORT),1)
 MINIZ_OBJ := $(B)/third_party/miniz.o
+else
+RT_SRC   := $(filter-out runtime/zipfile.c runtime/iosexport.c,$(RT_SRC))
+UI_SRC   := $(filter-out runtime/ui/ios_export_ui.mm,$(UI_SRC))
+UI_OBJ   := $(patsubst runtime/%.mm,$(B)/rt/%.o,$(UI_SRC))
+endif
 
 ifeq ($(PLATFORM),macos)
 SDL      := $(or $(DEPS),/opt/homebrew/opt/sdl3)
@@ -214,8 +225,8 @@ GAMELIB_IOS_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS_IOS)') | (shasu
 RT_OBJ   := $(patsubst runtime/%.cpp,$(B)/rt/%.o,$(patsubst runtime/%.c,$(B)/rt/%.o,$(RT_SRC)))
 # no path of this machine in what ships: debug info and __FILE__ name the checkout as "." (Windows: its C:/ form too)
 PATHMAP  := -ffile-prefix-map=$(CURDIR)=. $(if $(filter windows,$(PLATFORM)),-ffile-prefix-map=$(shell cygpath -m '$(CURDIR)')=.)
-RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(BASEFLAG) $(DEPINC) $(OSFLAGS) $(PATHMAP)
-CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(BASEFLAG) $(DEPINC) $(PATHMAP)
+RTFLAGS  := -O2 -g -fno-strict-aliasing -Wall -Wno-unused-function -Iruntime -Iruntime/nvn $(BASEFLAG) $(EXPORTFLAG) $(DEPINC) $(OSFLAGS) $(PATHMAP)
+CXXFLAGS := -O2 -g -std=c++17 -I$(IMGUI) -I$(IMGUI)/backends -Iruntime -Iruntime/nvn $(BASEFLAG) $(EXPORTFLAG) $(DEPINC) $(PATHMAP)
 
 all: $(EXE) $(if $(GEN_SRC),$(GAMELIB))
 
@@ -234,7 +245,8 @@ $(B)/rt/gamebuild.o: RTFLAGS += -DGAMELIB_ID='"$(GAMELIB_ID)"' -DGAMELIB_BASE_ID
                                 -DGAMELIB_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS)))"' \
                                 -DGAMELIB_SHARED='"$(GAMELIB_SHARED)"' \
                                 -DGAMELIB_IOS_ID='"$(GAMELIB_IOS_ID)"' \
-                                -DGAMELIB_IOS_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS_IOS)))"'
+                                -DGAMELIB_IOS_CFLAGS='"$(strip $(filter-out -Iruntime,$(GENFLAGS_IOS)))"' \
+                                -DIOS_MIN='"$(IOS_MIN)"'
 
 $(B)/rt/%.o: runtime/%.c $(RT_HDRS)
 	@mkdir -p $(dir $@)
@@ -356,7 +368,7 @@ app:
 ios-skeleton:
 	$(MAKE) PLATFORM=ios build/ios/lasrecomp
 	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
-ios-kit: ios-skeleton
+ios-kit: ios-skeleton $(MINIZ)/.fetched  # (the kit carries miniz's licence: the desktops' export reads it with miniz)
 	tools/ios_kit.sh
 # The simulator app (build/ios-sim/LAS Recomp.app, no game code, ad-hoc signed) and its run of the embedded
 # Python's self-test (tools/test_ios_sim.sh): what CI does on a Mac runner. Needs `make deps-ios-sim`.

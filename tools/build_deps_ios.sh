@@ -1,13 +1,13 @@
 #!/bin/bash
 # make deps-ios: SDL3 and FFmpeg (the same LGPL subset as macOS: the game's movies) as static libraries for iOS
-# (arm64, IOS_MIN = 16.0 by default), from the sources pinned in tools/build_deps_macos.sh, into build/deps-ios.
+# (arm64, the Makefile's IOS_MIN), from the sources pinned in tools/build_deps_macos.sh, into build/deps-ios.
 # Static: an .ipa then needs no embedded frameworks to sign. Each step is skipped when its output exists.
 # SIM=1: the same for the iOS Simulator (arm64, into build/deps-ios-sim), the CI's run of the start screen and the
 # embedded Python; only the SDK, the version-min flag and the xcframework slice differ.
 # Needs: Xcode (iOS SDK), cmake and ninja (brew), a host python of the embedded version PYV (brew python@<PYV>).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-MIN=${IOS_MIN:-16.0}
+MIN=${IOS_MIN:?the Makefile's IOS_MIN (run as make deps-ios)}
 if [ -n "${SIM:-}" ]; then
     SDKNAME=iphonesimulator; MINFLAG="-mios-simulator-version-min=$MIN"; SLICENAME=ios-arm64_x86_64-simulator; TAG=ios-sim
 else

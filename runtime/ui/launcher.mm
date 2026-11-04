@@ -652,11 +652,9 @@ static void onedrive_keep(void) {
     fprintf(stderr, "[launcher] %s warning: kept here\n", g_onedrive_name);
 }
 
+#if PLAT_IOS
 // iOS: signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but iOS
 // ends it at a much lower footprint. Shown on the start screen until OK, every launch (runtime/platform/ios.c).
-#if !PLAT_IOS
-static int plat_ios_memory_entitled(void) { return getenv("LARECOMP_TEST_NO_MEMORY_ENTITLEMENT") ? 0 : 1; }
-#endif
 static bool g_memory_ok_seen;
 static void memory_notice(float s, float w) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
@@ -676,6 +674,7 @@ static void memory_notice(float s, float w) {
     if (ImGui::Button(L("OK"))) g_memory_ok_seen = true;
     ImGui::EndChild();
 }
+#endif
 
 
 // ------------------------------------------------------------------ the user's own Nintendo fonts (not shipped)
@@ -1301,6 +1300,7 @@ static void safe_insets(float *l, float *t, float *r, float *b) {
 
 // The Settings / Game files window: its scale (1 at 1080 lines) and size, centred in the screen; phones: a third
 // larger (as the in-game menu there: runtime/ui/menu.mm kUi) and the whole safe area (the notch, the home indicator).
+// Once a frame: it scales FontGlobalScale, which the frame's start sets afresh.
 static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centre) {
     *sc = ds.y / 1080.0f, *w = fminf(ds.x * 0.9f, 1500 * *sc), *h = ds.y - 2 * 18 * *sc;  // (all the height: a slim margin)
     *centre = ImVec2(ds.x * 0.5f, ds.y * 0.5f);
@@ -1319,7 +1319,7 @@ static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centr
 
 // ------------------------------------------------------------------ iOS export (runtime/ui/ios_export_ui.mm)
 // Its page shares the setup's busy state, job line and progress bar through these hooks.
-#if !PLAT_IOS
+#if LARECOMP_IOSEXPORT
 static void ios_export_wire(void) {
     static bool wired;
     if (wired) return;
@@ -1636,7 +1636,7 @@ static void prelaunch_tab(float sc) {
         }
         if (opt_action("Cancel", "", "Keeps the game files.", true)) confirm_delete = false;
     }
-#if !PLAT_IOS
+#if LARECOMP_IOSEXPORT
     {  // the iOS export's page opens from here (runtime/ui/ios_export_ui.mm)
         pthread_mutex_lock(&g_lock);
         bool busy = g_busy;
@@ -1706,9 +1706,10 @@ extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
     menu_sfx_set_game_dir(root);
-#if !PLAT_IOS
+#if LARECOMP_IOSEXPORT
     ios_export_wire();
-#else
+#endif
+#if PLAT_IOS
     plat_ios_shortcuts_sync();  // (seeds added or deleted through the Files app since the last run)
 #endif
     static bool update_checked;  // (once per launch, not again after a "Title screen" reboot)
@@ -2238,7 +2239,7 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::PopFont();
                 plastic_widgets(false);
                 ImGui::EndChild();
-#if !PLAT_IOS
+#if LARECOMP_IOSEXPORT
                 bool to_ios = ios_export_page_requested();  // (Prelaunch's button: leave Settings for the export page)
                 if (to_ios) back = true;
 #else
@@ -2333,7 +2334,7 @@ extern "C" void launcher_run(const char *root) {
                     if (focus_first > 0 && focus_first--) ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
                 };
                 opt_begin(ios_page ? "##ios" : "##files", sc);
-#if !PLAT_IOS
+#if LARECOMP_IOSEXPORT
                 if (ios_page) {
                     ios_export_rows(ready, busy, win);
                     first_row();
@@ -2396,10 +2397,13 @@ extern "C" void launcher_run(const char *root) {
                     opt_section("Build cache");
                     if (opt_action("Clear build cache", "", "Deletes the built game code. It gets rebuilt the next time you "
                                    "set up.", true)) {  // (the iOS export's build too)
-                        char why[512] = "", ios_build[1100];
+                        char why[512] = "";
                         g_build_cache_changed = true;
+#if LARECOMP_IOSEXPORT
+                        char ios_build[1100];
                         iosexport_build_dir(ios_build, sizeof ios_build);
                         plat_remove_tree(ios_build);
+#endif
                         if (build_cache_clear(g_root.c_str(), why, sizeof why)) set_job(LN("Build cache cleared."));
                         else set_job(LN("Couldn't clear the build cache."), true, why);
                     }
@@ -2508,11 +2512,14 @@ extern "C" void launcher_run(const char *root) {
                 int r = onedrive_notice(s, w, status.empty());
                 if (r == 1) onedrive_keep();
                 else if (r == 2) choose_data_folder();
-            } else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (the same place, when there is no cloud warning)
+            }
+#if PLAT_IOS
+            else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (the same place, when there is no cloud warning)
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
                 memory_notice(s, w);
             }
+#endif
             if (const char *f = getenv("LARECOMP_LAUNCHER_FONT")) {  // (test) which typeface this window shows
                 const char *b = strrchr(f, '/');
                 ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetWindowPos().x + 20 * s, ImGui::GetWindowPos().y + 16 * s),

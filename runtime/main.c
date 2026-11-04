@@ -262,13 +262,13 @@ int main(int argc, char **argv) {
         menu_sfx_set_game_dir(root);
         menu_sfx_load_now();
     }
-#if !PLAT_IOS
+#if LARECOMP_IOSEXPORT
     if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
         extern bool iosexport_run_cli(const char *kit, const char *game_dir);
         return iosexport_run_cli(arg_kit, root) ? 0 : 1;
     }
 #else
-    (void)build_ios;
+    if (build_ios) { fprintf(stderr, "the iOS export isn't in this build of LAS Recomp\n"); return 1; }
 #endif
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {

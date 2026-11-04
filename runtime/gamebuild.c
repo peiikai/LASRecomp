@@ -19,7 +19,9 @@
 #include "paths.h"
 #include "platform.h"
 #include "rt.h"
+#if LARECOMP_IOSEXPORT
 #include "zipfile.h"
+#endif
 
 // From the Makefile: the flags the game code is compiled and linked with (as `make` builds it in a source checkout)
 #ifndef GAMELIB_CFLAGS
@@ -35,14 +37,16 @@
 // The iOS build (GAMEBUILD_IOS, any desktop): the same generated C compiled for arm64 iOS with the guest base chosen
 // at start-up (the Makefile's PLATFORM=ios flags; GAMELIB_IOS_ID: that build's id, which the exported app's runtime
 // checks).
-#ifndef GAMELIB_IOS_CFLAGS
+#ifndef GAMELIB_IOS_CFLAGS  // (the Makefile's GENFLAGS_IOS; this fallback kept in step with it: tools/test_gamebuild_ios.py)
 #define GAMELIB_IOS_CFLAGS "-O1 -g0 -fno-strict-aliasing -Wno-return-type -Wno-unused-label -fvisibility=hidden -mllvm -disable-licm-promotion -DLARECOMP_DYNAMIC_BASE=1"
 #endif
 #ifndef GAMELIB_IOS_ID
 #define GAMELIB_IOS_ID "dev-ios"
 #endif
 #define GAMELIB_IOS_NAME "lasgame-ios.dylib"
+#ifndef IOS_MIN  // (the Makefile's, the one source: the app's MinimumOSVersion, the deps' target, this build's)
 #define IOS_MIN "16.0"
+#endif
 
 #ifdef _WIN32
 #define SEP "\\"
@@ -197,6 +201,7 @@ bool gamebuild_available(void) {
     return find_tools(&t);
 }
 
+#if LARECOMP_IOSEXPORT
 // this machine's folder of linkers in the kit (tools/ios_kit.sh: lld/<arch>-<os>/bin/lld)
 #if defined(__aarch64__) || defined(_M_ARM64)
 #define LLD_ARCH "aarch64"
@@ -335,6 +340,14 @@ bool gamebuild_ios_available(const char *kit, char *why, size_t why_size) {
     Tools t;
     return find_ios_tools(&t, kit, false, NULL, why, why_size);
 }
+#else
+static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progress)(double, const char *), char *why,
+                           size_t why_size) {
+    (void)t, (void)kit, (void)unpack, (void)progress;
+    snprintf(why, why_size, "the iOS export isn't in this build of LAS Recomp");
+    return false;
+}
+#endif
 
 // zig cc on Linux: an explicit target, so it uses its own glibc headers and stubs instead of looking for the system's
 // (SteamOS and other systems without development packages have none: "failed to find libc installation", #181)
@@ -520,8 +533,8 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         if (!ios) snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp"));
         return false;
     }
+    // (lib_id: the generation's id; the library's is g_full_id, that plus the game's build ID)
     const char *lib_name = ios ? GAMELIB_IOS_NAME : GAMELIB_NAME, *lib_id = ios ? GAMELIB_IOS_ID : GAMELIB_ID;
-    (void)lib_id;  // (the generation's id; the library's is g_full_id: that plus the game's build ID)
     char work[1100], tmp[1100];
     snprintf(work, sizeof work, "%s" SEP ".gamebuild", game_dir);
     snprintf(tmp, sizeof tmp, "%s" SEP "%s.tmp", work, lib_name);
