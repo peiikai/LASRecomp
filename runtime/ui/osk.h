@@ -11,6 +11,10 @@ bool ui_input_text(const char *label, char *buf, size_t size, ImGuiInputTextFlag
                    const char *title = NULL);
 // true (once) after the on-screen keyboard of the field just drawn with ui_input_text was cancelled
 bool ui_input_text_cancelled(void);
+// Phones: the field being typed into (the system keyboard), its frame in the current context's coordinates, as
+// drawn this frame. True on the frames it is to be sent to the system: the one it took the focus, and after every
+// key - the keyboard is then slid out of its way (not as it scrolls: a slide under a dragging finger fed the scroll).
+bool ui_text_field_rect(ImVec2 *mn, ImVec2 *mx);
 
 // Once per frame, after the rest of the UI, at the root (outside any window), in the context the field was drawn in.
 void osk_draw(ImFont *big, float scale);

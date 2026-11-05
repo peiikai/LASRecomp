@@ -81,6 +81,12 @@ struct TouchUi {
     static ImGuiID scroll_window_id(float x, float y, int axis) {
         ImGuiWindow *w = NULL, *under_moving = NULL;
         ImGui::FindHoveredWindowEx(ImVec2(x, y), true, &w, &under_moving);
+        // a popup up (a dialog, a picker): only it scrolls, not the page behind its dimmed backdrop - as ImGui itself
+        // sends no mouse there (FindHoveredWindowEx doesn't know popups)
+        if (GImGui->OpenPopupStack.Size > 0) {
+            ImGuiWindow *popup = GImGui->OpenPopupStack.back().Window;
+            if (!popup || !w || !ImGui::IsWindowWithinBeginStackOf(w, popup)) return 0;
+        }
         // (across: only a strip made to scroll that way - a page a pixel too wide moved whole under a sideways drag)
         auto ok = [axis](ImGuiWindow *w) {
             return w->ScrollMax[axis] > 0 && (axis || (w->Flags & ImGuiWindowFlags_HorizontalScrollbar));

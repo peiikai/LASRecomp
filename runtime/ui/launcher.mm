@@ -1344,10 +1344,16 @@ static SDL_Window *g_launcher_win;
 static void safe_insets(float *l, float *t, float *r, float *b) {
     *l = *t = *r = *b = 0;
 #if PLAT_TOUCH
+    // Held while the system keyboard is up: SDL slides the view up to keep the text field (ImGui's IME rect) above
+    // the keyboard, which takes the view's bottom off the home indicator - a new safe area, which would move the
+    // field, and SDL would slide again: the screen shook back and forth between the two.
+    static float kl, kt, kr, kb;
+    bool kbd = SDL_TextInputActive(g_launcher_win) || SDL_ScreenKeyboardShown(g_launcher_win);
     SDL_Rect sa;
     int ww, wh;
-    if (SDL_GetWindowSafeArea(g_launcher_win, &sa) && SDL_GetWindowSize(g_launcher_win, &ww, &wh) && ww > 0)
-        *l = sa.x, *t = sa.y, *r = ww - sa.x - sa.w, *b = wh - sa.y - sa.h;
+    if (!kbd && SDL_GetWindowSafeArea(g_launcher_win, &sa) && SDL_GetWindowSize(g_launcher_win, &ww, &wh) && ww > 0)
+        kl = sa.x, kt = sa.y, kr = ww - sa.x - sa.w, kb = wh - sa.y - sa.h;
+    *l = kl, *t = kt, *r = kr, *b = kb;
 #endif
 }
 
@@ -1816,6 +1822,21 @@ extern "C" void launcher_run(const char *root) {
 #else
     ImGui_ImplSDL3_InitForVulkan(win);
     vk_imgui_backend_init();
+#endif
+#if PLAT_TOUCH
+    {   // the backend starts / stops the system keyboard; the field's frame goes to SDL from ui_text_field_rect, not
+        // the cursor's every move (SDL slides the view to keep it above the keyboard, and a slide under a dragging
+        // finger moved the finger relative to the view: more scroll, another slide - the page ran away under it)
+        static void (*backend_ime)(ImGuiContext *, ImGuiViewport *, ImGuiPlatformImeData *) = ImGui::GetPlatformIO().Platform_SetImeDataFn;
+        ImGui::GetPlatformIO().Platform_SetImeDataFn = [](ImGuiContext *ctx, ImGuiViewport *vp, ImGuiPlatformImeData *d) {
+            static bool visible;
+            if (d->WantVisible == visible) return;
+            visible = d->WantVisible;
+            ImGuiPlatformImeData no_rect = *d;
+            no_rect.InputLineHeight = 0;  // (a 0-high rect: SDL doesn't slide for it)
+            backend_ime(ctx, vp, &no_rect);
+        };
+    }
 #endif
     ImGui_ImplSDL3_SetGamepadMode(ImGui_ImplSDL3_GamepadMode_Manual, NULL, 0);  // (controllers: launcher_pad_event)
     launcher_pad_open_all();
@@ -2653,6 +2674,15 @@ extern "C" void launcher_run(const char *root) {
             menu_sfx_frame(frame_page != MAIN);
 
             ImGui::Render();
+#if PLAT_TOUCH
+            {   // (after Render: its EndFrame starts the keyboard through the backend; the start screen draws in points)
+                ImVec2 mn, mx;
+                if (ui_text_field_rect(&mn, &mx)) {
+                    SDL_Rect r = {(int)mn.x, (int)mn.y, (int)(mx.x - mn.x), (int)(mx.y - mn.y)};
+                    SDL_SetTextInputArea(win, &r, 0);
+                }
+            }
+#endif
 #ifdef __APPLE__
             static const float no_uv[4] = {0, 0, 1, 1};
             if (pieces) plastic_frame_begin(dev, cb, drawable.texture, nil, no_uv, io.MousePos, ds.y / 1080.0f);

@@ -78,6 +78,8 @@ static std::vector<QEvent> q_events;
 static float g_pixel_density = 1;
 static int g_win_px_w = 1, g_win_px_h = 1;  // (touch positions come normalized)
 static std::atomic<int> g_safe_l{0}, g_safe_t{0}, g_safe_r{0}, g_safe_b{0};  // insets, pixels (phones: notch, home bar)
+static std::atomic<bool> g_ime_send{false};  // the text field being typed in: its frame, points, to give SDL (phones)
+static SDL_Rect g_ime_rect;
 // Phones: the menu a third larger than on a 1080-line monitor (a 6.5" screen held at arm's length: rows to touch);
 // a tablet's screen is a monitor's size at arm's length: the monitor's scale
 static const float kUi = PLAT_TOUCH && !plat_tablet() ? 1.35f : 1.0f;
@@ -341,17 +343,22 @@ void menu_apply_window_requests(void *win) {
     g_pixel_density = SDL_GetWindowPixelDensity(w);
     SDL_GetWindowSizeInPixels(w, &g_win_px_w, &g_win_px_h);
 #if PLAT_TOUCH
-    {   // the safe area (points -> pixels): the menu keeps out of the notch and the home indicator
+    // phones: text input shows the system keyboard - only while a text field has the focus, not the whole time the
+    // menu is open
+    bool want_text = capturing() && g_text_busy.load();
+    if (g_ime_send.exchange(false)) SDL_SetTextInputArea(w, &g_ime_rect, 0);  // (SDL slides the view up off the keyboard)
+    {   // the safe area (points -> pixels): the menu keeps out of the notch and the home indicator. Held while the
+        // system keyboard is up: SDL slides the view up to keep the text field (ImGui's IME rect) above the keyboard,
+        // which takes the view's bottom off the home indicator - a new safe area, which would move the field, and SDL
+        // would slide again: the screen shook back and forth between the two.
         SDL_Rect sa;
         int ww, wh;
-        if (SDL_GetWindowSafeArea(w, &sa) && SDL_GetWindowSize(w, &ww, &wh) && ww > 0 && wh > 0) {
+        bool kbd = want_text || SDL_TextInputActive(w) || SDL_ScreenKeyboardShown(w);
+        if (!kbd && SDL_GetWindowSafeArea(w, &sa) && SDL_GetWindowSize(w, &ww, &wh) && ww > 0 && wh > 0) {
             g_safe_l = (int)(sa.x * g_pixel_density), g_safe_t = (int)(sa.y * g_pixel_density);
             g_safe_r = (int)((ww - sa.x - sa.w) * g_pixel_density), g_safe_b = (int)((wh - sa.y - sa.h) * g_pixel_density);
         }
     }
-    // phones: text input shows the system keyboard - only while a text field has the focus, not the whole time the
-    // menu is open
-    bool want_text = capturing() && g_text_busy.load();
 #else
     bool want_text = capturing();
 #endif
@@ -1010,6 +1017,10 @@ static void preview_page(void) {
     if (g_tab == 0) tab_display();
     else if (g_tab == 7) tab_cosmetics();
 }
+// (live_preview.mm: the panel keeps out of the notch and the home indicator, as the menu window does)
+void menu_safe_insets(float *l, float *t, float *r, float *b) {
+    *l = g_safe_l, *t = g_safe_t, *r = g_safe_r, *b = g_safe_b;
+}
 bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big) {
     return preview_active() && (preview_draw(scale, font, font_big, preview_page), true);
 }
@@ -1453,6 +1464,14 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     ImGui::GetStyle() = ov_style;
     ImGui::Render();
     g_text_busy = open && ui_text_busy();
+    {   // (phones: the field's frame for SDL's keyboard, pixels -> points; this context has no ImGui platform backend)
+        ImVec2 mn, mx;
+        if (PLAT_TOUCH && ui_text_field_rect(&mn, &mx)) {
+            float d = g_pixel_density;
+            g_ime_rect = {(int)(mn.x / d), (int)(mn.y / d), (int)((mx.x - mn.x) / d), (int)((mx.y - mn.y) / d)};
+            g_ime_send = true;
+        }
+    }
     // the pieces (and, the menu open over the game, the small copy of the game image they read): only with the menu or
     // the name entry up
     bool pieces = open || kbd;

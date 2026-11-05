@@ -90,6 +90,7 @@ bool opt_nav_step(int dir) {
 }
 static std::unordered_map<ImGuiID, int> g_ids;  // this page's rows so far, by id (two rows with one label)
 static bool g_held;  // the last row's left / right has been held a while (steppers go faster)
+static bool g_click_silent;  // this frame's click did nothing (a finger on a ◀ value ▶ row's body): no decide sound
 void opt_indent(int step) { g_indent = g_indent + step < 0 ? 0 : g_indent + step; }
 
 void opt_begin(const char *id, float scale) {
@@ -203,7 +204,26 @@ static int row(const char *label, const std::string &value_en, bool changed, con
     bool mark = g_next_mark, warn = g_next_warn;
     g_next_disabled = g_next_mark = g_next_warn = g_next_own = false;
     bool hov = ImGui::IsItemHovered(), foc = ImGui::IsItemFocused() && ImGui::GetCurrentContext()->NavCursorVisible;
-    int step = clicked && !off ? 2 : 0;
+    // (phones: a finger on a ◀ value ▶ row is only on its arrows - the body neither lights up nor steps; the
+    // controller still focuses and steps the row)
+    bool tap_steps = !(PLAT_TOUCH && arrows && ImGui::GetIO().MouseSource == ImGuiMouseSource_TouchScreen);
+    float arrow_lx = 0, arrow_rx = 0, arrow_aw = 0, arrow_hit = 0;
+    if (arrows && !value.empty()) {  // (the arrows' places, as drawn below)
+        float fs0 = ImGui::GetFontSize(), aw = fs0 * (cards ? 0.6f : 0.42f), gap = fs0 * 0.55f;
+        float right0 = p.x + w - 16 * g_scale - 14 * g_scale;
+        arrow_rx = right0 - aw, arrow_lx = arrow_rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw, arrow_aw = aw;
+        arrow_hit = tap_steps ? gap : fs0 * 1.2f;  // (a finger: wider targets)
+    }
+    int arrow_under = 0;  // (the arrow the mouse is over: -1 / +1)
+    if (hov && arrows && !value.empty()) {
+        float mx = ImGui::GetIO().MousePos.x;
+        if (mx >= arrow_lx - arrow_hit && mx <= arrow_lx + arrow_aw + arrow_hit) arrow_under = -1;
+        else if (mx >= arrow_rx - arrow_hit && mx <= arrow_rx + arrow_aw + arrow_hit) arrow_under = 1;
+    }
+    if (!tap_steps && !arrow_under) hov = false;  // (the finger on the body: not a highlight)
+    // (nor a press: no sound - menu_sfx_frame plays on the press frame, before the button reports the click)
+    if (!tap_steps && !arrow_under && ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) g_click_silent = true;
+    int step = clicked && !off && tap_steps ? 2 : 0;
     if (clicked && off) menu_sfx_play(MENU_SFX_BEEP);  // (greyed out: can't change)
     g_held = false;
     if (foc && !off) {
@@ -262,11 +282,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         float rx = right - aw, lx = rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw;
         dl->AddTriangleFilled(ImVec2(lx, cy), ImVec2(lx + aw, cy - aw * 0.75f), ImVec2(lx + aw, cy + aw * 0.75f), ac);
         dl->AddTriangleFilled(ImVec2(rx + aw, cy), ImVec2(rx, cy - aw * 0.75f), ImVec2(rx, cy + aw * 0.75f), ac);
-        if (clicked && !off) {
-            float mx = ImGui::GetIO().MousePos.x, hit = gap;
-            if (mx >= lx - hit && mx <= lx + aw + hit) step = -1;
-            else if (mx >= rx - hit && mx <= rx + aw + hit) step = 1;
-        }
+        if (clicked && !off && arrow_under) step = arrow_under;
         right = rx - gap;
     }
     if (chevron) {  // ">", drawn (as the arrows above)
@@ -668,6 +684,8 @@ static bool on_scrollbar(ImGuiContext &g) {
 
 extern "C" void menu_sfx_frame(bool back_ok) {
     ImGuiContext &g = *ImGui::GetCurrentContext();
+    bool silent = g_click_silent;
+    g_click_silent = false;
     static ImGuiContext *ctx;  // (the start screen's and the game's overlay are two)
     static ImGuiID last;
     if (ctx != &g) ctx = &g, last = 0;
@@ -676,7 +694,7 @@ extern "C" void menu_sfx_frame(bool back_ok) {
     if (!ui_text_busy() && cap < 0) {
         if (back_ok && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
             menu_sfx_play(MENU_SFX_CANCEL);
-        else if (g.NavActivatePressedId || (ImGui::IsMouseClicked(0) && g.HoveredId && !on_scrollbar(g)))
+        else if (g.NavActivatePressedId || (ImGui::IsMouseClicked(0) && g.HoveredId && !on_scrollbar(g) && !silent))
             menu_sfx_play(is_tab(g.NavActivatePressedId ? g.NavActivatePressedId : g.HoveredId) ? MENU_SFX_TAB
                                                                                                 : MENU_SFX_DECIDE);
         else if (g.NavCursorVisible && g.NavId && last && g.NavId != last)
