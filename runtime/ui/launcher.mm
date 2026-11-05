@@ -1386,6 +1386,7 @@ static void ios_export_wire(void) {
             stop_background_prep();
             g_cancel_build = false;
             g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = 0, g_copy_skipped = true;
+            set_job(LN("Getting the game files ready..."));  // (not the last export's line, path and all)
         },
         build_progress,
         build_cancelled,
@@ -1415,9 +1416,26 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
     ImVec2 ts = g_font_menu->CalcTextSizeA(tfs, FLT_MAX, 0, title);
     float line_h = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, "A").y;
     float pw = fminf(ds.x * 0.6f, 900 * sc), bar_y = 36 * sc + ts.y + 30 * sc;
+    char line[400];
+    if (preparing) snprintf(line, sizeof line, "%d%%", (int)(f * 100));  // (the title says it)
+    else snprintf(line, sizeof line, "%s   %d%%", test_busy ? L("Setting up the game files...") : shown(job).c_str(),
+                  (int)(f * 100));
     for (int i = 0; i < nnotes; i++)  // (wide enough for its text, within the window)
         pw = fmaxf(pw, g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]).x + 96 * sc);
+    pw = fmaxf(pw, g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line).x + 96 * sc);
     pw = fminf(fmaxf(pw, ts.x + 96 * sc), ds.x - 32 * sc);
+    {  // (still wider than the panel: cut short before the percentage, between UTF-8 characters)
+        std::string s = line;
+        size_t at = s.rfind("   ");
+        std::string pct = at == std::string::npos ? "" : s.substr(at), head = s.substr(0, s.size() - pct.size());
+        float room = pw - 96 * sc;
+        bool cut = false;
+        while (!head.empty() && g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, (head + (cut ? "..." : "") + pct).c_str()).x > room) {
+            do head.pop_back(); while (!head.empty() && ((unsigned char)head.back() & 0xC0) == 0x80);
+            cut = true;
+        }
+        if (cut) snprintf(line, sizeof line, "%s...%s", head.c_str(), pct.c_str());
+    }
     float ph = bar_y + 24 * sc + 26 * sc + line_h + (nnotes ? 14 * sc + nnotes * line_h : 0) + 40 * sc +
                (preparing ? line_h + 28 * sc : recompiling ? 54 * sc : 0);  // (Skip / Cancel)
     ImVec2 a(o.x + (ds.x - pw) * 0.5f, o.y + (ds.y - ph) * 0.5f), b(a.x + pw, a.y + ph);
@@ -1427,10 +1445,6 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
     ImVec2 ba(a.x + 48 * sc, a.y + bar_y), bb(b.x - 48 * sc, a.y + bar_y + 24 * sc);
     fg->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 25), 12 * sc);
     if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), IM_COL32(236, 194, 84, 255), 12 * sc);
-    char line[200];
-    if (preparing) snprintf(line, sizeof line, "%d%%", (int)(f * 100));  // (the title says it)
-    else snprintf(line, sizeof line, "%s   %d%%", test_busy ? L("Setting up the game files...") : shown(job).c_str(),
-                  (int)(f * 100));
     ImVec2 ls = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line);
     fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, bb.y + 26 * sc), IM_COL32(220, 216, 205, 255), line);
     for (int i = 0; i < nnotes; i++) {
