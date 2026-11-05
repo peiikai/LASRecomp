@@ -2024,9 +2024,12 @@ extern "C" void launcher_run(const char *root) {
                 ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP) && e.button.which == SDL_TOUCH_MOUSEID) ||
                 (e.type == SDL_EVENT_MOUSE_WHEEL && e.wheel.which == SDL_TOUCH_MOUSEID))
                 continue;
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || (e.type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e.gaxis.value) > 12000))
+                ui_typing_pad(true);  // (osk.mm: a controller types on its on-screen keys, a finger in the system's prompt)
             if (e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_MOTION ||
                 e.type == SDL_EVENT_FINGER_CANCELED) {
                 ImGuiIO &tio = ImGui::GetIO();
+                if (e.type == SDL_EVENT_FINGER_DOWN) ui_typing_pad(false);
                 if (page == MAIN) pick_swipe_event(e, tio.DisplaySize);
                 tio.AddMouseSourceEvent(ImGuiMouseSource_TouchScreen);
                 g_touch.event(&e, tio.DisplaySize.x, tio.DisplaySize.y, [&](float x, float y) { tio.AddMousePosEvent(x, y); },
@@ -2667,9 +2670,12 @@ extern "C" void launcher_run(const char *root) {
             ImGui::PopStyleColor();
             if (waiting) draw_busy_overlay(ds, "", false, true);
             bool osk_up = osk_is_open();  // (a text field activated with the controller: as the menu's keyboard)
-            if (osk_up) menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
-            osk_draw(g_font_menu, s * 0.7f);
-            if (osk_up) plastic_widgets(false), menu_style_end();
+            {   // (the in-game menu's size for it: 1 at 1080 lines, the phone's enlargement as panel_layout's)
+                float osc = ds.y / 1080.0f * (PLAT_TOUCH && !plat_tablet() ? 1.35f : 1.0f);
+                if (osk_up) menu_style_begin(osc), plastic_widgets(true), pieces = true;
+                osk_draw(g_font_menu, osc);
+                if (osk_up) plastic_widgets(false), menu_style_end();
+            }
             typed_before = ui_text_busy();
             menu_sfx_frame(frame_page != MAIN);
 

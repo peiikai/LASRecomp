@@ -56,12 +56,14 @@ bool warp_tab_took_back(void);  // warp_tab.mm (the same)
 #include "../input_bind.h"
 #include "../livesplit.h"
 #include "../paths.h"
+#include "../platform.h"
 #include "../rando.h"
 }
 
 // ------------------------------------------------------------------ state shared with the main thread
 static std::atomic<bool> g_open{false};
 static std::atomic<bool> g_text_busy{false};  // a text field / the on-screen keyboard has the keys (render thread: ui_text_busy)
+static std::atomic<bool> g_text_typed{false};  // an ImGui text field has the focus: the system keyboard follows (phones)
 static std::atomic<bool> g_want_fullscreen_apply{false};
 
 struct QEvent {
@@ -199,6 +201,11 @@ bool menu_handle_event(const SDL_Event *e) {
     if (g_open.load() && bind_capture_event(e)) return true;  // Controls tab waiting for a new binding: it takes the press
     if (e->type == SDL_EVENT_KEY_DOWN) g_last_pad = false;
     if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) g_last_pad = true;
+    if (PLAT_TOUCH) {  // (osk.mm: a finger or a controller types - the device used last)
+        if (e->type == SDL_EVENT_FINGER_DOWN) g_last_pad = false, ui_typing_pad(false);
+        if (e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) ui_typing_pad(true);
+        if (e->type == SDL_EVENT_GAMEPAD_AXIS_MOTION && abs(e->gaxis.value) > 12000) g_last_pad = true, ui_typing_pad(true);
+    }
     if (g_kbd.load() == 1 && e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat) {  // Enter confirms, Esc cancels
         if (e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_KP_ENTER) { g_kbd = 2; return true; }
         if (e->key.scancode == SDL_SCANCODE_ESCAPE) { g_kbd = 3; return true; }
@@ -343,9 +350,9 @@ void menu_apply_window_requests(void *win) {
     g_pixel_density = SDL_GetWindowPixelDensity(w);
     SDL_GetWindowSizeInPixels(w, &g_win_px_w, &g_win_px_h);
 #if PLAT_TOUCH
-    // phones: text input shows the system keyboard - only while a text field has the focus, not the whole time the
-    // menu is open
-    bool want_text = capturing() && g_text_busy.load();
+    // phones: text input shows the system keyboard - only while an ImGui text field has the focus (not the on-screen
+    // keys or the system prompt), not the whole time the menu is open
+    bool want_text = capturing() && g_text_typed.load();
     if (g_ime_send.exchange(false)) SDL_SetTextInputArea(w, &g_ime_rect, 0);  // (SDL slides the view up off the keyboard)
     {   // the safe area (points -> pixels): the menu keeps out of the notch and the home indicator. Held while the
         // system keyboard is up: SDL slides the view up to keep the text field (ImGui's IME rect) above the keyboard,
@@ -905,12 +912,29 @@ RT_ON_RESET(menu_reset) {
     set_open(false);
     g_kbd = 0;
     osk_cancel();
+#if PLAT_TOUCH
+    plat_ios_prompt_cancel();
+#endif
     pthread_mutex_lock(&q_lock);
     q_events.clear();
     pthread_mutex_unlock(&q_lock);
 }
 
 static void keyboard_draw(ImGuiIO &io, float scale) {
+    static bool was_open, was_pad;
+    bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
+    was_open = true, was_pad = pad;
+#if PLAT_TOUCH
+    if (!pad) {
+        // a phone without a controller: the system's text prompt (its keyboard, paste), as the menu's own fields;
+        // nothing of ours under it
+        if (appearing) plat_ios_prompt(L("Enter your name"), "", g_kbd_text, 0, L("OK"), L("Cancel"));
+        int r = plat_ios_prompt_poll(g_kbd_text, sizeof g_kbd_text);
+        if (r) g_kbd = r > 0 ? 2 : 3;
+        if (g_kbd.load() != 1) was_open = false;
+        return;
+    }
+#endif
     ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0, 0), io.DisplaySize,
                                                   IM_COL32(0, 0, 0, (int)(plastic_theme().dim * 255)));
     float w = fminf(io.DisplaySize.x * 0.9f, 1100 * scale);
@@ -921,15 +945,7 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
     ImGui::PushFont(g_font_big);
     ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Enter your name"));
     ImGui::PopFont();
-    static bool was_open, was_pad;
-    bool pad = g_last_pad.load(), appearing = !was_open || pad != was_pad;  // (switching device: focus the new one)
-    was_open = true, was_pad = pad;
-    if (PLAT_TOUCH && !pad) {
-        // a phone without a controller: big keys on the screen to tap (the system keyboard over the game was easy to
-        // miss and had no way to confirm); a hardware keyboard still types into them
-        int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big, true, true);
-        if (r) g_kbd = r > 0 ? 2 : 3;
-    } else if (!pad) {  // keyboard: type straight into the field
+    if (!pad) {  // keyboard: type straight into the field
         if (appearing) ImGui::SetKeyboardFocusHere();
         ImGui::SetNextItemWidth(-1);
         ImGui::PushFont(g_font_big);
@@ -939,8 +955,11 @@ static void keyboard_draw(ImGuiIO &io, float scale) {
         ImGui::PopFont();
         int units = kbd_cut(g_kbd_text, g_kbd_max);
         ImGui::TextDisabled(L("Enter  confirm      Esc  cancel      (%d / %d)"), units, g_kbd_max);
-    } else {  // controller: on-screen keyboard (osk.mm, shared with our menus' text fields)
-        int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big);
+    } else {  // controller: on-screen keyboard (osk.mm, shared with our menus' text fields; a phone's keys for fingers too)
+#if PLAT_TOUCH
+        if (appearing) plat_ios_prompt_cancel();  // (a controller picked up mid-entry: the prompt goes)
+#endif
+        int r = osk_keys(g_kbd_text, sizeof g_kbd_text, g_kbd_max, appearing, scale, g_font_big, true, PLAT_TOUCH && !plat_tablet());
         if (r) g_kbd = r > 0 ? 2 : 3;  // (Start / + confirms in menu_handle_event too)
     }
     ImGui::End();
@@ -1464,6 +1483,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     ImGui::GetStyle() = ov_style;
     ImGui::Render();
     g_text_busy = open && ui_text_busy();
+    g_text_typed = open && ui_text_typed_into();
     {   // (phones: the field's frame for SDL's keyboard, pixels -> points; this context has no ImGui platform backend)
         ImVec2 mn, mx;
         if (PLAT_TOUCH && ui_text_field_rect(&mn, &mx)) {

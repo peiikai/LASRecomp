@@ -200,6 +200,11 @@ int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
 bool plat_ios_cloud_offloaded(const char *dir);  // an iCloud file under dir isn't on the device (read waits for it)
 // Where path is as Files names it: root "" (this device) or a place's name, and the folders under it; false: unknown
 bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, size_t restn);
+// A system text prompt (an alert with a text field) over the window, from any thread; its answer polled: 1 OK (out =
+// the text), -1 cancelled, 0 still up. cancel: taken down from our side (the menu closed).
+void plat_ios_prompt(const char *title, const char *hint, const char *initial, int max_len, const char *ok, const char *cancel);
+int plat_ios_prompt_poll(char *out, size_t n);
+void plat_ios_prompt_cancel(void);
 #endif
 
 #ifdef __cplusplus

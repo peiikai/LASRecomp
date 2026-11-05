@@ -489,10 +489,14 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
     }
     ImGui::PushID(label);
     ImGui::SetNextItemWidth(-1);
+    // (a keyboard of ours or the system's prompt took the field: no more focus requests - the field would come back
+    //  to life under them, and the system keyboard with it)
+    if (osk_is_open()) focus = 0;
     if (focus > 0) ImGui::SetKeyboardFocusHere(), focus--;
     bool done = ui_input_text("##text", buf, cap, ImGuiInputTextFlags_EnterReturnsTrue, L(hint), L(label));
     if (ImGui::IsItemFocused()) g_desc_focus = desc ? L(desc) : "";
     if (done || ui_input_text_cancelled() || (focus == 0 && !ImGui::IsItemActive() && !osk_is_open())) editing = 0;
+    if (editing == 0 && ImGui::IsItemActive()) ImGui::ClearActiveID();
     ImGui::PopID();
     return done;
 }
