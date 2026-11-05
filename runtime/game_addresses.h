@@ -33,6 +33,8 @@ typedef struct GameVersion {
 
 // The version whose main build ID is the first 20 bytes of id (exefs/main 0x40), or NULL.
 const GameVersion *game_version_by_build_id(const uint8_t id[20]);
+// The version whose main build ID starts with hex (upper-case, 16 digits or more: a game code library's id), or NULL.
+const GameVersion *game_version_by_build_prefix(const char *hex);
 // The version of a main program file (exefs/main), or NULL (missing, unreadable or unknown).
 const GameVersion *game_version_of_main(const char *main_path);
 // The version of the game files in game_dir (its exefs/main), or NULL.

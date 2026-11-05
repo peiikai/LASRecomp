@@ -323,9 +323,36 @@ static bool files_changed(const std::string &root) {
 static const char *const CHANGED_HEAD = LN("Game files damaged or changed");
 static const char *const CHANGED_HINT = LN("Copy your game files again, then choose that folder and set them up again.");
 
+#if PLAT_IOS
+// iOS: the game code is the app's own, built for one version of the game (the desktops build it from the files set
+// up). Game files of another version: false, and both versions' labels ("1.0.1 / 1.1.0", "1.0.0").
+static const char *const OTHER_VERSION = LN("This app is for another version of the game");
+static const char *const OTHER_VERSION_HINT = LN("This app was exported for version %s of the game, these game files are "
+                                                 "version %s. Export the app again from these game files, or set up "
+                                                 "files of version %s.");
+static bool app_fits_files(const std::string &exefs_parent, std::string *app_v, std::string *files_v) {
+    char built[64], label[32];
+    const GameVersion *a = gamelib_built_for(built, sizeof built) ? game_version_by_build_prefix(built) : NULL;
+    const GameVersion *f = game_version_of(exefs_parent.c_str());
+    if (!a || !f || a == f) return true;
+    const char *fl = game_release_label((exefs_parent + "/exefs").c_str(), label, sizeof label);
+    if (app_v) *app_v = a->label;
+    if (files_v) *files_v = fl ? fl : f->label;
+    return false;
+}
+static std::string other_version_hint(const std::string &app_v, const std::string &files_v) {  // (menus' language)
+    char b[600];
+    snprintf(b, sizeof b, L(OTHER_VERSION_HINT), app_v.c_str(), files_v.c_str(), app_v.c_str());
+    return b;
+}
+#endif
+
 // "" = ready to play, else what is wrong
 static std::string check_game_files(const std::string &root) {
     std::string why = check_copied_files(root);
+#if PLAT_IOS
+    if (why.empty() && !gamelib_present(root.c_str()) && !app_fits_files(root, NULL, NULL)) return OTHER_VERSION;
+#endif
     if (why.empty() && !gamelib_present(root.c_str())) return LN("Game not built yet");
     return why;
 }
@@ -338,6 +365,15 @@ static const char *status_hint(const std::string &why) {
     if (why == "Wrong version of the game") return L("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.");
     if (why == "Game not built yet")
         return L("Set up the game files to build it. It takes a few minutes and you only do it once.");
+#if PLAT_IOS
+    if (why == OTHER_VERSION) {
+        static std::string h;
+        std::string a, f;
+        app_fits_files(g_root, &a, &f);
+        h = other_version_hint(a, f);
+        return h.c_str();
+    }
+#endif
     return L("Set up the game files to play.");
 }
 
@@ -495,6 +531,16 @@ static void *extract_thread(void *) {
     find_game(src, exefs, romfs, unusable);
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!build_id_ok(exefs)) { set_failure(FAIL_VERSION); goto done; }
+#if PLAT_IOS
+    {  // (refused before the earlier copy is removed: the app's game code wouldn't run them)
+        std::string app_v, files_v, parent = exefs.substr(0, exefs.find_last_of("/\\"));
+        if (!app_fits_files(parent, &app_v, &files_v)) {
+            fprintf(stderr, "[launcher] game files: version %s, the app's game code: %s\n", files_v.c_str(), app_v.c_str());
+            set_job(OTHER_VERSION, true, other_version_hint(app_v, files_v));
+            goto done;
+        }
+    }
+#endif
     if (int have = count_files(romfs); have < ROMFS_FILES) {  // (an incomplete copy: refused before copying it)
         fprintf(stderr, "[launcher] %s: %d of %d romfs files\n", romfs.c_str(), have, (int)ROMFS_FILES);
         set_failure(FAIL_MISSING, have);
@@ -534,6 +580,13 @@ check:
         if (why.empty()) prepare_shaders();  // (the GPU device is up: the start screen draws with it)
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job(LN("Game files ready."));
+#if PLAT_IOS
+        else if (why == OTHER_VERSION) {
+            std::string a, f;
+            app_fits_files(g_root, &a, &f);
+            set_job(OTHER_VERSION, true, other_version_hint(a, f));
+        }
+#endif
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
         else set_failure(FAIL_MISSING, g_romfs_count);
     }
@@ -2307,10 +2360,10 @@ extern "C" void launcher_run(const char *root) {
                 // explanation, and choosing again opens the picker again
                 std::string src_v = src.empty() ? LN("Choose...") : LN("Selected");
                 auto check_left_of_value = [&](const std::string &v) {
-                    if (v != "Selected") return;
-                    ImVec2 rb = ImGui::GetItemRectMax(), ra = ImGui::GetItemRectMin();
-                    float fs = ImGui::GetFontSize(), vw = ImGui::CalcTextSize(L_line(v).c_str()).x;  // (the row shows it so)
-                    float x = rb.x - 16 * sc - vw - fs * 0.95f, cy = (ra.y + rb.y) * 0.5f, u = fs * 0.62f;
+                    float vx, cy;
+                    opt_last_value_pos(&vx, &cy);
+                    if (v != "Selected" || vx <= 0) return;
+                    float fs = ImGui::GetFontSize(), u = fs * 0.62f, x = vx - fs * 0.35f - u;
                     ImU32 g = IM_COL32(120, 220, 120, 255);
                     ImDrawList *dl = ImGui::GetWindowDrawList();
                     dl->AddLine(ImVec2(x, cy), ImVec2(x + u * 0.35f, cy + u * 0.35f), g, fs * 0.11f);
@@ -2319,7 +2372,7 @@ extern "C" void launcher_run(const char *root) {
                 // (the descriptions put together here in the menus' language: the row finds no English for them)
                 std::string src_d = L("Pick the folder with your extracted exefs and romfs from The Legend of Zelda: Link's "
                                       "Awakening for Switch. LAS Recomp doesn't include the game.");
-                if (!src.empty()) src_d += std::string("\n\n") + L("Chosen:") + " " + src;
+                if (!src.empty()) src_d += std::string("\n\n") + L("Chosen:") + " " + folder_shown(src.c_str());
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
                 std::string ex_d = L("Copies the files LAS Recomp needs and recompiles the game from them. You only do this "

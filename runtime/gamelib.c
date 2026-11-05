@@ -65,6 +65,27 @@ bool gamelib_present(const char *game_dir) {
     return false;
 }
 
+#if PLAT_IOS
+bool gamelib_built_for(char *out, size_t size) {
+    char c[3][1100];
+    int n = candidates(NULL, c);
+    for (int i = 0; i < n; i++) {
+        char path[1100], id[128] = {0};
+        snprintf(path, sizeof path, "%s.id", c[i]);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        size_t k = fread(id, 1, sizeof id - 1, f);
+        fclose(f);
+        while (k && (id[k - 1] == '\n' || id[k - 1] == '\r')) id[--k] = 0;
+        char *dash = strrchr(id, '-');
+        if (!dash || (size_t)(dash - id) != strlen(GAMELIB_ID) || strncmp(id, GAMELIB_ID, dash - id)) continue;
+        snprintf(out, size, "%s", dash + 1);
+        return true;
+    }
+    return false;
+}
+#endif
+
 static const GameLibTables *open_lib(const char *path, const char *want) {
 #ifdef _WIN32
     HMODULE h = LoadLibraryA(path);

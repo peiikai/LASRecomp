@@ -133,6 +133,8 @@ void opt_section(const char *title) {
 static bool g_value_shown;  // (the next row's value is already in the menus' language: a number put in L(fmt), a name)
 static bool g_label_shown;  // (opt_shown_next: the label too)
 void opt_shown_next(void) { g_value_shown = g_label_shown = true; }
+static float g_value_x, g_value_cy;
+void opt_last_value_pos(float *x, float *cy) { *x = g_value_x, *cy = g_value_cy; }
 static int row(const char *label, const std::string &value_en, bool changed, const char *desc_en, bool upper = true,
                bool arrows = false, bool chevron = false) {
     const std::string &value = g_value_shown ? value_en : L_line(value_en);
@@ -274,11 +276,13 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         right -= cw + fs * 0.55f;
         if (step == 1) step = 2, menu_sfx_play(MENU_SFX_DECIDE);  // (Right opens it too)
     }
+    g_value_x = 0;
     if (!value.empty()) {
         float vw = ImGui::CalcTextSize(value.c_str()).x, vx = right - vw;
         ImU32 vc = off ? pt.text_dim : light ? on_col : changed ? pt.value_changed : pt.value;
         dl->AddText(ImVec2(vx, ty), vc, value.c_str());
         right = vx;
+        g_value_x = vx, g_value_cy = ty + fs * 0.52f;
     }
     if (!cards) {  // the label, clear of the value: a long one (German, French) a little smaller, then cut short with "..."
         float room = right - (p.x + lpad) - fs * (value.empty() && !chevron && !arrows ? 0.2f : 0.7f);

@@ -59,6 +59,8 @@ void opt_own_next(void);  // the next row is the player's own setting, not part 
 // the next row's label and value are already in the menus' language (i18n.h: put together with L_line, or the
 // player's own text): shown as they are
 void opt_shown_next(void);
+// the last row's value: its left edge and the middle of its line (screen coordinates; x 0: it had none)
+void opt_last_value_pos(float *x, float *cy);
 // rows after this sit one step in (+1) or back out (-1): options that belong to the row above
 void opt_indent(int step);
 void opt_end(void);

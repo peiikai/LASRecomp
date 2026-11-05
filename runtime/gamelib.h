@@ -72,6 +72,9 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size);
 const GameLibTables *gamelib_tables(void);
 // True when a library usable with this build is in one of those places (without loading it).
 bool gamelib_present(const char *game_dir);
+// iOS only: the app's own library (its id's GAMELIB_ID matches) - the game's build ID it was made for (16 hex digits,
+// the id's last part), whatever game files are there. false: none.
+bool gamelib_built_for(char *out, size_t size);
 
 #ifdef __cplusplus
 }
