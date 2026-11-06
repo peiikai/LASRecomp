@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "imgui.h"
@@ -40,7 +39,6 @@ static std::string g_page;  // (the page drawn last: its last shown description 
 // Phones: a page without a right pane is one column of cards (the Android port's 3b4d0504) - the name, its description
 // under it, the value with larger arrows on the right - instead of rows with the description in a pane beside them
 static bool g_cards;
-static std::unordered_set<std::string> g_split_pages;  // (pages with opt_split's right pane keep the two panes)
 // Phones: opt_list_begin's list is cards too, filling its pane - no description box under it
 static bool g_list_cards;
 
@@ -93,7 +91,7 @@ static bool g_held;  // the last row's left / right has been held a while (stepp
 static bool g_click_silent;  // this frame's click did nothing (a finger on a ◀ value ▶ row's body): no decide sound
 void opt_indent(int step) { g_indent = g_indent + step < 0 ? 0 : g_indent + step; }
 
-void opt_begin(const char *id, float scale) {
+void opt_begin(const char *id, float scale, bool split) {
     g_scale = scale;
     g_take_first = g_focus_req;
     g_focus_req = false;
@@ -104,7 +102,7 @@ void opt_begin(const char *id, float scale) {
     g_row_h = 1.9f, g_listed = false;
     g_desc_max_last = g_desc_max, g_desc_max = 0;
     if (g_page != id) g_page = id, g_desc_shown.clear(), g_desc_max_last = 0, g_desc_w = 0;
-    g_cards = PLAT_TOUCH && !g_split_pages.count(id);
+    g_cards = PLAT_TOUCH && !split;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float pane_w = g_cards ? avail.x : avail.x * 0.48f;
     {   // the rows' pane: a recessed well
@@ -575,7 +573,7 @@ void opt_end(void) {
 }
 
 void opt_split(void) {
-    if (g_cards) g_split_pages.insert(g_page);  // (from the next frame on: two panes)
+    IM_ASSERT(!g_cards && "opt_begin(id, scale, true) for a page with opt_split");
     left_end();
     g_left_hover = g_desc_hover, g_left_focus = g_desc_focus, g_left_hov_set = g_hov_set, g_left_foc_set = g_foc_set;
     g_desc_hover.clear(), g_desc_focus.clear();

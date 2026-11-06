@@ -410,7 +410,7 @@ extern "C" void save_editor_draw(float scale) {
         (opt_pressed_back() || (opt_pressed_left() && !opt_focused_lr())))
         g_back_frame = frame, g_focus = FOCUS_SEC;
 
-    opt_begin("##save", scale);
+    opt_begin("##save", scale, true);
     opt_compact();
     for (int c = 0; c < N_SEC; c++) {
         if (!sec_shown(c)) continue;

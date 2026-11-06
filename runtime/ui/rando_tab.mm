@@ -1464,7 +1464,7 @@ extern "C" void rando_tab_draw(float scale) {
     // (the start screen: no game loaded, nothing playing - and the seed's patches mustn't be applied yet)
     const char *active = !g_start_screen && rando_seed_dir() ? rando_seed_dir() + 6 : NULL;
 
-    opt_begin("##rando", scale);
+    opt_begin("##rando", scale, true);
     opt_compact();
     std::string cur_preset = L(current_preset().c_str());  // (Seeds and Presets share a line: half rows, a long name cut short)
     {  // (12 characters at most, cut between UTF-8 characters)

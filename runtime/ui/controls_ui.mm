@@ -170,7 +170,7 @@ static void configure_inputs(float scale) {
                                  ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)))
         g_focus = FOCUS_CAT;
 
-    opt_begin("##configure", scale);
+    opt_begin("##configure", scale, true);
     opt_section("Configure inputs");
     const char *names[9];
     for (int i = 0; i < nd; i++) names[i] = devs[i].name;

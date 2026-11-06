@@ -11,7 +11,8 @@
 #include <string>
 #include <vector>
 
-void opt_begin(const char *id, float scale);
+// split: the page ends with opt_split (a right pane of its own): phones then keep the two panes instead of cards
+void opt_begin(const char *id, float scale, bool split = false);
 void opt_section(const char *title);
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc);
 // wrap: past the last value back to the first (and the other way); false: stops at the ends

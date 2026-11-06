@@ -2424,7 +2424,7 @@ extern "C" void launcher_run(const char *root) {
                 auto first_row = [&] {
                     if (focus_first > 0 && focus_first--) ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
                 };
-                opt_begin(ios_page ? "##ios" : "##files", sc);
+                opt_begin(ios_page ? "##ios" : "##files", sc, !ios_page && !ready);  // (before the setup: the example folder on the right)
 #if LARECOMP_IOSEXPORT
                 if (ios_page) {
                     ios_export_rows(ready, busy, win);
