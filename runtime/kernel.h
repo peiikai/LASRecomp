@@ -6,9 +6,9 @@
 
 #define STACK_BASE GUEST_STACK_BASE  // (runtime/rt.h, with the rest of the layout)
 #define STACK_SIZE 0x0040000000ull
-#if PLAT_IOS  // (the packed layout, rt.h)
-_Static_assert(GUEST_STACK_OFF + STACK_SIZE <= GUEST_HI_OFF - ALIAS_SIZE, "the stacks run into the alias region");
-#endif
+_Static_assert(ALIAS_OFF >= GUEST_STACK_OFF + STACK_SIZE || ALIAS_OFF + ALIAS_SIZE <= GUEST_STACK_OFF,
+               "the stacks run into the alias region");
+_Static_assert(GUEST_STACK_OFF + STACK_SIZE <= GUEST_HI_OFF, "the stacks run past the window's end");
 
 typedef enum { KOBJ_THREAD = 1, KOBJ_EVENT, KOBJ_SESSION, KOBJ_SHMEM, KOBJ_TMEM } KType;
 typedef enum { WAIT_NONE = 0, WAIT_MUTEX, WAIT_CONDVAR, WAIT_ARBITER } WaitKind;

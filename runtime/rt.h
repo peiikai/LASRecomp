@@ -43,12 +43,14 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 #define HEAP_OFF         0x0018000000ull
 #define GUEST_STACK_OFF  0x00E8000000ull
 #define ALIAS_SIZE       0x0020000000ull                 // 512 MB
+#define ALIAS_OFF        (GUEST_HI_OFF - ALIAS_SIZE)      // (at the top, after the stacks)
 #else
 #define GUEST_HI_OFF     0x0320000000ull                 // 12.5 GB
 #define HLE_OFF          0x0080000000ull
 #define HEAP_OFF         0x0240000000ull
 #define GUEST_STACK_OFF  0x0200000000ull
 #define ALIAS_SIZE       0x0100000000ull
+#define ALIAS_OFF        0x0100000000ull                 // (the Switch's: between HLE and the stacks)
 #endif
 #define GUEST_HI         (GUEST_BASE + GUEST_HI_OFF)
 #define HLE_BASE         (GUEST_BASE + HLE_OFF)
@@ -60,13 +62,17 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 #define TLS_SIZE     0x0000100000ull
 #define HLE_HEAP     (HLE_BASE + 0x0002000000ull)     // guest-visible memory owned by host code
 #define HLE_HEAP_SIZE 0x000E000000ull
-#define ALIAS_BASE   (GUEST_HI - ALIAS_SIZE)          // alias region (svcMapMemory targets)
+#define ALIAS_BASE   (GUEST_BASE + ALIAS_OFF)         // alias region (svcMapMemory targets)
 #define HEAP_MAX     0x00D0000000ull   // 3.25 GB
+// (no region over another; the stacks' end: kernel.h, which has their size)
 _Static_assert(HLE_OFF + 0x0001000000ull + TLS_SIZE <= HLE_OFF + 0x0002000000ull &&
                HLE_OFF + 0x0002000000ull + HLE_HEAP_SIZE <= HEAP_OFF, "the HLE regions overlap");
-#if PLAT_IOS  // (packed end to end: the heap, then the stacks (kernel.h checks their end), then the alias region)
-_Static_assert(HEAP_OFF + HEAP_MAX <= GUEST_STACK_OFF, "the heap runs into the stacks");
-#endif
+_Static_assert(ALIAS_OFF >= HLE_OFF + 0x0002000000ull + HLE_HEAP_SIZE || ALIAS_OFF + ALIAS_SIZE <= HLE_OFF,
+               "the alias region runs into HLE");
+_Static_assert(ALIAS_OFF >= HEAP_OFF + HEAP_MAX || ALIAS_OFF + ALIAS_SIZE <= HEAP_OFF, "the alias region runs into the heap");
+_Static_assert(HEAP_OFF + HEAP_MAX <= GUEST_STACK_OFF || GUEST_STACK_OFF + 0x0040000000ull <= HEAP_OFF,
+               "the heap runs into the stacks");
+_Static_assert(ALIAS_OFF + ALIAS_SIZE <= GUEST_HI_OFF && HEAP_OFF + HEAP_MAX <= GUEST_HI_OFF, "past the window's end");
 
 // ---- loader.c
 typedef struct Module {
