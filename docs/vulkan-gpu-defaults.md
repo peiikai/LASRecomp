@@ -19,6 +19,7 @@ Vendor IDs: 0x13B5 Arm (Mali), 0x5143 Qualcomm (Adreno), 0x8086 Intel, 0x1002 AM
 | Placeholder colour attachment for depth-only passes | Intel | UHD 630 on Windows (a driver crash without it, #8, #46) | | `LARECOMP_VK_PLACEHOLDER_COLOR` |
 | Guest heap as driver memory | RADV, PanVK | PanVK (Mali-G610), RADV | #564, #483 | `LARECOMP_VK_HEAP_DMABUF` |
 | Shader memory through copies (no heap import) | drivers without `VK_EXT_external_memory_host` | PanVK | #556 | none (automatic) |
+| Varyings renumbered from 0 per vertex + fragment pair (fragment inputs at Location 16 and up read garbage: white triangles) | PanVK before Mesa 26.1 | PanVK 25.3.6 / 26.0.3 (Mali-G610, RK3588) | | `LARECOMP_VK_COMPACT_VARYINGS` |
 
 Notes:
 
