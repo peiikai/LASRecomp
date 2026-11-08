@@ -115,8 +115,15 @@ untranslated text shows in English.
 
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 
-`python3 tools/test_spirv_varyings.py` checks the Vulkan backend's varying renumbering (PanVK before Mesa 26.1) on
-synthetic SPIR-V pairs; it needs a C compiler and SPIRV-Tools.
+`python3 tools/test_spirv_varyings.py` checks the Vulkan backend's varying renumbering (on for Mesa drivers, for PanVK
+before 26.1) on synthetic SPIR-V pairs: a vertex, tessellation evaluation or geometry shader with a fragment shader,
+and the cases it must leave alone. It needs a C compiler and SPIRV-Tools.
+`python3 tools/test_spirv_varyings_render.py` draws VS -> FS, VS -> GS -> FS, VS -> TCS -> TES -> FS and
+VS -> TCS -> TES -> GS -> FS pipelines offscreen with the renumbering off and on, on every Vulkan 1.3 device it finds,
+and compares the images word for word. It needs a C compiler, the Vulkan loader and headers (`libvulkan-dev`),
+`glslangValidator` or `glslc`, and a device with geometry and tessellation shaders, such as lavapipe
+(`mesa-vulkan-drivers`). With the Khronos validation layer (`vulkan-validationlayers`) installed, any message from it
+fails the test. `--device llvmpipe` picks one device; with no Vulkan device it says so and exits 0.
 
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.
