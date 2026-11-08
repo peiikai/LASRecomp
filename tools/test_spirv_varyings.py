@@ -5,8 +5,7 @@ file with tools/test_spirv_varyings.c, assembles each pair with spirv-as, renumb
 spirv-val (Vulkan 1.3) and checks that the two stages still agree: one old -> new Location map, one-to-one, the same on
 both sides, nothing but those Location literals changed. Also every case the pass must refuse (other producer stages,
 several entry points, geometry Stream other than 0, per-primitive / per-vertex fragment inputs, block member
-Locations, decoration groups), which must leave both modules byte-identical. tools/test_spirv_varyings_render.py
-renders the same kind of pairs on a Vulkan device.
+Locations, decoration groups), which must leave both modules byte-identical.
 
 Needs a C compiler (CC, default cc) and SPIRV-Tools (spirv-as, spirv-dis, spirv-val) with Vulkan 1.3 and
 SPV_EXT_mesh_shader (2023 or newer).

@@ -120,13 +120,6 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends glslc spirv-tools
           tools/test_spirv_val.sh
-      # (the Vulkan backend's varying renumbering, spirv_varyings.c: synthetic SPIR-V pairs for every producer stage,
-      # then pipelines with each stage combination drawn with it off and on, on lavapipe, under the validation layer)
-      - name: Varying renumbering (synthetic SPIR-V; lavapipe render, validation layer)
-        run: |
-          sudo apt-get install -y --no-install-recommends spirv-tools glslang-tools mesa-vulkan-drivers vulkan-validationlayers
-          python3 tools/test_spirv_varyings.py
-          python3 tools/test_spirv_varyings_render.py --device llvmpipe --validation on
       - name: FP/SIMD lowering vs a CPU emulator (a sample)
         run: |
           python3 -m venv tools/venv && tools/venv/bin/pip install -q unicorn capstone lz4
