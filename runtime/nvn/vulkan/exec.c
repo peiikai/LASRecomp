@@ -1333,6 +1333,16 @@ void vk_exec_init(void) {
     const char *pe = getenv("LARECOMP_VK_PUSH_CB");
     LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push) ? "on" : "off",
         pe ? "LARECOMP_VK_PUSH_CB" : "default for this GPU");
+    // fmin / fmax / saturate as the GPU's min / max / clamp (shader.h maxwell_glsl_fast_minmax) by default on Android,
+    // where the fork it comes from measured it on Adreno (Turnip and Qualcomm's driver: the lit pass 1717 -> 1637
+    // instructions). LARECOMP_VK_FAST_MINMAX=1 turns it on elsewhere, =0 off anywhere.
+    const char *fm = getenv("LARECOMP_VK_FAST_MINMAX");
+#ifdef __ANDROID__
+    maxwell_glsl_fast_minmax = fm ? atoi(fm) != 0 : true;
+#else
+    maxwell_glsl_fast_minmax = fm && atoi(fm) != 0;
+#endif
+    LOG("[vk] fast min / max %s (%s)\n", maxwell_glsl_fast_minmax ? "on" : "off", fm ? "LARECOMP_VK_FAST_MINMAX" : "default here");
     // The command buffers of every slot, from the pool, before the recorder thread exists: from then on the pool and
     // the buffers are the recorder's (begun, recorded, ended and submitted in packet order)
     for (int i = 0; i < SUBS; i++) {
@@ -5712,6 +5722,7 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
 // pre_ii: texture descriptors already resolved by the caller (draw: fragment textures, needed earlier for the
 // viewport decision), or NULL.
 static float g_mirror_w;  // mirror mode's composite: its render target width (rscale[65].x; 0 otherwise)
+static float g_ao_taps;   // the AO's blurs: its scale (rscale[65].y, maxwell/translate.c ao_grid_fix; 0 otherwise)
 
 // (set reuse) what a set holds, one entry per descriptor written, in stage_set's order (fixed per program)
 typedef struct { uint32_t binding, type; uint64_t a, b, c; } SetEnt;
@@ -5733,7 +5744,7 @@ static VkDescriptorSet stage_set(Prog *p, VkDescriptorSetLayout layout, uint32_t
     if (!lean) memset(rs, 0, sizeof rs);
     rs[0][0] = rs[0][1] = 1; rs[0][2] = rs[0][3] = 0;
     if (rscale_row0) memcpy(rs[0], rscale_row0, 16);
-    rs[65][0] = g_mirror_w; rs[65][1] = rs[65][2] = rs[65][3] = 0;
+    rs[65][0] = g_mirror_w; rs[65][1] = g_ao_taps; rs[65][2] = g_settings.ao_quality == AO_OFF; rs[65][3] = 0;  // ([65].z: AO Off)
     for (int i = 0; i < p->nbinds; i++) {
         VkBindingInfo *b = &p->binds[i];
         if (b->set != set) continue;
@@ -6622,6 +6633,8 @@ static void draw_(CmdRec *r, bool indexed) {
     Prog *pr = get_program(st.program, &vkey, &fkey);
     if (!pr || atomic_load(&pr->state) != 1) { SKIP(!pr ? SK_NO_STAGES : atomic_load(&pr->state) == 2 ? SK_PROG_FAILED : SK_PROG_BUILDING); return; }
     g_mirror_w = 0;
+    extern float renderer_ao_blur_scale(NvnTexture *t);
+    g_ao_taps = pr->fi->uses_ao_taps && st.rt.ncolor ? renderer_ao_blur_scale(st.rt.color[0]) : 0;
     {   // mirror mode (runtime/hle/mirror.c; as renderer.m): the scene's composite into the window image is mirrored
         extern bool mirror_draw(bool composite);
         extern bool mirror_scene_size(uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
@@ -7928,7 +7941,7 @@ static void post_pass_ex(VkCommandBuffer cb, const char *fs, const VkImageView *
 
 // Depth copy that upsamples (copy_texture): a fullscreen draw writing bilinear depth (depthup.frag) into the destination
 // rectangle; stencil is kept. Nearest copies (blit / via colour) made stairs of sloped ground when the guest-sized AO
-// depth (textures.c tex_guest_sized_ao) comes from a scaled pyramid of lower resolution: dark horizontal lines in the
+// depth (textures.c tex_ao) comes from a scaled pyramid of lower resolution: dark horizontal lines in the
 // game's ambient occlusion (issue #356, 25% in a window). A placeholder colour attachment, as game passes get on Intel
 // (a depth-only pass crashed the UHD 630's driver). False: the copy falls back to the nearest paths.
 static bool depth_upsample_draw(VkCommandBuffer cb, TexBackend *s, TexBackend *d, uint32_t slv, uint32_t sly, int sx, int sy,

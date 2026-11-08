@@ -188,6 +188,9 @@ These work on both Metal and Vulkan unless noted.
 | `LARECOMP_DYN_TEST` | number | Pin Dynamic resolution at this render height (units of 1080 lines). |
 | `LARECOMP_GAME_DYNRES` | 1 | Turn the game's own dynamic resolution back on (it is off by default). |
 | `LARECOMP_NO_SCALE` | 1 | Keep all render targets at the game's own size (no resolution scaling). |
+| `LARECOMP_AO_SCALE` | 1 to 4 | Draw the game's ambient occlusion at this many times the Switch's size, whatever the setting and render scale. |
+| `LARECOMP_AO_SCALED` | 1 | Scale the ambient occlusion with the frame, as before issue #356 (shows the old haze and dither). |
+| `LARECOMP_AO_NO_GRID` | 1 | Leave the ambient occlusion shaders on the game's own pixel grid when the AO is larger than the Switch's. |
 | `LARECOMP_NO_FRAME_CLEAR` | 1 (Vulkan: 0 / 1) | Don't clear scene render targets at their first use each frame. On Vulkan the default is no clears on integrated GPUs. |
 | `LARECOMP_TEX_FULLHASH` | 1 | Hash every texture in full each time instead of the faster partial checks. |
 | `LARECOMP_NO_WIDESCREEN` | 1 | Turn the widescreen view off (16:9 framing everywhere). |
@@ -213,6 +216,7 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | Variable | Values | What it does |
 |---|---|---|
 | `LARECOMP_GPU` | index | Use this GPU (the index from the `[vk] gpu N:` log lines) instead of the first discrete one. |
+| `LARECOMP_VK_PIPELINE_CACHE` | 0 | Start with an empty Vulkan pipeline cache (the saved one is written over as usual). The Android emulator hangs loading a large one. |
 | `LARECOMP_VK_VALIDATION` | 1 | Turn the Khronos validation layer on (it must be installed) and log its warnings and errors (first 500). |
 | `LARECOMP_VK_VALIDATION_STOP` | 1 | As `LARECOMP_VK_VALIDATION`, and exit at the first validation error. |
 | `LARECOMP_VK_PRESENT` | `mailbox`, `fifo`, `immediate` | Present mode (default mailbox, fifo with frame generation). |
@@ -272,6 +276,7 @@ the start screen's setup otherwise).
 | `LARECOMP_GAME_LIB` | file path | Load the game code library from this path first. |
 | `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `lasgen`. |
 | `LARECOMP_CC` | file path | Compiler to use instead of the bundled zig. |
+| `LARECOMP_GUEST_BASE` | hex address | Builds with `DYN_BASE=1` only: start the guest window here (4 GB aligned, ending below 2^39). Without it a desktop `DYN_BASE` build uses `0x7100000000`, so the game runs away from its own addresses. |
 
 ## Tool scripts
 

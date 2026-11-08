@@ -425,9 +425,30 @@ static void use_pad(SDL_JoystickID id, const char *why) {
     note_family();
     recompute_pad();
 }
+#ifdef __ANDROID__
+// Android lists other input devices as gamepads too (a wireless keyboard / mouse receiver's media keys: "Logitech USB
+// Receiver Mouse"), and the first one listed was taken: a DualSense connected beside it wasn't read until pressed. A
+// pad SDL knows (PlayStation, Xbox, Switch...) ranks over one with sticks and face buttons, which ranks over anything
+// else; the best one connected is read, and pressing another still switches to it. From Nycolazs's
+// LASRecomp-Android-Plus via mamcjr's LASRecompAndroid (both MIT).
+static int pad_rank(SDL_JoystickID id) {
+    SDL_GamepadType t = SDL_GetGamepadTypeForID(id);
+    if (t != SDL_GAMEPAD_TYPE_UNKNOWN && t != SDL_GAMEPAD_TYPE_STANDARD) return 3;
+    char *m = SDL_GetGamepadMappingForID(id);
+    int r = m && strstr(m, "leftx:") && strstr(m, ",a:") && strstr(m, ",b:") ? 2 : 1;
+    SDL_free(m);
+    return r;
+}
+#endif
 static void open_pad(SDL_JoystickID id) {
     if (!SDL_GetGamepadFromID(id)) SDL_OpenGamepad(id);
+#ifdef __ANDROID__
+    int r = pad_rank(id);
+    LOG("[input] connected: %s (rank %d)\n", SDL_GetGamepadNameForID(id), r);
+    if (!pad || r > pad_rank(SDL_GetGamepadID(pad))) use_pad(id, pad ? " (a better controller)" : "");
+#else
     if (!pad) use_pad(id, "");
+#endif
 }
 
 void input_handle_event(const SDL_Event *e) {
@@ -465,7 +486,11 @@ void input_handle_event(const SDL_Event *e) {
         if (!pad) {  // another one still connected takes over
             int n = 0;
             SDL_JoystickID *ids = SDL_GetGamepads(&n);
+#ifdef __ANDROID__
+            for (int i = 0; ids && i < n; i++)  // (the best one still connected)
+#else
             for (int i = 0; ids && i < n && !pad; i++)
+#endif
                 if (ids[i] != e->gdevice.which) open_pad(ids[i]);
             SDL_free(ids);
             note_family();
@@ -483,7 +508,12 @@ void input_handle_event(const SDL_Event *e) {
         recompute_pad();
         break;
     case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-        if (!host_test && abs(e->gaxis.value) > 24000 && pad_at_rest()) use_pad(e->gaxis.which, " (switched)");
+        if (!host_test && abs(e->gaxis.value) > 24000 && pad_at_rest()
+#ifdef __ANDROID__
+            && (!pad || pad_rank(e->gaxis.which) >= pad_rank(SDL_GetGamepadID(pad)))  // (not to a lesser device's axis)
+#endif
+            )
+            use_pad(e->gaxis.which, " (switched)");
         if (pad && e->gaxis.which != SDL_GetGamepadID(pad)) break;  // (another pad's stick: not the game's)
         if ((e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER || e->gaxis.axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) &&
             !host_test) {  // (the triggers as buttons: past half way)
@@ -517,7 +547,8 @@ static _Atomic int32_t script_lx, script_ly, script_rx, script_ry;
 //   at frame, up `frames` later): they reach menus and the on-screen keyboard first, as a player's would.
 // "frame:sdlaxis:<axis>=<value>:frames" holds a controller axis (SDL name: righty, leftx...; raw units, -32768..32767,
 //   y down) as real events, back to 0 `frames` later.
-// "frame:mouse:<dx>/<dy>" moves the mouse by that many points, "frame:mouse:click" clicks it (real events).
+// "frame:mouse:<dx>/<dy>" moves the mouse by that many points, "frame:mouse:@<x>/<y>" to that point of the window
+//   (clicks then go there, not to the real mouse), "frame:mouse:click" clicks it (real events).
 // "frame:shot:<name>" saves the window (game + menus) to build/<name>.png.
 // "frame:resize:<W>x<H>" resizes the window to W x H points (menu_apply_window_requests: the main thread).
 // LARECOMP_BIND_TEST="frame:pad|key:<input>:<host>,..." starts a rebind capture of <input> (bind_* name: a, zl,
@@ -552,8 +583,14 @@ static void test_push(uint64_t frame, unsigned long start, unsigned long len, co
     if (!strcmp(dev, "mouse")) {
         if (frame != start) return;
         float mx, my, dx = 0, dy = 0;
+        static float at_x = -1, at_y;  // (the last "@x/y": clicks go there, wherever the real mouse is)
         SDL_GetMouseState(&mx, &my);
-        if (!strcmp(arg, "click")) {
+        if (at_x >= 0) mx = at_x, my = at_y;
+        if (arg[0] == '@') {
+            sscanf(arg + 1, "%f/%f", &at_x, &at_y);
+            e.type = SDL_EVENT_MOUSE_MOTION;
+            e.motion.which = TEST_DEVICE, e.motion.x = at_x, e.motion.y = at_y, e.motion.xrel = at_x - mx, e.motion.yrel = at_y - my;
+        } else if (!strcmp(arg, "click")) {
             e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
             e.button.which = TEST_DEVICE, e.button.button = SDL_BUTTON_LEFT, e.button.down = true, e.button.clicks = 1;
             e.button.x = mx, e.button.y = my;
@@ -561,6 +598,7 @@ static void test_push(uint64_t frame, unsigned long start, unsigned long len, co
             e.type = SDL_EVENT_MOUSE_BUTTON_UP, e.button.down = false;
         } else {
             sscanf(arg, "%f/%f", &dx, &dy);
+            if (at_x >= 0) at_x += dx, at_y += dy;
             e.type = SDL_EVENT_MOUSE_MOTION;
             e.motion.which = TEST_DEVICE, e.motion.x = mx + dx, e.motion.y = my + dy, e.motion.xrel = dx, e.motion.yrel = dy;
         }

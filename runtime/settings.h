@@ -13,6 +13,7 @@ enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /
 #define UPSCALE_SHARP UPSCALE_FSR1
 #endif
 enum { AA_OFF = 0, AA_SMAA = 1 };
+enum { AO_SWITCH = 0, AO_HIGH = 1, AO_OFF = 2 };  // the game's ambient occlusion: the Switch's size, up to twice it (output_scale_ao), or none
 enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTATION = 3 };
 // Which face button confirms in our own menus (runtime/ui/pad_nav.mm); the game's input is never affected
 enum { MENU_CONFIRM_GAME = 0, MENU_CONFIRM_CONTROLLER = 1 };
@@ -31,6 +32,7 @@ extern const char *const g_language_endonyms[N_LANGUAGES];  // each in its own l
 
 enum { RANDO_PRESETS_MAX = 20 };  // (the Randomizer tab's own presets: settings.rando_presets)
 
+enum { AUDIO_OUT_STEREO, AUDIO_OUT_51, N_AUDIO_OUTS };
 enum { FPS_OFF, FPS_TOP_LEFT, FPS_TOP_RIGHT, FPS_BOTTOM_LEFT, FPS_BOTTOM_RIGHT, N_FPS_CORNERS };
 
 typedef struct {
@@ -41,11 +43,14 @@ typedef struct {
     int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (MetalFX: macOS, FSR 1: Windows)
     bool upscaler_auto;  // never chosen: the default for this GPU (settings_resolve_defaults); saved as "auto"
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
+    int ao_quality;      // AO_*: the resolution of the game's ambient occlusion
     float volume;        // master volume, 1 = 100%
+    int audio_out;       // AUDIO_OUT_*: speaker layout of the game's sound (runtime/services/audio.c)
     bool reverb;         // room reverb effect
     bool movie_audio;
     bool menu_sounds;    // LAS Recomp's own menu sounds (runtime/menu_sfx.c)
     bool frame_interp;   // Frame Generation: extra images between the game's frames (runtime/nvn/interp.c)
+    bool metal_hud;      // macOS: Apple's Metal Performance HUD over the game (runtime/nvn/metal.m metal_hud_apply)
     int show_fps;        // FPS_*: the frame rate counter's corner (FPS_OFF: none)
     int dpad_mode;       // DPAD_*: what the d-pad (and arrow keys) do in play: nothing, items (runtime/hle/dpad_items.c), move Link
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
@@ -110,6 +115,7 @@ typedef struct {
 
 enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 4, N_WEATHERS = 6 };
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
+extern const char *const g_audio_outs[N_AUDIO_OUTS];  // (the menu's names: Stereo, 5.1)
 extern const char *const g_weathers[N_WEATHERS];  // (the menu's names: Off, Rain, Snow, Storm, Blizzard, Random)
 extern const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES];  // (the menu's names)
 
