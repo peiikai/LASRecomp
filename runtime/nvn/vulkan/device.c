@@ -731,6 +731,8 @@ static void create_device(void) {
             else if (mesa)
                 LOG("[vk] varyings renumbered per vertex + fragment pair: on, a Mesa driver (%s; Mesa PanVK before 26.1 "
                     "misreads fragment inputs at Location 16 and up, harmless elsewhere)\n", drv.driverName);
+            else
+                LOG("[vk] varyings renumbered per vertex + fragment pair: off, not a Mesa driver (%s)\n", drv.driverName);
         }
         // command buffers released before each begin (record.c begin_cb_run) by default on Arm's own driver: the implicit
         // reset of vkBeginCommandBuffer keeps the memory vkCmdBeginRendering allocates (64 KB blocks of host memory), so
