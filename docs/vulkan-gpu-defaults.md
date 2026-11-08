@@ -21,7 +21,7 @@ Vendor IDs: 0x13B5 Arm (Mali), 0x5143 Qualcomm (Adreno), 0x8086 Intel, 0x1002 AM
 | Guest heap as driver memory | RADV, PanVK | PanVK (Mali-G610), RADV | #564, #483 | `LARECOMP_VK_HEAP_DMABUF` |
 | fmin / fmax / saturate as the GPU's min / max / clamp | Android (every GPU) | Turnip and Qualcomm's driver (Adreno 830), in LASRecompAndroid | | `LARECOMP_VK_FAST_MINMAX` |
 | Shader memory through copies (no heap import) | drivers without `VK_EXT_external_memory_host` | PanVK | #556 | none (automatic) |
-| Varyings renumbered from 0 per vertex + fragment pair (fragment inputs at Location 16 and up read garbage: white triangles) | PanVK before Mesa 26.1 | PanVK 25.3.6 / 26.0.3 (Mali-G610, RK3588) | | `LARECOMP_VK_COMPACT_VARYINGS` |
+| Varyings renumbered from 0 per vertex + fragment pair (PanVK before Mesa 26.1 reads fragment inputs at Location 16 and up as garbage: white triangles) | every Mesa driver | PanVK 25.3.6 / 26.0.3 (Mali-G610, RK3588: needed), PanVK 26.2.4 and Turnip (Adreno 643: same image and speed) | #633 | `LARECOMP_VK_COMPACT_VARYINGS` |
 
 Notes:
 

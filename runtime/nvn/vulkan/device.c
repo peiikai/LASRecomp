@@ -198,6 +198,22 @@ static void create_instance(void) {
     }
 }
 
+// A Mesa Vulkan driver: driverInfo "Mesa ..." (every Mesa driver's), or a Mesa driver ID (for a build that says
+// something else there). 26 and 28 by number: older headers (Ubuntu 24.04's 1.3.275) name 26 VK_DRIVER_ID_MESA_AGXV
+// and lack 28.
+static bool mesa_driver(const VkPhysicalDeviceDriverProperties *d) {
+    if (!strncmp(d->driverInfo, "Mesa ", 5)) return true;
+    switch ((int)d->driverID) {
+    case VK_DRIVER_ID_MESA_RADV: case VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA: case VK_DRIVER_ID_MESA_LLVMPIPE:
+    case VK_DRIVER_ID_MESA_TURNIP: case VK_DRIVER_ID_MESA_V3DV: case VK_DRIVER_ID_MESA_PANVK: case VK_DRIVER_ID_MESA_VENUS:
+    case VK_DRIVER_ID_MESA_DOZEN: case VK_DRIVER_ID_MESA_NVK: case VK_DRIVER_ID_IMAGINATION_OPEN_SOURCE_MESA:
+    case 26:  // VK_DRIVER_ID_MESA_HONEYKRISP
+    case 28:  // VK_DRIVER_ID_MESA_KOSMICKRISP
+        return true;
+    default: return false;
+    }
+}
+
 static bool has_ext(VkExtensionProperties *e, uint32_t n, const char *name) {
     for (uint32_t i = 0; i < n; i++) if (!strcmp(e[i].extensionName, name)) return true;
     return false;
@@ -700,26 +716,21 @@ static void create_device(void) {
         // is the GPU's ("Mali-G610 MC4"), hence the driver ID.
         g_vk.heap_dmabuf_default = strstr(g_vk.props.deviceName, "RADV") != NULL || drv.driverID == VK_DRIVER_ID_MESA_PANVK;
         // varyings renumbered from 0 for each vertex + fragment pair (exec.c compile_program, spirv_varyings.c) by default
-        // on PanVK before Mesa 26.1. On Valhall v9 / v10 (Mali-G57 / G610 / G710) it reads the varyings of a fragment
-        // shader with at most 16 inputs at byte offset 16 x Location in an 8-bit field, so Locations 16 and up (the
-        // translated shaders keep the guest's attribute numbers; Field shaders read 24-27) overflow into the source
-        // format bits: white triangles over the Field (Mali-G610, panthor, Mesa 25.2.7 / 25.3.6 / 26.0.3). Fixed in
-        // Mesa 26.1 (0f0a3225a599). The version is driverInfo's "Mesa X.Y[.Z][-devel]", else driverVersion; a
-        // 26.1.0-devel build may predate the fix, so it counts as older. Harmless on any driver (=1 forces it on).
+        // on every Mesa driver. PanVK before Mesa 26.1 needs it: on Valhall v9 / v10 (Mali-G57 / G610 / G710) it reads
+        // the varyings of a fragment shader with at most 16 inputs at byte offset 16 x Location in an 8-bit field, so
+        // Locations 16 and up (the translated shaders keep the guest's attribute numbers; Field shaders read 24-27)
+        // overflow into the source format bits: white triangles over the Field (Mali-G610, panthor, Mesa 25.2.7 /
+        // 25.3.6 / 26.0.3; fixed in 26.1, 0f0a3225a599). Elsewhere it is harmless (the same image and speed on PanVK
+        // 26.2.4 and Turnip), and it keeps every Mesa build on one path instead of trusting version strings.
         {
-            unsigned maj = g_vk.props.driverVersion >> 22, min = (g_vk.props.driverVersion >> 12) & 0x3ff, im, in;
-            const char *src = "driverVersion";
-            if (sscanf(drv.driverInfo, "Mesa %u.%u", &im, &in) == 2) maj = im, min = in, src = "driverInfo";
-            bool devel = strstr(drv.driverInfo, "-devel") != NULL;
-            bool old_panvk = drv.driverID == VK_DRIVER_ID_MESA_PANVK &&
-                             (maj < 26 || (maj == 26 && (min < 1 || (min == 1 && devel && !strncmp(drv.driverInfo, "Mesa 26.1.0", 11)))));
             const char *cv = getenv("LARECOMP_VK_COMPACT_VARYINGS");
-            g_vk.compact_varyings = cv && *cv ? atoi(cv) != 0 : old_panvk;
+            bool mesa = mesa_driver(&drv);
+            g_vk.compact_varyings = cv && *cv ? atoi(cv) != 0 : mesa;
             if (cv && *cv) LOG("[vk] varyings renumbered per vertex + fragment pair: %s (LARECOMP_VK_COMPACT_VARYINGS)\n",
                                g_vk.compact_varyings ? "on" : "off");
-            else if (old_panvk)
-                LOG("[vk] varyings renumbered per vertex + fragment pair: PanVK Mesa %u.%u (%s) < 26.1 misreads fragment "
-                    "inputs at Location 16 and up\n", maj, min, src);
+            else if (mesa)
+                LOG("[vk] varyings renumbered per vertex + fragment pair: on, a Mesa driver (%s; Mesa PanVK before 26.1 "
+                    "misreads fragment inputs at Location 16 and up, harmless elsewhere)\n", drv.driverName);
         }
         // command buffers released before each begin (record.c begin_cb_run) by default on Arm's own driver: the implicit
         // reset of vkBeginCommandBuffer keeps the memory vkCmdBeginRendering allocates (64 KB blocks of host memory), so

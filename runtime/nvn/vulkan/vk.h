@@ -58,7 +58,7 @@ typedef struct {
     bool gpl_probe;
     bool map_placed, unmap_reserve;  // VK_EXT_map_memory_placed: driver memory mapped at a given address (exec.c guest_heap_dmabuf)
     bool heap_dmabuf_default;  // the heap as driver memory by default: RADV and Mesa's PanVK (device.c; LARECOMP_VK_HEAP_DMABUF overrides)
-    bool compact_varyings;  // each vertex + fragment pair's varyings renumbered from 0: PanVK before Mesa 26.1 (device.c; LARECOMP_VK_COMPACT_VARYINGS)
+    bool compact_varyings;  // each vertex + fragment pair's varyings renumbered from 0: Mesa drivers, for PanVK before 26.1 (device.c; LARECOMP_VK_COMPACT_VARYINGS)
     bool cb_release;  // command buffers reset with RELEASE_RESOURCES before each begin: Arm's driver (device.c; LARECOMP_VK_CB_RELEASE)
     bool ssbo_chunks;  // stores and atomics from fragment and vertex shaders (exec.c: the heap in chunks counts misses)
     bool lazy_heap, bda;  // the heap imported chunk by chunk (device.c lazy_heap_predicted), buffer device addresses enabled for it
