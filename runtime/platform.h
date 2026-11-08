@@ -9,6 +9,17 @@
 #include "platform/win_compat.h"
 #elif defined(__linux__) && !defined(__ANDROID__)  // (Bionic has strlcpy and arc4random)
 #include "platform/linux_compat.h"
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+// PLAT_IOS: the iOS app (runtime/platform/ios.c): no child processes, no re-exec, no AppKit; data in Documents.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#define PLAT_IOS 1
+#else
+#define PLAT_IOS 0
+#endif
+#if PLAT_IOS
+#define PLAT_TOUCH 1
 #endif
 // PLAT_TOUCH: a phone or tablet - a touch screen and no desktop around the window (runtime/ui/mobile/, the
 // on-screen controls, the menus as cards in the safe area, no Quit / Fullscreen). A phone port sets it to 1 and
@@ -19,6 +30,15 @@
 #ifndef PLAT_TOUCH
 #define PLAT_TOUCH 0
 #endif
+// LARECOMP_IOSEXPORT: the iOS export is in this app (runtime/iosexport.c, the Makefile's IOSEXPORT: the desktops
+// unless told otherwise; never the iOS app).
+#ifndef LARECOMP_IOSEXPORT
+#ifdef __ANDROID__
+#define LARECOMP_IOSEXPORT 0
+#else
+#define LARECOMP_IOSEXPORT (!PLAT_IOS)
+#endif
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,6 +47,10 @@ extern "C" {
 // ---- guest address space
 // Claim [lo, hi) for the guest at exactly that address, readable/writable (pages may be backed lazily).
 bool plat_reserve_guest(uint64_t lo, uint64_t hi);
+// iOS (LARECOMP_DYN_BASE): claim `size` bytes for the guest wherever the process has room below 2^39 (guest
+// addresses are 39 bits), 1 GB aligned, and return the start; 0 when nowhere fits (after saying where the process's
+// room is: the log). Where an iOS process has room differs by device and version, so the map is read.
+uint64_t plat_place_guest(uint64_t size);
 // Make sure [addr, addr+size) inside the guest window is backed (before the OS itself writes there, e.g.
 // file reads); a no-op where the whole window is backed from the start.
 void plat_commit(uint64_t addr, uint64_t size);
@@ -134,8 +158,9 @@ PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool 
 #endif
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf
-// dir is synced by OneDrive (Windows: under a OneDrive folder, or a cloud file); false on other systems
-bool plat_onedrive_synced(const char *dir);
+// dir is synced to a cloud drive: the service's name ("OneDrive" on Windows: under a OneDrive folder, or a cloud
+// file; "iCloud Drive" on iOS), NULL when not (always on macOS / Linux)
+const char *plat_cloud_synced(const char *dir);
 #ifdef _WIN32
 #define PLAT_EXE_SUFFIX ".exe"
 #define PLAT_VENV_PYTHON "venv/Scripts/python.exe"  // relative to the venv's parent
@@ -174,6 +199,24 @@ int plat_touch_prompt_poll(char *out, size_t n);
 void plat_touch_prompt_cancel(void);
 #else
 static inline bool plat_touch_tablet(void) { return false; }
+#endif
+
+// ---- iOS only (runtime/platform/ios.c, ios_bookmark.m; SDL's dialogs: platform/ios_sdl.h; within the iOS layer:
+// platform/ios_internal.h)
+#if PLAT_IOS
+const char *plat_ios_documents(void);     // the app's Documents folder (Files > On My iPhone > LAS Recomp): the default data root
+// The signature has / lacks (1 / 0) com.apple.developer.kernel.increased-memory-limit; -1 unreadable. Without it iOS
+// ends the app at a much lower footprint. LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1 (test): 0.
+int plat_ios_memory_entitled(void);
+// The data folder's security-scoped bookmark (runtime/paths.c's pointer file holds it, base64): made under the
+// picker's scope and checked to resolve back; resolve opens the folder's scope for the process's life - 1 resolved,
+// 0 not a bookmark / gone / in the trash, -1 resolved but stale (rewrite it). A picked folder stays readable through
+// the picker's own scope until the next pick (the move, the bookmark).
+bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
+int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
+bool plat_ios_cloud_offloaded(const char *dir);  // an iCloud file under dir isn't on the device (read waits for it)
+// Where path is as Files names it: root "" (this device) or a place's name, and the folders under it; false: unknown
+bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, size_t restn);
 #endif
 
 #ifdef __cplusplus

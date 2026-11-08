@@ -947,22 +947,22 @@ static bool final_path(const wchar_t *p, wchar_t *out, DWORD n) {
 #endif
 
 // Under one of the OneDrive folders the environment names (personal, work / school), or a cloud file itself
-bool plat_onedrive_synced(const char *dir) {
+const char *plat_cloud_synced(const char *dir) {
     wchar_t w[MAX_PATH], d[1024], r[1024], v[1024];
-    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return false;
+    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return NULL;
     DWORD a = GetFileAttributesW(d);
     if (a != INVALID_FILE_ATTRIBUTES &&
         (a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_PINNED | FILE_ATTRIBUTE_UNPINNED)))
-        return true;
+        return "OneDrive";
     static const wchar_t *const vars[] = {L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial"};
     for (int i = 0; i < 3; i++) {
         DWORD k = GetEnvironmentVariableW(vars[i], v, 1024);
         if (!k || k >= 1024 || !final_path(v, r, 1024)) continue;
         size_t l = wcslen(r);
         if (r[l - 1] == L'\\') l--;  // (a drive's root: "D:\")
-        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return true;
+        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return "OneDrive";
     }
-    return false;
+    return NULL;
 }
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.

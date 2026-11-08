@@ -5717,8 +5717,11 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         }
         bool up = !up_nearest && (dw > sw || dh > sh);
         id<MTLTexture> sdepth = s;
-        if (s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8)
-            sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
+        bool packed_ds = s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
+#if !TARGET_OS_IPHONE
+        packed_ds |= s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8;  // (macOS only; iOS never makes one)
+#endif
+        if (packed_ds) sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
         id<MTLSamplerState> smp = up ? dlin : dnear;
         id<MTLDepthStencilState> dss = always;
         void (^copy)(void) = ^{

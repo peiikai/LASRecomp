@@ -5,7 +5,8 @@
 #include <string.h>
 #include <ctype.h>
 #include <math.h>
-#ifdef __ANDROID__
+#include "platform.h"  // (PLAT_TOUCH, before the blocks below)
+#if PLAT_TOUCH
 #include <stdatomic.h>
 #endif
 #if defined(__APPLE__)
@@ -368,7 +369,7 @@ void settings_load(void) {
 }
 
 void settings_save(void) {
-#ifdef __ANDROID__
+#if PLAT_TOUCH
     // Written to larecomp.ini.tmp, then put in its place: a phone ends apps in the background at any moment (the app
     // saves then too: vulkan/device.c), and a file cut short there lost every setting. One writer at a time. (From
     // Nycolazs's LASRecomp-Android-Plus via mamcjr's LASRecompAndroid, MIT.)
@@ -481,7 +482,7 @@ void settings_save(void) {
     if (g_settings.rando_options[0]) fprintf(f, "rando_options = %s\n", g_settings.rando_options);
     for (int i = 0; i < RANDO_PRESETS_MAX; i++)
         if (g_settings.rando_presets[i][0]) fprintf(f, "rando_preset = %s\n", g_settings.rando_presets[i]);
-#ifdef __ANDROID__
+#if PLAT_TOUCH
     if (fclose(f) != 0 || rename(tmp, SETTINGS_FILE) != 0) LOG("[settings] cannot write %s\n", SETTINGS_FILE);
     atomic_flag_clear(&lock);
 #else

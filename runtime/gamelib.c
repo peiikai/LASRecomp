@@ -41,9 +41,16 @@ static int candidates(const char *game_dir, char out[3][1100]) {
     const char *env = getenv("LARECOMP_GAME_LIB");
     if (env && *env) snprintf(out[n++], 1100, "%s", env);
     char exe_side[1024];
+#if PLAT_IOS
+    // the embedded framework (tools/bundle_ios.sh): the only place iOS runs code from
+    if (rt_resource("Frameworks/LASGame.framework/LASGame", NULL, exe_side, sizeof exe_side))
+        snprintf(out[n++], 1100, "%s", exe_side);
+    (void)game_dir;
+#else
     if (rt_resource(GAMELIB_NAME, NULL, exe_side, sizeof exe_side) && exists(exe_side))
         snprintf(out[n++], 1100, "%s", exe_side);
     if (game_dir) snprintf(out[n++], 1100, "%s/%s", game_dir, GAMELIB_NAME);
+#endif
     return n;
 }
 
@@ -90,6 +97,27 @@ static const char *loadable_copy(const char *path) {
         LOG("[gamelib] copied to internal storage to load it: %s\n", dst);
     }
     return dst;
+}
+#endif
+
+#if PLAT_IOS
+bool gamelib_built_for(char *out, size_t size) {
+    char c[3][1100];
+    int n = candidates(NULL, c);
+    for (int i = 0; i < n; i++) {
+        char path[1100], id[128] = {0};
+        snprintf(path, sizeof path, "%s.id", c[i]);
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        size_t k = fread(id, 1, sizeof id - 1, f);
+        fclose(f);
+        while (k && (id[k - 1] == '\n' || id[k - 1] == '\r')) id[--k] = 0;
+        char *dash = strrchr(id, '-');
+        if (!dash || (size_t)(dash - id) != strlen(GAMELIB_ID) || strncmp(id, GAMELIB_ID, dash - id)) continue;
+        snprintf(out, size, "%s", dash + 1);
+        return true;
+    }
+    return false;
 }
 #endif
 
