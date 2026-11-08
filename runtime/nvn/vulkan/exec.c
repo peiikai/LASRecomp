@@ -1973,8 +1973,9 @@ static bool spirv_strip_early_tests(uint32_t *w, size_t *nwords) {
     return false;
 }
 
-// PanVK before Mesa 26.1 (device.c compact_varyings): the pair's varyings renumbered from 0 when a fragment input sits at
-// Location 16 or above (spirv_varyings.c says why). Once per program, before its modules are made; the SPIR-V cache
+// Mesa drivers (device.c compact_varyings, for PanVK before 26.1): the pair's varyings renumbered from 0 when a fragment
+// input sits at Location 16 or above (spirv_varyings.c says why). LA's programs are vertex + fragment only, so the
+// vertex shader is the producer. Once per program, before its modules are made; the SPIR-V cache
 // keeps the shaders as translated, and the driver's pipeline cache keys on the modules' words, so its entries follow.
 static void compact_varyings(Prog *p, uint32_t *sv, size_t nv, uint32_t *sf, size_t nf) {
     static _Atomic int n_done, n_failed;

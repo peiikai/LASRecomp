@@ -1,5 +1,6 @@
-// Host driver for tools/test_spirv_varyings.py: runs spirv_compact_varyings on a vertex + fragment SPIR-V pair.
-// Usage: test_spirv_varyings <vs.spv> <fs.spv> <limit> <vs out> <fs out>; prints "<result> <info>".
+// Host driver for tools/test_spirv_varyings.py: runs spirv_compact_varyings on a SPIR-V pair (the last
+// pre-rasterization stage, then the fragment shader).
+// Usage: test_spirv_varyings <pre.spv> <fs.spv> <limit> <pre out> <fs out>; prints "<result> <info>".
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -25,12 +26,12 @@ static void store(const char *path, const uint32_t *w, size_t n) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 6) { fprintf(stderr, "usage: %s vs.spv fs.spv limit vs-out fs-out\n", argv[0]); return 2; }
-    size_t nv, nf;
-    uint32_t *vs = load(argv[1], &nv), *fs = load(argv[2], &nf);
+    if (argc != 6) { fprintf(stderr, "usage: %s pre.spv fs.spv limit pre-out fs-out\n", argv[0]); return 2; }
+    size_t np, nf;
+    uint32_t *pre = load(argv[1], &np), *fs = load(argv[2], &nf);
     char info[256];
-    int r = spirv_compact_varyings(vs, nv, fs, nf, (uint32_t)atoi(argv[3]), info, sizeof info);
-    store(argv[4], vs, nv);
+    int r = spirv_compact_varyings(pre, np, fs, nf, (uint32_t)atoi(argv[3]), info, sizeof info);
+    store(argv[4], pre, np);
     store(argv[5], fs, nf);
     printf("%d %s\n", r, info);
     return 0;
