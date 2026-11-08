@@ -547,6 +547,14 @@ void rec_BeginCommandBuffer(VkCommandBuffer cb) {
     commit();
     ENQ_END();
 }
+static void reset_cb_run(const void *p) { VK_CHECK(vkResetCommandBuffer(*(const VkCommandBuffer *)p, 0)); }
+void rec_ResetCommandBuffer(VkCommandBuffer cb) {
+    if (on <= 0) { reset_cb_run(&cb); return; }
+    ENQ_T0();
+    *(VkCommandBuffer *)push(reset_cb_run, sizeof cb, 0) = cb;
+    commit();
+    ENQ_END();
+}
 static void end_cb_run(const void *p) { VK_CHECK(vkEndCommandBuffer(*(const VkCommandBuffer *)p)); }
 void rec_EndCommandBuffer(VkCommandBuffer cb) {
     if (on <= 0) { end_cb_run(&cb); return; }

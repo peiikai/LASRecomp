@@ -706,6 +706,25 @@ static void create_device(void) {
         const char *cbr = getenv("LARECOMP_VK_CB_RELEASE");
         g_vk.cb_release = cbr ? atoi(cbr) != 0 : drv.driverID == VK_DRIVER_ID_ARM_PROPRIETARY;
         if (g_vk.cb_release) LOG("[vk] command buffers release their memory at each begin%s\n", cbr ? " (LARECOMP_VK_CB_RELEASE)" : ": Arm's driver");
+        // command buffers reset as soon as their submission completes (exec.c cb_early_reset) by default on PanVK. PanVK
+        // gives a command buffer one shader scratch (TLS) allocation at vkEndCommandBuffer: the largest per-thread stack
+        // of the shaders it used, rounded up to a power of two, x 2048 threads x the core ID range (19 on RK3588: 1 KB a
+        // thread is 38 MB, 8 KB is 304 MB). From Mesa 25.3 (0e88dd575fc0) a reset hands it back to the command pool's
+        // free list for the next command buffer to reuse; it is freed only by vkResetCommandPool(RELEASE_RESOURCES) or
+        // the pool's destruction. Before 25.3 a reset freed it. Either way, every command buffer between its
+        // vkEndCommandBuffer and its reset holds its own: kept until the slot's next use, 24 submissions later, there are
+        // as many of them as slots whose last submission used a stack-heavy shader. Reset early, only the submissions
+        // still in flight hold one.
+        {
+            const char *cer = getenv("LARECOMP_VK_CB_EARLY_RESET");
+            g_vk.cb_early_reset = cer && *cer ? atoi(cer) != 0 : drv.driverID == VK_DRIVER_ID_MESA_PANVK;
+            if (cer && *cer)
+                LOG("[vk] command buffers reset once their submission completes: %s (LARECOMP_VK_CB_EARLY_RESET)\n",
+                    g_vk.cb_early_reset ? "on" : "off");
+            else if (g_vk.cb_early_reset)
+                LOG("[vk] command buffers reset once their submission completes: PanVK keeps a command buffer's shader "
+                    "scratch memory until its reset\n");
+        }
 #ifdef VK_EXT_graphics_pipeline_library
         if (gpl_ext)
             snprintf(gpl, sizeof gpl, "%s (fast linking %s, independent interpolation decoration %s)",
