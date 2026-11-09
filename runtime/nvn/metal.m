@@ -1802,7 +1802,7 @@ static void shot_write(id<MTLTexture> tex, const char *path, bool exit_after) {
 static void ip_tick(uint64_t tp) {
     uint64_t cb_now = plat_now_ns(), period = atomic_load(&ip_period);
     ip_lead_ms += ((tp > cb_now ? (tp - cb_now) / 1e6 : 0) - ip_lead_ms) * 0.02;
-    if (!atomic_load(&ip_on)) return;
+    if (!atomic_load(&ip_on) || ui_in_background()) return;  // (a tick queued before the app left: no drawable now)
     double P = period ? (double)period : 16666667.0;
     // The window's presents can queue up behind each other (seen: images on screen 1 to 4 vsyncs after the one they
     // were made for, steady for a whole run): each vsync of that queue is latency. One vsync without a present lets
