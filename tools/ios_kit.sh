@@ -9,6 +9,7 @@
 #   include/any-darwin-any/  zig's Darwin libc headers (the bundled zig compiles for iOS with these; its own copy
 #                            is trimmed to the host's, tools/fetch_zig.sh)
 #   libSystem.B.tbd          the libSystem stub the link needs (runtime/platform/ios-sdk)
+#   version.txt              this release's version: the runtime refuses a kit from another release
 #   README.txt
 # Run after `make ios-skeleton` (the app) and tools/fetch_lld.sh for every LLD_TARGET (the linkers); needs the
 # zig release archive of this host in build/zig-dl (tools/fetch_zig.sh fetched it) for the untrimmed headers.
@@ -54,11 +55,12 @@ APSL), libSystem.B.tbd (the link stub). LAS Recomp reads and writes the zip file
 miniz-LICENSE.txt).
 EOT
 cp build/miniz/LICENSE "$STAGE/miniz-LICENSE.txt"
+echo "$VERSION" > "$STAGE/version.txt"
 mkdir -p build/dist
 OUT="build/dist/LAS Recomp-$VERSION-iOS.laskit"
 rm -f "$OUT"
 # (no symlinks in the app: an iOS install drops them; -y would keep any as entries) -X: no extra fields beyond the modes
 [ -z "$(find "$STAGE/Payload" -type l)" ] || { echo "symlinks in the app: $(find "$STAGE/Payload" -type l)"; exit 1; }
-(cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt miniz-LICENSE.txt)
+(cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt version.txt miniz-LICENSE.txt)
 rm -rf "$STAGE"
 echo "$OUT ($(du -h "$OUT" | cut -f1))"

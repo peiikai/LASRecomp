@@ -285,11 +285,11 @@ this repository and not in release builds. You must provide your own legally obt
 
 LAS Recomp's own code (the recompiler tools, the runtime, the randomizer additions) is open source under the
 [MIT License](LICENSE). Third-party components keep their own licenses: LAS-Randomizer (MIT), ported audio renderer code (MIT, see `third_party/`), Dear ImGui (MIT),
-Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically), the
+Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically, and statically in the iOS app), the
 Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions; its C library headers keep their own
 licenses), the iOS kit's Mach-O linker (LLD as built by the Rust project: Apache 2.0 with LLVM exceptions), miniz
 (MIT: the iOS kit and the .ipa it makes), and the generator helpers' bundled libraries listed under Credits (oead / evfl / Keystone in the seed
-generator and Unicorn in the game code generator are under the GPL, versions in the table below: each helper is a separate program the game runs, and its
+generator and Unicorn in the game code generator are under the GPL, versions in the table below: each helper is a separate program the game runs, except on iOS, where oead and Keystone run inside the app, and its
 sources are this repository plus those projects' published sources). The license covers LAS Recomp's code only - it grants
 nothing for Nintendo's game, which you must supply yourself.
 
@@ -311,7 +311,7 @@ Release builds include these components; their source code for the exact version
 | Capstone (game code generator) | 5.0.9 | BSD 3-clause | https://pypi.org/project/capstone/5.0.9/ |
 | Unicorn (game code generator) | 2.1.4 | GPL 2.0 (Python bindings: BSD) | https://pypi.org/project/unicorn/2.1.4/, https://github.com/unicorn-engine/unicorn |
 | python-lz4 (game code generator; includes LZ4) | 4.4.5 | BSD 3-clause; LZ4: BSD 2-clause | https://pypi.org/project/lz4/4.4.5/ |
-| FFmpeg (LGPL configuration, macOS, Windows and Linux builds) | 9.0.2 | LGPL 2.1+ | https://ffmpeg.org/releases/ |
+| FFmpeg (LGPL configuration, macOS, Windows, Linux and iOS builds) | 9.0.2 | LGPL 2.1+ | https://ffmpeg.org/releases/ |
 | SDL 3 | 3.4.18 (macOS, Windows), 3.4.16 (Linux) | zlib | https://github.com/libsdl-org/SDL/releases/tag/release-3.4.18, https://github.com/libsdl-org/SDL/releases/tag/release-3.4.16 |
 | shaderc (Windows, Linux: GLSL to SPIR-V; Linux: with glslang, SPIRV-Tools inside) | 2026.4 (Windows), 2026.3 (Linux) | Apache 2.0 | https://github.com/google/shaderc |
 | libiconv (Windows: used by SDL 3) | 1.19 | LGPL 2.1+ | https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.19.tar.gz |

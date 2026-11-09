@@ -31,7 +31,21 @@ const char *larecomp_version(void);  // runtime/ui/launcher.mm
 #endif
 
 bool iosexport_available(const char *kit, char *why, size_t why_size) {
-    return gamebuild_ios_available(kit, why, why_size);
+    if (!gamebuild_ios_available(kit, why, why_size)) return false;
+    // A kit from another release would make an .ipa that only fails on the device: refused here, both versions named.
+    char zwhy[256];
+    ZipReader *z = zip_open(kit, zwhy, sizeof zwhy);
+    if (!z) { snprintf(why, why_size, "can't read the iOS kit: %s", zwhy); return false; }
+    int i = zip_find(z, "version.txt");
+    size_t size = 0;
+    char *v = i >= 0 ? zip_read(z, i, &size) : NULL;
+    zip_close(z);
+    if (v) v[strcspn(v, "\r\n")] = 0;
+    bool same = v && !strcmp(v, larecomp_version());
+    if (!same) snprintf(why, why_size, "this iOS kit is from %s, and this is LAS Recomp %s: choose the kit of the same release",
+                        v && *v ? v : "another release", larecomp_version());
+    free(v);
+    return same;
 }
 
 // The iOS build's own folder, <data root>/cache/ios-build (its .gamebuild/ and library apart from this machine's;
