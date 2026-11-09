@@ -131,6 +131,7 @@ cat > "$APP/Info.plist" <<EOF
 	<key>UIRequiresFullScreen</key><true/>
 	<key>UIStatusBarHidden</key><true/>
 	<key>UIViewControllerBasedStatusBarAppearance</key><false/>
+	<key>CADisableMinimumFrameDurationOnPhone</key><true/>
 	<key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>metal</string></array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

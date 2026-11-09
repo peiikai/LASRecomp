@@ -17,8 +17,7 @@
 #endif
 #include "output_scale.h"
 #import <QuartzCore/CAMetalLayer.h>
-#import <CoreVideo/CoreVideo.h>
-#include <mach/mach_time.h>
+#import <QuartzCore/CADisplayLink.h>
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_metal.h>
 #include <stdatomic.h>
@@ -1660,7 +1659,7 @@ static void present_tail(NvnTexture *t, uint64_t frame) {
 // ---------------------------------------------------------------- frame interpolation (runtime/nvn/interp.c)
 // The render thread makes the images - the game's own frame and its in-betweens, each the full present pass into an
 // image of the window's size ("slot") with the time it's due on screen - and a presenter thread driven by the
-// display (CAMetalDisplayLink) shows, at every vsync, the newest slot that's due, with the overlay (menu, FPS, tracker)
+// display (CADisplayLink) shows, at every vsync, the newest slot that's due, with the overlay (menu, FPS, tracker)
 // drawn on top of each image. The game's frame pacing is untouched: its frames reach the render thread as before.
 //   LARECOMP_INTERP_SEQ=<from>:<count>:<dir>  save every image shown for game frames from..from+count-1
 //                                             (<dir>/<n>_f<frame>_<g|m|r>.png: game / in-between / repeated)
@@ -1798,7 +1797,7 @@ static void shot_write(id<MTLTexture> tex, const char *path, bool exit_after) {
     });
 }
 
-// ---- the presenter (a display link's thread, CVDisplayLink: CAMetalDisplayLink forbids the plain present's
+// ---- the presenter (a display link's thread, CADisplayLink: CAMetalDisplayLink forbids the plain present's
 // nextDrawable on the same window): one image per vsync, shown on the vsync it was made for
 static void ip_tick(uint64_t tp) {
     uint64_t cb_now = plat_now_ns(), period = atomic_load(&ip_period);
@@ -2024,37 +2023,91 @@ static void ip_tick(uint64_t tp) {
 }
 
 
+// The display link: the window's CADisplayLink (it follows the display the window is on; the screen's on iOS), on a run
+// loop thread of its own. It calls after each vsync with the next one's time.
+#if !TARGET_OS_IPHONE
+static NSWindow *ip_window(void) {
+    return (__bridge NSWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+}
+#endif
+@interface InterpLink : NSObject
+- (void)tick:(CADisplayLink *)link;
+@end
+@implementation InterpLink
+- (void)tick:(CADisplayLink *)link {
+    if (ui_in_background()) return;  // (iOS: no drawable in the background)
+    double per = link.targetTimestamp - link.timestamp;
+    if (per <= 0) per = link.duration;
+    if (per <= 0) per = 1.0 / 60;
+    // The image goes to the vsync after targetTimestamp (the next one, a period away). A present for the next one
+    // doesn't make it: the compositor takes a present for a vsync about 1.4 periods ahead (CVDisplayLink called that
+    // early), later ones are dropped for the one after - every image made for targetTimestamp went unshown
+    // (presentedTime 0), and with the presenter's wait the margin would be 2 ms. (CACurrentMediaTime's clock: plat_now_ns's)
+    uint64_t tp = (uint64_t)((link.targetTimestamp + per) * 1e9);
+    {   // the display's period changed (the window was moved to another display): logged
+        static uint64_t last_per;
+        uint64_t p = (uint64_t)(per * 1e9);
+        if (last_per && (p > last_per + 200000 || p + 200000 < last_per)) {
 #if TARGET_OS_IPHONE
-// (no CVDisplayLink there; a CADisplayLink presenter is to come - until then frames are shown without interpolation,
-//  and nothing ticks while the app is in the background)
-static bool ip_link_start(void) { return false; }
-static void ip_link_stop(void) {}
+            LOG("[interp] display period %.2f -> %.2f ms\n", last_per / 1e6, per * 1e3);
 #else
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"  // (CVDisplayLink: the display-link API without a layer)
-static CVDisplayLinkRef ip_cv;
-static CVReturn ip_cv_cb(CVDisplayLinkRef l, const CVTimeStamp *now, const CVTimeStamp *out, CVOptionFlags fi,
-                         CVOptionFlags *fo, void *ctx) {
-    (void)l, (void)now, (void)fi, (void)fo, (void)ctx;
-    static mach_timebase_info_data_t tb;
-    if (!tb.denom) mach_timebase_info(&tb);
-    static bool named;
-    if (!named) { named = true; pthread_setname_np("interp presenter"); }
-    uint64_t tp = out->hostTime * tb.numer / tb.denom;
-    uint64_t period = out->videoTimeScale ? (uint64_t)((double)out->videoRefreshPeriod * 1e9 / out->videoTimeScale) : 0;
-    if (period) atomic_store(&ip_period, period);
+            NSScreen *s = ip_window().screen;
+            LOG("[interp] display period %.2f -> %.2f ms (display %u, %ld Hz)\n", last_per / 1e6, per * 1e3,
+                [s.deviceDescription[@"NSScreenNumber"] unsignedIntValue], (long)s.maximumFramesPerSecond);
+#endif
+        }
+        last_per = p;
+    }
+    atomic_store(&ip_period, (uint64_t)(per * 1e9));
     atomic_store(&ip_phase, tp);
     atomic_store(&ip_last_cb, plat_now_ns());
-    if (!ip_wake_ns) { @autoreleasepool { ip_tick(tp); } return kCVReturnSuccess; }
+    if (!ip_wake_ns) { @autoreleasepool { ip_tick(tp); } return; }
     pthread_mutex_lock(&ip_wake_mx);  // (the presenter's own thread does it, ip_wake_ns before the vsync)
     ip_wake_tp = tp;
     pthread_cond_signal(&ip_wake_cv);
     pthread_mutex_unlock(&ip_wake_mx);
-    return kCVReturnSuccess;
+}
+@end
+
+static CADisplayLink *ip_link;
+static InterpLink *ip_link_target;
+static CFRunLoopRef ip_link_loop;
+static _Atomic int ip_link_state;  // 0 not started, 1 running, -1 couldn't be made
+static void *ip_link_thread(void *arg) {
+    (void)arg;
+    pthread_setname_np("interp display link");
+    plat_thread_realtime(8333333);  // (its calls aren't coalesced when the app isn't frontmost)
+    @autoreleasepool {
+        ip_link_target = [InterpLink new];
+#if TARGET_OS_IPHONE
+        ip_link = [CADisplayLink displayLinkWithTarget:ip_link_target selector:@selector(tick:)];
+        unsigned disp = 0;
+        long hz = UIScreen.mainScreen.maximumFramesPerSecond;
+        ip_link.preferredFrameRateRange = CAFrameRateRangeMake(60, hz, hz);  // (ProMotion: 60 unless asked for more)
+#else
+        NSWindow *w = ip_window();
+        ip_link = [w displayLinkWithTarget:ip_link_target selector:@selector(tick:)];
+        unsigned disp = [w.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+        long hz = w.screen.maximumFramesPerSecond;
+#endif
+        if (!ip_link) { atomic_store(&ip_link_state, -1); return NULL; }
+        [ip_link addToRunLoop:NSRunLoop.currentRunLoop forMode:NSRunLoopCommonModes];
+        ip_link_loop = CFRunLoopGetCurrent();
+        LOG("[interp] frame interpolation presenter: display %u, %ld Hz\n", disp, hz);
+        atomic_store(&ip_link_state, 1);
+    }
+    for (;;) CFRunLoopRun();
+    return NULL;
+}
+static void ip_link_pause(bool paused) {  // (the link's own thread sets it)
+    CADisplayLink *l = ip_link;
+    CFRunLoopPerformBlock(ip_link_loop, kCFRunLoopCommonModes, ^{ l.paused = paused; });
+    CFRunLoopWakeUp(ip_link_loop);
 }
 
-// The display link asks ~12 ms ahead of a vsync; the presenter waits until ip_wake_ns before it and takes the newest
-// image then: images can be made that much later (less latency). LARECOMP_INTERP_WAKE_MS (default 6: 4 missed vsyncs now and then; 0: at once).
+// The display link calls after a vsync with the next one's time; the presenter waits until ip_wake_ns before it and
+// takes the newest image then: images can be made that much later (less latency). LARECOMP_INTERP_WAKE_MS (default 6:
+// 4 missed vsyncs now and then; 0: at once).
 static void *ip_presenter(void *arg) {
     (void)arg;
     pthread_setname_np("interp presenter");
@@ -2073,26 +2126,19 @@ static void *ip_presenter(void *arg) {
 }
 
 static bool ip_link_start(void) {
-    if (!ip_cv) {
-        if (CVDisplayLinkCreateWithActiveCGDisplays(&ip_cv) != kCVReturnSuccess) { ip_cv = NULL; return false; }
-        CGDirectDisplayID disp = CGMainDisplayID();
-        NSWindow *w = (__bridge NSWindow *)SDL_GetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
-        NSNumber *num = w.screen.deviceDescription[@"NSScreenNumber"];
-        if (num) disp = (CGDirectDisplayID)num.unsignedIntValue;
-        CVDisplayLinkSetCurrentCGDisplay(ip_cv, disp);
-        CVDisplayLinkSetOutputCallback(ip_cv, ip_cv_cb, NULL);
+    if (atomic_load(&ip_link_state) == 0) {
         if (getenv("LARECOMP_INTERP_WAKE_MS")) ip_wake_ns = (uint64_t)(atof(getenv("LARECOMP_INTERP_WAKE_MS")) * 1e6);
         if (ip_wake_ns) { pthread_t th; pthread_create(&th, NULL, ip_presenter, NULL); }
         ip_queue = [dev newCommandQueue];
-        CVTime nominal = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(ip_cv);
-        LOG("[interp] frame interpolation presenter: display %u, %.2f Hz\n", disp,
-            nominal.timeValue ? (double)nominal.timeScale / nominal.timeValue : 0.0);
+        pthread_t th;
+        pthread_create(&th, NULL, ip_link_thread, NULL);
+        while (atomic_load(&ip_link_state) == 0) usleep(1000);
+    } else if (atomic_load(&ip_link_state) > 0) {
+        ip_link_pause(false);
     }
-    return CVDisplayLinkStart(ip_cv) == kCVReturnSuccess || CVDisplayLinkIsRunning(ip_cv);
+    return atomic_load(&ip_link_state) > 0;
 }
-static void ip_link_stop(void) { if (ip_cv) CVDisplayLinkStop(ip_cv); }
-#pragma clang diagnostic pop
-#endif
+static void ip_link_stop(void) { if (atomic_load(&ip_link_state) > 0) ip_link_pause(true); }
 
 // The presenter runs and shows slots: true once its display link calls.
 static bool ip_start(void) {

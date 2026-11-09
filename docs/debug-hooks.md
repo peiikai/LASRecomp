@@ -92,6 +92,7 @@ Comma-separated entries, each starting with a frame:
 - `frame:mouse:<dx>/<dy>`, `frame:mouse:click`: move or click the mouse.
 - `frame:shot:<name>`: save the window to `build/<name>.png`.
 - `frame:resize:<W>x<H>`: resize the window.
+- `frame:move:<x>/<y>`: move the window to that position (another display, in points).
 
 ## Warps, saves and seeds
 
