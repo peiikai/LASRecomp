@@ -105,6 +105,15 @@ attribute, so the `removexattr` on the linker is gone too.
 
 ## Everything else
 
+- **The game's sound plays on in the background inside LiveContainer**, which has to be supported. LiveContainer
+  runs the app under its own Info.plist, and that allows background audio, so the game's outputs and audio threads
+  keep going on the home screen. To fix: pause every output in `background_watch` (`metal.m`), resume it in the
+  foreground, and open new outputs paused while in the background (`services/audio.c`, debeanz/LASRecomp-iOS
+  6208a197).
+- **The README's licences, gone through for iOS.** The iOS app ships more than the desktops, and statically: FFmpeg,
+  CPython and its extension modules, keystone, oead, Pillow, quicktex and the rest of the generator's packages, all in
+  the .ipa. Check each one's licence, add it to the components table and the "License" paragraph, and ship its
+  licence text in the app where the licence asks for it.
 - **No `docs/ios.md`.** The app has its own bundle id now (`com.peiikai.lasrecomp.ios`, tools/bundle_ios.sh; a
   sideloading tool rewrites it per team), but nothing documents the setup for a player: the kit, the export, the
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.
