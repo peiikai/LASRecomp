@@ -1743,19 +1743,18 @@ static std::string g_driver_msg;
 static bool g_driver_restart;
 static void driver_picked(const char *r) {  // (another thread)
     pthread_mutex_lock(&g_lock);
-    g_driver_msg = !strcmp(r, "-") ? L("The phone's own driver from the next start. Restart LAS Recomp to use it.")
-                   : *r ? L("Driver package added. Restart LAS Recomp to use it.")
-                        : L("That file isn't a driver package (.zip or .so).");
-    g_driver_restart = *r != 0;
+    g_driver_msg = *r ? "" : L("That file isn't a driver package (.zip or .so).");
+    g_driver_restart = *r != 0;  // (a package, or the phone's own again: driver_rows restarts on it)
     pthread_mutex_unlock(&g_lock);
 }
 
+extern "C" uint32_t vk_gpu_vendor(void);  // runtime/nvn/vulkan/device.c
 static void driver_rows(void) {
     android_on_driver(driver_picked);
     auto base = [](const char *p) { const char *s = p ? strrchr(p, '/') : NULL; return std::string(s ? s + 1 : p ? p : ""); };
     std::string want = base(getenv("LARECOMP_VK_DRIVER")), used = base(getenv("LARECOMP_VK_DRIVER_IN_USE"));
-    std::string d = L("The Vulkan driver the game runs on. On Adreno GPUs a Turnip driver package (.zip, as other "
-                      "emulators use) can run it better than the phone's own driver. A new one applies from the next start.");
+    std::string d = L("The Vulkan driver the game runs on. On some Adreno GPUs a custom Turnip driver package may be "
+                      "required to run or may provide better performance.");
     if (!want.empty() && used.empty()) {
         char b[400];
         snprintf(b, sizeof b, L("%s couldn't run here, so the phone's own driver is in use."), want.c_str());
@@ -1764,16 +1763,27 @@ static void driver_rows(void) {
     pthread_mutex_lock(&g_lock);
     std::string msg = g_driver_msg;
     bool restart = g_driver_restart;
+    g_driver_restart = false;
     pthread_mutex_unlock(&g_lock);
+    // the driver is loaded at the start (runtime/nvn/vulkan/android_driver.c): a new one takes a restart, made at once
+    if (restart) {
+        stop_background_prep();
+        settings_save();
+        android_call("restartApp");
+    }
     if (!msg.empty()) d += "\n\n" + msg;
+    // Driver packages (Turnip) exist only for Adreno: the replacement driver has to talk to the phone's own kernel
+    // driver, and only Mesa's Turnip does (Qualcomm's KGSL); Mesa's Mali, Xclipse and PowerVR drivers need kernel
+    // drivers phones don't ship. Elsewhere the section is hidden - unless a package is set anyway (settings from
+    // another phone), so it can be cleared. Vendor not known yet (0): shown.
+    uint32_t vendor = vk_gpu_vendor();
+    if (vendor && vendor != 0x5143 && want.empty()) return;
     opt_section("Graphics driver");
     if (opt_action("Vulkan driver", used.empty() ? LN("Phone's own") : used.c_str(), d.c_str(), true))
         android_call("pickDriver");
-    if (!want.empty() && opt_action("Use the phone's own driver", "", "Goes back to the phone's own Vulkan driver from the "
-                                    "next start.", true))
+    if (!want.empty() && opt_action("Use the phone's own driver", "", "Goes back to the phone's own Vulkan driver. "
+                                    "LAS Recomp restarts to use it.", true))
         android_call("useSystemDriver");
-    if (restart && opt_action("Restart now", "", "Starts LAS Recomp again with the driver you chose.", true))
-        android_call("restartApp");
 }
 #endif
 
