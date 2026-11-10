@@ -9,13 +9,14 @@
 > As with anything on the internet, you run the code at your own discretion.
 
 **LAS Recomp** is a static recompilation of *The Legend of Zelda: Link's Awakening* (Nintendo Switch, 2019) into a
-native Windows, macOS and Linux application.
+native Windows, macOS, Linux and Android application.
 
 > [!NOTE]
 > Currently supported platforms:
 > - macOS - Apple Silicon only, Metal graphics backend + MetalFX
 > - Windows - x86-64 only, Vulkan graphics backend
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
+> - Android - arm64, Vulkan graphics backend
 > - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
 
@@ -36,6 +37,18 @@ These are the minimums during the beta and may change as development continues.
 | Disk | About 12 GB free for setup |
 
 Not supported: Intel UHD 600-series and older Intel integrated graphics, and anything slower than a Switch. Linux on ARM (aarch64) is experimental.
+
+**Android:**
+
+| | Minimum |
+|---|---|
+| OS | Android 11 or newer, 64-bit (arm64) |
+| Chip | Snapdragon 865 (Adreno 650) or as fast, for example the Retroid Pocket 5 |
+| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files |
+| RAM | 8 GB |
+| Storage | About 15 GB free |
+
+At the minimum, expect about 30 fps at 360p (Dynamic resolution). Faster phones run sharper or at 60.
 
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
 
@@ -169,9 +182,19 @@ Where files live (game files, saves, seeds, settings and logs):
 - macOS: `~/Library/Application Support/com.peiikai.lasrecomp/`
 - Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
 - Linux: `~/.local/share/lasrecomp/`
+- Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
 - You can move it to another folder or drive in Settings > Prelaunch > Data folder.
 - `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
+
+### Android
+
+Requirements: the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and
+Python 3. Details in [docs/android.md](docs/android.md).
+
+1. Dependencies (once): `bash android/deps/build_deps.sh` and `bash android/deps/build_gen_deps.sh`.
+2. Build: `cd android && ./gradlew assembleDebug` -> `android/app/build/outputs/apk/debug/app-debug.apk`.
+3. Install it on the phone and set up your game files from the start screen. The game code is built on the phone.
 
 ### Resuming game-code builds
 
