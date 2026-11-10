@@ -257,6 +257,10 @@ static void pick_device(void) {
         g_vk.smaa_stencil ? "on" : "off", g_vk.no_frame_clear ? "off" : "on", igpu ? "integrated" : "not an integrated");
 }
 
+// The GPU's PCI-style vendor ID (0x5143 Qualcomm, 0x13B5 Arm, ...); 0 before a device is picked. Android's start
+// screen offers driver packages only on Adreno (runtime/ui/launcher.mm driver_rows).
+uint32_t vk_gpu_vendor(void) { return g_vk.phys ? g_vk.props.vendorID : 0; }
+
 static bool g_fault_ext;
 // After VK_ERROR_DEVICE_LOST: what the driver says faulted (VK_EXT_device_fault), into the log.
 void vk_device_fault_report(void) {

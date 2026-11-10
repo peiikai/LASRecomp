@@ -1687,6 +1687,7 @@ static void driver_picked(const char *r) {  // (another thread)
     pthread_mutex_unlock(&g_lock);
 }
 
+extern "C" uint32_t vk_gpu_vendor(void);  // runtime/nvn/vulkan/device.c
 static void driver_rows(void) {
     android_on_driver(driver_picked);
     auto base = [](const char *p) { const char *s = p ? strrchr(p, '/') : NULL; return std::string(s ? s + 1 : p ? p : ""); };
@@ -1703,6 +1704,12 @@ static void driver_rows(void) {
     bool restart = g_driver_restart;
     pthread_mutex_unlock(&g_lock);
     if (!msg.empty()) d += "\n\n" + msg;
+    // Driver packages (Turnip) exist only for Adreno: the replacement driver has to talk to the phone's own kernel
+    // driver, and only Mesa's Turnip does (Qualcomm's KGSL); Mesa's Mali, Xclipse and PowerVR drivers need kernel
+    // drivers phones don't ship. Elsewhere the section is hidden - unless a package is set anyway (settings from
+    // another phone), so it can be cleared. Vendor not known yet (0): shown.
+    uint32_t vendor = vk_gpu_vendor();
+    if (vendor && vendor != 0x5143 && want.empty()) return;
     opt_section("Graphics driver");
     if (opt_action("Vulkan driver", used.empty() ? LN("Phone's own") : used.c_str(), d.c_str(), true))
         android_call("pickDriver");
