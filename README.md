@@ -44,7 +44,7 @@ Not supported: Intel UHD 600-series and older Intel integrated graphics, and any
 |---|---|
 | OS | Android 11 or newer, 64-bit (arm64) |
 | Chip | Snapdragon 865 (Adreno 650) or as fast, for example the Retroid Pocket 5 |
-| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files |
+| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files. The latest we've tested is Turnip 26.2.0 R7 from [StevenMXZ's Adreno-Tools-Drivers](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases) |
 | RAM | 8 GB |
 | Storage | About 15 GB free |
 
