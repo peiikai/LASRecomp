@@ -340,6 +340,7 @@ void rt_paths_init(void) {
 }
 
 const char *rt_data_root(void) { return g_root; }
+const char *rt_data_home(void) { return g_home; }
 
 bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     char c[4][1100] = {{0}};
@@ -470,9 +471,6 @@ const char *rt_data_root_fixed(void) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) return LN("Set by LARECOMP_DATA_ROOT.");
     if (g_dev) return LN("A source checkout uses its own folder.");
-#ifdef __ANDROID__
-    return LN("On Android this is the app's own folder.");
-#endif
     return NULL;
 }
 

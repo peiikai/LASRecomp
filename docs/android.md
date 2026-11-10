@@ -24,8 +24,11 @@ cd android && ./gradlew assembleDebug  # android/app/build/outputs/apk/debug/app
   as well as `lasrecomp.log`, backtraces come from the unwinder, and the process can't restart itself.
 - The guest window moves (`LARECOMP_DYN_BASE`, `runtime/rt.h`): an app process is forked with its libraries already
   mapped, so `runtime/main.c` picks a free spot from `/proc/self/maps`.
-- The data folder is `Android/data/com.lasrecomp.android/files`. The fonts and icon are copied from the APK to the
-  app's internal storage at start, where `rt_resource` finds them.
+- The data folder is `Android/data/com.lasrecomp.android/files`, in internal storage or on an SD card (Settings >
+  Storage, and the first row of the setup window): the app's own folder on each, the only places it can use by path
+  without a permission. The SD card's is named in `data_root.txt` as on the desktop, and the data moves with the
+  desktop's move (`runtime/paths.c`); the activity starts the app again after it. The fonts and icon are copied from
+  the APK to the app's internal storage at start, where `rt_resource` finds them.
 - Every Vulkan function comes through volk: Android's loader exports only Vulkan 1.1 before API 33.
 - The swapchain is left unrotated and the compositor turns it, so presents report `VK_SUBOPTIMAL_KHR` by design.
 - The game files folder comes from Android's folder picker (a `content://` folder, not a path): the setup copies
