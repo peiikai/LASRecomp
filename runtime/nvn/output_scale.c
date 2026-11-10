@@ -31,10 +31,10 @@ int rt_game_dynres(void) {
     return on;
 }
 
-// Dynamic resolution: a factor on the Match display scale, from the floor to 1 in coarse 0.1 steps. The floor: 1/3 of
-// the Match display, but never under 540 lines (half the Switch's 1080): a 1080p window 0.50 (960x540), 1440 lines
-// 0.375, 4K and up 1/3 (1280x720 at 4K, still 1440 lines at 8K); 540 lines or less: no scaling. It was 1/3 everywhere:
-// 640x360 of a 1080p window, blurry on integrated GPUs (issue #205).
+// Dynamic resolution: a factor on the Match display scale, from the floor to 1 in coarse 0.1 steps. The floor is 25% of
+// the Match display (the lowest fixed Internal resolution), so Dynamic can go as low as the frame rate target needs. It
+// was 540 lines at least (0.50 of a 1080p window, issue #205); a player who prefers sharper at 30 picks Internal FPS
+// target 30.
 // It holds a resolution and changes only when it must: down when 3 of the last 4 half seconds were over budget or
 // they averaged over 95% of it (1 s in a row when frames miss 60 outright), straight to where the last second's frame is predicted to fit with room; up
 // one step after 5 s in a row (no load spikes in it) with that step predicted to fit with room, at least 5 s after the
@@ -67,8 +67,7 @@ int rt_game_dynres(void) {
 // size). Frames that don't wait (mailbox: a frame every G + W) keep going down to the floor: there every step down is
 // a faster frame. tools/test_dynres.py: the controller against a simulated GPU (the UHD 770 cases).
 #define DYN_N 30            // frames per decision (~half a second)
-#define DYN_FLOOR_LINES 540.0     // the floor: at least this many render lines...
-#define DYN_FLOOR_SHARE (1.0 / 3)  // ... and at least this share of the Match display's
+#define DYN_FLOOR_SHARE 0.25  // the floor: this share of the Match display
 #define DYN_STEP 0.1        // the factor's grid (the floor below its first step)
 #define DYN_BUDGET 14.5     // ms of GPU work per frame at 60 fps (G + W)
 #define DYN_RAISE_FIT 0.9   // a hold's raise: predicted G + W under this share of the budget
@@ -122,9 +121,10 @@ static double dyn_fit(double G, double W, double budget) {
     double f = floor(fit / DYN_STEP + 1e-6) * DYN_STEP;
     return f < g_dyn_floor + DYN_STEP / 2 - 1e-6 ? g_dyn_floor : f;
 }
-// the floor for a Match display of `lines` render lines (1 when that is 540 or less)
+// the floor for a Match display of `lines` render lines (the same share at every size)
 static void dyn_set_floor(double lines) {
-    double f = fmin(1.0, fmax(DYN_FLOOR_SHARE, DYN_FLOOR_LINES / fmax(lines, 1)));
+    (void)lines;
+    double f = DYN_FLOOR_SHARE;
     if (fabs(f - g_dyn_floor) < 1e-9) return;
     g_dyn_floor = f;
     if (g_dyn < f) g_dyn = f;
