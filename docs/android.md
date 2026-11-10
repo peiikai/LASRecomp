@@ -14,7 +14,7 @@ Needs the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 
 
 ```
 bash android/deps/build_deps.sh        # SDL3, shaderc, volk, Vulkan headers, FFmpeg for arm64 (once)
-bash android/deps/build_gen_deps.sh    # the game code builder: Python, capstone, unicorn, lz4, zig (once)
+bash android/deps/build_gen_deps.sh    # the game code builder and seed generator: Python, its modules, zig (once)
 cd android && ./gradlew assembleDebug  # android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -35,6 +35,11 @@ cd android && ./gradlew assembleDebug  # android/app/build/outputs/apk/debug/app
   the app's native library folder, so Python's launcher and zig ship there as `lib*.so`; the rest is unpacked from
   `assets/gen.zip` at the first start after an install or update. The library is loaded from a copy in internal
   storage, since shared storage is mounted noexec.
+- The randomizer's seed generator runs the same way: Python runs `tools/rando/las_headless.py` from the unpacked files
+  (PyInstaller, which makes the desktop's `rando-gen`, has no Android target). `build_gen_deps.sh` builds its compiled
+  modules (oead, quicktex, Pillow's core, Keystone) for that Python; they load from internal storage like Python's own.
+  Shared storage has no symlinks, so the room shuffle's scratch folder goes in internal storage
+  (`LARECOMP_RANDO_SCRATCH`). A seed takes about five minutes on a Snapdragon 865.
 
 ## Testing in the emulator
 

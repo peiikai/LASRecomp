@@ -14,6 +14,10 @@ import re
 import sys
 import types
 
+if os.environ.get('LARECOMP_RANDO_SCRATCH'):  # (Android: the app's internal storage - see shuffle_dungeon_rooms)
+    import tempfile
+    tempfile.tempdir = os.environ['LARECOMP_RANDO_SCRATCH']
+
 LAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'third_party', 'LAS-Randomizer')
 LAS = os.path.normpath(LAS)
 if getattr(sys, 'frozen', False):  # standalone helper (tools/rando/rando_gen.spec): LAS + tools/rando data in the bundle
@@ -151,7 +155,8 @@ def shuffle_dungeon_rooms(romfs, out_dir, mode, layouts, jumps):
                 except OSError:
                     shutil.copyfile(src, dst)
     out_romfs = os.path.join(out_dir, 'romfs')
-    overlay = os.path.join(out_dir, '.room_overlay')
+    # (LARECOMP_RANDO_SCRATCH: somewhere symlinks work - Android's shared storage, where seeds are written, has none)
+    overlay = os.path.join(os.environ.get('LARECOMP_RANDO_SCRATCH') or out_dir, '.room_overlay')
     shutil.rmtree(overlay, ignore_errors=True)
     rc = os.path.join(overlay, 'region_common')
     os.makedirs(os.path.join(rc, 'level'))
