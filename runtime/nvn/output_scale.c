@@ -31,10 +31,9 @@ int rt_game_dynres(void) {
     return on;
 }
 
-// Dynamic resolution: a factor on the Match display scale, from the floor to 1 in coarse 0.1 steps. The floor is 25% of
-// the Match display (the lowest fixed Internal resolution), so Dynamic can go as low as the frame rate target needs. It
-// was 540 lines at least (0.50 of a 1080p window, issue #205); a player who prefers sharper at 30 picks Internal FPS
-// target 30.
+// Dynamic resolution: a factor on the Match display scale, from the floor to 1 in coarse 0.1 steps. The floor is the
+// Video tab's Minimum resolution (g_settings.dyn_min): 25%, 50% (the default) or 75% of the Match display. It was 540
+// lines at least (0.50 of a 1080p window, 1/3 at 4K; issue #205).
 // It holds a resolution and changes only when it must: down when 3 of the last 4 half seconds were over budget or
 // they averaged over 95% of it (1 s in a row when frames miss 60 outright), straight to where the last second's frame is predicted to fit with room; up
 // one step after 5 s in a row (no load spikes in it) with that step predicted to fit with room, at least 5 s after the
@@ -67,7 +66,6 @@ int rt_game_dynres(void) {
 // size). Frames that don't wait (mailbox: a frame every G + W) keep going down to the floor: there every step down is
 // a faster frame. tools/test_dynres.py: the controller against a simulated GPU (the UHD 770 cases).
 #define DYN_N 30            // frames per decision (~half a second)
-#define DYN_FLOOR_SHARE 0.25  // the floor: this share of the Match display
 #define DYN_STEP 0.1        // the factor's grid (the floor below its first step)
 #define DYN_BUDGET 14.5     // ms of GPU work per frame at 60 fps (G + W)
 #define DYN_RAISE_FIT 0.9   // a hold's raise: predicted G + W under this share of the budget
@@ -80,7 +78,7 @@ int rt_game_dynres(void) {
 #define DYN_HOLD_UP_FIT 0.8 // a hold steps up: the floor's predicted G + W under this share of the faster rate's budget
 #define DYN_HOLD_MAX 3      // vsyncs a hold waits at most (60 Hz: 20 fps)
 static double g_dyn = 1.0;
-static double g_dyn_floor = DYN_FLOOR_SHARE;  // (set from the window: dyn_set_floor)
+static double g_dyn_floor = 0.5;  // (set from the setting: dyn_set_floor)
 static unsigned g_down_hist;  // the last decisions over budget (bit 0: the latest)
 static double g_down_gw[4];   // and their G + W
 static int g_down_fast_votes;  // decisions in a row missing 60 outright
@@ -121,10 +119,11 @@ static double dyn_fit(double G, double W, double budget) {
     double f = floor(fit / DYN_STEP + 1e-6) * DYN_STEP;
     return f < g_dyn_floor + DYN_STEP / 2 - 1e-6 ? g_dyn_floor : f;
 }
-// the floor for a Match display of `lines` render lines (the same share at every size)
+// the floor: Minimum resolution, the same share of the Match display at every size (`lines` unused)
 static void dyn_set_floor(double lines) {
     (void)lines;
-    double f = DYN_FLOOR_SHARE;
+    int m = g_settings.dyn_min;
+    double f = (m == 25 || m == 75 ? m : 50) / 100.0;
     if (fabs(f - g_dyn_floor) < 1e-9) return;
     g_dyn_floor = f;
     if (g_dyn < f) g_dyn = f;

@@ -12,7 +12,7 @@
 #include "../runtime/settings.h"
 #include "../runtime/nvn/output_scale.h"
 
-Settings g_settings = {.res_mode = RES_DYNAMIC};
+Settings g_settings = {.res_mode = RES_DYNAMIC, .dyn_min = 25};  // (Minimum resolution 25%: the lowest)
 bool g_gpu_integrated = true;
 void pace_hitch(const char *why) { (void)why; }  // (output_scale.c's render scale changes: nvn/pace.c)
 void pace_settings_changed(const char *what) { (void)what; }  // (output_scale.c's setting watch: nvn/pace.c)
@@ -30,7 +30,7 @@ typedef struct {
     double wobble;      // the scene's load swings +-this over 20 s (0: 3%; frame to frame +-2%: the floor's 30.6 fps)
     double heavy_at, heavy, heavy_until;  // > 0: G x heavy from heavy_at (s) until heavy_until (0: the end)
     double wander;      // > 0: the scene's load wanders at random (walking around: +-this typical, over a few seconds)
-    double lines;       // the window's height (0: 2160, 4K); the floor is 25% of it at every size
+    double lines;       // the window's height (0: 2160, 4K); the floor is 25% of it at every size (dyn_min)
     double clock_slow;  // > 0: the GPU clocks down while mostly idle (an iGPU): its times x up to this, at under 60% busy
     double resize_at, lines2;  // > 0: the window's height becomes lines2 then (fullscreen <-> windowed): G's scaling part
                                // and W follow the window's area
@@ -196,7 +196,7 @@ int main(int argc, char **argv) {
     if (argc < 2) { printf("%d\n", n); return 0; }
     int i = atoi(argv[1]);
     Result r = run(&cases[i]);
-    // (the floor is 25% of the Match display at every size: it was 540 lines, 0.50 in a 1080p window)
+    // (the floor is 25% of the Match display at every size, Minimum resolution's lowest: it was 540 lines, 0.50 at 1080p)
     switch (i) {
     case 0: check(r.f_end >= 0.35 && r.fps_end > 58 && r.changes_last60 == 0, "4K bilinear: 60 under 0.50"); break;
     case 1: check(r.fps_end > 28 && r.changes_last60 <= 2, "4K FSR: 30 fps at the floor"); break;

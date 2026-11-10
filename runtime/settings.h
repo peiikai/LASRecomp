@@ -49,6 +49,7 @@ typedef struct {
     int ao_quality;      // AO_*: the resolution of the game's ambient occlusion
     int shadow_quality;  // SHADOW_*: the resolution of the game's shadow map
     int fps_target;      // FPS_TARGET_*: the game's 30 or 60 fps mode, or 30 outdoors (the Field) and 60 indoors
+    int dyn_min;         // Dynamic resolution's lowest factor, % of the display: 25, 50 or 75
     float volume;        // master volume, 1 = 100%
     int audio_out;       // AUDIO_OUT_*: speaker layout of the game's sound (runtime/services/audio.c)
     bool reverb;         // room reverb effect
