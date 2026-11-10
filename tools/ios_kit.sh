@@ -49,7 +49,8 @@ one entitlement, com.apple.developer.kernel.increased-memory-limit, which a free
 the executable's signature, where those tools read it. On the device, put your extracted/ folder (exefs and romfs)
 in the app's Documents through the Files app or Finder.
 
-Contents: Payload/LAS Recomp.app (the app without game code), lld/ (the linker for each desktop OS, from Rust's
+Contents: Payload/LAS Recomp.app (the app without game code; what it embeds - SDL3, FFmpeg, CPython, the seed
+generator's packages, fonts - and their licence texts are in its LICENSES/ folder and next to the fonts), lld/ (the linker for each desktop OS, from Rust's
 rust-lld: Apache-2.0 with LLVM exception, lld/<os>/LICENSE.TXT), include/ (zig's Darwin C headers: MIT / Apple's
 APSL), libSystem.B.tbd (the link stub). LAS Recomp reads and writes the zip files with miniz (MIT,
 miniz-LICENSE.txt).

@@ -110,10 +110,12 @@ attribute, so the `removexattr` on the linker is gone too.
   keep going on the home screen. To fix: pause every output in `background_watch` (`metal.m`), resume it in the
   foreground, and open new outputs paused while in the background (`services/audio.c`, debeanz/LASRecomp-iOS
   6208a197).
-- **The README's licences, gone through for iOS.** The iOS app ships more than the desktops, and statically: FFmpeg,
-  CPython and its extension modules, keystone, oead, Pillow, quicktex and the rest of the generator's packages, all in
-  the .ipa. Check each one's licence, add it to the components table and the "License" paragraph, and ship its
-  licence text in the app where the licence asks for it.
+- ~~**The README's licences, gone through for iOS.**~~ The components table has a row for everything the app
+  embeds with its version (BeeWare's CPython 3.13.16 and the libraries inside it, Pillow, PyYAML, appdirs, pybind11,
+  the static SDL3 / FFmpeg, keystone's patch), the "License" paragraph says what is static and how the LGPL ones
+  relink, and the app ships every licence text in `LICENSES/` (`tools/build_deps_ios.sh` collects them from the
+  tarballs and wheels it opens into `build/deps-ios/licenses`; `tools/bundle_ios.sh` adds the tree's own: the ported
+  audio renderer, ImGui, SMAA, LAS-Randomizer; the fonts' sit next to the fonts as on the desktops).
 - **No `docs/ios.md`.** The app has its own bundle id now (`com.peiikai.lasrecomp.ios`, tools/bundle_ios.sh; a
   sideloading tool rewrites it per team), but nothing documents the setup for a player: the kit, the export, the
   sideloading tools that keep `increased-memory-limit`, where the files go, which devices and iOS versions run it.

@@ -88,6 +88,18 @@ cp third_party/fonts/BIZUDPGothic/BIZUDPGothic-Regular.ttf "$APP/"
 cp third_party/fonts/BIZUDPGothic/OFL.txt "$APP/BIZUDPGothic-OFL.txt"
 cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$APP/"
 cp third_party/fonts/DejaVu/LICENSE "$APP/DejaVu-LICENSE.txt"
+# LICENSES/: the texts of what the app links or embeds, unlike the desktops' dynamic libraries and separate
+# helpers (the fonts' above, as the desktops ship them; the README's License section lists each with its version):
+# the ported audio renderer code, Dear ImGui and SMAA from the tree, and the static SDL3 and FFmpeg, the embedded
+# CPython and the seed generator's packages from build/deps-ios/licenses (tools/build_deps_ios.sh)
+DEPS=${DEPS:-build/deps-ios}
+mkdir -p "$APP/LICENSES"
+cp third_party/ryujinx/LICENSE.txt "$APP/LICENSES/audio-renderer-port-LICENSE.txt"
+cp third_party/imgui/LICENSE.txt "$APP/LICENSES/imgui-LICENSE.txt"
+cp third_party/smaa/LICENSE.txt "$APP/LICENSES/SMAA-LICENSE.txt"
+cp third_party/LAS-Randomizer/LICENSE.txt "$APP/LICENSES/LAS-Randomizer-LICENSE.txt"
+[ -d "$DEPS/licenses" ] || { echo "no $DEPS/licenses (make deps-ios again: it collects the licence texts)"; exit 1; }
+cp "$DEPS"/licenses/* "$APP/LICENSES/"
 
 # App icon: the asset catalog compiled from the 1024 png (Assets.car + CFBundleIcons); skipped without actool.
 if command -v xcrun >/dev/null && xcrun --find actool >/dev/null 2>&1; then

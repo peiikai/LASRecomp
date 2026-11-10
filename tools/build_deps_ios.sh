@@ -198,6 +198,26 @@ if [ ! -f "$SP/oead$EXT" ]; then
     unzip -qo "$P/wheels/$QUICKTEX_WHL" -d "$SP" && rm -rf "$SP/quicktex/cli"  # (_quicktex: a top-level module)
     rm -rf "$SP"/*.dist-info "$SP"/oead-stubs
 fi
+# The licence texts of what the app ships statically, for the app's LICENSES/ (tools/bundle_ios.sh; the README's
+# License section names each with its version): from the tarballs and wheels above. Kept every run (site-packages
+# is cached).
+L=$P/licenses
+rm -rf "$L" && mkdir -p "$L"
+unpack SDL3-3.4.18.tar.gz sdl-lic && cp "$S/sdl-lic/LICENSE.txt" "$L/SDL3-LICENSE.txt"
+unpack ffmpeg-9.0.2.tar.xz ffmpeg-lic && cp "$S/ffmpeg-lic/COPYING.LGPLv2.1" "$L/FFmpeg-COPYING.LGPLv2.1.txt"
+cp "$P/Python.xcframework/lib/python$PYV/LICENSE.txt" "$L/Python-LICENSE.txt"
+unpack keystone-0.9.2.tar.gz keystone-lic && cp "$S/keystone-lic/COPYING" "$L/keystone-COPYING.txt" &&
+    cp "$S/keystone-lic/bindings/python/LICENSE.TXT" "$L/keystone-python-LICENSE.txt"
+unpack oead-1.3.0.tar.gz oead-lic && cp "$S/oead-lic/LICENSE.md" "$L/oead-LICENSE.md"
+mkdir -p "$S/quicktex-lic" && tar -xf "$P/wheels/quicktex-0.2.1.tar.gz" -C "$S/quicktex-lic" --strip-components 1 &&
+    cp "$S/quicktex-lic/LICENSE.md" "$L/quicktex-LICENSE.md"
+unpack pyyaml-6.0.2.tar.gz pyyaml-lic && cp "$S/pyyaml-lic/LICENSE" "$L/PyYAML-LICENSE.txt"
+rm -rf "$S"/{sdl,ffmpeg,keystone,oead,quicktex,pyyaml}-lic
+for w in evfl appdirs pillow; do  # (the pure-Python wheels and BeeWare's Pillow: their dist-info)
+    unzip -qo "$P"/wheels/$w-*.whl "$w-*.dist-info/LICENSE*" -d "$S/$w-lic" && cp "$S"/$w-lic/$w-*.dist-info/LICENSE* "$L/$w-LICENSE.txt"
+    rm -rf "$S/$w-lic"
+done
+ls "$L"
 # (every pybind11 module in site-packages on one internals version: oead's and quicktex's)
 tags=$(for so in "$SP/oead$EXT" "$SP/_quicktex$EXT"; do strings "$so" | grep -o '__pybind11_internals_v[0-9]*' | sort -u | head -1; done | sort -u)
 [ "$(echo "$tags" | wc -l | tr -d ' ')" = 1 ] && [ -n "$tags" ] || { echo "the pybind11 modules disagree on their internals: $tags"; exit 1; }
