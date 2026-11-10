@@ -137,6 +137,12 @@ with tempfile.TemporaryDirectory() as directory:
             run('move', dst, step, stall=True)
             check_in(home, f'{how}: move cut off at step {step}')
             assert ours_left(dst) == [] and ours_left(home) == sorted(ENTRIES), (ours_left(dst), ours_left(home))
+        # Cancel pressed while copying, then while checking: the move fails as cancelled, the copy is removed
+        for step in (0, 1):
+            r = run('cancel', dst, step)
+            assert r['MOVE'] == 'failed Move cancelled.', r
+            check_in(home, f'{how}: move cancelled at step {step}')
+            assert ours_left(dst) == [] and ours_left(home) == sorted(ENTRIES), (ours_left(dst), ours_left(home))
         # cut off while removing the old copy: the new folder is in use, and the next start finishes the removal
         run('move', dst, 2, stall=True)
         check_in(dst, f'{how}: move cut off while removing the old copy')
@@ -147,7 +153,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert r['MOVE'].startswith('ok'), r
         check_in(home, f'{how}: moved back')
         assert ours_left(dst) == [] and not (home / 'data_root.txt').exists()
-        print(f'move ({how}): cut off while copying, checking or removing - the data is whole in one folder')
+        print(f'move ({how}): cut off or cancelled while copying, checking or removing - the data is whole in one folder')
     env.pop('LARECOMP_MOVE_NO_LINKS')
 
     other = os.environ.get('LARECOMP_TEST_OTHER_FS')

@@ -1563,6 +1563,7 @@ static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 m
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
+static bool g_df_cancelling;                  // Cancel pressed during the move: waiting for it to stop
 
 static void SDLCALL picked_data(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
@@ -1656,11 +1657,20 @@ static void data_folder_popup(float s) {
     } else if (g_df == DF_MOVING) {
         static const char *const steps[] = {LN("Copying..."), LN("Checking the copy..."), LN("Removing the old copy...")};
         int r = g_df_result, k = g_df_step;
-        ImGui::Text("%s", r == 1 ? L("Restarting...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
+        ImGui::Text("%s", r == 1 ? L("Restarting...") : g_df_cancelling ? L("Cancelling...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
         ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
-        ImGui::TextDisabled("%s", t.path);
+        // Cancel: while it copies or checks (the copy is removed, the data stays where it was); not once the switch
+        // is made and the old copy is being removed
+        if (r == 0 && k < 2) {
+            ImGui::Spacing();
+            ImGui::BeginDisabled(g_df_cancelling);
+            if (ImGui::Button(L("Cancel"), bw) || (esc && !g_df_cancelling)) g_df_cancelling = true, rt_data_move_cancel();
+            ImGui::EndDisabled();
+        }
         if (r == 1) df_restart();
+        else if (r == -1 && g_df_cancelling) close = true;  // (cancelled: nothing to report)
         else if (r == -1) g_df = DF_FAILED;
+        if (r != 0) g_df_cancelling = false;
     } else {
         ImGui::TextColored(red, "%s", L_line(g_df_err).c_str());  // (English: here or runtime/paths.c)
         ImGui::Text(L("Your data is still in %s"), rt_data_root());

@@ -4,6 +4,7 @@
 //   test_data_move root                     the data folder this start uses (finishes what a cut-off move left)
 //   test_data_move target <picked>          what the start screen would offer for that folder
 //   test_data_move move <to> [<step>]       move there; <step> (0 copy, 1 check, 2 remove the old): stall partway
+//   test_data_move cancel <to> <step>       move there, Cancel pressed partway through step 0 or 1
 //   test_data_move use <to>                 switch to it as it is
 #include <stdint.h>
 #include <stdio.h>
@@ -28,8 +29,9 @@ void rt_fault_report(const char *what, uint64_t a, uint64_t pc, uint64_t lr) {
 }
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset) { (void)pc, (void)offset; return NULL; }
 
-static int g_stall = -1;
+static int g_stall = -1, g_cancel = -1;
 static void progress(int step, double f) {
+    if (step == g_cancel && f >= 0.3) rt_data_move_cancel();  // (as the start screen's Cancel, from another thread)
     if (step != g_stall || f < 0.3) return;
     printf("STALL\n");
     fflush(stdout);
@@ -54,6 +56,10 @@ int main(int argc, char **argv) {
         printf("PATH %s\nHAS_DATA %d\nREFUSE %s\nBYTES %llu\n", t.path, t.has_data, t.refuse, t.bytes);
     } else if (!strcmp(argv[1], "move") && argc > 2) {
         if (argc > 3) g_stall = atoi(argv[3]);
+        bool ok = rt_data_move(argv[2], progress, err, sizeof err);
+        printf("MOVE %s %s\n", ok ? "ok" : "failed", err);
+    } else if (!strcmp(argv[1], "cancel") && argc > 3) {
+        g_cancel = atoi(argv[3]);
         bool ok = rt_data_move(argv[2], progress, err, sizeof err);
         printf("MOVE %s %s\n", ok ? "ok" : "failed", err);
     } else if (!strcmp(argv[1], "use") && argc > 2) {
