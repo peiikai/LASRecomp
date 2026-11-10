@@ -326,6 +326,13 @@ jobs:
             build/deps
             !build/deps/src
           key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/build_deps_macos.sh') }}
+      # (zig's release archive, pinned and hash-checked by tools/fetch_zig.sh: fetched from ziglang.org once per
+      # version, not on every job)
+      - name: zig download cache
+        uses: actions/cache@v4
+        with:
+          path: build/zig-dl
+          key: zig-dl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_zig.sh') }}
       - name: Finished macOS app
         run: |
           brew install ninja
