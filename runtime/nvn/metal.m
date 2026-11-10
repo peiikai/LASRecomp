@@ -1303,17 +1303,20 @@ static bool direct_repeat;  // (render thread off) backend_represent's present
 // the way out: iOS ends backgrounded apps without exit(), so the exit handlers never run.
 // (SDL 3 never queues these events: they reach an event watcher only, on the main thread as UIKit posts them)
 static atomic_bool g_background;
+extern void audio_set_background(bool bg);  // runtime/services/audio.c
 static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
     (void)ud;
     if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND || e->type == SDL_EVENT_DID_ENTER_BACKGROUND) {
         if (!atomic_exchange(&g_background, true)) {
             LOG("[metal] in the background: game paused\n");
+            audio_set_background(true);
             input_rumble_stop();
             settings_save();
             plat_touch_shortcuts_sync();  // (the seed list as the Home Screen will offer it)
         }
     } else if ((e->type == SDL_EVENT_WILL_ENTER_FOREGROUND || e->type == SDL_EVENT_DID_ENTER_FOREGROUND) && atomic_load(&g_background)) {
         atomic_store(&g_background, false);
+        audio_set_background(false);
         LOG("[metal] in the foreground: game resumed\n");
     }
     return true;

@@ -105,11 +105,12 @@ attribute, so the `removexattr` on the linker is gone too.
 
 ## Everything else
 
-- **The game's sound plays on in the background inside LiveContainer**, which has to be supported. LiveContainer
-  runs the app under its own Info.plist, and that allows background audio, so the game's outputs and audio threads
-  keep going on the home screen. To fix: pause every output in `background_watch` (`metal.m`), resume it in the
-  foreground, and open new outputs paused while in the background (`services/audio.c`, debeanz/LASRecomp-iOS
-  6208a197).
+- ~~**The game's sound plays on in the background inside LiveContainer**~~: LiveContainer runs the app under its
+  own Info.plist, which allows background audio (`UIBackgroundModes` audio), so the game's sound and its audio
+  threads went on from the home screen. `background_watch` (`metal.m`) now pauses every output and resumes them in
+  front; outputs opened meanwhile start paused (`services/audio.c` `audio_set_background`, as debeanz/LASRecomp-iOS
+  6208a197). Checked on a virtual iPhone with that key in the app's own plist: the renderer's output stops in the
+  background and plays on in front.
 - ~~**The README's licences, gone through for iOS.**~~ The components table has a row for everything the app
   embeds with its version (BeeWare's CPython 3.13.16 and the libraries inside it, Pillow, PyYAML, appdirs, pybind11,
   the static SDL3 / FFmpeg, keystone's patch), the "License" paragraph says what is static and how the LGPL ones
