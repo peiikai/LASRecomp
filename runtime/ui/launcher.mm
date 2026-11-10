@@ -1611,6 +1611,18 @@ static void data_folder_popup(float s) {
     ImGui::PopFont();
     ImGui::PushTextWrapPos(900 * sc);
     bool close = false, esc = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+#ifdef __ANDROID__
+    // Android: where the data goes as the Storage row names it (the paths say nothing to a player): "Internal storage
+    // -> SD card" (the menu font's arrow when it has one)
+    auto on_sd = [](const char *p) {
+        const char *sd = getenv("LARECOMP_ANDROID_SD_DIR");
+        char a[PATH_MAX], b[PATH_MAX];
+        return sd && *sd && realpath(p, a) && realpath(sd, b) && !strcmp(a, b);
+    };
+    const char *arrow = ImGui::GetFont()->FindGlyphNoFallback(0x2192) ? " \xe2\x86\x92 " : " -> ";
+    std::string dir = std::string(L(on_sd(rt_data_root()) ? "SD card" : "Internal storage")) + arrow +
+                      L(on_sd(t.path) ? "SD card" : "Internal storage");
+#endif
     auto use_it = [&] {
         stop_background_prep();
         settings_save();
@@ -1618,7 +1630,11 @@ static void data_folder_popup(float s) {
         else g_df = DF_FAILED;
     };
     if (g_df == DF_ASK) {
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());
+#else
         ImGui::TextDisabled("%s", t.path);
+#endif
         if (g_df_onedrive) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("This folder is synced by OneDrive too."));
         ImGui::Spacing();
         if (t.refuse[0]) {
@@ -1657,6 +1673,9 @@ static void data_folder_popup(float s) {
     } else if (g_df == DF_MOVING) {
         static const char *const steps[] = {LN("Copying..."), LN("Checking the copy..."), LN("Removing the old copy...")};
         int r = g_df_result, k = g_df_step;
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());
+#endif
         ImGui::Text("%s", r == 1 ? L("Restarting...") : g_df_cancelling ? L("Cancelling...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
         ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
         // Cancel: while it copies or checks (the copy is removed, the data stays where it was); not once the switch
