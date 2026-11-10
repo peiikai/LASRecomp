@@ -124,8 +124,13 @@ with tempfile.TemporaryDirectory() as directory:
     assert Path(t['PATH']) == S / 'misc' / 'LAS Recomp' and not t['REFUSE'] and t['HAS_DATA'] == '0', t
     t = run('target', S / 'empty')
     assert Path(t['PATH']) == S / 'empty' and not t['REFUSE'] and int(t['BYTES']) > 10_000_000, t
-    print('target: the folder itself when empty, a "LAS Recomp" folder in a full one; the data folder and folders '
-          'in it refused')
+    (S / 'logs').mkdir()  # (only LAS Recomp's own logs - a start there before: counts as empty)
+    (S / 'logs/lasrecomp.log').write_text('log')
+    (S / 'logs/lasrecomp-backup-20261110-120000-1.log').write_text('log')
+    t = run('target', S / 'logs')
+    assert Path(t['PATH']) == S / 'logs' and not t['REFUSE'], t
+    print('target: the folder itself when empty (or holding only our logs), a "LAS Recomp" folder in a full one; the '
+          'data folder and folders in it refused')
 
     for links in (True, False):  # (same drive: hard links; LARECOMP_MOVE_NO_LINKS: copied as to another drive)
         if not links:
@@ -137,6 +142,12 @@ with tempfile.TemporaryDirectory() as directory:
             run('move', dst, step, stall=True)
             check_in(home, f'{how}: move cut off at step {step}')
             assert ours_left(dst) == [] and ours_left(home) == sorted(ENTRIES), (ours_left(dst), ours_left(home))
+        # Cancel pressed while copying, then while checking: the move fails as cancelled, the copy is removed
+        for step in (0, 1):
+            r = run('cancel', dst, step)
+            assert r['MOVE'] == 'failed Move cancelled.', r
+            check_in(home, f'{how}: move cancelled at step {step}')
+            assert ours_left(dst) == [] and ours_left(home) == sorted(ENTRIES), (ours_left(dst), ours_left(home))
         # cut off while removing the old copy: the new folder is in use, and the next start finishes the removal
         run('move', dst, 2, stall=True)
         check_in(dst, f'{how}: move cut off while removing the old copy')
@@ -147,7 +158,7 @@ with tempfile.TemporaryDirectory() as directory:
         assert r['MOVE'].startswith('ok'), r
         check_in(home, f'{how}: moved back')
         assert ours_left(dst) == [] and not (home / 'data_root.txt').exists()
-        print(f'move ({how}): cut off while copying, checking or removing - the data is whole in one folder')
+        print(f'move ({how}): cut off or cancelled while copying, checking or removing - the data is whole in one folder')
     env.pop('LARECOMP_MOVE_NO_LINKS')
 
     other = os.environ.get('LARECOMP_TEST_OTHER_FS')

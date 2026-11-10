@@ -1563,6 +1563,7 @@ static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 m
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
+static bool g_df_cancelling;                  // Cancel pressed during the move: waiting for it to stop
 
 static void SDLCALL picked_data(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
@@ -1582,6 +1583,18 @@ static void df_restart(void) {
     snprintf(g_df_err, sizeof g_df_err, "%s", LN("Couldn't restart LAS Recomp. Start it again to use the new folder."));
     g_df = DF_FAILED;
 }
+
+#ifdef __ANDROID__
+// Android: the folder is on the SD card - the app's folder there (LARECOMP_ANDROID_SD_DIR) or one inside it (a
+// "LAS Recomp" folder a move made there when the card's folder had other files)
+static bool android_on_sd(const char *p) {
+    const char *sd = getenv("LARECOMP_ANDROID_SD_DIR");
+    char a[PATH_MAX], b[PATH_MAX];
+    if (!sd || !*sd || !realpath(p, a) || !realpath(sd, b)) return false;
+    size_t n = strlen(b);
+    return !strncmp(a, b, n) && (a[n] == 0 || a[n] == '/');
+}
+#endif
 
 // The question / the move's progress, in front of everything (called at the start screen's top level)
 static void data_folder_popup(float s) {
@@ -1610,6 +1623,14 @@ static void data_folder_popup(float s) {
     ImGui::PopFont();
     ImGui::PushTextWrapPos(900 * sc);
     bool close = false, esc = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+#ifdef __ANDROID__
+    // Android: where the data goes as the Storage row names it (the paths say nothing to a player): "Internal storage
+    // -> SD card" (the menu font's arrow when it has one)
+    auto on_sd = android_on_sd;
+    const char *arrow = ImGui::GetFont()->FindGlyphNoFallback(0x2192) ? " \xe2\x86\x92 " : " -> ";
+    std::string dir = std::string(L(on_sd(rt_data_root()) ? "SD card" : "Internal storage")) + arrow +
+                      L(on_sd(t.path) ? "SD card" : "Internal storage");
+#endif
     auto use_it = [&] {
         stop_background_prep();
         settings_save();
@@ -1617,7 +1638,11 @@ static void data_folder_popup(float s) {
         else g_df = DF_FAILED;
     };
     if (g_df == DF_ASK) {
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());
+#else
         ImGui::TextDisabled("%s", t.path);
+#endif
         if (g_df_onedrive) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("This folder is synced by OneDrive too."));
         ImGui::Spacing();
         if (t.refuse[0]) {
@@ -1656,11 +1681,23 @@ static void data_folder_popup(float s) {
     } else if (g_df == DF_MOVING) {
         static const char *const steps[] = {LN("Copying..."), LN("Checking the copy..."), LN("Removing the old copy...")};
         int r = g_df_result, k = g_df_step;
-        ImGui::Text("%s", r == 1 ? L("Restarting...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
+        ImGui::Text("%s", r == 1 ? L("Restarting...") : g_df_cancelling ? L("Cancelling...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
         ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
-        ImGui::TextDisabled("%s", t.path);
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());  // (under the bar: which way it goes)
+#endif
+        // Cancel: while it copies or checks (the copy is removed, the data stays where it was); not once the switch
+        // is made and the old copy is being removed
+        if (r == 0 && k < 2) {
+            ImGui::Spacing();
+            ImGui::BeginDisabled(g_df_cancelling);
+            if (ImGui::Button(L("Cancel"), bw) || (esc && !g_df_cancelling)) g_df_cancelling = true, rt_data_move_cancel();
+            ImGui::EndDisabled();
+        }
         if (r == 1) df_restart();
+        else if (r == -1 && g_df_cancelling) close = true;  // (cancelled: nothing to report)
         else if (r == -1) g_df = DF_FAILED;
+        if (r != 0) g_df_cancelling = false;
     } else {
         ImGui::TextColored(red, "%s", L_line(g_df_err).c_str());  // (English: here or runtime/paths.c)
         ImGui::Text(L("Your data is still in %s"), rt_data_root());
@@ -1671,6 +1708,32 @@ static void data_folder_popup(float s) {
     ImGui::PopFont();
     if (close) g_df = DF_NONE, ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+}
+
+// The Storage section (Settings > Prelaunch, the Game Files window). Android: the app's own folder in internal
+// storage or on the SD card - the only places it can use by path (runtime/paths.c rt_data_root_fixed); another one
+// picked goes through the same question as on the desktop (move the data there, or start fresh).
+static void storage_rows(bool busy) {
+    const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
+    std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
+                    rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
+    opt_section("Storage");
+#ifdef __ANDROID__
+    const char *sd = getenv("LARECOMP_ANDROID_SD_DIR"), *home = rt_data_home();
+    bool have_sd = sd && *sd;
+    int cur = have_sd && android_on_sd(rt_data_root()) ? 1 : 0, pick = cur;
+    static const char *const where[] = {LN("Internal storage"), LN("SD card")};
+    if (!have_sd && !cur) d += std::string("\n\n") + L("Put in an SD card to keep it there.");
+    if (busy || fixed || (!have_sd && !cur)) opt_disable_next();
+    if (opt_choice("Data folder", &pick, where, 2, 0, d.c_str(), false) && pick != cur) {
+        pthread_mutex_lock(&g_lock);
+        g_df_pick = pick ? sd : home;
+        pthread_mutex_unlock(&g_lock);
+    }
+#else
+    if (busy || fixed) opt_disable_next();
+    if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
+#endif
 }
 
 #ifdef __ANDROID__
@@ -1772,14 +1835,7 @@ static void prelaunch_tab(float sc) {
         }
         if (opt_action("Cancel", "", "Keeps the game files.", true)) confirm_delete = false;
     }
-    {   // where all of it is kept (as the setup window's Storage row)
-        const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
-        std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                        rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
-        opt_section("Storage");
-        if (fixed) opt_disable_next();
-        if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
-    }
+    storage_rows(false);  // where all of it is kept (as the setup window's Storage row)
 #ifdef __ANDROID__
     driver_rows();
 #endif
@@ -2527,6 +2583,9 @@ extern "C" void launcher_run(const char *root) {
                 };
                 opt_begin("##files", sc, !ready);  // (before the setup: the example folder on the right)
                 if (!ready) {
+#ifdef __ANDROID__
+                    storage_rows(busy);
+#endif
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true)) choose_game_folder(win);
@@ -2570,14 +2629,10 @@ extern "C" void launcher_run(const char *root) {
                         if (opt_action("Cancel", "", "Keeps the game files.", true)) g_confirm_delete = false;
                     }
                 }
-                {  // where all of it is kept: another folder (a bigger drive)
-                    const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
-                    std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                                    rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
-                    opt_section("Storage");
-                    if (busy || fixed) opt_disable_next();
-                    if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
-                }
+#ifdef __ANDROID__
+                if (ready)  // (before the setup it's the first row: chosen before the game files are copied)
+#endif
+                storage_rows(busy);  // where all of it is kept: another folder (a bigger drive)
                 if (!busy && has_build_cache()) {
                     opt_section("Build cache");
                     if (opt_action("Clear build cache", "", "Deletes the built game code. It gets rebuilt the next time you "
@@ -2741,11 +2796,11 @@ extern "C" void launcher_run(const char *root) {
             ImGui::PopFont();
             }
             ImGui::EndDisabled();
-            {   // (another data folder picked: move / start fresh, then restart; from Settings: in its look)
-                bool in_settings = page == SETTINGS || page == RANDO;
-                if (in_settings) menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
+            {   // (another data folder picked: move / start fresh, then restart; in the menus' look from every page -
+                // Settings, the Game Files window at the first setup)
+                menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
                 data_folder_popup(s);
-                if (in_settings) plastic_widgets(false), menu_style_end();
+                plastic_widgets(false), menu_style_end();
             }
             ImGui::End();
             ImGui::PopStyleColor();

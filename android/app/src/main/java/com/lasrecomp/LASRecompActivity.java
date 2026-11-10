@@ -14,6 +14,7 @@ import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.system.ErrnoException;
 import android.system.Os;
@@ -45,6 +46,13 @@ public class LASRecompActivity extends SDLActivity {
             copyAssets("res", new File(getFilesDir(), "res"));
             Os.setenv("LARECOMP_NATIVE_LIB_DIR", getApplicationInfo().nativeLibraryDir, true);
             Os.setenv("LARECOMP_GEN_DIR", new File(getFilesDir(), "gen").getAbsolutePath(), true);
+            // the app's folder on a removable SD card, if one is in (runtime/ui/launcher.mm storage_rows: the data
+            // folder there or in internal storage, both usable by path without any permission)
+            String sd = "";
+            for (File f : getExternalFilesDirs(null))
+                if (f != null && Environment.isExternalStorageRemovable(f) &&
+                    Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState(f))) { sd = f.getAbsolutePath(); break; }
+            Os.setenv("LARECOMP_ANDROID_SD_DIR", sd, true);
             File driver = customDriver();  // (runtime/nvn/vulkan/android_driver.c: none = the system's)
             Os.setenv("LARECOMP_VK_DRIVER", driver != null ? driver.getAbsolutePath() : "", true);
             // (a screen of 600 dp or more: runtime/platform/android_storage.c, read while libmain loads)
