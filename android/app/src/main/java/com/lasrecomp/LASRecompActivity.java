@@ -177,11 +177,23 @@ public class LASRecompActivity extends SDLActivity {
         return true;
     }
 
+    // A Snapdragon (Adreno) phone: driver packages (Turnip) exist only for those (runtime/ui/launcher.mm driver_rows).
+    // Read from the system, as the dialog below comes up before any GPU works: SOC_MANUFACTURER "QTI" (Android 12+),
+    // else the qcom hardware name (Retroid Pocket 5: QTI, SM8250, qcom).
+    private static boolean snapdragon() {
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            String m = android.os.Build.SOC_MANUFACTURER;
+            if (m != null && (m.equalsIgnoreCase("QTI") || m.toLowerCase().contains("qualcomm"))) return true;
+        }
+        return "qcom".equalsIgnoreCase(android.os.Build.HARDWARE);
+    }
+
     private void showDriverError(String extra) {
         String msg = dlgText + (extra != null ? "\n\n" + extra : "");
         android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("LAS Recomp").setMessage(msg).setCancelable(false)
-            .setPositiveButton("Choose a driver package", (d, w) -> {
+            .setTitle("LAS Recomp").setMessage(msg).setCancelable(false);
+        if (snapdragon())  // (elsewhere no package can help: Close, or back to the phone's own driver)
+            b.setPositiveButton("Choose a driver package", (d, w) -> {
                 Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 i.addCategory(Intent.CATEGORY_OPENABLE);
                 i.setType("*/*");
@@ -191,10 +203,10 @@ public class LASRecompActivity extends SDLActivity {
                     Log.e(TAG, "file picker: " + e);
                     showDriverError("The file picker couldn't open.");
                 }
-            })
-            .setNegativeButton("Close", (d, w) -> {
-                synchronized (dlgLock) { dlgDone = true; dlgLock.notifyAll(); }
             });
+        b.setNegativeButton("Close", (d, w) -> {
+            synchronized (dlgLock) { dlgDone = true; dlgLock.notifyAll(); }
+        });
         File[] custom = new File(getExternalFilesDir(null), "drivers").listFiles((dir, n) -> n.endsWith(".so") || n.endsWith(".zip"));
         if (custom != null && custom.length > 0)
             b.setNeutralButton("Use the phone's own driver", (d, w) -> {
