@@ -12,7 +12,7 @@
 #include "../runtime/settings.h"
 #include "../runtime/nvn/output_scale.h"
 
-Settings g_settings = {.res_mode = RES_DYNAMIC, .dyn_min = 25};  // (Minimum resolution 25%: the lowest)
+Settings g_settings = {.res_mode = RES_DYNAMIC, .dyn_min = 540};  // (Minimum resolution: each case sets it, run())
 bool g_gpu_integrated = true;
 void pace_hitch(const char *why) { (void)why; }  // (output_scale.c's render scale changes: nvn/pace.c)
 void pace_settings_changed(const char *what) { (void)what; }  // (output_scale.c's setting watch: nvn/pace.c)
@@ -30,10 +30,11 @@ typedef struct {
     double wobble;      // the scene's load swings +-this over 20 s (0: 3%; frame to frame +-2%: the floor's 30.6 fps)
     double heavy_at, heavy, heavy_until;  // > 0: G x heavy from heavy_at (s) until heavy_until (0: the end)
     double wander;      // > 0: the scene's load wanders at random (walking around: +-this typical, over a few seconds)
-    double lines;       // the window's height (0: 2160, 4K); the floor is 25% of it at every size (dyn_min)
+    double lines;       // the window's height (0: 2160, 4K); the floor is min_lines of it (540: 0.50 at 1080p, 0.25 at 4K)
     double clock_slow;  // > 0: the GPU clocks down while mostly idle (an iGPU): its times x up to this, at under 60% busy
     double resize_at, lines2;  // > 0: the window's height becomes lines2 then (fullscreen <-> windowed): G's scaling part
                                // and W follow the window's area
+    int min_lines;      // Minimum resolution (0: 540, the default; 360 or 720)
 } Case;
 
 typedef struct {
@@ -52,6 +53,7 @@ typedef struct {
 static int near30(double h) { return fabs(h - 30) < 0.5; }
 static Result run(const Case *c) {
     g_rng = 7;
+    g_settings.dyn_min = c->min_lines ? c->min_lines : 540;
     double now = 1.0, f = output_scale_dynamic_factor(), g_prev = -1, w_prev = -1;
     double frames_end = 0, t_end = 0, last_f = f, f_min = 1, f_max = 0, last_hold = 0, hold_t = 0;
     int changes = 0, hold_changes = 0, settled = 0;
@@ -109,8 +111,11 @@ static Result run(const Case *c) {
         now += p / 1000;
         if (now > c->secs - 10) frames_end++, t_end += p / 1000;
     }
-    Result r = {f, frames_end / t_end, last_hold, changes, hold_changes, f_min, f_max, hold_t, settled, back30, f_after,
-                f_before, changes_after, slow_after, downs_after};
+    // (by name: the fields' order once differed from this list, so f_min_last60 got hold_t, changes_settled f_min, ...)
+    Result r = {.f_end = f, .fps_end = frames_end / t_end, .hold_end = last_hold, .changes_last60 = changes,
+                .hold_changes = hold_changes, .changes_settled = settled, .back30_t = back30, .f_min_last60 = f_min,
+                .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
+                .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled);
     if (c->resize_at > 0)
@@ -138,8 +143,7 @@ int main(int argc, char **argv) {
         // 1080p, bilinear: G 10.9 W 0.2 at 0.65, hunting 0.65 <-> 0.75 before (the old raise needed G < 10.5, a step
         // down G + W > 14.5): G = 0.3 + 25.1 f^2 (10.9 at 0.65, 14.4 at 0.75), the load swinging +-5%
         {"1080p bilinear (G 10.9 + W 0.2 at 0.65, fifo)", 0.3, 25.1, 0.2, 1, 0, 180, 0.05, 0, 0, 0, 0, 1080},
-        // 1080p, SMAA + FSR 1: G 9.1 W 8.1 at 0.50 -> 30 fps (G = 6.5 + 10.4 f^2: a large part that doesn't scale); 60
-        // fits at the floor (G 7.2 + W 8.1 at 0.25)
+        // 1080p, SMAA + FSR 1: G 9.1 W 8.1 at 0.50 -> 30 fps (G = 6.5 + 10.4 f^2: a large part that doesn't scale)
         {"1080p SMAA + FSR 1 (G 9.1 + W 8.1 at 0.50, fifo)", 6.5, 10.4, 8.1, 1, 0, 180, 0, 0, 0, 0, 0, 1080},
         // control: the frames don't wait (mailbox): every step down is a faster frame, so down to the floor as before
         {"4K bilinear, mailbox (G 16.3 + W 0.9 at 0.50)", 4.1, 48.8, 0.9, 0, 0, 120},
@@ -191,17 +195,25 @@ int main(int argc, char **argv) {
         // 4K fullscreen at the floor (case 0) to a 1440-line window: the factor goes up to the same render height at
         // once (before: it stayed at 0.33 there for the raise wait, 720 lines of a 1440 window)
         {"4K at the floor to a 1440-line window at 90 s (fifo)", 4.1, 48.8, 0.9, 1, 0, 180, 0, 0, 0, 0, 0, 2160, 0, 90, 1440},
+        // Minimum resolution 360p: case 3 in a 1080p window, the floor 0.33 (640x360)
+        {"1080p SMAA + FSR 1, Minimum resolution 360p (fifo)", 6.5, 10.4, 8.1, 1, 0, 180, 0, 0, 0, 0, 0, 1080, 0, 0, 0, 360},
+        // a heavy 4K scene (G 4 + 200 f^2): 30 at 540p's floor (0.25, G 16.5); 360p's (0.17, G 9.6) fits 60
+        {"4K heavy, Minimum resolution 540p (fifo)", 4, 200, 0.9, 1, 0, 180, 0, 0, 0, 0, 0, 2160},
+        {"4K heavy, Minimum resolution 360p (fifo)", 4, 200, 0.9, 1, 0, 180, 0, 0, 0, 0, 0, 2160, 0, 0, 0, 360},
+        // Minimum resolution 720p: case 2 (settles at 0.70 in a 1080p window), the floor 0.67
+        {"1080p bilinear, Minimum resolution 720p (fifo)", 0.3, 25.1, 0.2, 1, 0, 180, 0.05, 0, 0, 0, 0, 1080, 0, 0, 0, 720},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
     int i = atoi(argv[1]);
     Result r = run(&cases[i]);
-    // (the floor is 25% of the Match display at every size, Minimum resolution's lowest: it was 540 lines, 0.50 at 1080p)
+    // (Minimum resolution 540p unless a case says: 0.50 in a 1080p window, 0.25 at 4K)
     switch (i) {
     case 0: check(r.f_end >= 0.35 && r.fps_end > 58 && r.changes_last60 == 0, "4K bilinear: 60 under 0.50"); break;
     case 1: check(r.fps_end > 28 && r.changes_last60 <= 2, "4K FSR: 30 fps at the floor"); break;
     case 2: check(r.fps_end > 58 && r.changes_last60 == 0 && r.f_end >= 0.65, "1080p bilinear: settle at 60"); break;
-    case 3: check(r.fps_end > 58 && r.f_end <= 0.35 && r.changes_last60 <= 2, "1080p FSR: 60 low down"); break;
+    // (a 1080p window's floor is 0.50 at 540p, 960x540: 60 is out of reach there, so it holds 30 - much sharper)
+    case 3: check(near(r.hold_end, 30) && r.fps_end > 29 && r.changes_last60 <= 2, "1080p FSR: 30, sharper"); break;
     case 4: check(r.fps_end > 58 && r.f_end <= 0.45, "mailbox: 60 under 0.50"); break;
     case 5: check(r.fps_end > 58, "lighter scene: back to 60"); break;
     case 6: check(r.f_end >= 0.35 && r.fps_end > 58 && r.changes_last60 == 0, "4K bilinear f^2: 60 under 0.50"); break;
@@ -226,6 +238,10 @@ int main(int argc, char **argv) {
     case 21: check(r.f_after <= 0.4 && r.slow_after <= 3 && r.fps_end > 58 && r.downs_after == 0,
                    "1080p window to 4K: the same render height, still 60"); break;
     case 22: check(r.f_after >= 0.5 && r.fps_end > 58, "4K floor to a 1440 window: the same render height at once"); break;
+    case 23: check(r.f_min_last60 >= 0.33 && r.fps_end > 29 && r.changes_last60 <= 2, "360p: floor 0.33, steady"); break;
+    case 24: check(near(r.hold_end, 30) && r.fps_end > 29 && r.f_min_last60 >= 0.25 && r.changes_last60 <= 2, "4K heavy 540p: 30 at 0.25"); break;
+    case 25: check(r.fps_end > 58 && r.f_end < 0.25 && r.changes_last60 <= 2, "4K heavy 360p: 60 under 0.25"); break;
+    case 26: check(r.fps_end > 58 && r.f_min_last60 >= 0.66 && r.changes_last60 <= 2, "720p: never under 0.67"); break;
     }
     // a hold is real: the frames come at least at the rate it says
     if (r.hold_end > 0) check(r.fps_end >= 0.95 * r.hold_end, "the held frame rate is met");
