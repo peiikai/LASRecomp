@@ -491,8 +491,11 @@ static bool empty_dir(const char *dir) {
     bool empty = true;
     while (empty && (e = readdir(d))) {
         const char *n = e->d_name;
+        size_t k = strlen(n);  // (LAS Recomp's own logs too - a start there before: logs stay where they are, and an
+                               //  SD card's app folder on Android held one, so the data went into "LAS Recomp" in it)
         empty = !strcmp(n, ".") || !strcmp(n, "..") || !strcmp(n, ".DS_Store") || !strcmp(n, ".localized") ||
-                !strcmp(n, "desktop.ini") || !strcmp(n, "Thumbs.db");
+                !strcmp(n, "desktop.ini") || !strcmp(n, "Thumbs.db") ||
+                (!strncmp(n, "lasrecomp", 9) && k > 4 && !strcmp(n + k - 4, ".log"));
     }
     closedir(d);
     return empty;

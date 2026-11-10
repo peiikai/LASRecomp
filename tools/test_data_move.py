@@ -124,8 +124,13 @@ with tempfile.TemporaryDirectory() as directory:
     assert Path(t['PATH']) == S / 'misc' / 'LAS Recomp' and not t['REFUSE'] and t['HAS_DATA'] == '0', t
     t = run('target', S / 'empty')
     assert Path(t['PATH']) == S / 'empty' and not t['REFUSE'] and int(t['BYTES']) > 10_000_000, t
-    print('target: the folder itself when empty, a "LAS Recomp" folder in a full one; the data folder and folders '
-          'in it refused')
+    (S / 'logs').mkdir()  # (only LAS Recomp's own logs - a start there before: counts as empty)
+    (S / 'logs/lasrecomp.log').write_text('log')
+    (S / 'logs/lasrecomp-backup-20261110-120000-1.log').write_text('log')
+    t = run('target', S / 'logs')
+    assert Path(t['PATH']) == S / 'logs' and not t['REFUSE'], t
+    print('target: the folder itself when empty (or holding only our logs), a "LAS Recomp" folder in a full one; the '
+          'data folder and folders in it refused')
 
     for links in (True, False):  # (same drive: hard links; LARECOMP_MOVE_NO_LINKS: copied as to another drive)
         if not links:

@@ -1584,6 +1584,18 @@ static void df_restart(void) {
     g_df = DF_FAILED;
 }
 
+#ifdef __ANDROID__
+// Android: the folder is on the SD card - the app's folder there (LARECOMP_ANDROID_SD_DIR) or one inside it (a
+// "LAS Recomp" folder a move made there when the card's folder had other files)
+static bool android_on_sd(const char *p) {
+    const char *sd = getenv("LARECOMP_ANDROID_SD_DIR");
+    char a[PATH_MAX], b[PATH_MAX];
+    if (!sd || !*sd || !realpath(p, a) || !realpath(sd, b)) return false;
+    size_t n = strlen(b);
+    return !strncmp(a, b, n) && (a[n] == 0 || a[n] == '/');
+}
+#endif
+
 // The question / the move's progress, in front of everything (called at the start screen's top level)
 static void data_folder_popup(float s) {
     float sc = s * 720.0f / 1080.0f;
@@ -1614,11 +1626,7 @@ static void data_folder_popup(float s) {
 #ifdef __ANDROID__
     // Android: where the data goes as the Storage row names it (the paths say nothing to a player): "Internal storage
     // -> SD card" (the menu font's arrow when it has one)
-    auto on_sd = [](const char *p) {
-        const char *sd = getenv("LARECOMP_ANDROID_SD_DIR");
-        char a[PATH_MAX], b[PATH_MAX];
-        return sd && *sd && realpath(p, a) && realpath(sd, b) && !strcmp(a, b);
-    };
+    auto on_sd = android_on_sd;
     const char *arrow = ImGui::GetFont()->FindGlyphNoFallback(0x2192) ? " \xe2\x86\x92 " : " -> ";
     std::string dir = std::string(L(on_sd(rt_data_root()) ? "SD card" : "Internal storage")) + arrow +
                       L(on_sd(t.path) ? "SD card" : "Internal storage");
@@ -1673,11 +1681,11 @@ static void data_folder_popup(float s) {
     } else if (g_df == DF_MOVING) {
         static const char *const steps[] = {LN("Copying..."), LN("Checking the copy..."), LN("Removing the old copy...")};
         int r = g_df_result, k = g_df_step;
-#ifdef __ANDROID__
-        ImGui::TextDisabled("%s", dir.c_str());
-#endif
         ImGui::Text("%s", r == 1 ? L("Restarting...") : g_df_cancelling ? L("Cancelling...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
         ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());  // (under the bar: which way it goes)
+#endif
         // Cancel: while it copies or checks (the copy is removed, the data stays where it was); not once the switch
         // is made and the old copy is being removed
         if (r == 0 && k < 2) {
@@ -1713,8 +1721,7 @@ static void storage_rows(bool busy) {
 #ifdef __ANDROID__
     const char *sd = getenv("LARECOMP_ANDROID_SD_DIR"), *home = rt_data_home();
     bool have_sd = sd && *sd;
-    char r_root[PATH_MAX], r_sd[PATH_MAX];
-    int cur = have_sd && realpath(rt_data_root(), r_root) && realpath(sd, r_sd) && !strcmp(r_root, r_sd) ? 1 : 0, pick = cur;
+    int cur = have_sd && android_on_sd(rt_data_root()) ? 1 : 0, pick = cur;
     static const char *const where[] = {LN("Internal storage"), LN("SD card")};
     if (!have_sd && !cur) d += std::string("\n\n") + L("Put in an SD card to keep it there.");
     if (busy || fixed || (!have_sd && !cur)) opt_disable_next();
