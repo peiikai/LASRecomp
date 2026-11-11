@@ -128,7 +128,7 @@ extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (
 
 // ------------------------------------------------------------------ update check
 // The start screen asks GitHub for the project's releases once per launch (a background curl, which macOS and
-// Windows 10+ ship) and offers the best one if it outranks this build (runtime/ui/update_tags.h): any v1.0.0+ above
+// Windows 10+ ship; on Android the activity fetches it) and offers the best one if it outranks this build (runtime/ui/update_tags.h): any v1.0.0+ above
 // every beta, betas by number, a beta's fixes releases (beta_<n>.<m>, v0.<n>.<m>) between it and the next beta, and
 // v0.<n>.<m> the same as beta_<n>.<m>; other tags (the alpha_* ones) are ignored. (Beta 5 and earlier only know
 // beta_<n>: they never offer a hotfix; builds before Beta 5.3 don't know v0.<n>.<m> either.) Offline / no curl /
@@ -159,10 +159,15 @@ static void *update_thread(void *) {
 #endif
         std::string out = std::string(rt_data_root()) + "/cache/releases.json";
         mkdir((std::string(rt_data_root()) + "/cache").c_str(), 0755);
+#ifdef __ANDROID__
+        (void)curl;  // (Android has no curl: the activity fetches it, runtime/platform/android_storage.c)
+        if (!android_fetch(RELEASES_URL, out.c_str(), "LASRecomp/" LARECOMP_VERSION)) { remove(out.c_str()); return NULL; }
+#else
         const char *av[] = {curl.c_str(), "-fsSL", "--max-time", "15", "-H", "Accept: application/vnd.github+json",
                             "-A", "LASRecomp/" LARECOMP_VERSION, RELEASES_URL, NULL};
         PlatProc p = plat_spawn(av, out.c_str(), false);
         if (!p || plat_proc_wait(p, true) != 0) { remove(out.c_str()); return NULL; }
+#endif
         if (FILE *f = fopen(out.c_str(), "rb")) {
             char buf[8192];
             size_t n;
