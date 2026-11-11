@@ -89,6 +89,24 @@ bool android_driver_error_dialog(const char *text) {
     return shown;
 }
 
+bool android_fetch(const char *url, const char *out, const char *user_agent) {
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();  // (attaches the update check's thread)
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return false;
+    jclass c = (*env)->GetObjectClass(env, act);
+    jmethodID m = c ? (*env)->GetStaticMethodID(env, c, "fetchUrl", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z") : NULL;
+    bool ok = false;
+    if (m) {
+        jstring ju = (*env)->NewStringUTF(env, url), jo = (*env)->NewStringUTF(env, out), ja = (*env)->NewStringUTF(env, user_agent);
+        ok = (*env)->CallStaticBooleanMethod(env, c, m, ju, jo, ja);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env), ok = false;
+        (*env)->DeleteLocalRef(env, ju), (*env)->DeleteLocalRef(env, jo), (*env)->DeleteLocalRef(env, ja);
+    } else (*env)->ExceptionClear(env);
+    if (c) (*env)->DeleteLocalRef(env, c);
+    (*env)->DeleteLocalRef(env, act);
+    return ok;
+}
+
 static void (*g_files_done)(void *, const char *const *, int);
 void android_pick_files(void (*done)(void *, const char *const *, int)) {
     g_files_done = done;

@@ -17,10 +17,29 @@ android {
         applicationId = "com.lasrecomp.android"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1-dev"
+        // (experimental builds: .github/workflows/experimental.yml sets the build's version and a code that grows)
+        versionCode = System.getenv("LARECOMP_VERSION_CODE")?.toInt() ?: 1
+        versionName = System.getenv("LARECOMP_VERSION_NAME") ?: "0.1-dev"
         ndk {
             abiFilters += "arm64-v8a"
+        }
+    }
+
+    // The published APKs' key (.github/workflows/experimental.yml, from the repository's secrets): Android installs an
+    // update only over an app signed with the same key. Without it, the release build is unsigned.
+    signingConfigs {
+        System.getenv("LARECOMP_KEYSTORE")?.let { ks ->
+            create("release") {
+                storeFile = file(ks)
+                storePassword = System.getenv("LARECOMP_KEYSTORE_PASSWORD")
+                keyAlias = "lasrecomp"
+                keyPassword = System.getenv("LARECOMP_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

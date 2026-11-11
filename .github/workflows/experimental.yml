@@ -1,5 +1,5 @@
 # Experimental builds, a rolling pre-release for experimental platforms: ones that aren't official but are available
-# for testing (Linux aarch64, Windows on ARM). From 1.0.0 they are never on the normal releases. Each build goes on the rolling pre-release "experimental", replacing that platform's previous file,
+# for testing (Linux aarch64, Windows on ARM, Android). From 1.0.0 they are never on the normal releases. Each build goes on the rolling pre-release "experimental", replacing that platform's previous file,
 # or, for a reporter testing a fix, on a test build of its own. None of the files holds game code or game files.
 # Run by pushing a tag at the commit to build (from any branch that has this file):
 #   experimental-<anything>  -> the rolling "experimental" release; the pushed tag is deleted after the upload
@@ -197,10 +197,79 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  # the Android app (ci.yml's Android job) as a release build, signed with the published APKs' key (the repository's
+  # secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD: every build installs over the previous one)
+  android:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: NDK and CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;30.0.16248370" "cmake;3.30.4" "platforms;android-36" > /dev/null
+      - name: Experimental version
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          STAMP: ${{ needs.check.outputs.stamp }}
+        run: |
+          F=runtime/ui/launcher.mm
+          sed -i "s/^#define LARECOMP_VERSION \".*\"/#define LARECOMP_VERSION \"$VERSION\"/; s/^#define LARECOMP_EXPERIMENTAL_STAMP .*/#define LARECOMP_EXPERIMENTAL_STAMP ${STAMP}LL/" $F
+          grep -q "^#define LARECOMP_VERSION \"$VERSION\"" $F && grep -q "^#define LARECOMP_EXPERIMENTAL_STAMP ${STAMP}LL" $F ||
+            { echo "::error::$F: LARECOMP_VERSION / LARECOMP_EXPERIMENTAL_STAMP not set"; exit 1; }
+      - name: Dependencies cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: android/deps/out
+          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh', 'android/gen/**') }}
+      - name: Dependencies (SDL3, shaderc, volk, Vulkan headers; the game code builder)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          bash android/deps/build_deps.sh
+          bash android/deps/build_gen_deps.sh
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: android/deps/out
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          LARECOMP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          LARECOMP_VERSION_NAME: ${{ needs.check.outputs.version }}
+          STAMP: ${{ needs.check.outputs.stamp }}
+        run: |
+          [ -n "$KEYSTORE_B64" ] && [ -n "$LARECOMP_KEYSTORE_PASSWORD" ] || { echo "::error::the signing key secrets are not set"; exit 1; }
+          export LARECOMP_KEYSTORE=$RUNNER_TEMP/lasrecomp.keystore
+          echo "$KEYSTORE_B64" | base64 -d > "$LARECOMP_KEYSTORE"
+          # (Android's version code only grows: minutes since 2026-01-01)
+          export LARECOMP_VERSION_CODE=$(( ($(date -u -d "${STAMP:0:8} ${STAMP:8:2}:${STAMP:10:2}" +%s) - $(date -u -d 20260101 +%s)) / 60 ))
+          (cd android && ./gradlew assembleRelease --console=plain)
+          rm -f "$LARECOMP_KEYSTORE"
+      - name: Signed, and no game files
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify --print-certs "$APK"
+          tools/check_apk.sh "$APK"
+          mkdir -p build/dist && cp "$APK" "build/dist/LAS Recomp-$VERSION-android.apk" && ls -la build/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: build/dist/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
   publish:
-    needs: [check, linux, windows]
+    needs: [check, linux, windows, android]
     # (a platform whose build failed keeps its previous file; the others still go up)
-    if: always() && needs.check.result == 'success' && (needs.linux.result == 'success' || needs.windows.result == 'success')
+    if: always() && needs.check.result == 'success' && (needs.linux.result == 'success' || needs.windows.result == 'success' || needs.android.result == 'success')
     runs-on: ubuntu-24.04
     permissions:
       contents: write  # (only here: the experimental / test-arm release)
@@ -221,28 +290,32 @@ jobs:
         run: |
           ls -la dist
           URL=https://github.com/$GH_REPO
+          # (the rolling release's notes are written on every run, so a platform added here shows up on its page)
+          if [ "$RELEASE" = experimental ]; then
+            TITLE="Experimental builds"
+            printf '%s\n' \
+              "> [!WARNING]" \
+              "> **These builds are experimental.** They are for platforms that aren't official but are available for testing, so expect problems. For everything else, use the **[latest release]($URL/releases/latest)**." \
+              "" \
+              "The latest build for each platform is below. Each new build replaces the old one, and the game tells you on its start screen when a newer one is here." \
+              "" \
+              "- Linux aarch64 (ARM): \`linux-aarch64.AppImage\`" \
+              "- Windows on ARM: \`windows-arm64.zip\` (Windows 11 on ARM, with a Vulkan 1.3 graphics driver)" \
+              "- Android: \`android.apk\` ([requirements]($URL#system-requirements))" \
+              "" \
+              "## Help us make these better" \
+              "" \
+              "We really want to hear how these builds run on your device, good or bad. We don't have most of this hardware ourselves, so your reports are how these platforms get better. When something doesn't work, we'll work through it with you on the issue, make test builds for you to try, and fix what we can." \
+              "" \
+              "To report, open an issue on the [issues page]($URL/issues) with your device, its graphics driver, screenshots of anything that looks wrong, and the log (\`lasrecomp.log\` in the data folder)." > notes.md
+          else
+            TITLE="Test build: ${RELEASE#test-}"
+            echo "ARM test build from $SHA." > notes.md
+          fi
           if ! gh release view "$RELEASE" >/dev/null 2>&1; then
-            if [ "$RELEASE" = experimental ]; then
-              TITLE="Experimental builds"
-              printf '%s\n' \
-                "> [!WARNING]" \
-                "> **These builds are experimental.** They are for platforms that aren't official but are available for testing, so expect problems. For everything else, use the **[latest release]($URL/releases/latest)**." \
-                "" \
-                "The latest build for each platform is below. Each new build replaces the old one, and the game tells you on its start screen when a newer one is here." \
-                "" \
-                "- Linux aarch64 (ARM): \`linux-aarch64.AppImage\`" \
-                "- Windows on ARM: \`windows-arm64.zip\`" \
-                "" \
-                "## Help us make these better" \
-                "" \
-                "We really want to hear how these builds run on your device, good or bad. We don't have most of this hardware ourselves, so your reports are how these platforms get better. When something doesn't work, we'll work through it with you on the issue, make test builds for you to try, and fix what we can." \
-                "" \
-                "To report, open an issue on the [issues page]($URL/issues) with your device, its graphics driver, screenshots of anything that looks wrong, and the log (\`lasrecomp.log\` in the data folder)." > notes.md
-            else
-              TITLE="Test build: ${RELEASE#test-}"
-              echo "ARM test build from $SHA." > notes.md
-            fi
             gh release create "$RELEASE" --prerelease --title "$TITLE" --notes-file notes.md --target "$SHA"
+          elif [ "$RELEASE" = experimental ]; then
+            gh release edit "$RELEASE" --notes-file notes.md
           fi
           # this platform's previous file(s) out, the new one in
           for f in dist/*; do
