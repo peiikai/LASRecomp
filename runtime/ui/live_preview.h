@@ -11,9 +11,13 @@
 
 // the preview is up (the menu draws it instead of the settings window)
 bool preview_active(void);
+// the label of the row it shows ("" when none)
+const char *preview_label(void);
 // phones: the notch and the home indicator, in the caller's display units (the start screen's points, the in-game
 // menu's pixels) - set before preview_draw
 void preview_safe_area(float l, float t, float r, float b);
+// the panel at the top of the screen instead of the bottom: what the setting changes is at the bottom
+void preview_place_top(bool top);
 // opt_preview: this row (label: its id) opens; focus_row: its index on the page (opt_focus_row on the way back; -1 none)
 void preview_open(const char *label, int focus_row);
 // closed without a prompt, keeping the value (the menu closed under it)

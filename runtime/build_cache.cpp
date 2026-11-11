@@ -207,7 +207,7 @@ extern "C" BuildCache *build_cache_open(const char *game_dir, const char *spec, 
         auto c = acquire(game_dir);
         auto owner = c->root / "owner";
         if (fs::exists(owner))
-            need(read(owner, 64) == "LASBUILD3\n", "Unknown build cache; clear it from Game Files and retry.");
+            need(read(owner, 64) == "LASBUILD3\n", "Unknown build cache; clear it from System and retry.");
         else {
             // Pre-receipt beta_5 caches are ours too; upgrade them without asking every existing player to clear.
             recover(c.get());

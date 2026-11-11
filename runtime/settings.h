@@ -117,6 +117,7 @@ typedef struct {
     // touch screens (runtime/ui/mobile/touch_controls.mm)
     int touch_mode;      // 0 Auto (while no controller is connected), 1 Always, 2 Off
     bool touch_stick_fixed;  // the touch stick stays in its place (else its base comes to the thumb)
+    bool touch_dpad;  // the on-screen stick drawn and read as an 8-way D-pad (mobile/touch_controls.mm)
     bool touch_all;      // every play button on screen, not only those the game uses now
     bool touch_hide_xy_hud;  // the game's own X / Y item HUD hidden while the on-screen controls are shown
     float touch_opacity; // 0.15 .. 1

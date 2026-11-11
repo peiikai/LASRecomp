@@ -46,6 +46,9 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include "platform.h"
 #include "platform/ios_sdl.h"  // (iOS: SDL's file dialogs and SDL_OpenURL as the Files app's)
+#if PLAT_TOUCH
+#include "mobile/touch_safe.h"
+#endif
 #include "paths.h"
 #include "gamebuild.h"
 #include "build_cache.h"
@@ -62,6 +65,8 @@ extern "C" {
 #include "nvn/shader_prep.h"
 bool controls_ui_took_back(void);  // ui/controls_ui.mm: B went back a step on Configure inputs
 bool rando_tab_took_back(void);   // ui/rando_tab.mm: B went back a step in the right column
+bool rando_tab_close_pressed(void);  // ui/rando_tab.mm (touch screens: the X is in its own pane)
+float menu_page_corner(int tab, float scale);  // ui/menu.mm (touch screens: a page's icon for its title)
 void ui_window_init(void);
 SDL_Window *ui_window(void);
 #ifdef __APPLE__
@@ -728,7 +733,7 @@ static void *onedrive_size_thread(void *arg) {
     return NULL;
 }
 
-// The warning, w wide at the cursor (the start screen's upper right; before the setup, under the Game Files rows).
+// The warning, w wide at the cursor (the start screen's upper right; before the setup, under the System rows).
 // 1: Keep here pressed, 2: Choose another folder (offered when the data folder can be changed and nothing is running)
 static int onedrive_notice(float s, float w, bool ready) {
     std::string src;
@@ -1351,12 +1356,14 @@ static bool phone_pick_row(const char *title, const char *pick, int choice, int 
     // (a capital's middle, down from the top of a line of that size: what the boxes and the name centre on)
     const ImFontGlyph *gH = f->FindGlyph('H');
     auto mid = [&](float size) { return gH ? (gH->Y0 + gH->Y1) * 0.5f * size / f->FontSize : size * 0.5f; };
-    float bh = h * 1.02f, cy = at.y + mid(h), y0 = cy - bh * 0.5f, y1 = cy + bh * 0.5f;
+    // (the boxes no taller than a line, so the row keeps the other items' spacing and SETTINGS sits as far below it as
+    // it sits below PLAY)
+    float bh = h * 0.84f, cy = at.y + mid(h), y0 = cy - bh * 0.5f, y1 = cy + bh * 0.5f;
     float pw = ImGui::CalcTextSize(title).x + pad;  // (the title bare, at the items' left edge; its target reaches the ‹)
     float nroom = win_w * 0.9f - at.x - pw - 3 * gap - 2 * bh - 2 * pad;  // (a long name: smaller past 90% of the window)
     float ntw = ImGui::CalcTextSize(pick).x, nsc = ntw > nroom ? fmaxf(nroom / ntw, 0.55f) : 1.0f;
     ImVec2 pa(at.x, y0), pb(at.x + pw, y1), la(pb.x + gap, y0), lb(la.x + bh, y1);
-    ImVec2 na(lb.x + gap, y0), nb(na.x + ntw * nsc + 2 * pad, y1), ra(nb.x + gap, y0), rb(ra.x + bh, y1);
+    ImVec2 na(lb.x + gap, y0), nb(na.x + ntw * 0.9f * nsc + 2 * pad, y1), ra(nb.x + gap, y0), rb(ra.x + bh, y1);
     g_pick_rect = ImRect(la, rb);
     bool can_back = choice > 0, can_on = choice < n - 1;  // (a step each way left)
 
@@ -1402,11 +1409,13 @@ static bool phone_pick_row(const char *title, const char *pick, int choice, int 
     ImU32 bottom = hot ? IM_COL32(255, 160, 50, 255) : top;
     text_fx(dl, f, h, ImVec2(pa.x, at.y), top, bottom, title, on ? h * 0.05f : 0);
     ImU32 nc = choice ? IM_COL32(250, 250, 255, 255) : IM_COL32(246, 232, 176, 255);  // ("New Seed" in vanilla cream)
-    float nh = h * nsc;
+    float nh = h * 0.9f * nsc;  // (a little under the line, inside the shorter box)
     text_fx(dl, f, nh, ImVec2(na.x + pad, cy - mid(nh)), nc, nc, pick, nh * 0.05f);
 
-    ImGui::SetCursorScreenPos(at);
-    ImGui::Dummy(ImVec2(rb.x - at.x, h * 1.3f - ImGui::GetStyle().ItemSpacing.y));  // (SETTINGS' band clear of the boxes)
+    ImGui::SetCursorScreenPos(at);  // (then down as menu_item steps: its button, then the line spacing)
+    ImGui::Dummy(ImVec2(rb.x - at.x, h + 6));
+    if (g_menu_gap >= 0) ImGui::Dummy(ImVec2(0, h * g_menu_gap));
+    else ImGui::SetCursorPosY(ImGui::GetCursorPosY() + h * g_menu_gap);
     ImGui::PopFont();
     ImGui::SetWindowFontScale(1.0f);
     return pressed;
@@ -1509,6 +1518,23 @@ static void safe_insets(float *l, float *t, float *r, float *b) {
 #endif
 }
 
+// The paper behind the Settings / Game files window (pa, w x h): phones and tablets fill the screen with it
+static void page_panel(ImVec2 wp, ImVec2 ds, ImVec2 pa, float w, float h, float sc) {
+    if (PLAT_TOUCH) plastic_panel_full(ImGui::GetWindowDrawList(), wp, ImVec2(wp.x + ds.x, wp.y + ds.y), sc);
+    else plastic_panel(ImGui::GetWindowDrawList(), pa, ImVec2(pa.x + w, pa.y + h), sc);  // (framed)
+}
+
+// Touch screens: the window reaches the right edge for its X, what's on the page keeps that side's inset
+static void page_content_inset(void) {
+#if PLAT_TOUCH
+    float sl, st, sr, sb;
+    safe_insets(&sl, &st, &sr, &sb);
+    touch_cushion(&sl, &sr, g_launcher_win);
+    ImGui::GetCurrentWindow()->WorkRect.Max.x -= sr;
+    ImGui::GetCurrentWindow()->ContentRegionRect.Max.x -= sr;
+#endif
+}
+
 // The Settings / Game files window: its scale (1 at 1080 lines) and size, centred in the screen; phones: a third
 // larger (as the in-game menu there: runtime/ui/menu.mm kUi) and the whole safe area (the notch, the home indicator).
 // Once a frame: it scales FontGlobalScale, which the frame's start sets afresh.
@@ -1522,9 +1548,12 @@ static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centr
     const float phone = plat_touch_tablet() ? 1.0f : 1.35f;  // (a tablet's screen is a monitor's size: no enlargement)
     *sc *= phone;
     ImGui::GetIO().FontGlobalScale *= phone;
-    // (centred on the screen: the wider side inset on both sides - the notch is on one side only in landscape)
-    float sx = fmaxf(sl, sr), sy = fmaxf(st, sb);
-    *w = ds.x - 2 * sx - 2 * 12 * *sc, *h = ds.y - 2 * sy - 2 * 12 * *sc;
+    // (each side's own inset: a camera cutout is on one side only in landscape. Top to bottom the whole screen, and
+    // past it by the window's padding, so the page runs to the edges - menu.mm's page window)
+    touch_cushion(&sl, &sr, g_launcher_win);
+    float pad = 24 * *sc, top = 14 * *sc - pad;
+    *w = ds.x - sl, *h = ds.y + pad - 8 * *sc - top;  // (to the right edge, for the X: page_content_inset)
+    *centre = ImVec2(sl + *w * 0.5f, top + *h * 0.5f);
 #endif
 }
 
@@ -1689,7 +1718,7 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
 }
 
 // ------------------------------------------------------------------ the data folder (runtime/paths.h): another one
-// picked (Settings > Prelaunch, the Game Files window), the data moved there or a fresh start, then a restart there
+// picked (Settings > Prelaunch, the System window), the data moved there or a fresh start, then a restart there
 enum { DF_NONE, DF_ASK, DF_MOVING, DF_FAILED, DF_RESTART };
 static int g_df;                  // (main thread)
 static std::string g_df_pick;     // the folder picked (g_lock: the dialog calls back on any thread)
@@ -1877,7 +1906,7 @@ static void data_folder_popup(float s) {
     ImGui::EndPopup();
 }
 
-// The Storage section (Settings > Prelaunch, the Game Files window). Android: the app's own folder in internal
+// The Storage section (Settings > Prelaunch, the System window). Android: the app's own folder in internal
 // storage or on the SD card - the only places it can use by path (runtime/paths.c rt_data_root_fixed); another one
 // picked goes through the same question as on the desktop (move the data there, or start fresh).
 static void storage_rows(bool busy) {
@@ -1904,7 +1933,7 @@ static void storage_rows(bool busy) {
 }
 
 #ifdef __ANDROID__
-// The Vulkan driver package (Settings > Game files): the activity copies a picked one into the drivers folder, and the
+// The Vulkan driver package (Settings > System): the activity copies a picked one into the drivers folder, and the
 // driver is loaded at the next start (runtime/nvn/vulkan/android_driver.c). From LASRecompAndroid by mamcjr (MIT).
 static std::string g_driver_msg;
 static bool g_driver_restart;
@@ -1955,7 +1984,7 @@ static void driver_rows(void) {
 #endif
 
 static bool g_files_deleted;  // set here: the start screen goes back to setting the game files up
-// Settings > Game files, as the other tabs: option rows on the left, the selected row's description on the right
+// Settings > System, as the other tabs: option rows on the left, the selected row's description on the right
 static void prelaunch_tab(float sc) {
     static double gb = -1;
     static bool confirm_delete;
@@ -2441,7 +2470,7 @@ extern "C" void launcher_run(const char *root) {
             ImGui::GetIO().FontGlobalScale = s * 0.5f;
             ImDrawList *bg = ImGui::GetBackgroundDrawList();
             // an update by itself: only its bar, on the start screen's background (gray without it; a failure or
-            // Cancel then shows the Game Files page)
+            // Cancel then shows the System page)
             const bool update_only = g_auto_update && busy;
             if (g_bg && (status.empty() || update_only)) {  // cover the window, keep the aspect
                 float ia = (float)g_bg_w / g_bg_h, wa = ds.x / ds.y;
@@ -2482,7 +2511,7 @@ extern "C" void launcher_run(const char *root) {
             float x0 = fmaxf(90 * s, safe_l + 30 * s);
             ImGui::SetCursorPos(ImVec2(x0, 120 * s));
             ImGui::PushFont(g_font_title);
-            if (page == MAIN) {  // gold to orange, shadowed (not behind the Settings / Game Files windows)
+            if (page == MAIN) {  // gold to orange, shadowed (not behind the Settings / System windows)
                 const char *t = "LAS Recompiled";
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), p, IM_COL32(255, 232, 120, 255),
@@ -2659,27 +2688,33 @@ extern "C" void launcher_run(const char *root) {
                 ImVec2 wp = ImGui::GetWindowPos();
                 ImVec2 pa(wp.x + centre.x - w * 0.5f, wp.y + centre.y - h * 0.5f);
                 pieces = true;
-                plastic_panel(ImGui::GetWindowDrawList(), pa, ImVec2(pa.x + w, pa.y + h), sc);  // (the paper panel, framed)
+                page_panel(wp, ds, pa, w, h, sc);
                 ImGui::SetCursorScreenPos(pa);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
                 ImGui::BeginChild("##settings", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
+                page_content_inset();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
                 plastic_widgets(true);  // (popups, buttons and fields inside as pieces too)
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(plastic_col(plastic_theme().title), "%s", page == RANDO ? L("Randomizer") : L("Settings"));
+                if (!PLAT_TOUCH)  // (touch: an icon for the title - Settings' gear in tabs_body, the Randomizer's below)
+                    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", page == RANDO ? L("Randomizer") : L("Settings"));
                 ImGui::PopFont();
-                bool back;
-                {  // close: the round X in the corner (B / Esc too)
+                bool back = false;
+                {  // close: the round X in the corner (B / Esc too); touch, the Randomizer: in its own pane (rando_tab.mm)
                     float bx = 44 * sc;
-                    back = plastic_close_corner(bx, sc);
+                    if (!(PLAT_TOUCH && page == RANDO)) back = plastic_close_corner(bx, sc);
                 }
                 bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);  // (before the pages run, like the menu)
-                if (page == RANDO) menu_tabs_draw(sc, g_font_small, g_font_menu, false, NULL, 3);
-                else menu_tabs_draw(sc, g_font_small, g_font_menu, false, prelaunch_tab);
+                if (page == RANDO) {
+                    float indent = PLAT_TOUCH ? menu_page_corner(3, sc) : 0;
+                    menu_tabs_draw(sc, g_font_small, g_font_menu, false, NULL, 3);
+                    if (indent > 0) ImGui::Unindent(indent);
+                    if (PLAT_TOUCH && rando_tab_close_pressed()) back = true;
+                } else menu_tabs_draw(sc, g_font_small, g_font_menu, false, prelaunch_tab);
                 int cap_dev;
                 bind_capture_active(&cap_dev, NULL, NULL);
                 if (!popup && !typing && cap_dev < 0 && !controls_ui_took_back() && !rando_tab_took_back() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
@@ -2721,19 +2756,20 @@ extern "C" void launcher_run(const char *root) {
                 ImVec2 wp = ImGui::GetWindowPos();
                 ImVec2 pa(wp.x + centre.x - w * 0.5f, wp.y + centre.y - h * 0.5f);
                 pieces = true;
-                plastic_panel(ImGui::GetWindowDrawList(), pa, ImVec2(pa.x + w, pa.y + h), sc);
+                page_panel(wp, ds, pa, w, h, sc);
                 ImGui::SetCursorScreenPos(pa);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0, 0, 0, 0));
                 ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * sc);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * sc, 24 * sc));
                 ImGui::BeginChild("##setup", ImVec2(w, h), ImGuiChildFlags_AlwaysUseWindowPadding, ImGuiWindowFlags_NavFlattened);
+                page_content_inset();
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor();
                 menu_style_begin(sc);  // (the menu's colours: the rows' descriptions, the text under them)
                 plastic_widgets(true);
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(plastic_col(plastic_theme().title), "%s", ios_page ? L("Recomp for iOS") : L("Game Files"));
+                ImGui::TextColored(plastic_col(plastic_theme().title), "%s", ios_page ? L("Recomp for iOS") : L("System"));
                 ImGui::PopFont();
                 bool back = false;
                 if (!busy) {  // close: the round X in the corner, as Settings (B / Esc too)
@@ -2917,7 +2953,7 @@ extern "C" void launcher_run(const char *root) {
 
             }
 
-            // status (lower left) and version (lower right) - not under the Settings / Game Files windows
+            // status (lower left) and version (lower right) - not under the Settings / System windows
             if (page == MAIN) {
             ImGui::PushFont(g_font_small);
             ImGui::SetCursorPos(ImVec2(x0, ds.y - 118 * s - safe_b));
@@ -3014,7 +3050,7 @@ extern "C" void launcher_run(const char *root) {
             }
             ImGui::EndDisabled();
             {   // (another data folder picked: move / start fresh, then restart; in the menus' look from every page -
-                // Settings, the Game Files window at the first setup)
+                // Settings, the System window at the first setup)
                 menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
                 data_folder_popup(s);
                 plastic_widgets(false), menu_style_end();

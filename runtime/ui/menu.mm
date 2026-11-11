@@ -47,9 +47,13 @@ extern "C" int game_in_play(void);  // hle/warp.c
 void save_editor_on_open(void);
 void rando_tab_draw(float scale);
 bool warp_tab_draw(float scale);  // warp_tab.mm: true when a warp started
+bool warp_tab_close_pressed(void);  // warp_tab.mm (touch screens: the X is in its map pane)
+bool save_editor_close_pressed(void);  // save_editor.mm (the same, in its right pane)
+bool rando_tab_close_pressed(void);  // rando_tab.mm (the same: its right pane, or the corner over its seed sheet)
 extern "C" void cheats_draw(float scale);  // cheats.mm
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
+void touch_tab_draw(float scale);     // controls_ui.mm (touch screens)
 bool controls_ui_took_back(void);
 bool rando_tab_took_back(void);  // rando_tab.mm: B went back a step in the right column
 bool save_editor_took_back(void);  // save_editor.mm (the same)
@@ -58,6 +62,9 @@ bool warp_tab_took_back(void);  // warp_tab.mm (the same)
 #include "../livesplit.h"
 #include "../paths.h"
 #include "../platform.h"
+#if PLAT_TOUCH
+#include "mobile/touch_safe.h"
+#endif
 #include "../rando.h"
 }
 
@@ -87,6 +94,7 @@ extern "C" void menu_safe_insets(float *l, float *r) {
     float w = ImGui::GetCurrentContext() ? ImGui::GetIO().DisplaySize.x : 0;
     *l = w > 0 ? g_safe_l.load() / w : 0, *r = w > 0 ? g_safe_r.load() / w : 0;
 }
+static std::atomic<int> g_cushion_l{0}, g_cushion_r{0};  // (the same, on the camera cutout's side only: the menu pages)
 #endif
 static std::atomic<bool> g_ime_send{false};  // the text field being typed in: its frame, points, to give SDL (phones)
 static SDL_Rect g_ime_rect;
@@ -132,11 +140,13 @@ void menu_tabs_focus(bool first_tab);
 #if PLAT_TOUCH
 extern "C" void touch_reset(void);  // mobile/touch_controls.mm (on-screen controls)
 extern "C" bool touch_visible(void);
-extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font);
+extern "C" bool touch_title_box(void);
+extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFont *menu_font);
 #else
 static void touch_reset(void) {}
 static bool touch_visible(void) { return false; }
-static void touch_draw(ImDrawList *, float, float, ImFont *) {}
+static bool touch_title_box(void) { return false; }
+static void touch_draw(ImDrawList *, float, float, ImFont *, ImFont *) {}
 #endif
 static void set_open(bool open) {
     if (open == g_open.load()) return;
@@ -398,6 +408,9 @@ void menu_apply_window_requests(void *win) {
         if (!kbd && SDL_GetWindowSafeArea(w, &sa) && SDL_GetWindowSize(w, &ww, &wh) && ww > 0 && wh > 0) {
             g_safe_l = (int)(sa.x * g_pixel_density), g_safe_t = (int)(sa.y * g_pixel_density);
             g_safe_r = (int)((ww - sa.x - sa.w) * g_pixel_density), g_safe_b = (int)((wh - sa.y - sa.h) * g_pixel_density);
+            float cl = g_safe_l, cr = g_safe_r;
+            touch_cushion(&cl, &cr, w);
+            g_cushion_l = (int)cl, g_cushion_r = (int)cr;
         }
     }
 #else
@@ -1179,12 +1192,80 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // The live preview (live_preview.h) of a row on the page shown: instead of the tabs, until it closes. The pages with
 // opt_preview rows: Video, Cosmetics.
+static float g_preview_scale = 1;
 static void preview_page(void) {
     if (g_tab == 0) tab_display();
     else if (g_tab == 7) tab_cosmetics();
+#if PLAT_TOUCH
+    else if (g_tab == 10) touch_tab_draw(g_preview_scale);
+#endif
 }
 bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big) {
+    g_preview_scale = scale;
+    // (the on-screen controls are mostly along the bottom; the game's X / Y items are along the top)
+    preview_place_top(PLAT_TOUCH && g_tab == 10 && strcmp(preview_label(), "Hide X/Y item HUD") != 0);
     return preview_active() && (preview_draw(scale, font, font_big, preview_page), true);
+}
+
+#if PLAT_TOUCH
+// A menu page's title on a touch screen: an icon in the screen's corner (a notch or a camera hole sits mid-height, clear
+// of it). tab: -1000 Settings (a gear), 3 Randomizer (a die), 4 Warp (a map pin), 2 Save Editor (a floppy disk)
+static void page_corner_icon(int tab, float scale) {
+    float bs = 44 * 1.35f * scale, ox = 14 * scale, oy = 12 * scale;
+    ImVec2 vp = ImGui::GetMainViewport()->Pos, c(vp.x + ox + bs * 0.5f, vp.y + oy + bs * 0.5f);
+    float r = bs * 0.42f;
+    ImU32 gc = ImGui::ColorConvertFloat4ToU32(plastic_col(plastic_theme().title));
+    ImVec4 p = plastic_theme().panel;
+    p.w = 1;
+    ImU32 cut = ImGui::ColorConvertFloat4ToU32(p);  // (the holes: the paper's colour)
+    ImDrawList *gd = ImGui::GetWindowDrawList();
+    gd->PushClipRectFullScreen();
+    if (tab == -1000) {
+        gd->AddCircle(c, r * 0.52f, gc, 32, r * 0.34f);
+        for (int k = 0; k < 8; k++) {
+            float a = k * 3.14159265f / 4, ca = cosf(a), sa = sinf(a), hw = r * 0.15f;
+            ImVec2 in(c.x + ca * r * 0.6f, c.y + sa * r * 0.6f), out(c.x + ca * r, c.y + sa * r);
+            gd->AddQuadFilled(ImVec2(in.x - sa * hw * 1.25f, in.y + ca * hw * 1.25f), ImVec2(out.x - sa * hw, out.y + ca * hw),
+                              ImVec2(out.x + sa * hw, out.y - ca * hw), ImVec2(in.x + sa * hw * 1.25f, in.y - ca * hw * 1.25f), gc);
+        }
+    } else if (tab == 3) {
+        float e = r * 0.86f, o = e * 0.5f, pr = e * 0.17f;
+        gd->AddRectFilled(ImVec2(c.x - e, c.y - e), ImVec2(c.x + e, c.y + e), gc, r * 0.28f);
+        const float pip[5][2] = {{-1, -1}, {1, -1}, {0, 0}, {-1, 1}, {1, 1}};  // (a five)
+        for (const auto &p : pip) gd->AddCircleFilled(ImVec2(c.x + p[0] * o, c.y + p[1] * o), pr, cut, 16);
+    } else if (tab == 4) {
+        float hr = r * 0.68f;
+        ImVec2 head(c.x, c.y - r * 0.3f);
+        gd->AddCircleFilled(head, hr, gc, 32);
+        gd->AddTriangleFilled(ImVec2(c.x - hr * 0.86f, head.y + hr * 0.5f), ImVec2(c.x + hr * 0.86f, head.y + hr * 0.5f), ImVec2(c.x, c.y + r), gc);
+        gd->AddCircleFilled(head, hr * 0.42f, cut, 24);
+    } else {
+        float e = r * 0.92f;
+        ImVec2 a(c.x - e, c.y - e), b(c.x + e, c.y + e);
+        gd->AddRectFilled(a, b, gc, r * 0.14f);
+        gd->AddRectFilled(ImVec2(c.x - e * 0.5f, a.y + e * 0.08f), ImVec2(c.x + e * 0.5f, a.y + e * 0.72f), cut, r * 0.06f);  // shutter
+        gd->AddRectFilled(ImVec2(c.x + e * 0.14f, a.y + e * 0.18f), ImVec2(c.x + e * 0.38f, a.y + e * 0.62f), gc);
+        gd->AddRectFilled(ImVec2(c.x - e * 0.66f, c.y + e * 0.08f), ImVec2(c.x + e * 0.66f, b.y), cut, r * 0.06f);  // label
+    }
+    gd->PopClipRect();
+}
+#endif
+
+// A page alone on a touch screen (the bar's Randomizer, Warp and Save Editor; the start screen's Randomizer): its icon
+// in the corner for a title, the page from the top of the screen, clear of the icon. Returns the indent to undo.
+extern "C" float menu_page_corner(int tab, float scale) {
+#if PLAT_TOUCH
+    page_corner_icon(tab, scale);
+    float bs = 44 * 1.35f * scale;
+    ImVec2 vp = ImGui::GetMainViewport()->Pos, p = ImGui::GetCursorScreenPos();
+    float indent = fmaxf(0, vp.x + (14 + 8) * scale + bs - p.x);
+    ImGui::SetCursorScreenPos(ImVec2(p.x, vp.y + 14 * scale));
+    if (indent > 0) ImGui::Indent(indent);
+    return indent;
+#else
+    (void)tab, (void)scale;
+    return 0;
+#endif
 }
 
 // false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
@@ -1195,13 +1276,18 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
     struct Tab { const char *name; int id; bool on; };
     Tab tabs[11];
     int ntabs = 0;
-    if (prelaunch) tabs[ntabs++] = {LN("Game files"), -1, true};
+    if (prelaunch) tabs[ntabs++] = {LN("System"), -1, true};
     static const char *names[] = {LN("Video"), LN("Audio"), LN("Save Editor"), LN("Randomizer"), LN("Warp"),
-                                  LN("Cheats"), LN("Gameplay"), LN("Cosmetics"), LN("Controls"), LN("Quit")};
+                                  LN("Cheats"), LN("Gameplay"), LN("Cosmetics"), PLAT_TOUCH ? LN("Controller") : LN("Controls"), LN("Quit"),
+                                  LN("Touch")};
     // Controls, Video, Audio, Gameplay, Cosmetics, Cheats (ids stay: test hooks). Warp, Save Editor and Quit are the
     // in-game menu bar's own entries (only usable in a save - user 2026-11-03); the Randomizer is the bar's entry in
-    // game and its own row on the start screen (user 2026-11-09)
+    // game and its own row on the start screen (user 2026-11-09). Touch screens: Touch first
+#if PLAT_TOUCH
+    static const int order[] = {10, 8, 0, 1, 6, 7, 5};
+#else
     static const int order[] = {8, 0, 1, 6, 7, 5};
+#endif
     int keep_tab = g_tab;  // (one page alone: the Settings window's tab stays as it was)
     if (only != -1000) tabs[ntabs++] = {names[only], only, true}, g_tab = only;
     else
@@ -1276,8 +1362,20 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
     }
     if (only == -1000) {
         const PlasticTheme &pt = plastic_theme();
-        float gap = 8 * scale, pad = 20 * scale, th = ImGui::GetFontSize() + 20 * scale;
-        float tw[16], text_w[16], total = 0, avail = ImGui::GetContentRegionAvail().x - 4 * scale;
+        float gap = 8 * scale, pad = 20 * scale, th = ImGui::GetFontSize() + 20 * scale, tabs_cut = 0;
+#if PLAT_TOUCH
+        {   // the Settings window on a touch screen: a gear in the screen's corner for its title (a notch or a camera
+            // hole sits mid-height, clear of it), the tabs beside it on the top row, short of the corner buttons
+            // (plastic.mm corner_button)
+            float bs = 44 * 1.35f * scale, ox = 14 * scale, oy = 12 * scale;
+            ImVec2 vp = ImGui::GetMainViewport()->Pos;
+            page_corner_icon(-1000, scale);
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            ImGui::SetCursorScreenPos(ImVec2(fmaxf(p.x, vp.x + ox + bs + gap), vp.y + oy + (bs - th) * 0.5f));
+            tabs_cut = 2 * bs + 8 * scale;  // (the corner buttons, side by side on the tabs' row)
+        }
+#endif
+        float tw[16], text_w[16], total = 0, avail = ImGui::GetContentRegionAvail().x - 4 * scale - tabs_cut;
         for (int k = 0; k < ntabs; k++)  // (each tab also sits 2 px right of the cursor: counted, or the bar overflowed)
             text_w[k] = ImGui::CalcTextSize(L(tabs[k].name)).x, total += text_w[k] + (k ? gap : 0) + 2 * scale;
         // a narrow window: tighter tabs; still too wide: on a phone the bar scrolls sideways instead of squeezing them,
@@ -1373,6 +1471,9 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         case 6: difficulty_draw(scale); break;
         case 7: tab_cosmetics(); break;
         case 8: controls_tab_draw(scale); break;
+#if PLAT_TOUCH
+        case 10: touch_tab_draw(scale); break;
+#endif
         }
         static const char *scroll_test = getenv("LARECOMP_MENU_SCROLL");  // test hook: page scroll, 0..1
         if (scroll_test) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(scroll_test));
@@ -1432,9 +1533,9 @@ static void bar_draw(ImGuiIO &io, float scale) {
     e = 1 - (1 - e) * (1 - e) * (1 - e);
     ImGui::PushFont(g_menu_font);
     float fs = ImGui::GetFontSize(), in = 30 * scale, ph = fs + 20 * scale, m = 12 * scale;
-    // (phones: inside the safe area, as the page window - the wider side inset on both sides)
-    float sx = PLAT_TOUCH ? (float)fmaxf(g_safe_l, g_safe_r) : 0, sy = PLAT_TOUCH ? (float)g_safe_t : 0;
-    float bh = ph + 2 * in, top = m + sy - (1 - e) * (bh + m + sy);
+    // (phones: inside the safe area sideways, the wider side inset on both sides; the top is free in landscape)
+    float sx = PLAT_TOUCH ? (float)fmaxf(g_safe_l, g_safe_r) : 0;
+    float bh = ph + 2 * in, top = m - (1 - e) * (bh + m);
     ImGui::SetNextWindowPos(ImVec2(m + sx, top), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x - 2 * (m + sx), bh), ImGuiCond_Always);
     ImGui::Begin("##bar", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
@@ -1524,7 +1625,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #else
     plastic_perf_note_vk(open);
 #endif
-    bool touch = !open && !kbd && touch_visible();  // (on-screen controls: mobile/touch_controls.mm)
+    // (on-screen controls: mobile/touch_controls.mm; also under the live preview of their own settings)
+    bool touch = (!open && !kbd && touch_visible()) || (PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
     if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
@@ -1667,7 +1769,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     if (inv) {
         inventory_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont());
     }
-    if (touch) touch_draw(ImGui::GetBackgroundDrawList(), io.DisplaySize.x, io.DisplaySize.y, g_font_big ? g_font_big : ImGui::GetFont());
+    if (touch) touch_draw(ImGui::GetBackgroundDrawList(), io.DisplaySize.x, io.DisplaySize.y, g_font_big ? g_font_big : ImGui::GetFont(),
+                          g_menu_font_big ? g_menu_font_big : ImGui::GetFont());
 
     if (open || kbd) {  // (the menu's colours; its windows, popups and buttons as plastic pieces)
         ImGui::GetStyle() = menu_style;
@@ -1693,16 +1796,27 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             float w = fminf(io.DisplaySize.x * 0.9f, 1500 * scale), h = io.DisplaySize.y - 2 * 18 * scale;  // (all the height: a slim margin)
             ImVec2 centre(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f);
 #if PLAT_TOUCH
-            {   // phones: the whole safe area (the notch and the home indicator left out), centred on the screen: the
-                // wider side inset on both sides (the notch is on one side only in landscape)
-                float sx = fmaxf(g_safe_l, g_safe_r), sy = fmaxf(g_safe_t, g_safe_b);
-                w = io.DisplaySize.x - 2 * sx - 2 * 12 * scale;
-                h = io.DisplaySize.y - 2 * sy - 2 * 12 * scale;
+            ImGuiWindowFlags page_flags = ImGuiWindowFlags_NoBackground;
+            {   // phones and tablets: the paper fills the screen, the window (what's on it) stays clear of a camera cutout,
+                // on its own side only. Top to bottom it takes the whole screen: in landscape nothing is in the way
+                // there (Android's bars are hidden but still reported), and past the edges by the window's padding, so
+                // the page runs to them.
+                float sl = g_cushion_l, pad = ImGui::GetStyle().WindowPadding.y, top = 14 * scale - pad;
+                // (to the screen's right edge, for the corner buttons: what's on the page keeps the inset, below)
+                w = io.DisplaySize.x - sl, h = io.DisplaySize.y + pad - 8 * scale - top;
+                centre = ImVec2(sl + w * 0.5f, top + h * 0.5f);
+                plastic_panel_full(ImGui::GetBackgroundDrawList(), ImVec2(0, 0), io.DisplaySize, scale);
             }
+#else
+            ImGuiWindowFlags page_flags = 0;
 #endif
             ImGui::SetNextWindowPos(centre, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(w, h), ImGuiCond_Always);
-            ImGui::Begin("##menu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::Begin("##menu", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | page_flags);
+#if PLAT_TOUCH
+            ImGui::GetCurrentWindow()->WorkRect.Max.x -= g_cushion_r;
+            ImGui::GetCurrentWindow()->ContentRegionRect.Max.x -= g_cushion_r;
+#endif
             ImFont *keep_big = g_font_big;  // (the window in the menu's font; header() uses g_font_big)
             g_font_big = g_menu_font_big;
             ImGui::PushFont(g_menu_font);
@@ -1710,13 +1824,19 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             // back to the bar). ("Title screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user
             // 2026-10-11.)
             static const char *titles[] = {LN("Settings"), LN("Randomizer"), LN("Warp"), LN("Save Editor")};
+            static const int only[] = {-1000, 3, 4, 2};  // (the pages' tab ids)
+#if PLAT_TOUCH
+            // (an icon for the title; Settings': tabs_body)
+            float page_indent = page != BAR_SETTINGS ? menu_page_corner(only[page], scale) : 0;
+#else
             ImGui::PushFont(g_font_big);
             ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L(titles[page]));
             ImGui::PopFont();
+#endif
             bool back = false;
             {
                 float bx = 44 * scale;
-                if (plastic_close_corner(bx, scale)) back = true;
+                if (!(PLAT_TOUCH && page != BAR_SETTINGS) && plastic_close_corner(bx, scale)) back = true;
                 if (page == BAR_SETTINGS) {
                     if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
                     vanilla_popup(scale);
@@ -1724,8 +1844,13 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             }
 
             bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before
-            static const int only[] = {-1000, 3, 4, 2};  // (the pages' tab ids)                 //  the pages run)
-            tabs_body(scale, true, NULL, only[page]);
+            tabs_body(scale, true, NULL, only[page]);                                             //  the pages run)
+#if PLAT_TOUCH
+            if (page_indent > 0) ImGui::Unindent(page_indent);
+            if (page == BAR_RANDO && rando_tab_close_pressed()) back = true;
+            if (page == BAR_WARP && warp_tab_close_pressed()) back = true;
+            if (page == BAR_EDITOR && save_editor_close_pressed()) back = true;
+#endif
             // B with nothing focused-deeper goes back to the bar (not the Esc / B that ends typing: typing is from the
             // frame before, so it's still true the frame a field lets go)
             if (!any_popup && !typing && !ui_text_busy() && !controls_ui_took_back() && !rando_tab_took_back() &&
@@ -1758,7 +1883,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     }
     // the pieces (and, the menu open over the game, the small copy of the game image they read): only with the menu or
     // the name entry up
-    bool pieces = open || kbd;
+    bool pieces = open || kbd || touch_title_box();
 #ifdef __APPLE__
     id<MTLTexture> scene = g_scene;
     g_scene = nil;

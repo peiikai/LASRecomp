@@ -19,8 +19,10 @@
 #include <string>
 #include <vector>
 
+#include "../platform.h"  // (PLAT_TOUCH)
 #include "i18n.h"
 #include "imgui.h"
+#include "plastic.h"
 #include "option_rows.h"
 #include "osk.h"
 #include "warp_data.h"
@@ -471,6 +473,9 @@ static void draw_map(void) {
     warp_draw_island(dl, a0, a1, g_island, cr, cc, a->sec == SEC_OW && cr < 0 ? a->region : -1);
 }
 
+static bool g_close_pressed;
+extern "C" bool warp_tab_close_pressed(void) { bool r = g_close_pressed; g_close_pressed = false; return r; }
+
 extern "C" bool warp_tab_draw(float scale) {
     if (g_areas.empty()) build_places();
     const char *cur = current_level();
@@ -583,6 +588,9 @@ extern "C" bool warp_tab_draw(float scale) {
         opt_indent(-1);
     }
     opt_split();
+#if PLAT_TOUCH
+    g_close_pressed = plastic_close_pane(44 * scale, scale);  // (the page has no row of its own for it: the map's box)
+#endif
     draw_map();
     opt_split_end();
     g_focus_prev = g_focus_now;

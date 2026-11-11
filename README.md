@@ -43,7 +43,7 @@ These are the minimums during the beta and may change as development continues.
 |---|---|
 | OS | Android 11 or newer, 64-bit (arm64) |
 | Chip | Snapdragon 865 (Adreno 650) or as fast, for example the Retroid Pocket 5 |
-| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files. The latest we've tested is [Turnip 26.3.0 R6](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/tag/v37) (`Turnip_v26.3.0-R6.zip`) from StevenMXZ's Adreno-Tools-Drivers |
+| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > System. The latest we've tested is [Turnip 26.3.0 R6](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/tag/v37) (`Turnip_v26.3.0-R6.zip`) from StevenMXZ's Adreno-Tools-Drivers |
 | RAM | 8 GB |
 | Storage | About 15 GB free |
 
@@ -92,7 +92,7 @@ The iOS app is made on your computer from your own game files, then sideloaded.
 
 1. Set up LAS Recomp on a Mac, Windows or Linux computer as usual.
 2. From the same release, download `LAS Recomp-<version>-iOS.laskit`.
-3. On the start screen, open Settings > Game files > Recomp for iOS..., choose the kit, then Export iOS app.
+3. On the start screen, open Settings > System > Recomp for iOS..., choose the kit, then Export iOS app.
    The app is saved to your Downloads folder as `LAS Recomp-<version>-iOS.ipa`.
 4. Install the .ipa with a sideloading tool such as SideStore, AltStore or Sideloadly. A free Apple account works,
    but the app then has to be refreshed every 7 days. LAS Recomp only makes the .ipa. Installing it is up to you,
@@ -214,7 +214,7 @@ Where files live (game files, saves, seeds, settings and logs):
 - Linux: `~/.local/share/lasrecomp/`
 - Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
 - iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
-- You can move it to another folder or drive in Settings > Game files > Data folder.
+- You can move it to another folder or drive in Settings > System > Data folder.
 - `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
 
@@ -230,7 +230,7 @@ Python 3. Details in [docs/android.md](docs/android.md).
 ### Resuming game-code builds
 
 If the game-code build is cancelled or interrupted, **Resume game code** continues where it stopped. It also resumes
-by itself the next time LAS Recomp starts. **Game Files > Clear build cache** removes the build's leftover files
+by itself the next time LAS Recomp starts. **System > Clear build cache** removes the build's leftover files
 without touching the installed game, your game files or your saves.
 
 ## Credits
@@ -333,7 +333,7 @@ none of their files are used):
 - [XC2-Recomp-Contributions](https://github.com/circerio/XC2-Recomp-Contributions) by circerio (MIT) - the
   branch-phi test shader in the shader translator's control-flow test (`tools/test_translate_flow.c`)
 - **Dusklight** by the TwilitRealm team (https://github.com/TwilitRealm/dusklight) - design inspiration for the start
-  screen (Play / Settings / Game Files layout)
+  screen (Play / Settings / System layout)
 - **SuperMarioWonderRecomp** by BelmanteGu (https://github.com/BelmanteGu/SuperMarioWonderRecomp) - its
   ahead-of-time shader approach is what the first-launch shader preparation follows (a shipped list of shader variants,
   built on the player's machine from their own game files)

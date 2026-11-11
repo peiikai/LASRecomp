@@ -276,6 +276,7 @@ void settings_load(void) {
         else if (!strcmp(key, "touch_all")) g_settings.touch_all = atoi(val) != 0;
         else if (!strcmp(key, "touch_stick_fixed")) g_settings.touch_stick_fixed = atoi(val) != 0;
         else if (!strcmp(key, "touch_hide_xy_hud")) g_settings.touch_hide_xy_hud = atoi(val) != 0;
+        else if (!strcmp(key, "touch_dpad")) g_settings.touch_dpad = atoi(val) != 0;
         else if (!strcmp(key, "touch_size")) g_settings.touch_size = (float)atof(val);
         else if (!strncmp(key, "touch_ctl_", 10)) {  // (the layout editor: x, y, size, hidden)
             for (int i = 0; i < TOUCH_NCTL; i++) {
@@ -425,6 +426,7 @@ void settings_save(void) {
     fprintf(f, "touch_all = %d\ntouch_stick_fixed = %d\ntouch_hide_xy_hud = %d\n", g_settings.touch_all, g_settings.touch_stick_fixed,
             g_settings.touch_hide_xy_hud);
     fprintf(f, "touch_size = %.2f\n", g_settings.touch_size);
+    fprintf(f, "touch_dpad = %d\n", g_settings.touch_dpad);
     {
         for (int i = 0; i < TOUCH_NCTL; i++)
             if (g_settings.touch_moved[i] || g_settings.touch_hidden[i] || (g_settings.touch_scale[i] > 0.1f && fabsf(g_settings.touch_scale[i] - 1) > 0.01f))
