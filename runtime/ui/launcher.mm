@@ -117,6 +117,8 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 #define LARECOMP_PLATFORM "windows"
 #elif defined(__APPLE__)
 #define LARECOMP_PLATFORM "macOS"
+#elif defined(__ANDROID__)
+#define LARECOMP_PLATFORM "android"
 #elif defined(__aarch64__)
 #define LARECOMP_PLATFORM "linux-aarch64"
 #else

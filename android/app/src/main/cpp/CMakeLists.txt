@@ -94,7 +94,9 @@ target_include_directories(main PRIVATE ${R}/runtime ${R}/runtime/nvn ${IMGUI} $
 # every Vulkan function through volk (runtime/nvn/vulkan/vk.h), ImGui's and VMA's too
 target_compile_definitions(main PRIVATE LARECOMP_DYN_BASE VK_USE_PLATFORM_ANDROID_KHR VK_NO_PROTOTYPES
     IMGUI_IMPL_VULKAN_USE_VOLK VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
-target_compile_options(main PRIVATE -fno-strict-aliasing -Wall -Wno-unused-function -Wno-format  # (as on Linux)
+# -O2 -g with assert() on in every build type, as the desktop Makefile builds it (Gradle's debug type is -O0, its
+# release type -O3 -DNDEBUG)
+target_compile_options(main PRIVATE -O2 -g -UNDEBUG -fno-strict-aliasing -Wall -Wno-unused-function -Wno-format  # (as on Linux)
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++17>)
 # -z nostart-stop-gc: tables in named sections found through
 # __start_ / __stop_ symbols (runtime/hle.h, ipc.h, main.c); 16 KB pages (Android 15+)
