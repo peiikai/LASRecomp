@@ -25,6 +25,8 @@ void rt_frame_job_kickoff(uint64_t owner);  // delegate_null.c
 void rt_frame_job_finish(uint64_t job);
 void rt_owner_call_notify(Cpu *c, uint64_t obj);
 uint32_t rt_powerup_music_flags(Cpu *c, uint32_t flags, bool update);
+uint32_t rt_text_rate(uint32_t game_bits);  // text_speed.c
+int rt_text_snap(void);
 
 // The hook sites (game_addresses.h): which one a site is, by the selected game version's table
 #define HOOK_SITES(X) \
@@ -57,7 +59,9 @@ uint32_t rt_powerup_music_flags(Cpu *c, uint32_t flags, bool update);
     X(FRAME_JOB_FINISH_SITE) \
     X(SHAPE_SIM_SITES_0) \
     X(SHAPE_SIM_SITES_1) \
-    X(EFFECT_BONE_SITE)
+    X(EFFECT_BONE_SITE) \
+    X(TEXT_RATE_SITE) \
+    X(TEXT_SNAP_SITE)
 enum {
 #define X(name) H_##name,
     HOOK_SITES(X)
@@ -139,6 +143,11 @@ int rt_hook(Cpu *c, uint64_t site) {
         if (c->x[0]) return 0;
         LOG("[event] empty handler skipped (issue #41)\n");
         return 2;  // (the dispatcher's catch: returns 0)
+    case H_TEXT_RATE_SITE:  // TEXT_RATE_SITE - str w8, [x0, #0x284]: a message pane's text step (Text speed, #681)
+        ST32(c->x[0] + 0x284, rt_text_rate((uint32_t)c->x[8]));
+        return 1;
+    case H_TEXT_SNAP_SITE:  // TEXT_SNAP_SITE - b.lt: text short of the page's end; Instant takes the "at the end" path
+        return rt_text_snap();
     case H_CHOICE_COUNT_SITE: {  // CHOICE_COUNT_SITE - str w8, [x19, #0x1cc4]: a question's answer count (issue #183)
         int32_t n = (int32_t)c->x[8];
         if (n >= 2 && n <= 4) return 0;

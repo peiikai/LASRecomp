@@ -969,6 +969,7 @@ static void reset_to_vanilla(void) {
     s.aspect = ASPECT_ORIGINAL;
     s.cheat_hookshot = s.no_buff_drops = s.mirror_mode = false;
     s.walk_speed = 1.0f, s.walk_speed_dungeons = false;
+    s.text_speed = TEXT_SPEED_NORMAL;
     s.diff_damage = 1.0f, s.diff_ohko = false;
     s.timer = false, s.timer_pos = TIMER_POS_LEFT;
     if (s.livesplit) s.livesplit = false, livesplit_poke();

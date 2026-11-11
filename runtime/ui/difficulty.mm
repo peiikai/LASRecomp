@@ -106,6 +106,9 @@ extern "C" void difficulty_draw(float scale) {
                        "Use the walk speed in houses, caves and dungeons too."))
             settings_save();
     }
+    if (opt_choice("Text speed", &g_settings.text_speed, g_text_speeds, N_TEXT_SPEEDS, TEXT_SPEED_NORMAL,
+                   "How fast message text appears. Each message still waits for your button press."))
+        settings_save();
     opt_section("Difficulty");
     static const char *const names[] = {LN("Half"), LN("Default"), LN("2x"), LN("3x"), LN("4x"), LN("5x"),
                                          LN("6x"), LN("7x"), LN("8x")};
