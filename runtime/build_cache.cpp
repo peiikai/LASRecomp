@@ -2,7 +2,9 @@
 // Generated source and logs survive interruption, but are removed after successful publication.
 #include "build_cache.h"
 #include "cache_sha256.h"
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -146,8 +148,14 @@ std::unique_ptr<BuildCache> acquire(const char *game_dir) {
     need(c->handle != INVALID_HANDLE_VALUE, "This game folder is already being compiled by another process.");
 #else
     c->handle = open(lock.c_str(), O_CREAT | O_RDWR, 0600);
-    need(c->handle >= 0 && flock(c->handle, LOCK_EX | LOCK_NB) == 0,
-         "This game folder is already being compiled by another process.");
+    need(c->handle >= 0, "Couldn't open the game folder's build lock.");
+    // Only a lock that another process holds stops the build. A file system without locks (Android's SD card through
+    // FUSE: flock gives ENOSYS) builds unlocked - it said "already being compiled" there every time, so an update
+    // that needed new game code sent the player back to setup.
+    if (flock(c->handle, LOCK_EX | LOCK_NB) != 0) {
+        need(errno != EWOULDBLOCK, "This game folder is already being compiled by another process.");
+        fprintf(stderr, "[gamebuild] no file locks on this file system (%s): building without one\n", strerror(errno));
+    }
 #endif
     plain_tree(c->root);
     return c;
