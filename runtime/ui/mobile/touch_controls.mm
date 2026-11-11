@@ -13,10 +13,10 @@
 //   play        the stick, A, Plus / Minus, and B / R / L once Link has the sword / shield / boots, X / Y while an item
 //               is on them (their icons: the live save's items word and X / Y slots)
 //   title       (not in play: the opening, the title, the file select) a tap anywhere: skips the opening, presses L + R
-//               on the title, on the file select picks the file tapped (four presses up - its cursor stops at the top -
-//               then down to it) and confirms, then confirms its "load this file?"; the stick, A and B are there too
+//               on the title, on the file select puts the cursor on the file tapped (file_select_jump) and confirms,
+//               then confirms its "load this file?"; the stick, A and B are there too
 //   items page  (Plus) the stick, A, B "back", X / Y "equip", L / R, Plus / Minus; a tap on an item moves the game's
-//               cursor there (d-pad presses until inventory_items_cursor says so)
+//               cursor straight there (one d-pad press, its move sent to that cell: inventory_items_jump)
 //   map pages   (Minus, a dungeon's map) the stick, A, B "back", L / R, Plus / Minus
 // Layout editor (Controls tab, "Edit touch layout"): over the game, drag a control to move it, tap it to select it; the
 // bar sets the selected one's size, hides / shows it (hidden ones are drawn faint while editing), puts every control
@@ -194,8 +194,17 @@ static void stick_to(float x, float y) {
     if (d > r) dx *= r / d, dy *= r / d;
     g_knob_x = g_stick_cx + dx, g_knob_y = g_stick_cy + dy;
     float nx = dx / r, ny = -dy / r, m = sqrtf(nx * nx + ny * ny);
-    if (m < 0.12f) nx = ny = 0;  // dead zone
-    else if (g_settings.touch_dpad) {  // eight ways, full tilt (the game walks by the stick: its D-pad is a setting of its own)
+    // Link has two speeds: he walks from about a third of the stick's tilt (11500 of 32767) and runs only at full tilt
+    // (28000 still walks; measured with scripted stick holds). A thumb rarely holds a steady part-way tilt, so the
+    // stick has two zones: a short one near the middle that walks (0.6: well inside the game's walking range) and the
+    // rest, which runs. Once running it stays so down to 0.32, so a thumb at the edge doesn't flick between the two.
+    static bool running;
+    if (m < 0.12f) nx = ny = 0, running = false;  // dead zone
+    else if (!g_settings.touch_dpad) {
+        running = m >= (running ? 0.32f : 0.40f);
+        float k = (running ? 1.0f : 0.6f) / m;
+        nx *= k, ny *= k;
+    } else {  // eight ways, full tilt (the game walks by the stick: its D-pad is a setting of its own)
         if (m < 0.25f) nx = ny = 0;
         else {
             float a = roundf(atan2f(ny, nx) / (3.14159265f / 4)) * (3.14159265f / 4);
@@ -230,27 +239,38 @@ static void seq_add(uint64_t bits, float on, float off) {
     if (g_seq_n < SEQ_MAX) g_seq[g_seq_n++] = {bits, on, off};
 }
 
+// The game's menus are laid out on a 16:9 page, sized by the screen's height on wider screens (phones) and by its width
+// on narrower ones (an iPad's 4:3: the page then sits in the middle, bands above and below - seen on a 1024x768
+// window). page_at: a point as (across from the page's middle, down from its top), in shares of the page's height.
+static void page_at(float x, float y, float *u, float *v) {
+    float ph = fminf(g_h, g_w * 9.0f / 16.0f), top = (g_h - ph) * 0.5f;
+    *u = (x - g_w * 0.5f) / ph, *v = (y - top) / ph;
+}
+
 // The Items page's 12 slots (4 x 3, cursor 0..11 row by row), measured on the phone (2400x1080): the first slot's centre
-// 0.170 of the screen's height right of its middle and 0.304 down, 0.144 apart both ways (the page keeps its size by
-// the height, centred, whatever the window's shape)
+// 0.170 of the page's height right of its middle and 0.304 down, 0.144 apart both ways
 static const float kGridX0 = 0.1704f, kGridY0 = 0.3037f, kGridD = 0.1444f;
 static std::atomic<int> g_item_target{-1};  // the slot a tap asked for (the render thread steps the cursor there)
 static int item_slot_at(float x, float y) {
-    float u = (x - g_w * 0.5f) / g_h, v = y / g_h;
+    float u, v;
+    page_at(x, y, &u, &v);
     int col = (int)floorf((u - (kGridX0 - kGridD * 0.5f)) / kGridD), row = (int)floorf((v - (kGridY0 - kGridD * 0.5f)) / kGridD);
     return col >= 0 && col < 4 && row >= 0 && row < 3 ? row * 4 + col : -1;
 }
 
 // The file select's four files (three diaries and the autosave), measured the same way: their centres down the
-// screen, each 0.19 of its height tall, 0.57 of it either side of the middle
+// page, each 0.19 of its height tall, 0.57 of it either side of the middle
 static const float kFileY[4] = {0.195f, 0.400f, 0.605f, 0.856f};
 static int file_at(float x, float y) {
-    if (fabsf(x - g_w * 0.5f) > 0.57f * g_h) return -1;
-    for (int i = 0; i < 4; i++) if (fabsf(y / g_h - kFileY[i]) < 0.095f) return i;
+    float u, v;
+    page_at(x, y, &u, &v);
+    if (fabsf(u) > 0.57f) return -1;
+    for (int i = 0; i < 4; i++) if (fabsf(v - kFileY[i]) < 0.095f) return i;
     return -1;
 }
 // The file select's "load this file?" is up: a file was tapped and the file select is still shown
 static bool g_file_picked;
+extern "C" void file_select_jump(int file);  // runtime/ui/inventory_overlay.mm
 
 // What the game shows before play, from what it draws: 1 the title, 2 the file select, 0 else (a movie, loading)
 static int title_screen(void) {
@@ -266,12 +286,12 @@ static void title_tap(float x, float y) {
         seq_add(BIT(BTN_L) | BIT(BTN_R), 0.12f, 0.10f);
         return;
     }
-    if (s == 2 && !g_file_picked) {  // the file select: the file tapped (its cursor stops at the top), and in
-        int f = file_at(x, y);
+    if (s == 2 && !g_file_picked) {  // the file select: the file tapped (the game's cursor goes straight there on its
+        int f = file_at(x, y);       // next frame), and in
         if (f < 0) return;
+        file_select_jump(f);
         seq_start();
-        for (int i = 0; i < 4; i++) seq_add(BIT(BTN_UP), 0.08f, 0.08f);
-        for (int i = 0; i < f; i++) seq_add(BIT(BTN_DOWN), 0.08f, 0.08f);
+        seq_add(0, 0.10f, 0);  // (the game's frame that moves the cursor)
         seq_add(BIT(BTN_A), 0.10f, 0.10f);
         g_file_picked = true;
         return;
@@ -280,8 +300,9 @@ static void title_tap(float x, float y) {
     seq_add(BIT(BTN_A), 0.10f, 0.05f);
 }
 
-// (each frame drawn) the presses for taps: the queue, then the items cursor stepping to the tapped slot - one step at a
-// time, pressed 60 ms and let go 60 ms, until the game's cursor is there
+// (each frame drawn) the presses for taps: the queue, then the items cursor to the tapped slot - a press (60 ms) whose
+// move the game takes straight there (inventory_items_jump), again after 60 ms let go until the game's cursor is there
+extern "C" void inventory_items_jump(int cell);  // runtime/ui/inventory_overlay.mm
 static void nav_tick(void) {
     static double phase_until;
     static uint64_t phase_bits;
@@ -302,6 +323,7 @@ static void nav_tick(void) {
             else {
                 int dc = want % 4 - cur % 4, dr = want / 4 - cur / 4;
                 phase_bits = dc > 0 ? BIT(BTN_RIGHT) : dc < 0 ? BIT(BTN_LEFT) : dr > 0 ? BIT(BTN_DOWN) : BIT(BTN_UP);
+                inventory_items_jump(want);  // (the game's move then goes straight to it: one press)
             }
             phase_until = t + 0.06;
         }
