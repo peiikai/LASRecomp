@@ -42,6 +42,9 @@ typedef struct {
                                              // compiling after a warp, the GPU idle
     double wmenu_at, wmenu_until, wmenu;  // > 0: the window step takes wmenu ms from wmenu_at to wmenu_until (s): the
                                           // menu open
+    double paced;       // > 0: the GPU's clock follows the load (Apple GPUs: iPad Pro M4): it clocks down until G + W is
+                        // about 90% of the frame, down to 1 / paced of its full clock - its times x up to `paced`
+    double w1;          // > 0: the window step at 1.00 (MetalFX only runs below 1.00: W is w there)
 } Case;
 
 typedef struct {
@@ -106,7 +109,12 @@ static Result run(const Case *c) {
             walk += -walk / 3.0 * dt + c->wander * sqrt(2 / 3.0) * sqrt(dt) * gauss;
             scene *= exp(walk);
         }
-        double g = (c->a + c->b * f * f * area) * scene * (0.98 + 0.04 * rnd()) * clk, w = c->w * area * (0.99 + 0.02 * rnd()) * clk;
+        double w_base = c->w1 > 0 && f >= 1.0 - 1e-6 ? c->w1 : c->w;
+        double g = (c->a + c->b * f * f * area) * scene * (0.98 + 0.04 * rnd()) * clk, w = w_base * area * (0.99 + 0.02 * rnd()) * clk;
+        if (c->paced > 0) {  // the clock eases (over ~0.3 s) to where G + W takes 90% of a 60 Hz frame, never above full
+            double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, 0.9 * 16.667 / full));
+            clk += (want - clk) * 0.05;
+        }
         if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
         if (c->clock_slow > 0) {  // under 60% busy: the clock drifts down (times up), over 80%: back up, over ~1 s
@@ -239,6 +247,16 @@ int main(int argc, char **argv) {
         // floor (the late-frame cap under the floor's G) and then climbed to 1.00 at 20 fps
         {.name = "target 30, slow GPU: the floor a little late (mailbox)", .a = 6, .b = 100, .w = 5, .secs = 150,
          .lines = 1080, .min_lines = 360, .t30 = 1, .cpu = 14},
+        // iPad Pro 11-inch M4 (Metal, 2420x1668, MetalFX + SMAA, target 60): the GPU clocks down until it is ~90% busy, so
+        // G + W read 14.6-15.0 ms at every factor (game 13.4 + window 1.6 at 1.00 ... 8.8 + 6.0 at 0.32) with the frames on
+        // time throughout; MetalFX only runs below 1.00 (window 1.6 -> 3.2 ms). Each step down was predicted to help, none
+        // did: 1.00 -> 0.32 (the 540p floor) in 3 s. 60 fits at 1.00 - it must stay there
+        {.name = "iPad M4, clock follows the load, 60 fits at 1.00 (fifo)", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
+         .secs = 120, .lines = 1668, .paced = 2.5},
+        // the same GPU, a heavy stretch 40-80 s (G x3: 1.00 misses 60 even at full clock): down while it's heavy, back to
+        // 1.00 after it
+        {.name = "iPad M4, clock follows the load, heavy 40-80 s (fifo)", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
+         .secs = 160, .lines = 1668, .paced = 2.5, .heavy_at = 40, .heavy = 3, .heavy_until = 80},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -286,6 +304,9 @@ int main(int argc, char **argv) {
     case 28: check(r.fps_end > 29 && r.f_end < 0.8 && r.changes_last60 <= 2, "target 30, CPU not overlapping: steps down to 30, steady"); break;
     case 29: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 29, "target 30, menu open and closed: stays at 1.00"); break;
     case 30: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.89, "target 30, heavier stretch: one step down, then back"); break;
+    case 32: check(r.f_end == 1.0 && r.f_min_last60 == 1.0 && r.fps_end > 58 && r.changes_settled <= 2,
+                   "iPad M4, clock follows the load: stays at 1.00"); break;
+    case 33: check(r.f_end == 1.0 && r.fps_end > 58, "iPad M4, heavy stretch: back to 1.00 after it"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
