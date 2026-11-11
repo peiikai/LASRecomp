@@ -185,6 +185,32 @@ public class LASRecompActivity extends SDLActivity {
         return true;
     }
 
+    // ---- the start screen's update check (runtime/ui/launcher.mm update_thread; desktops run curl): GitHub's releases
+    // list into a file. Called on the check's own thread. False: offline, an error status, or anything unexpected.
+    public static boolean fetchUrl(String url, String path, String userAgent) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(15000);
+            c.setRequestProperty("Accept", "application/vnd.github+json");
+            c.setRequestProperty("User-Agent", userAgent);
+            if (c.getResponseCode() != 200) return false;
+            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(path)) {
+                byte[] buf = new byte[65536];
+                long total = 0;
+                for (int n; (n = in.read(buf)) > 0 && total < (8L << 20); total += n) out.write(buf, 0, n);
+            }
+            return true;
+        } catch (Exception e) {
+            Log.w("LASRecomp", "update check: " + e);
+            new File(path).delete();
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
     // A Snapdragon (Adreno) phone: driver packages (Turnip) exist only for those (runtime/ui/launcher.mm driver_rows).
     // Read from the system, as the dialog below comes up before any GPU works: SOC_MANUFACTURER "QTI" (Android 12+),
     // else the qcom hardware name (Retroid Pocket 5: QTI, SM8250, qcom).
