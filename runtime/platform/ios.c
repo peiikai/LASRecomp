@@ -129,6 +129,7 @@ void plat_init(void) {
         session_log_open(dir, g_log_path, sizeof g_log_path);
         if (g_vm_report_len) fputs(g_vm_report, stderr);
     }
+    raise_open_file_limit();
     int ent = plat_ios_memory_entitled();
     fprintf(stderr, "[memory] limit %llu MB (available + footprint), device %lld MB, increased-memory-limit %s\n",
             (unsigned long long)(memory_limit() >> 20), (long long)(sysctl_int("hw.memsize") >> 20),
