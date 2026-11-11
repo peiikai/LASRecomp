@@ -1646,7 +1646,11 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         if (g_settings.res_mode == RES_DYNAMIC) {  // (Dynamic resolution: the size it draws the game at now)
             int rw, rh;
             output_scale_render_size(&rw, &rh);
-            if (rw > 0) ImGui::SameLine(), ImGui::Text("%dx%d", rw, rh);
+            if (rw > 0) {  // (under the frame rate, smaller: the counter keeps about its width)
+                ImGui::SetWindowFontScale(0.7f);
+                ImGui::Text("%dx%d", rw, rh);
+                ImGui::SetWindowFontScale(1.0f);
+            }
         }
         ImGui::End();
     }
