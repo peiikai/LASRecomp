@@ -13,6 +13,7 @@
 #include <SDL3/SDL.h>
 #include <ctype.h>
 #include <dirent.h>
+#include <limits.h>
 #include <pthread.h>
 #include <string>
 #include <sys/stat.h>
@@ -111,6 +112,13 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
+// An experimental platform that joins the normal releases: from this release on, its experimental builds offer it
+// (and any later one) ahead of a newer experimental build. Android ships in Beta 6.
+#ifdef __ANDROID__
+#define LARECOMP_EXPERIMENTAL_UNTIL "beta_6"
+#else
+#define LARECOMP_EXPERIMENTAL_UNTIL ""
+#endif
 #if defined(_WIN32) && defined(_M_ARM64)
 #define LARECOMP_PLATFORM "windows-arm64"
 #elif defined(_WIN32)
@@ -177,19 +185,19 @@ static void *update_thread(void *) {
         remove(out.c_str());
     }
     std::string best;
-    if (LARECOMP_EXPERIMENTAL_STAMP) {
-        if (newest_experimental(body, LARECOMP_PLATFORM) > LARECOMP_EXPERIMENTAL_STAMP) best = "experimental";
-    } else {
-        // (a test build ranks just below the release it previews; other test builds rank -1: never offered)
-        long long best_rank = strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
-        for (size_t at = 0; (at = body.find("\"tag_name\"", at)) != std::string::npos;) {
-            size_t q1 = body.find('"', body.find(':', at) + 1), q2 = q1 == std::string::npos ? q1 : body.find('"', q1 + 1);
-            if (q2 == std::string::npos) break;
-            std::string tag = body.substr(q1 + 1, q2 - q1 - 1);
-            if (tag_rank(tag) > best_rank) best_rank = tag_rank(tag), best = tag;
-            at = q2;
-        }
+    // the newest release above this rank (a test build ranks just below the release it previews; other test builds
+    // rank -1: never offered). An experimental build only takes the release its platform joins (or a later one).
+    long long best_rank = LARECOMP_EXPERIMENTAL_STAMP ? (LARECOMP_EXPERIMENTAL_UNTIL[0] ? tag_rank(LARECOMP_EXPERIMENTAL_UNTIL) - 1 : LLONG_MAX)
+                        : strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
+    for (size_t at = 0; best_rank < LLONG_MAX && (at = body.find("\"tag_name\"", at)) != std::string::npos;) {
+        size_t q1 = body.find('"', body.find(':', at) + 1), q2 = q1 == std::string::npos ? q1 : body.find('"', q1 + 1);
+        if (q2 == std::string::npos) break;
+        std::string tag = body.substr(q1 + 1, q2 - q1 - 1);
+        if (tag_rank(tag) > best_rank) best_rank = tag_rank(tag), best = tag;
+        at = q2;
     }
+    if (LARECOMP_EXPERIMENTAL_STAMP && best.empty() && newest_experimental(body, LARECOMP_PLATFORM) > LARECOMP_EXPERIMENTAL_STAMP)
+        best = "experimental";
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);
     g_update_tag = best;
