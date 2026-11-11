@@ -49,7 +49,7 @@ Not supported: Intel UHD 600-series and older Intel integrated graphics, and any
 | Storage | About 15 GB free |
 
 > [!TIP]
-> On low-end devices around this level, we recommend setting Resolution to Dynamic, Minimum resolution to 360p and
+> On low-end devices around this level, we recommend setting Internal resolution to Dynamic, Minimum resolution to 360p and
 > Internal FPS target to 30.
 
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
