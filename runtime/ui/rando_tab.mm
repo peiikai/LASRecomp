@@ -183,6 +183,20 @@ static int g_tri_custom = 24;      // the Custom count (kept while a preset is c
 static int g_tri_mode = 2;         // 0..2 a preset, 3 Custom (follows a loaded seed ID)
 static int g_back_frame = -10;     // the frame B went back a step in the right column (the menu mustn't close on it)
 extern "C" bool rando_tab_took_back(void) { return g_back_frame == ImGui::GetFrameCount(); }
+// Touch screens: the page's X is the tab's own - in the right pane's box (the page has the whole height), or in the
+// corner over the seed sheet - and the panes' headings sit on its line
+static bool g_close_pressed;
+extern "C" bool rando_tab_close_pressed(void) { bool r = g_close_pressed; g_close_pressed = false; return r; }
+#if PLAT_TOUCH
+static void pane_heading(const char *title, float scale) {  // (title NULL: just the room for the X)
+    float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+    if (title) {
+        ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
+        ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(title)).c_str());
+    }
+    ImGui::SetCursorPosY(top + bx + 4 * scale);
+}
+#endif
 static void tri_mode_from_opts(void) {
     g_tri_mode = 3;
     for (int i = 0; i < 3; i++) if (g_opts.tri_needed == kTriPresets[i]) g_tri_mode = i;
@@ -1426,6 +1440,9 @@ static void seed_sheet(float scale, const char *active) {
     for (const Seed &x : g_seeds) if (x.name == active) sp = &x;
     GenOpts so = g_opts;  // (the seed's own options, for its room shuffle; a seed from before IDs: the rows all open)
     bool rooms = !sp || sp->id.empty() || !seed_id_decode(sp->id.c_str(), so).empty() || so.room_shuffle;
+#if PLAT_TOUCH
+    g_close_pressed = plastic_close_corner(44 * scale, scale);  // (one column: the screen's corner, as on Settings)
+#endif
     ImGui::TextColored(plastic_col(plastic_theme().title), "%s", active);
     ImGui::TextDisabled(L("Seed ID: %s"), sp && !sp->id.empty() ? sp->id.c_str() : "-");
     if (sp && sp->race) ImGui::TextDisabled(L("Race mode. Seed hash: %s"), hash_names(sp->id).c_str());
@@ -1538,6 +1555,9 @@ extern "C" void rando_tab_draw(float scale) {
 
     opt_begin("##rando", scale, true);
     opt_compact();
+#if PLAT_TOUCH
+    pane_heading("Settings", scale);  // (level with the right column's heading: the full-screen page lines both up)
+#endif
     std::string cur_preset = L(current_preset().c_str());  // (Seeds and Presets share a line: half rows, a long name cut short)
     {  // (12 characters at most, cut between UTF-8 characters)
         size_t chars = 0, cut = 0;
@@ -1603,13 +1623,20 @@ extern "C" void rando_tab_draw(float scale) {
 
     // ---- the right column: the chosen category's rows, the description under them
     opt_split();
+    bool cat_title = !summary && !(g_cat == CAT_SEEDS && !g_act_seed.empty()) && !(g_cat == CAT_PRESETS && !g_act_preset.empty());
+#if PLAT_TOUCH
+    g_close_pressed = plastic_close_pane(44 * scale, scale);  // (in this pane's box: the page has the whole height)
+    pane_heading(cat_title ? k_cat_name[g_cat] : NULL, scale);  // (a seed's, a preset's or the summary's own title: under the X)
+#else
+    (void)cat_title;
+#endif
     if (summary) seed_summary(scale);
     else {
         if (g_cat == CAT_SEEDS && !g_act_seed.empty()) seed_header(active);
         else if (g_cat == CAT_PRESETS && !g_act_preset.empty()) {
             ImGui::TextColored(plastic_col(plastic_theme().title), "%s", g_act_preset.c_str());
             ImGui::Spacing();
-        } else opt_section(k_cat_name[g_cat]);
+        } else if (!PLAT_TOUCH) opt_section(k_cat_name[g_cat]);
         opt_list_begin();
         if (g_focus == FOCUS_RIGHT) g_focus = FOCUS_NONE, opt_focus_next_row();
         if (g_cat == CAT_SEEDS) rows_seeds(active);

@@ -21,6 +21,8 @@ extern "C" {
 }
 static float g_sl, g_st, g_sr, g_sb;
 void preview_safe_area(float l, float t, float r, float b) { g_sl = l, g_st = t, g_sr = r, g_sb = b; }
+static bool g_top;
+void preview_place_top(bool top) { g_top = top; }
 
 static struct {
     bool active, scanning, found;
@@ -36,6 +38,7 @@ static struct {
 } P;
 
 bool preview_active(void) { return P.active; }
+const char *preview_label(void) { return P.active ? P.label.c_str() : ""; }
 bool preview_scanning(void) { return P.scanning; }
 
 void preview_open(const char *label, int focus_row) {
@@ -197,6 +200,10 @@ bool preview_draw(float scale, ImFont *font, ImFont *font_big, void (*page)(void
     float y_btn = bottom - pad * 0.7f - bh, y_rule = y_btn - fs * 0.6f, y_desc = y_rule - fs * 0.6f - desc_h;
     float y_line = y_desc - fs * 0.3f - big;
     float top = y_line - pad * 0.6f;
+    if (g_top) {
+        float d = edge - top;
+        top += d, y_line += d, y_desc += d, y_rule += d, y_btn += d, bottom += d;
+    }
     {   // (the paper at the menu's colours, lighter so the game shows through; its frame solid)
         ImVec4 p1 = pt.panel, p2 = pt.panel2;
         p1.w = p2.w = 0.62f;

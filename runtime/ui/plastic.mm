@@ -14,6 +14,7 @@
 #include <string.h>
 #include <string>
 
+#include "../platform.h"  // (PLAT_TOUCH)
 #include "i18n.h"
 #include "imgui_internal.h"
 #include "plastic.h"
@@ -601,6 +602,15 @@ void plastic_panel(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale) {
     dl->PopClipRect();
 }
 
+void plastic_panel_full(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale) {
+    const PlasticTheme &t = plastic_theme();
+    float off = 60 * scale;  // (the slab's rounded corners and bevel past the screen's edges)
+    dl->PushClipRectFullScreen();
+    plastic_add(dl, ImVec2(a.x - off, a.y - off), ImVec2(b.x + off, b.y + off), 26 * scale, t.panel, PK_SLAB, 14 * scale, 0.3f,
+                t.panel2, 0, t.mottle * scale);
+    dl->PopClipRect();
+}
+
 void plastic_well(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale) {
     dl->PushClipRectFullScreen();
     plastic_add(dl, a, b, 16 * scale, plastic_theme().inset, PK_INSET, 8 * scale, 0);
@@ -638,13 +648,18 @@ static bool round_button(const char *id, float bx, float scale, bool reset) {
 bool plastic_close_button(float bx, float scale) { return round_button("##close", bx, scale, false); }
 
 // slot 0: the corner itself; each slot further one button (and a gap) to the left
-static bool corner_button(float bx, float scale, int slot, bool reset) {
+static bool corner_button(float bx, float scale, int slot, bool reset, bool in_pane = false) {
     // in the window's top right corner, clear of the frame (its moulding ends 20 px in), and out of the layout: the
     // line it's on keeps its height
     ImGuiWindow *w = ImGui::GetCurrentWindow();
     ImGuiWindowTempData keep = w->DC;
-    float m = 34 * scale;
-    ImGui::SetCursorScreenPos(ImVec2(w->Pos.x + w->Size.x - m - bx - slot * (bx + 12 * scale), w->Pos.y + m));
+    float m = 34 * scale, y = w->Pos.y + m;
+    if (PLAT_TOUCH) {  // (no frame to clear on a full-screen page: the screen's corner, and a finger's size)
+        m = 16 * scale, bx *= 1.35f;  // (m: not under the window's clip, half its padding in)
+        y = ImGui::GetMainViewport()->Pos.y + 12 * scale;
+        if (in_pane) m = 10 * scale, y = w->Pos.y + m;  // (inside a pane's box: the current window is the pane)
+    }
+    ImGui::SetCursorScreenPos(ImVec2(w->Pos.x + w->Size.x - m - bx - slot * (bx + 12 * scale), y));
     bool r = round_button(reset ? "##reset" : "##close", bx, scale, reset);
     w->DC.CursorPos = keep.CursorPos, w->DC.CursorPosPrevLine = keep.CursorPosPrevLine;
     w->DC.CursorMaxPos = keep.CursorMaxPos, w->DC.IdealMaxPos = keep.IdealMaxPos;
@@ -655,6 +670,7 @@ static bool corner_button(float bx, float scale, int slot, bool reset) {
 }
 
 bool plastic_close_corner(float bx, float scale) { return corner_button(bx, scale, 0, false); }
+bool plastic_close_pane(float bx, float scale) { return corner_button(bx, scale, 0, false, true); }
 
 bool plastic_reset_corner(float bx, float scale) {
     bool r = corner_button(bx, scale, 1, true);

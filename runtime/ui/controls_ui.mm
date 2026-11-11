@@ -27,6 +27,7 @@ void input_apply_background(void);
 bool touch_edit_available(void);  // mobile/touch_controls.mm (the on-screen controls)
 void touch_edit_begin(void);
 void touch_layout_reset(void);
+int game_in_play(void);  // hle/warp.c
 void menu_toggle(void);  // menu.mm
 #endif
 }
@@ -380,31 +381,62 @@ extern "C" void controls_tab_draw(float scale) {
                "On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom "
                "button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.");
 
+    opt_end();
+}
+
 #if PLAT_TOUCH
-    opt_section("Touch controls");
+// The Touch tab (phones and tablets): the on-screen controls. In play their looks open the live preview, the controls
+// drawn over the game (menu.mm); before play there is nothing to show them over.
+extern "C" void touch_tab_draw(float scale) {
+    const bool live = game_in_play() != 0;
+    auto row = [live](const char *label, int *v, const char *const *names, int n, int def, const char *desc, bool wrap) {
+        return opt_preview(label, v, names, n, def, desc, wrap, live);
+    };
+    opt_begin("##touch", scale);
+    opt_section("Display");
     {
         static const char *const modes[] = {"Auto (no controller)", "Always", "Off"};
-        opt_choice("Show", &g_settings.touch_mode, modes, 3, 0,
-                   "On-screen buttons for the touch screen. The middle button at the top opens this menu.");
-        {
-            static const char *const which[] = {"What the game uses", "All"};
-            int v = g_settings.touch_all ? 1 : 0;
-            if (opt_choice("Buttons", &v, which, 2, 0,
-                           "What the game uses: only the buttons that do something right now - B once Link has the sword, "
-                           "R with the shield, X / Y with the items you equip. All: every button, all the time."))
-                g_settings.touch_all = v != 0;
+        row("Show", &g_settings.touch_mode, modes, 3, 0,
+            "On-screen buttons for the touch screen. The middle button at the top opens this menu.", true);
+        static const char *const which[] = {"What the game uses", "All"};
+        int v = g_settings.touch_all ? 1 : 0;
+        if (row("Buttons", &v, which, 2, 0,
+                "What the game uses: only the buttons that do something right now - B once Link has the sword, "
+                "R with the shield, X / Y with the items you equip. All: every button, all the time.", true))
+            g_settings.touch_all = v != 0;
+        static const char *const off_on[] = {"Off", "On"};
+        int hide = g_settings.touch_hide_xy_hud ? 1 : 0;
+        if (row("Hide X/Y item HUD", &hide, off_on, 2, 0, "Hides the game's own X / Y items while the on-screen buttons are shown.", true))
+            g_settings.touch_hide_xy_hud = hide != 0;
+    }
+    opt_section("Appearance");
+    {
+        // (steps of 5%: the preview's rows are lists of values)
+        static char text[21][8];
+        static const char *size_names[21], *op_names[18];
+        static bool init;
+        if (!init) {
+            init = true;
+            for (int i = 0; i < 21; i++) snprintf(text[i], 8, "%d%%", 60 + i * 5), size_names[i] = text[i];
         }
-        {
-            static const char *const stick[] = {"Follows the thumb", "Fixed"};
-            int v = g_settings.touch_stick_fixed ? 1 : 0;
-            if (opt_choice("Stick", &v, stick, 2, 0,
-                           "Follows the thumb: the stick comes to where your thumb lands, anywhere on the lower left. "
-                           "Fixed: it stays where it is (move it in Edit touch layout) and answers to touches on it."))
-                g_settings.touch_stick_fixed = v != 0;
-        }
-        float sz = roundf(g_settings.touch_size * 100), op = roundf(g_settings.touch_opacity * 100);
-        if (opt_slider("Size", &sz, 60, 160, 5, 100, "%.0f%%", "The on-screen buttons' size.")) g_settings.touch_size = sz / 100;
-        if (opt_slider("Opacity", &op, 15, 100, 5, 60, "%.0f%%", "How see-through the on-screen buttons are.")) g_settings.touch_opacity = op / 100;
+        static char op_text[18][8];
+        for (int i = 0; i < 18; i++) snprintf(op_text[i], 8, "%d%%", 15 + i * 5), op_names[i] = op_text[i];
+        int sz = (int)lroundf((g_settings.touch_size * 100 - 60) / 5), op = (int)lroundf((g_settings.touch_opacity * 100 - 15) / 5);
+        sz = sz < 0 ? 0 : sz > 20 ? 20 : sz, op = op < 0 ? 0 : op > 17 ? 17 : op;
+        if (row("Size", &sz, size_names, 21, 8, "The on-screen buttons' size.", false)) g_settings.touch_size = (60 + sz * 5) / 100.0f;
+        if (row("Opacity", &op, op_names, 18, 9, "How see-through the on-screen buttons are.", false))
+            g_settings.touch_opacity = (15 + op * 5) / 100.0f;
+    }
+    opt_section("Layout");
+    {
+        static const char *const move[] = {"Stick", "D-pad"};
+        int v = g_settings.touch_dpad ? 1 : 0;
+        if (row("Movement", &v, move, 2, 0, "Stick: any direction. D-pad: eight directions.", true)) g_settings.touch_dpad = v != 0;
+        bool f = !g_settings.touch_stick_fixed;
+        if (opt_toggle("Follow thumb", &f, true,
+                       "On: it comes to where your thumb lands, anywhere on the lower left. Off: it stays where it is "
+                       "(move it in Edit touch layout)."))
+            g_settings.touch_stick_fixed = !f;
         // the layout editor (mobile/touch_controls.mm): over the game, so only while it plays
         if (!touch_edit_available()) opt_disable_next();
         if (opt_action("Edit touch layout", "", "Move the on-screen buttons, change each one's size or hide it, over the game. "
@@ -415,7 +447,6 @@ extern "C" void controls_tab_draw(float scale) {
         if (opt_action("Reset touch layout", "", "Puts every on-screen button back in its place, at its size, shown."))
             touch_layout_reset();
     }
-#endif
-
     opt_end();
 }
+#endif

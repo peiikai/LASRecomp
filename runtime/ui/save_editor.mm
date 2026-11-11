@@ -10,6 +10,9 @@
 #include <strings.h>
 
 #include "imgui.h"
+#include "imgui_internal.h"
+#include "plastic.h"
+#include "../platform.h"  // (PLAT_TOUCH)
 #include "i18n.h"
 #include "osk.h"
 #include "item_names.h"
@@ -384,6 +387,8 @@ static int g_last_frame = -10;     // (a frame without this tab: the cursor star
 static int g_back_frame = -10;     // the frame B went back to the sections (the menu mustn't close on it)
 enum { FOCUS_NONE, FOCUS_SEC, FOCUS_RIGHT };
 static int g_focus;
+static bool g_close_pressed;
+extern "C" bool save_editor_close_pressed(void) { bool r = g_close_pressed; g_close_pressed = false; return r; }
 extern "C" bool save_editor_took_back(void) { return g_back_frame == ImGui::GetFrameCount(); }
 
 extern "C" void save_editor_draw(float scale) {
@@ -412,6 +417,16 @@ extern "C" void save_editor_draw(float scale) {
 
     opt_begin("##save", scale, true);
     opt_compact();
+#if PLAT_TOUCH
+    // each pane's heading on the line of the right pane's X, and both lists starting under it, level
+    float head_top = 10 * scale, head_h = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+    auto heading = [&](const char *title) {
+        ImGui::SetCursorPosY(head_top + (head_h - ImGui::GetTextLineHeight()) / 2);
+        ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(title)).c_str());
+        ImGui::SetCursorPosY(head_top + head_h + 4 * scale);
+    };
+    heading("Settings");
+#endif
     for (int c = 0; c < N_SEC; c++) {
         if (!sec_shown(c)) continue;
         if (g_in_right && c == g_sec) opt_mark_next();
@@ -422,7 +437,12 @@ extern "C" void save_editor_draw(float scale) {
         if (open && !clicked) g_focus = FOCUS_RIGHT;  // (A / Right: the cursor goes to its rows)
     }
     opt_split();
+#if PLAT_TOUCH
+    g_close_pressed = plastic_close_pane(44 * scale, scale);  // (in this pane's box: the page has the whole height)
+    heading(k_sec_name[g_sec]);
+#else
     opt_section(k_sec_name[g_sec]);
+#endif
     opt_list_begin();
     if (g_focus == FOCUS_RIGHT) g_focus = FOCUS_NONE, opt_focus_next_row();
     k_sec_rows[g_sec]();

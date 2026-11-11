@@ -30,6 +30,7 @@
 #include <string.h>
 
 #include "imgui.h"
+#include "../plastic.h"
 #include "../../game_addresses.h"
 
 extern "C" {
@@ -194,6 +195,13 @@ static void stick_to(float x, float y) {
     g_knob_x = g_stick_cx + dx, g_knob_y = g_stick_cy + dy;
     float nx = dx / r, ny = -dy / r, m = sqrtf(nx * nx + ny * ny);
     if (m < 0.12f) nx = ny = 0;  // dead zone
+    else if (g_settings.touch_dpad) {  // eight ways, full tilt (the game walks by the stick: its D-pad is a setting of its own)
+        if (m < 0.25f) nx = ny = 0;
+        else {
+            float a = roundf(atan2f(ny, nx) / (3.14159265f / 4)) * (3.14159265f / 4);
+            nx = cosf(a), ny = sinf(a);
+        }
+    }
     g_lx = (int32_t)lrintf(clampf(nx, -1, 1) * 32767), g_ly = (int32_t)lrintf(clampf(ny, -1, 1) * 32767);
 }
 
@@ -488,14 +496,16 @@ static uint32_t g_items_word;
 static int g_slot_x, g_slot_y;  // (0 / 1, the sword's and shield's slots, never sit on X / Y: an empty one reads 0)
 static uint32_t wanted(int ctx) {
     uint32_t m = kShown[ctx];
+    if (ctx == X_PLAY || ctx == X_ITEMS) {  // (the items page too: X / Y show what's just been equipped)
+        g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
+        g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
+    }
     if (ctx == X_PLAY && g_settings.touch_all) {  // (every button, whatever Link has)
         for (int i = 0; i < C_COUNT; i++)
             if ((i == C_ZL || i == C_ZR) && g_settings.touch_moved[i] && !g_settings.touch_hidden[i]) m |= M(i);
         return m;
     }
     if (ctx == X_PLAY) {
-        g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
-        g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
         if (!(g_items_word & 1)) m &= ~M(C_B);           // the sword
         if (!(g_items_word & 2)) m &= ~M(C_R);           // the shield
         if (!(g_items_word >> 11 & 1)) m &= ~M(C_L);     // the Pegasus Boots
@@ -581,6 +591,44 @@ static void compass(ImDrawList *dl, ImVec2 c, float r, ImVec2 knob, float a, flo
                       ImVec2(knob.x - d * 0.7f, knob.y), col(230, 248, 255, 0.85f * a));
 }
 
+// the D-pad: the stick's disc with a glossy cross on it, in the bubbles' colours, the arms held down lit
+static void dpad(ImDrawList *dl, ImVec2 c, float r, int32_t lx, int32_t ly, float a, float th, bool sel) {
+    a = fmaxf(a, 0.55f);
+    dl->AddCircleFilled(c, r, col(30, 100, 165, 0.45f * a), 64);
+    dl->AddCircle(c, r, sel ? col(236, 194, 84, 1) : col(190, 235, 255, 0.80f * a), 64, (sel ? 5.0f : 2.6f) * th);
+    dl->AddCircle(c, r * 0.80f, col(190, 235, 255, 0.35f * a), 64, 1.6f * th);
+    float len = r * 0.84f, w = r * 0.29f, in = r * 0.05f, rnd = r * 0.10f;
+    ImU32 shadow = col(5, 30, 60, 0.35f * a), rim = col(19, 64, 100, 0.80f * a), body = col(38, 128, 200, 0.72f * a);
+    ImU32 lit = col(108, 188, 240, 0.95f * a), gloss = col(255, 255, 255, 0.22f * a), edge = col(185, 232, 255, 0.95f * a);
+    float dy = r * 0.05f;
+    dl->AddRectFilled(ImVec2(c.x - w, c.y - len + dy), ImVec2(c.x + w, c.y + len + dy), shadow, rnd);
+    dl->AddRectFilled(ImVec2(c.x - len, c.y - w + dy), ImVec2(c.x + len, c.y + w + dy), shadow, rnd);
+    dl->AddRectFilled(ImVec2(c.x - w, c.y - len), ImVec2(c.x + w, c.y + len), rim, rnd);
+    dl->AddRectFilled(ImVec2(c.x - len, c.y - w), ImVec2(c.x + len, c.y + w), rim, rnd);
+    float w2 = w - in, l2 = len - in;
+    const bool up = ly > 8000, down = ly < -8000, left = lx < -8000, right = lx > 8000;
+    dl->AddRectFilled(ImVec2(c.x - w2, c.y - l2), ImVec2(c.x + w2, c.y + l2), body, rnd * 0.7f);
+    dl->AddRectFilled(ImVec2(c.x - l2, c.y - w2), ImVec2(c.x + l2, c.y + w2), body, rnd * 0.7f);
+    if (up) dl->AddRectFilled(ImVec2(c.x - w2, c.y - l2), ImVec2(c.x + w2, c.y - w2), lit, rnd * 0.7f);
+    if (down) dl->AddRectFilled(ImVec2(c.x - w2, c.y + w2), ImVec2(c.x + w2, c.y + l2), lit, rnd * 0.7f);
+    if (left) dl->AddRectFilled(ImVec2(c.x - l2, c.y - w2), ImVec2(c.x - w2, c.y + w2), lit, rnd * 0.7f);
+    if (right) dl->AddRectFilled(ImVec2(c.x + w2, c.y - w2), ImVec2(c.x + l2, c.y + w2), lit, rnd * 0.7f);
+    dl->AddRectFilled(ImVec2(c.x - l2 + in, c.y - w2 + in * 0.4f), ImVec2(c.x + l2 - in, c.y - w2 + in * 2.0f), gloss, in);  // (the sheen along the top)
+    dl->AddRectFilled(ImVec2(c.x - w2 + in * 0.4f, c.y - l2 + in), ImVec2(c.x - w2 + in * 2.0f, c.y - w - in), gloss, in);
+    ImVec2 o[12] = {{c.x - w2, c.y - l2}, {c.x + w2, c.y - l2}, {c.x + w2, c.y - w2}, {c.x + l2, c.y - w2}, {c.x + l2, c.y + w2}, {c.x + w2, c.y + w2},
+                    {c.x + w2, c.y + l2}, {c.x - w2, c.y + l2}, {c.x - w2, c.y + w2}, {c.x - l2, c.y + w2}, {c.x - l2, c.y - w2}, {c.x - w2, c.y - w2}};
+    dl->AddPolyline(o, 12, edge, ImDrawFlags_Closed, 2.2f * th);
+    float kr = r * 0.17f;  // (the middle: the stick's knob, small)
+    dl->AddCircleFilled(c, kr, col(70, 165, 225, 0.85f * a), 32);
+    dl->AddCircle(c, kr, col(220, 245, 255, 0.95f * a), 32, 1.8f * th);
+    float t = len * 0.90f, h = len * 0.62f, s = r * 0.14f;
+    ImU32 ar = col(245, 252, 255, fmaxf(a, 0.85f));
+    dl->AddTriangleFilled(ImVec2(c.x, c.y - t), ImVec2(c.x + s, c.y - h), ImVec2(c.x - s, c.y - h), ar);
+    dl->AddTriangleFilled(ImVec2(c.x, c.y + t), ImVec2(c.x - s, c.y + h), ImVec2(c.x + s, c.y + h), ar);
+    dl->AddTriangleFilled(ImVec2(c.x - t, c.y), ImVec2(c.x - h, c.y - s), ImVec2(c.x - h, c.y + s), ar);
+    dl->AddTriangleFilled(ImVec2(c.x + t, c.y), ImVec2(c.x + h, c.y + s), ImVec2(c.x + h, c.y - s), ar);
+}
+
 static void label_text(ImDrawList *dl, ImFont *font, float fs, ImVec2 c, const char *t, ImU32 colr, bool shadow, bool bold = false) {
     ImVec2 ts = font->CalcTextSizeA(fs, 1e9f, 0, t);
     ImVec2 p(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f);
@@ -590,8 +638,12 @@ static void label_text(ImDrawList *dl, ImFont *font, float fs, ImVec2 c, const c
 }
 
 // Drawn over the game (the overlay menu's frame, before its windows)
-extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font) {
+static std::atomic<bool> g_title_box{false};
+extern "C" bool touch_title_box(void) { return g_title_box.load(); }  // (menu.mm: its panel needs the pieces this frame)
+
+extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFont *menu_font) {
     std::lock_guard<std::mutex> l(g_lock);
+    g_title_box = false;
     if (w != g_w || h != g_h || g_size != g_settings.touch_size || g_layout_dirty.load()) {  // (a new screen, a setting)
         if (!g_editing) release_all();
         layout(w, h);
@@ -669,14 +721,31 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font) {
     int ts = ctx == X_TITLE && !g_editing ? title_screen() : 0;
     if (ts == 1 || (ts == 2 && !g_file_picked)) {  // what a tap does (past the file select: the game's own)
         const char *t = ts == 2 ? "Tap a file to play" : "Tap to start";
-        // (the title screen: between its "Press L + R" and the copyright line at the bottom, which it covered)
-        float ty = ts == 2 ? h - 40 * tt : h * 0.835f;
-        label_text(dl, font, 40 * tt, ImVec2(w * 0.5f, ty), t, IM_COL32(255, 255, 255, 255), true);
+        // (the title screen: on its "Press L + R")
+        float ty = ts == 2 ? h - 40 * tt : h * 0.735f;
+        // the menus' own framed panel, solid (over the title's "Press L + R": a tap does that here), the words fading gently
+        float fade = 0.72f + 0.28f * (0.5f + 0.5f * sinf((float)ImGui::GetTime() * 6.2831853f / 1.8f));
+        const PlasticTheme &pt = plastic_theme();
+        ImVec2 ts_sz = menu_font->CalcTextSizeA(40 * tt, 1e9f, 0, t);
+        float bx = fmaxf(ts_sz.x * 0.5f + 40 * tt, ts == 1 ? h * 0.175f : 0.0f), by = fmaxf(ts_sz.y * 0.5f + 16 * tt, ts == 1 ? h * 0.062f : 0.0f);
+        if (ty + by > h - 8 * tt) ty = h - 8 * tt - by;
+        ImVec2 b0(w * 0.5f - bx, ty - by), b1(w * 0.5f + bx, ty + by);
+        ImVec4 p1 = pt.panel, p2 = pt.panel2;
+        p1.w = p2.w = 1;
+        float k = tt * 0.7f, in = 7 * k, fw = 13 * k;
+        plastic_add(dl, b0, b1, 26 * k, p1, PK_SLAB, 14 * k, 0.3f, p2, 0, pt.mottle * tt);
+        plastic_add(dl, ImVec2(b0.x + in, b0.y + in), ImVec2(b1.x - in, b1.y - in), 20 * k, pt.frame, PK_RING, 7 * k, 1.0f, pt.frame_inner, fw);
+        g_title_box = true;
+        label_text(dl, menu_font, 40 * tt, ImVec2(w * 0.5f, ty), t, col(255, 255, 255, fade), true);
     }
     if ((want & 1) && (g_editing || !hidden(C_STICK))) {
         const Control &s = g_ctl[C_STICK];
-        compass(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, ImVec2(knob_x, knob_y), a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th,
-                g_editing && g_sel == C_STICK);
+        if (g_settings.touch_dpad)
+            dpad(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, g_editing ? 0 : g_lx.load(), g_editing ? 0 : g_ly.load(),
+                 a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th, g_editing && g_sel == C_STICK);
+        else
+            compass(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, ImVec2(knob_x, knob_y), a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th,
+                    g_editing && g_sel == C_STICK);
     }
     if (g_editing) {  // the editor's hint and bar
         label_text(dl, font, 30 * tt, ImVec2(w * 0.5f, h * 0.31f), "Drag the controls to move them. Tap one to resize or hide it.",
