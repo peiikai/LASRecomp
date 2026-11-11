@@ -75,8 +75,8 @@ Still open:
 Closed (the `.laskit` kit, miniz fetched by tools/fetch_miniz.sh): the player no longer unpacks anything - the kit is one zip
 (tools/ios_kit.sh) the runtime reads in place (runtime/zipfile.h over miniz): this host's linker, the headers and
 the link stub come out once into `<data root>/cache/ios-kit/<kit id>/` (sha256 of the file; older kits' folders are
-sweeps), the app ships as `Payload/LAS Recomp.app/` entries and the export clones them into the .ipa - data,
-name and central-directory record, so modes come along without recompressing - and appends the library
+swept; a symlink entry is refused there), the app ships as `Payload/LAS Recomp.app/`
+entries and the export clones them into the .ipa - data, name and central-directory record, so modes come along without recompressing - and appends the library
 (deflated: ~50 MB instead of 170). The app holds no symlinks (an iOS install drops them; the `.symlink` files and
 the symlink entries that replaced them are both gone - keystone's library is preloaded as a framework). A
 folder picked instead of the file gets a message saying so. Files the runtime writes itself carry no quarantine

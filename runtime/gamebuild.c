@@ -356,9 +356,9 @@ bool gamebuild_available(void) {
 #define KIT_LLD "lld/" LLD_HOST
 #define KIT_LD KIT_LLD "/bin/lld" PLAT_EXE_SUFFIX
 
-// The kit (tools/ios_kit.sh, a zip) opened and looked over: the app, the headers, the link stub, a linker for this
-// machine. NULL: why, for the player.
-static ZipReader *open_kit(const char *kit, char *why, size_t why_size) {
+ZipReader *gamebuild_ios_kit_open(const char *kit, char *why, size_t why_size) {
+    Tools t;
+    if (!find_tools(&t) || !t.zig) { snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp"); return NULL; }
     if (!kit || !*kit) { snprintf(why, why_size, "choose the iOS kit (.laskit) of this release"); return NULL; }
     struct stat st;
     if (stat(kit, &st) != 0) { snprintf(why, why_size, "the iOS kit isn't there any more: %s", kit); return NULL; }
@@ -387,10 +387,11 @@ static ZipReader *open_kit(const char *kit, char *why, size_t why_size) {
 // The kit's tools for this machine, unpacked once per kit into <data root>/cache/ios-kit/<kit id>/ (lld/<host>/,
 // include/, libSystem.B.tbd: the layout of the kit itself; .complete marks a finished unpack). Earlier kits' folders
 // go. Files the app writes itself carry no quarantine attribute, so the linker runs on macOS as it is.
-static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size, void (*progress)(double, const char *),
-                       char *why, size_t why_size) {
-    char id[17];
-    if (!zip_file_id(kit, id)) { snprintf(why, why_size, "can't read the iOS kit"); return false; }
+static bool unpack_kit(ZipReader *z, char *dir, size_t dir_size, void (*progress)(double, const char *), char *why,
+                       size_t why_size) {
+    char hex[65], id[17];
+    if (!build_cache_file_sha256(zip_path(z), hex)) { snprintf(why, why_size, "can't read the iOS kit"); return false; }
+    snprintf(id, sizeof id, "%.16s", hex);
     char kits[1100], mark[1200], tmp[1200];
     snprintf(kits, sizeof kits, "%s" SEP "cache" SEP "ios-kit", rt_data_root());
     snprintf(dir, dir_size, "%s" SEP "%s", kits, id);
@@ -444,18 +445,13 @@ static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size
     return true;
 }
 
-// unpack: the tools taken out of the kit (the build); else only looked for (the start screen's check)
-static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progress)(double, const char *), char *why,
-                           size_t why_size) {
+// the tools taken out of the kit (gamebuild_ios_kit_open's)
+static bool find_ios_tools(Tools *t, ZipReader *kit, void (*progress)(double, const char *), char *why, size_t why_size) {
     if (!find_tools(t) || !t->zig) { snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp"); return false; }
     t->ios = true;
-    ZipReader *z = open_kit(kit, why, why_size);
-    if (!z) return false;
-    if (!unpack) { zip_close(z); return true; }
+    if (!kit) { snprintf(why, why_size, "no iOS kit"); return false; }
     char dir[1100];
-    bool ok = unpack_kit(z, kit, dir, sizeof dir, progress, why, why_size);
-    zip_close(z);
-    if (!ok) return false;
+    if (!unpack_kit(kit, dir, sizeof dir, progress, why, why_size)) return false;
     snprintf(t->zig_libc, sizeof t->zig_libc, "%s" SEP "include" SEP "any-darwin-any", dir);
     snprintf(t->tbd, sizeof t->tbd, "%s" SEP "libSystem.B.tbd", dir);
     const char *e = getenv("LARECOMP_IOS_LD");
@@ -471,15 +467,10 @@ static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progre
     }
     return true;
 }
-
-bool gamebuild_ios_available(const char *kit, char *why, size_t why_size) {
-    Tools t;
-    return find_ios_tools(&t, kit, false, NULL, why, why_size);
-}
 #else
-static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progress)(double, const char *), char *why,
+static bool find_ios_tools(Tools *t, struct ZipReader *kit, void (*progress)(double, const char *), char *why,
                            size_t why_size) {
-    (void)t, (void)kit, (void)unpack, (void)progress;
+    (void)t, (void)kit, (void)progress;
     snprintf(why, why_size, "the iOS export isn't in this build of LAS Recomp");
     return false;
 }
@@ -564,13 +555,6 @@ static void helper_failed(const char *what, int r, const char *log, char *why, s
         if (sig == SIGKILL) {
             snprintf(how, sizeof how, "killed by signal %d (SIGKILL: likely out of memory)", sig);
             snprintf(why, why_size, LN("A build helper was killed by the system, likely out of memory."));
-#ifdef __APPLE__
-            if (!strcmp(what, "linking") && !last[0]) {  // (an unsigned helper under quarantine ends the same way)
-                snprintf(how, sizeof how, "killed by signal %d (SIGKILL: out of memory, or Gatekeeper on a quarantined helper)", sig);
-                snprintf(why, why_size, LN("A build helper was killed by the system: out of memory, or macOS refused to run it "
-                                           "(a downloaded tool under quarantine)."));
-            }
-#endif
         } else {
             snprintf(how, sizeof how, "killed by signal %d (%s)", sig, strsignal(sig));
             snprintf(why, why_size, LN("A build helper crashed (signal %d)."), sig);
@@ -668,7 +652,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         return false;
     }
     Tools t;
-    if (ios ? !find_ios_tools(&t, o->ios_kit, true, o->progress, why, why_size) : !find_tools(&t)) {
+    if (ios ? !find_ios_tools(&t, o->ios_kit, o->progress, why, why_size) : !find_tools(&t)) {
         if (!ios) snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp"));
         return false;
     }

@@ -105,7 +105,7 @@ with tempfile.TemporaryDirectory() as temporary:
     CANCEL=ct.CFUNCTYPE(ct.c_bool)
     class Options(ct.Structure):
         _fields_=[('progress',PROGRESS),('jobs',ct.c_int),('cancelled',CANCEL),
-                  ('target',ct.c_int),('ios_kit',ct.c_char_p)]  # (GAMEBUILD_HOST, no kit)
+                  ('target',ct.c_int),('ios_kit',ct.c_void_p)]  # (GAMEBUILD_HOST, no kit)
     processes={}; launched=[]; next_id=0; fail_compile=False; fail_link=False
     @SPAWN
     def spawn(args, log, append):
