@@ -45,11 +45,13 @@ Not supported: Intel UHD 600-series and older Intel integrated graphics, and any
 |---|---|
 | OS | Android 11 or newer, 64-bit (arm64) |
 | Chip | Snapdragon 865 (Adreno 650) or as fast, for example the Retroid Pocket 5 |
-| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files. The latest we've tested is Turnip 26.2.0 R7 from [StevenMXZ's Adreno-Tools-Drivers](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases) |
+| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files. The latest we've tested is [Turnip 26.3.0 R6](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/tag/v37) (`Turnip_v26.3.0-R6.zip`) from StevenMXZ's Adreno-Tools-Drivers |
 | RAM | 8 GB |
 | Storage | About 15 GB free |
 
-At the minimum, expect about 30 fps at 360p (Dynamic resolution). Faster phones run sharper or at 60.
+> [!TIP]
+> On low-end devices around this level, we recommend setting Internal resolution to Dynamic, Minimum resolution to 360p and
+> Internal FPS target to 30.
 
 **iPhone and iPad:**
 
@@ -263,8 +265,13 @@ without touching the installed game, your game files or your saves.
 - **[@wimw85](https://github.com/wimw85)** - much faster game code setup on the Steam Deck and other PCs (#434)
 - **[@missionfloyd](https://github.com/missionfloyd)** - a much smaller game code build, without debug info (#487)
 - **[@wolfchimneyrock](https://github.com/wolfchimneyrock)** - full speed on ARM Mali graphics (#527), the CPU and GPU working in parallel on Mali (#529), and faster render passes on Mali (#528, #534), a cheaper FSR upscale (#532), the game on the big cores of ARM and Intel hybrid CPUs on Linux (#533), no more flickering grass and shadows on Mali (#546), the game starting on Snapdragon (Adreno) devices (#561), much faster shaders on Mali and Adreno (#562, #563, #579), faster graphics memory on Mali with Mesa (#564), GPU tuning tools for Vulkan (#565), no more memory leak on Arm's Mali driver (#607), smaller shader stacks that keep 4 GB Mali boards from running out of memory (#645), and less shader scratch memory on PanVK (#646)
-- **[@mamcjr](https://github.com/mamcjr)** - the Android port ([LASRecompAndroid](https://github.com/mamcjr/LASRecompAndroid)), which we are bringing in piece by piece, starting with a guest window that can move
 - **[@bgevko](https://github.com/bgevko)** - an option to keep the area's music during Guardian Acorns and Pieces of Power (#642)
+
+**Mobile ports** - special thanks to the people who brought the game to phones and tablets:
+- Android: **[@Nycolazs](https://github.com/Nycolazs)** ([LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus))
+  and **[@mamcjr](https://github.com/mamcjr)** ([LASRecompAndroid](https://github.com/mamcjr/LASRecompAndroid)), the
+  Android ports our Android app is built from
+- iOS: **[@ky1vstar](https://github.com/ky1vstar)** - the game on iPhone and iPad (#238)
 
 Thanks also to everyone who reports issues and tests builds. Your logs and screenshots find most of the bugs.
 

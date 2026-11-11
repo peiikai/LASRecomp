@@ -1,8 +1,9 @@
 """Generate C for a whole NSO module.
 
-Usage: gen.py <name> <nso> <base> <outdir> [--hle hle_symbols.txt] [--chunk N] [--simd asm|c] [--dyn-base]
+Usage: gen.py <name> <nso> <base> <outdir> [--hle hle_symbols.txt] [--simd asm|c] [--dyn-base] [--new-chunk-bounds]
 
 --simd: FP/SIMD/CRC32 as AArch64 inline asm (default on arm64 hosts) or portable C (default elsewhere).
+--new-chunk-bounds: cut the files by size and save those cuts to tools/chunk_bounds.py (every file compiles once).
 """
 import argparse
 import bisect
@@ -18,6 +19,7 @@ import unicorn as uc
 from unicorn import arm64_const as A
 
 from analyze import eh_frame_functions
+import chunk_bounds
 import lifter
 from lifter import CANON, Insn, Lifter, Unsupported, bits, emit_asm_batch, gaddr, hx, sext
 from nso import Nso, R_AARCH64_RELATIVE
@@ -538,9 +540,12 @@ def main():
     ap.add_argument('base', type=lambda s: int(s, 0))
     ap.add_argument('outdir')
     ap.add_argument('--hle')
+    # --new-chunk-bounds only: how the files are cut by size (with saved cuts, those decide; tools/chunk_bounds.py)
     ap.add_argument('--chunk', type=int, default=1500)  # functions per file at most
     ap.add_argument('--chunk-bytes', type=int, default=1500000)  # and about this much C (even compile times)
     ap.add_argument('--big-fn', type=int, default=100000)  # bytes of C from which a function gets its own file
+    ap.add_argument('--new-chunk-bounds', action='store_true',
+                    help='cut the files by size and save the cuts for this module build (tools/chunk_bounds.py)')
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--simd', choices=('asm', 'c'),
                     default='asm' if platform.machine().lower() in ('arm64', 'aarch64') else 'c')
@@ -627,43 +632,83 @@ def main():
     order = sorted(entries)
     if args.limit:
         order = order[:args.limit]
-    nchunks = 0
-    ci = 0
-    pending = None  # (address, lines, refs) of a big function that starts the next file
-    while ci < len(order) or pending:
-        body, refs, size, fns = [], set(), 0, []
-        while (pending or ci < len(order)) and len(fns) < args.chunk and size < args.chunk_bytes:
-            if pending:
-                a, lines, r = pending
-                pending = None
-            else:
-                a = order[ci]
-                ci += 1
-                end, labels, tables = entries[a]
-                lines = m.emit_function(a, end, labels, tables, hle)
-                r = getattr(m, '_refs', set())
-                m._refs = set()
-            n = sum(len(l) + 1 for l in lines)
-            if n > args.big_fn and fns:  # (a big function gets a file of its own: they compile in parallel)
-                pending = (a, lines, r)
-                break
+
+    def render(a):
+        end, labels, tables = entries[a]
+        lines = m.emit_function(a, end, labels, tables, hle)
+        r = getattr(m, '_refs', set())
+        m._refs = set()
+        return a, lines, r
+
+    def by_size():
+        """Files of at most --chunk functions and about --chunk-bytes of C; a big function gets a file of its own
+        (they compile in parallel). Makes the saved cuts; builds use it only for a module without them, since here
+        where a cut falls depends on every function before it."""
+        ci, pending = 0, None
+        while ci < len(order) or pending:
+            fns, size = [], 0
+            while (pending or ci < len(order)) and len(fns) < args.chunk and size < args.chunk_bytes:
+                if pending:
+                    f, pending = pending, None
+                else:
+                    f = render(order[ci])
+                    ci += 1
+                n = sum(len(l) + 1 for l in f[1])
+                if n > args.big_fn and fns:
+                    pending = f
+                    break
+                fns.append(f)
+                size += n
+                if n > args.big_fn:
+                    break
+            yield fns
+
+    def by_bounds(starts):
+        """File k holds the functions from starts[k] up to starts[k + 1] (the first file also anything before
+        starts[0]): a changed function changes only its own file, whatever happens before it."""
+        k, fns = 0, []
+        for a in order:
+            j = max(bisect.bisect_right(starts, a) - 1, 0)
+            while j > k:
+                yield fns
+                fns, k = [], k + 1
+            fns.append(render(a))
+        while k < len(starts):
+            yield fns
+            fns, k = [], k + 1
+
+    key = m.nso.build_id[:16]
+    saved = None if args.new_chunk_bounds else chunk_bounds.BOUNDS.get(key)
+    if saved:
+        chunks = by_bounds([args.base + o for o in saved[1]])
+    else:
+        if not args.new_chunk_bounds:
+            print(f'{args.name}: no saved file cuts for build {key}, cutting by size', file=sys.stderr)
+        chunks = by_size()
+    nchunks = done = 0
+    firsts = []
+    for fns in chunks:
+        body, refs = [], set()
+        for a, lines, r in fns:
             body += lines
-            size += n
-            fns.append(a)
             refs |= r
-            if n > args.big_fn:
-                break
+        firsts.append(fns[0][0] if fns else None)
+        done += len(fns)
         path = os.path.join(args.outdir, f'{args.name}_{nchunks:03d}.c')
         text = ['#include "cpu.h"\n' + ('#include "simd.h"\n' if m.lifter.sc else '')]
         if args.dyn_base:
             text += ['extern __attribute__((visibility("hidden"))) uint64_t lasgame_gb;\n']
         text += [f'void {fname(r)}(Cpu *c);\n' for r in sorted(refs)]
-        text += [f'void {sanitize(hle[a])}(Cpu *c);\n' for a in sorted(set(hle) & set(fns))]
+        text += [f'void {sanitize(hle[a])}(Cpu *c);\n' for a in sorted(set(hle) & {a for a, _, _ in fns})]
         text += ['\n'.join(body), '\n']
         write_if_changed(path, ''.join(text))
         nchunks += 1
         # (the start screen's setup reads these for its progress bar: runtime/gamebuild.c)
-        print(f'{args.name}: progress {ci}/{len(order)} files {nchunks}', file=sys.stderr, flush=True)
+        print(f'{args.name}: progress {done}/{len(order)} files {nchunks}', file=sys.stderr, flush=True)
+    if args.new_chunk_bounds:
+        what = args.name + (f' {game_addresses.VERSIONS[version][0]}' if args.name == 'main' else '')
+        chunk_bounds.save(key, what, [a - args.base for a in firsts])
+        print(f'{args.name}: saved {nchunks} file cuts for build {key} to tools/chunk_bounds.py', file=sys.stderr)
     for fn in os.listdir(args.outdir):  # an earlier run's extra chunks
         mm = re.fullmatch(re.escape(args.name) + r'_(\d{3})\.c', fn)
         if mm and int(mm.group(1)) >= nchunks:
