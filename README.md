@@ -44,11 +44,13 @@ Not supported: Intel UHD 600-series and older Intel integrated graphics, and any
 |---|---|
 | OS | Android 11 or newer, 64-bit (arm64) |
 | Chip | Snapdragon 865 (Adreno 650) or as fast, for example the Retroid Pocket 5 |
-| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files. The latest we've tested is Turnip 26.2.0 R7 from [StevenMXZ's Adreno-Tools-Drivers](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases) |
+| GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > Game files. The latest we've tested is [Turnip 26.3.0 R6](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/tag/v37) (`Turnip_v26.3.0-R6.zip`) from StevenMXZ's Adreno-Tools-Drivers |
 | RAM | 8 GB |
 | Storage | About 15 GB free |
 
-At the minimum, expect about 30 fps at 360p (Dynamic resolution). Faster phones run sharper or at 60.
+> [!TIP]
+> On low-end devices around this level, we recommend setting Internal resolution to Dynamic, Minimum resolution to 360p and
+> Internal FPS target to 30.
 
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
 
