@@ -76,6 +76,9 @@ file(GLOB VK_SRC ${R}/runtime/nvn/vulkan/*.c ${R}/runtime/nvn/vulkan/*.cpp)
 # its own. Its hook libraries (hook_impl, main_hook, ...) are shared libraries of this build: they ship in the APK.
 add_subdirectory(${DEPS}/adrenotools ${CMAKE_BINARY_DIR}/adrenotools)
 file(GLOB UI_SRC ${R}/runtime/ui/*.mm ${R}/runtime/ui/mobile/*.mm)
+# the iOS export is a desktop feature (the Makefile's IOSEXPORT)
+list(REMOVE_ITEM RT_SRC ${R}/runtime/zipfile.c ${R}/runtime/iosexport.c)
+list(REMOVE_ITEM UI_SRC ${R}/runtime/ui/ios_export_ui.mm)
 set(IMGUI ${R}/third_party/imgui)
 set(IMGUI_SRC ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_sdl3.cpp ${IMGUI}/backends/imgui_impl_vulkan.cpp)

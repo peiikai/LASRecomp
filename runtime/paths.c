@@ -138,6 +138,8 @@ static void default_home(char *root, size_t n) {
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     if (xdg && *xdg == '/') snprintf(root, n, "%s/lasrecomp", xdg);
     else snprintf(root, n, "%s/.local/share/lasrecomp", home && *home ? home : "/tmp");
+#elif PLAT_IOS
+    snprintf(root, n, "%s", plat_ios_documents());  // (the app's folder in Files; the pointer file lives there too)
 #else
     const char *home = getenv("HOME");
     snprintf(root, n, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
@@ -170,6 +172,25 @@ static bool write_line(const char *path, const char *line) {
 #endif
     if (!ok) remove(tmp);
     return ok;
+}
+
+// A move's note naming the other folder. iOS: its bookmark - a path outside the sandbox grants nothing next launch
+static bool write_note(const char *note, const char *dir) {
+#if PLAT_IOS
+    char b64[8192];
+    if (plat_ios_bookmark_make(dir, b64, sizeof b64)) return write_line(note, b64);
+#endif
+    return write_line(note, dir);
+}
+static bool read_note(const char *note, char *out, size_t n) {
+#if PLAT_IOS
+    char line[8192];
+    if (!read_line(note, line, sizeof line)) return false;
+    if (line[0] == '/') return (size_t)snprintf(out, n, "%s", line) < n;  // (a path: the folder had no bookmark)
+    return plat_ios_bookmark_resolve(line, out, n) != 0;
+#else
+    return read_line(note, out, n);
+#endif
 }
 
 static void join(char *out, size_t n, const char *dir, const char *name) { snprintf(out, n, "%s" SEP "%s", dir, name); }
@@ -210,11 +231,21 @@ static bool in_app(const char *p) {
 #endif
 }
 
-// The data folder a pointer file names (false: none, or it points into the app)
+// The data folder a pointer file names (false: none, or it points into the app). iOS: a path outside the sandbox
+// grants nothing on the next launch; the pointer file holds the folder's bookmark (plat_ios_bookmark_*), base64 on
+// its one line.
 static bool pointer_root(const char *home, char *out, size_t n) {
     char p[1100];
     join(p, sizeof p, home, POINTER_FILE);
+#if PLAT_IOS
+    char b64[8192];  // (a bookmark runs to a few thousand characters: far more than a path)
+    if (!read_line(p, b64, sizeof b64)) return false;
+    int r = plat_ios_bookmark_resolve(b64, out, n);
+    if (r == 0) { fprintf(stderr, "[paths] %s: the data folder's bookmark doesn't resolve\n", p); out[0] = 0; return true; }
+    if (r < 0 && plat_ios_bookmark_make(out, b64, sizeof b64)) write_line(p, b64);  // (stale: the system asks for a rewrite)
+#else
     if (!read_line(p, out, n)) return false;
+#endif
     if (in_app(out)) {
         fprintf(stderr, "[paths] %s points into the app (%s): ignored\n", p, out);
         return false;
@@ -265,16 +296,16 @@ static void remove_partial(const char *dir) {
 static void finish_moves(const char *root, void (*progress)(int, double)) {
     char note[1100], other[1024], p[1100], back[1024];
     join(note, sizeof note, root, NOTE_TO);
-    if (read_line(note, other, sizeof other)) {
+    if (read_note(note, other, sizeof other)) {
         join(p, sizeof p, other, MARK_PARTIAL);
         bool partial = exists(p);
         join(p, sizeof p, other, NOTE_FROM);
-        bool ours = partial || (read_line(p, back, sizeof back) && same_dir(back, root));
+        bool ours = partial || (read_note(p, back, sizeof back) && same_dir(back, root));
         if (ours && !overlap(root, other)) remove_partial(other);
         remove(note);
     }
     join(note, sizeof note, root, NOTE_FROM);
-    if (read_line(note, other, sizeof other)) {
+    if (read_note(note, other, sizeof other)) {
         if (!overlap(root, other) && is_dir(other)) {
             fprintf(stderr, "[paths] removing the old copy of the data in %s\n", other);
             join(p, sizeof p, other, NOTE_TO);
@@ -299,15 +330,19 @@ void rt_paths_init(void) {
     char root[1024];
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) snprintf(root, sizeof root, "%s", env);
+#if !PLAT_IOS
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
+#endif
     else {
         snprintf(root, sizeof root, "%s", g_home);
         char ptr[1024];
         while (pointer_root(g_home, ptr, sizeof ptr)) {  // another folder chosen on the start screen
-            if (is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
+            if (ptr[0] && is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
             char msg[1400];
-            snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
-                     "connected, connect it and try again.", ptr);
+            if (!ptr[0]) snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available any more.\n\nIf it's on a "
+                                  "drive that isn't connected, connect it and try again.");  // (iOS: no path to show)
+            else snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
+                          "connected, connect it and try again.", ptr);
             const SDL_MessageBoxButtonData b[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Try again"},
                                                   {0, 1, "Use the default folder"},
                                                   {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"}};
@@ -345,7 +380,7 @@ const char *rt_data_home(void) { return g_home; }
 bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     char c[4][1100] = {{0}};
     if (name) {
-        snprintf(c[0], sizeof c[0], "%s" SEP "%s", g_exe_dir, name);
+        snprintf(c[0], sizeof c[0], "%s" SEP "%s", g_exe_dir, name);  // (iOS: the .app is flat, this is the bundle)
         snprintf(c[1], sizeof c[1], "%s" SEP ".." SEP "Resources" SEP "%s", g_exe_dir, name);  // .app/Contents/Resources
     }
     if (dev_rel) {
@@ -716,7 +751,13 @@ static bool point_to(const char *to) {
     if (same_dir(to, g_home)) return remove(p) == 0 || !exists(p);
     if (!resolve(to, r, sizeof r)) return false;
     mkdirs(g_home);
+#if PLAT_IOS
+    char b64[8192];
+    if (!plat_ios_bookmark_make(r, b64, sizeof b64)) return false;
+    return write_line(p, b64);
+#else
     return write_line(p, r);
+#endif
 }
 
 // A folder to use: created if needed, writable, with no unfinished copy or old move notes in it
@@ -762,7 +803,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     Move m = {progress, 0, entries_size(from), 0, err, n, malloc(MOVE_BUF), malloc(MOVE_BUF)};
     join(p, sizeof p, abs_to, MARK_PARTIAL);
     join(q, sizeof q, from, NOTE_TO);
-    bool ok = m.buf && m.buf2 && write_line(p, from) && write_line(q, abs_to);
+    bool ok = m.buf && m.buf2 && write_line(p, from) && write_note(q, abs_to);
     if (!ok) move_fail(&m, "Couldn't write to", abs_to);
     fprintf(stderr, "[paths] moving the data (%.2f GB) from %s to %s\n", m.total / 1e9, from, abs_to);
     for (int step = 0; step < 2 && ok; step++) {  // copy, then check every file of the copy
@@ -782,7 +823,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     if (ok && move_cancelled(&m)) ok = false;  // (the last chance: after this the switch is made)
     if (ok) {
         join(q, sizeof q, abs_to, NOTE_FROM);
-        ok = write_line(q, from) && remove(p) == 0;
+        ok = write_note(q, from) && remove(p) == 0;
         if (!ok) move_fail(&m, "Couldn't write to", abs_to);
     }
     if (ok && !point_to(abs_to)) ok = false, snprintf(err, n, LN("Couldn't save the data folder's location in %s."), g_home);

@@ -32,10 +32,10 @@
 
 // macOS and Windows have system fonts known to work well (Hiragino / Yu Gothic): the OS's fonts first, untouched.
 // Everywhere else the bundled BIZ UDPGothic serves ahead of them and every substitute gets the console's metrics.
-#if defined(__APPLE__) || defined(_WIN32)
+#if (defined(__APPLE__) && !PLAT_IOS) || defined(_WIN32)
 #define OS_FONTS_KNOWN 1
 #else
-#define OS_FONTS_KNOWN 0
+#define OS_FONTS_KNOWN 0  // (Linux; iOS: the system's font files aren't readable by an app)
 #endif
 
 typedef struct { uint64_t addr, size; } Font;

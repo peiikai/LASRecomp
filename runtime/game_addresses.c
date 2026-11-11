@@ -41,6 +41,14 @@ const GameVersion *game_version_by_build_id(const uint8_t id[20]) {
     return NULL;
 }
 
+const GameVersion *game_version_by_build_prefix(const char *hex) {
+    size_t n = strlen(hex);
+    if (n < 16 || n > 40) return NULL;
+    for (size_t i = 0; i < sizeof versions / sizeof versions[0]; i++)
+        if (!strncmp(versions[i].build_id, hex, n)) return &versions[i];
+    return NULL;
+}
+
 // The main program's build ID (0x40 in the file). false: missing or not a program.
 static bool read_build_id(const char *path, uint8_t id[20]) {
     uint8_t hdr[0x60];

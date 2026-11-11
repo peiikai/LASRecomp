@@ -29,6 +29,7 @@
 #include "osk.h"
 #include "pad_nav.h"
 #include "plastic.h"
+#include "ios_export_ui.h"
 #include "live_preview.h"
 #include "mobile/touch_ui.h"
 static TouchUi g_touch;  // (touch screens: the start screen's pages)
@@ -44,11 +45,13 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 #include "platform.h"
+#include "platform/ios_sdl.h"  // (iOS: SDL's file dialogs and SDL_OpenURL as the Files app's)
 #include "paths.h"
 #include "gamebuild.h"
 #include "build_cache.h"
 #include "game_addresses.h"
 #include "gamelib.h"
+#include "iosexport.h"
 #include "romfs_build.h"
 #ifdef __ANDROID__
 #include "platform/android_storage.h"
@@ -159,6 +162,25 @@ static void *update_thread(void *) {
             p = c ? c + 1 : p + strlen(p);
         }
     } else {
+#if PLAT_IOS
+        // (no curl to run on iOS)
+        @autoreleasepool {
+            NSMutableURLRequest *rq = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@RELEASES_URL]
+                                                              cachePolicy:NSURLRequestReloadIgnoringLocalCacheData
+                                                          timeoutInterval:15];
+            [rq setValue:@"application/vnd.github+json" forHTTPHeaderField:@"Accept"];
+            [rq setValue:@"LASRecomp/" LARECOMP_VERSION forHTTPHeaderField:@"User-Agent"];
+            dispatch_semaphore_t done = dispatch_semaphore_create(0);
+            __block NSData *got = nil;
+            [[[NSURLSession sharedSession] dataTaskWithRequest:rq completionHandler:^(NSData *d, NSURLResponse *r, NSError *err) {
+                if (!err && [(NSHTTPURLResponse *)r statusCode] == 200) got = d;
+                dispatch_semaphore_signal(done);
+            }] resume];
+            dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+            if (!got) return NULL;
+            body.assign((const char *)got.bytes, std::min<size_t>(got.length, 8u << 20));
+        }
+#else
 #ifdef _WIN32
         const char *sr = getenv("SystemRoot");
         std::string curl = std::string(sr ? sr : "C:\\Windows") + "\\System32\\curl.exe";
@@ -183,6 +205,7 @@ static void *update_thread(void *) {
             fclose(f);
         }
         remove(out.c_str());
+#endif
     }
     std::string best;
     // the newest release above this rank (a test build ranks just below the release it previews; other test builds
@@ -323,9 +346,36 @@ static bool files_changed(const std::string &root) {
 static const char *const CHANGED_HEAD = LN("Game files damaged or changed");
 static const char *const CHANGED_HINT = LN("Copy your game files again, then choose that folder and set them up again.");
 
+#if PLAT_IOS
+// iOS: the game code is the app's own, built for one version of the game (the desktops build it from the files set
+// up). Game files of another version: false, and both versions' labels ("1.0.1 / 1.1.0", "1.0.0").
+static const char *const OTHER_VERSION = LN("This app is for another version of the game");
+static const char *const OTHER_VERSION_HINT = LN("This app was exported for version %s of the game, these game files are "
+                                                 "version %s. Export the app again from these game files, or set up "
+                                                 "files of version %s.");
+static bool app_fits_files(const std::string &exefs_parent, std::string *app_v, std::string *files_v) {
+    char built[64], label[32];
+    const GameVersion *a = gamelib_built_for(built, sizeof built) ? game_version_by_build_prefix(built) : NULL;
+    const GameVersion *f = game_version_of(exefs_parent.c_str());
+    if (!a || !f || a == f) return true;
+    const char *fl = game_release_label((exefs_parent + "/exefs").c_str(), label, sizeof label);
+    if (app_v) *app_v = a->label;
+    if (files_v) *files_v = fl ? fl : f->label;
+    return false;
+}
+static std::string other_version_hint(const std::string &app_v, const std::string &files_v) {  // (menus' language)
+    char b[600];
+    snprintf(b, sizeof b, L(OTHER_VERSION_HINT), app_v.c_str(), files_v.c_str(), app_v.c_str());
+    return b;
+}
+#endif
+
 // "" = ready to play, else what is wrong
 static std::string check_game_files(const std::string &root) {
     std::string why = check_copied_files(root);
+#if PLAT_IOS
+    if (why.empty() && !gamelib_present(root.c_str()) && !app_fits_files(root, NULL, NULL)) return OTHER_VERSION;
+#endif
     if (why.empty() && !gamelib_present(root.c_str())) return LN("Game not built yet");
     return why;
 }
@@ -338,6 +388,15 @@ static const char *status_hint(const std::string &why) {
     if (why == "Wrong version of the game") return L("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.");
     if (why == "Game not built yet")
         return L("Set up the game files to build it. It takes a few minutes and you only do it once.");
+#if PLAT_IOS
+    if (why == OTHER_VERSION) {
+        static std::string h;
+        std::string a, f;
+        app_fits_files(g_root, &a, &f);
+        h = other_version_hint(a, f);
+        return h.c_str();
+    }
+#endif
     return L("Set up the game files to play.");
 }
 
@@ -388,31 +447,12 @@ static void set_failure(int k, int have = -1, const char *reason = NULL) {
     set_job(head[k], true, reason ? std::string(reason) + " " + hint[k] : hint[k]);
 }
 
-static bool is_dir(const std::string &p) {
-    struct stat st;
-    return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
-}
-
-// exefs: the folder with main and main.npdm; romfs: the folder with region_common (the game's data root). Found
-// in the picked folder or a few levels below it (some folder layouts nest them).
-static void find_game(const std::string &dir, int depth, std::string &exefs, std::string &romfs, bool &unusable) {
-    if (depth > 4 || (!exefs.empty() && !romfs.empty())) return;
-    if (exefs.empty() && file_exists(dir + "/main") && file_exists(dir + "/main.npdm")) exefs = dir;
-    if (romfs.empty() && is_dir(dir + "/region_common")) romfs = dir;
-    DIR *d = opendir(dir.c_str());
-    if (!d) return;
-    std::vector<std::string> sub;
-    while (struct dirent *e = readdir(d)) {
-        std::string n = e->d_name;
-        if (n[0] == '.') continue;
-        std::string ext = n.size() > 4 ? n.substr(n.size() - 4) : "";
-        for (auto &ch : ext) ch = (char)tolower((unsigned char)ch);
-        if (ext == ".xci" || ext == ".nsp" || ext == ".nca" || ext == ".nsz" || ext == ".xcz") unusable = true;
-        if (n != "region_common" && is_dir(dir + "/" + n)) sub.push_back(dir + "/" + n);
-    }
-    closedir(d);
-    std::sort(sub.begin(), sub.end());
-    for (auto &s : sub) find_game(s, depth + 1, exefs, romfs, unusable);
+// exefs: the folder with main and main.npdm; romfs: the folder with region_common (runtime/romfs_build.h: the
+// picked folder or a few levels below it)
+static void find_game(const std::string &dir, std::string &exefs, std::string &romfs, bool &unusable) {
+    char e[2200], r[2200];
+    romfs_find_game(dir.c_str(), e, sizeof e, r, sizeof r, &unusable);
+    exefs = e, romfs = r;
 }
 
 // A supported game version (runtime/game_addresses/versions.h)? Logs which one.
@@ -481,12 +521,14 @@ static void stop_background_prep(void) {
 static float extract_progress(void) {
     if (float p = g_prep_frac; p >= 0) return p > 1 ? 1 : p;
     unsigned long long t = g_total, d = g_done;
-    float b = g_build_frac, f = b >= 0 ? (g_copy_skipped ? b : 0.1f + 0.9f * b) : t ? 0.1f * (float)((double)d / (double)t) : 0;
+    const float copy_share = PLAT_IOS ? 1.0f : 0.1f;  // (iOS: no build - the copy is the whole bar)
+    float b = g_build_frac, f = b >= 0 ? (g_copy_skipped ? b : copy_share + (1 - copy_share) * b) : t ? copy_share * (float)((double)d / (double)t) : 0;
     return f < 0 ? 0 : f > 0.99f ? 0.99f : f;
 }
 
 // Builds the game code from the copied files (a few minutes); false = failed (the job line says so)
 static bool build_game_code(void) {
+    if (PLAT_IOS) return true;  // (the game code ships in the app: Frameworks/LASGame.framework)
     int cores = SDL_GetNumLogicalCPUCores(), ram_gb = SDL_GetSystemRAM() / 1024;
     GameBuildOpts o = {build_progress, cores < ram_gb - 2 ? cores : ram_gb - 2 > 1 ? ram_gb - 2 : 1, build_cancelled};
     char why[256] = "";
@@ -536,9 +578,19 @@ static void *extract_thread(void *) {
     }
 #endif
     set_job(LN("Looking for the game files..."));
-    find_game(src, 0, exefs, romfs, unusable);
+    find_game(src, exefs, romfs, unusable);
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
     if (!build_id_ok(exefs)) { set_failure(FAIL_VERSION); goto done; }
+#if PLAT_IOS
+    {  // (refused before the earlier copy is removed: the app's game code wouldn't run them)
+        std::string app_v, files_v, parent = exefs.substr(0, exefs.find_last_of("/\\"));
+        if (!app_fits_files(parent, &app_v, &files_v)) {
+            fprintf(stderr, "[launcher] game files: version %s, the app's game code: %s\n", files_v.c_str(), app_v.c_str());
+            set_job(OTHER_VERSION, true, other_version_hint(app_v, files_v));
+            goto done;
+        }
+    }
+#endif
     if (int have = count_files(romfs); have < ROMFS_FILES) {  // (an incomplete copy: refused before copying it)
         fprintf(stderr, "[launcher] %s: %d of %d romfs files\n", romfs.c_str(), have, (int)ROMFS_FILES);
         set_failure(FAIL_MISSING, have);
@@ -578,6 +630,13 @@ check:
         if (why.empty()) prepare_shaders();  // (the GPU device is up: the start screen draws with it)
         if (why.empty() && files_changed(g_root)) set_job(CHANGED_HEAD, true, CHANGED_HINT);  // (playable all the same)
         else if (why.empty()) set_job(LN("Game files ready."));
+#if PLAT_IOS
+        else if (why == OTHER_VERSION) {
+            std::string a, f;
+            app_fits_files(g_root, &a, &f);
+            set_job(OTHER_VERSION, true, other_version_hint(a, f));
+        }
+#endif
         else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
         else set_failure(FAIL_MISSING, g_romfs_count);
     }
@@ -614,32 +673,39 @@ static void SDLCALL picked(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 
-// The game files folder's Choose...: Android's own folder picker there (SDL has none for folders; the folder is a
-// content:// URI, copied by the setup through the storage framework: extract_thread)
+// The folder picker: SDL's dialog (on iOS the Files app's through runtime/platform/ios_sdl.h's macros); on Android
+// its own (the folder is a content:// URI, copied by the setup through the storage framework: extract_thread)
 #ifdef __ANDROID__
+static SDL_DialogFileCallback g_android_cb;
+static void *g_android_ud;
 static void picked_android(const char *uri) {
-    fprintf(stderr, "[launcher] game files folder: %s\n", uri ? uri : "(none picked)");
+    fprintf(stderr, "[launcher] folder picked: %s\n", uri ? uri : "(none picked)");
     const char *list[2] = {uri, NULL};
-    picked(NULL, list, -1);  // (NULL uri: cancelled - an empty list)
+    g_android_cb(g_android_ud, list, -1);  // (NULL uri: cancelled - an empty list)
 }
 #endif
-static void choose_game_folder(SDL_Window *win) {
+static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *win) {
 #ifdef __ANDROID__
     (void)win;
-    if (!android_pick_folder(picked_android)) picked(NULL, NULL, -1);
+    g_android_cb = cb, g_android_ud = ud;
+    if (!android_pick_folder(picked_android)) cb(ud, NULL, -1);
 #else
-    SDL_ShowOpenFolderDialog(picked, NULL, win, NULL, false);
+    SDL_ShowOpenFolderDialog(cb, ud, win, NULL, false);
 #endif
 }
 
-// ------------------------------------------------------------------ OneDrive (Windows)
-// A data root inside a OneDrive folder uploads every game file to the player's OneDrive: a warning on the start screen
-// with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep here
-// (settings.onedrive_kept). Checked once per launch on the current data root (plat_onedrive_synced); the
-// size in the background: the data root's own once set up, before that the picked game files (or a typical copy) plus
-// what the setup adds. LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system.
+// ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on iOS)
+// A data root inside a synced folder uploads every game file to the player's cloud drive: a warning on the start
+// screen with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep
+// here (settings.onedrive_kept). Checked once per launch on the current data root (plat_cloud_synced); the size in
+// the background: the data root's own once set up, before that the picked game files (or a typical copy) plus what
+// the setup adds. LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
 #define GAME_FILES_GB 6.3   // exefs + romfs, as players bring them
 #define SETUP_ADDS_GB 0.4   // the built game code and its kept pieces (0.23, a beta_5 setup), shader caches
+static const char *g_onedrive_name;        // the service's name (the English text names it); NULL: not synced
+// (iOS: the system offloads a cloud folder's files it thinks unused; the game then waits for each one it reads)
+static const char *const KEEP_DOWNLOADED = LN("In the Files app, touch and hold the data folder and choose Keep "
+                                              "Downloaded, so its files stay on this iPhone.");
 static int g_onedrive = -1;                // -1: not checked yet
 static std::atomic<double> g_od_gb{-1};    // the estimate (-1: not known yet)
 static std::atomic<int> g_od_job;
@@ -653,7 +719,7 @@ static void *onedrive_size_thread(void *arg) {
     else {
         std::string exefs, romfs;
         bool unusable = false;
-        if (*src != "\x01") find_game(*src, 0, exefs, romfs, unusable);
+        if (*src != "\x01") find_game(*src, exefs, romfs, unusable);
         gb = (exefs.empty() || romfs.empty() ? GAME_FILES_GB : (rt_tree_size(exefs.c_str()) + rt_tree_size(romfs.c_str())) / 1e9)
              + SETUP_ADDS_GB;
     }
@@ -684,9 +750,10 @@ static int onedrive_notice(float s, float w, bool ready) {
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  This folder is synced by OneDrive"));
-    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your OneDrive."),
-                       fmax(1.0, gb));
+    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_onedrive_name);
+    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your %s."),
+                       fmax(1.0, gb), g_onedrive_name);
+    if (PLAT_IOS) ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 4 * s));
     int r = 0;
@@ -706,8 +773,33 @@ static int onedrive_notice(float s, float w, bool ready) {
 static void onedrive_keep(void) {
     g_settings.onedrive_kept = true;
     settings_save();
-    fprintf(stderr, "[launcher] OneDrive warning: kept here\n");
+    fprintf(stderr, "[launcher] %s warning: kept here\n", g_onedrive_name);
 }
+
+#if PLAT_IOS
+// iOS: signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but iOS
+// ends it at a much lower footprint. Shown on the start screen until OK, every launch (runtime/platform/ios.c).
+static bool g_memory_ok_seen;
+static void memory_notice(float s, float w) {
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
+    ImGui::BeginChild("##memory", ImVec2(w, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
+                      ImGuiWindowFlags_NavFlattened);
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor();
+    ImGui::PushTextWrapPos(0);
+    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  Installed without the increased memory limit"));
+    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s",
+                       L("iOS may close the game when it needs more memory. Sign the app again with the Increased "
+                         "Memory Limit entitlement turned on."));
+    ImGui::PopTextWrapPos();
+    ImGui::Dummy(ImVec2(0, 4 * s));
+    if (ImGui::Button(L("OK"))) g_memory_ok_seen = true;
+    ImGui::EndChild();
+}
+#endif
+
 
 // ------------------------------------------------------------------ the user's own Nintendo fonts (not shipped)
 // runtime/hle/pl.c loads fonts/ first, else a close substitute of the requested language. Import copies recognized
@@ -865,8 +957,9 @@ static std::vector<std::string> list_seeds() {
 
 // ------------------------------------------------------------------ screen
 static ImFont *g_font_title, *g_font_menu, *g_font_small;
-// SETTINGS: the in-game menu's tabs (runtime/ui/menu.mm); RANDO: the Randomizer panel (New Seed: rando_tab.mm)
-enum Page { MAIN, SETTINGS, SETUP, RANDO };
+// SETTINGS: the in-game menu's tabs (runtime/ui/menu.mm); RANDO: the Randomizer panel (New Seed: rando_tab.mm);
+// IOS: the export page (from Settings > Prelaunch)
+enum Page { MAIN, SETTINGS, SETUP, RANDO, IOS };
 static int g_refocus = MAIN;  // back on the main page: select the item of the page we came from (controllers)
 
 // A big menu line: gold + a marker when focused / hovered (keyboard, gamepad or mouse), grey when disabled
@@ -1378,7 +1471,7 @@ static bool launcher_pad_event(const SDL_Event &e) {
 // Returns when PLAY is chosen (seed stored in g_settings.rando_seed); QUIT exits.
 // Settings' first tab, on the start screen only: the extracted game files (size, delete) and the user's own Switch
 // fonts (import / back to the substitute)
-// Open a folder in Finder / Explorer (relative paths are in the data root, the working directory)
+// Open a folder in Finder / Explorer / the Files app (relative paths are in the data root, the working directory)
 #ifndef __ANDROID__
 static void reveal_folder(const std::string &dir) {
     std::string path = dir;
@@ -1434,6 +1527,34 @@ static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centr
     *w = ds.x - 2 * sx - 2 * 12 * *sc, *h = ds.y - 2 * sy - 2 * 12 * *sc;
 #endif
 }
+
+// ------------------------------------------------------------------ iOS export (runtime/ui/ios_export_ui.mm)
+// Its page shares the setup's busy state, job line and progress bar through these hooks.
+#if LARECOMP_IOSEXPORT
+static void ios_export_wire(void) {
+    static bool wired;
+    if (wired) return;
+    wired = true;
+    IosExportHost h = {
+        [] { pthread_mutex_lock(&g_lock); },
+        [] { pthread_mutex_unlock(&g_lock); },
+        &g_busy,
+        [](const std::string &line, bool failed, const std::string &hint) { set_job(line, failed, hint); },
+        [] {  // (as the setup's thread starts: no copy phase, the bar is the build)
+            stop_background_prep();
+            g_cancel_build = false;
+            g_done = 0, g_total = 0, g_phase_base = 0, g_build_frac = 0, g_copy_skipped = true;
+            set_job(LN("Getting the game files ready..."));  // (not the last export's line, path and all)
+        },
+        build_progress,
+        build_cancelled,
+        [] { g_build_frac = -1; },
+        [](const std::string &dir) { reveal_folder(dir); },
+        &g_root,
+    };
+    ios_export_ui_init(h);
+}
+#endif
 
 // The progress overlay in front of the start screen (input waits): the setup, an update's build, or the shader
 // preparation (with Skip) - the setup's, or the background one when PLAY was pressed before it finished
@@ -1569,16 +1690,30 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
 
 // ------------------------------------------------------------------ the data folder (runtime/paths.h): another one
 // picked (Settings > Prelaunch, the Game Files window), the data moved there or a fresh start, then a restart there
-enum { DF_NONE, DF_ASK, DF_MOVING, DF_FAILED };
+enum { DF_NONE, DF_ASK, DF_MOVING, DF_FAILED, DF_RESTART };
 static int g_df;                  // (main thread)
 static std::string g_df_pick;     // the folder picked (g_lock: the dialog calls back on any thread)
 static RtDataTarget g_df_t;
-static bool g_df_onedrive;        // the folder picked is synced by OneDrive too (Windows)
+static const char *g_df_cloud;    // the folder picked is synced to a cloud drive too (its name; NULL: not)
 static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 moved, -1 failed
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
 static bool g_df_cancelling;                  // Cancel pressed during the move: waiting for it to stop
+
+// A folder as the player knows it: its path; on iOS as Files names it ("iCloud Drive › LASData"), the full path
+// when the place isn't recognized
+static std::string folder_shown(const char *path) {
+#if PLAT_IOS
+    char root[256], rest[1024];
+    if (!plat_ios_folder_place(path, root, sizeof root, rest, sizeof rest)) return path;
+    const char *top = root[0] ? root : plat_touch_tablet() ? L("On My iPad") : L("On My iPhone");
+    return rest[0] ? std::string(top) + " \xe2\x80\xba " + rest : top;
+#else
+    return path;
+#endif
+}
+static std::string data_root_shown(void) { return folder_shown(rt_data_root()); }
 
 static void SDLCALL picked_data(void *, const char *const *files, int) {
     if (!files || !files[0]) return;
@@ -1587,6 +1722,15 @@ static void SDLCALL picked_data(void *, const char *const *files, int) {
     pthread_mutex_unlock(&g_lock);
 }
 static void choose_data_folder(void) { SDL_ShowOpenFolderDialog(picked_data, NULL, g_launcher_win, NULL, false); }
+static void show_font_dialog(void) {
+#ifdef __ANDROID__
+    android_pick_files(picked_fonts);  // (SDL's file window gives content:// links there, not files)
+#else
+    static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
+    font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
+    SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
+#endif
+}
 static void df_progress(int step, double f) { g_df_step = step, g_df_frac = (float)f; }
 static void *df_move_thread(void *) {
     g_df_result = rt_data_move(g_df_t.path, df_progress, g_df_err, sizeof g_df_err) ? 1 : -1;
@@ -1594,9 +1738,13 @@ static void *df_move_thread(void *) {
 }
 static void df_restart(void) {
     unsetenv("LARECOMP_LAUNCHER_DATA_PICK");
+#if PLAT_IOS
+    g_df = DF_RESTART;  // (no exec on iOS: the app ends on OK, the player opens it again)
+#else
     rt_paths_restart();
     snprintf(g_df_err, sizeof g_df_err, "%s", LN("Couldn't restart LAS Recomp. Start it again to use the new folder."));
     g_df = DF_FAILED;
+#endif
 }
 
 #ifdef __ANDROID__
@@ -1621,7 +1769,7 @@ static void data_folder_popup(float s) {
     pthread_mutex_unlock(&g_lock);
     if (!pick.empty() && g_df == DF_NONE && !busy) {
         rt_data_target(pick.c_str(), &g_df_t);
-        g_df_onedrive = !g_df_t.refuse[0] && plat_onedrive_synced(g_df_t.path);
+        g_df_cloud = g_df_t.refuse[0] ? NULL : plat_cloud_synced(g_df_t.path);
         g_df = DF_ASK;
         ImGui::OpenPopup("##datafolder");
     }
@@ -1656,9 +1804,9 @@ static void data_folder_popup(float s) {
 #ifdef __ANDROID__
         ImGui::TextDisabled("%s", dir.c_str());
 #else
-        ImGui::TextDisabled("%s", t.path);
+        ImGui::TextDisabled("%s", folder_shown(t.path).c_str());
 #endif
-        if (g_df_onedrive) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("This folder is synced by OneDrive too."));
+        if (g_df_cloud) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("This folder is synced by %s too."), g_df_cloud);
         ImGui::Spacing();
         if (t.refuse[0]) {
             ImGui::TextColored(red, "%s", t.refuse);
@@ -1713,9 +1861,13 @@ static void data_folder_popup(float s) {
         else if (r == -1 && g_df_cancelling) close = true;  // (cancelled: nothing to report)
         else if (r == -1) g_df = DF_FAILED;
         if (r != 0) g_df_cancelling = false;
+    } else if (g_df == DF_RESTART) {
+        ImGui::TextUnformatted(L("LAS Recomp needs to restart to use the new folder. It closes now; open it again."));
+        ImGui::Spacing();
+        if (ImGui::Button(L("OK"), bw)) { fflush(stderr); exit(0); }
     } else {
         ImGui::TextColored(red, "%s", L_line(g_df_err).c_str());  // (English: here or runtime/paths.c)
-        ImGui::Text(L("Your data is still in %s"), rt_data_root());
+        ImGui::Text(L("Your data is still in %s"), data_root_shown().c_str());
         ImGui::Spacing();
         close = ImGui::Button(L("OK"), bw) || esc;
     }
@@ -1731,7 +1883,7 @@ static void data_folder_popup(float s) {
 static void storage_rows(bool busy) {
     const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
     std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                    rt_data_root() + (fixed ? std::string("\n\n") + fixed : "");
+                    data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
     opt_section("Storage");
 #ifdef __ANDROID__
     const char *sd = getenv("LARECOMP_ANDROID_SD_DIR"), *home = rt_data_home();
@@ -1815,7 +1967,9 @@ static void prelaunch_tab(float sc) {
 #ifdef __ANDROID__
     // (none: other apps can't open the app's own folder there)
 #else
-#ifdef _WIN32
+#if PLAT_IOS
+    const char *show = LN("Open in Files");
+#elif defined(_WIN32)
     const char *show = LN("Show in Explorer");
 #elif defined(__linux__)
     const char *show = LN("Open folder");
@@ -1850,6 +2004,15 @@ static void prelaunch_tab(float sc) {
         }
         if (opt_action("Cancel", "", "Keeps the game files.", true)) confirm_delete = false;
     }
+#if LARECOMP_IOSEXPORT
+    {  // the iOS export's page opens from here (runtime/ui/ios_export_ui.mm)
+        pthread_mutex_lock(&g_lock);
+        bool busy = g_busy;
+        pthread_mutex_unlock(&g_lock);
+        opt_section("iOS");
+        ios_export_prelaunch(busy);
+    }
+#endif
     storage_rows(false);  // where all of it is kept (as the setup window's Storage row)
 #ifdef __ANDROID__
     driver_rows();
@@ -1867,14 +2030,7 @@ static void prelaunch_tab(float sc) {
     opt_action("Button icons", fe ? LN("Imported") : LN("Substitute"), fonts_d, true, fe);
     std::string imp_d = L(fonts_d);
     if (!g_font_msg.empty()) imp_d += "\n\n" + g_font_msg;
-    static SDL_DialogFileFilter font_f[] = {{"Switch fonts", "bfttf;ttf"}};
-    font_f[0].name = L("Switch fonts");  // (the file window's; L's text stays)
-    if (opt_action("Import fonts", "", imp_d.c_str(), true))
-#ifdef __ANDROID__
-        android_pick_files(picked_fonts);  // (SDL's file window gives content:// links there, not files)
-#else
-        SDL_ShowOpenFileDialog(picked_fonts, NULL, g_launcher_win, font_f, 1, NULL, true);
-#endif
+    if (opt_action("Import fonts", "", imp_d.c_str(), true)) show_font_dialog();
     if ((fs || fl || fe) && opt_action("Remove imported fonts", "", "Deletes the fonts you imported. The game goes back to "
                                        "the substitutes.", true))
         remove_fonts();
@@ -1914,6 +2070,9 @@ extern "C" void launcher_run(const char *root) {
     g_root = root;
     g_start_screen = 1;
     menu_sfx_set_game_dir(root);
+#if LARECOMP_IOSEXPORT
+    ios_export_wire();
+#endif
 #if PLAT_TOUCH
     plat_touch_shortcuts_sync();  // (seeds added or deleted outside the app since the last run)
 #endif
@@ -2004,6 +2163,7 @@ extern "C" void launcher_run(const char *root) {
         if (pg && (!strncmp(pg + 1, "settings", 8) || !strcmp(pg + 1, "askdelete"))) page = SETTINGS, menu_tabs_focus(true);
         if (pg && !strcmp(pg + 1, "setup")) page = SETUP;
         if (pg && !strcmp(pg + 1, "rando")) page = RANDO, menu_tabs_focus(false);
+        if (pg && !strcmp(pg + 1, "ios")) page = IOS;
         if (pg && !strcmp(pg + 1, "preparing")) page = SETUP, prep_progress(666, 1585), set_job(LN("Preparing shaders"));
         if (pg && !strcmp(pg + 1, "skipask")) page = SETUP, prep_progress(666, 1585), set_job(LN("Preparing shaders")), g_prep_skip_ask = true;
         if (pg && !strncmp(pg + 1, "fail", 4)) page = SETUP, set_failure(atoi(pg + 5));  // (the failure messages)
@@ -2076,10 +2236,20 @@ extern "C" void launcher_run(const char *root) {
         if (!status.empty()) { g_bg = 0; page = SETUP; }
     }
     if (g_onedrive < 0) {  // (once per launch: a "Title screen" reboot keeps it)
+        if (PLAT_IOS) fprintf(stderr, "[launcher] data folder shown as: %s\n", data_root_shown().c_str());
         const char *t = getenv("LARECOMP_TEST_ONEDRIVE");
-        g_onedrive = t ? atoi(t) != 0 : plat_onedrive_synced(rt_data_root());
-        if (g_onedrive) fprintf(stderr, "[launcher] the data folder is synced by OneDrive%s: %s\n",
+        g_onedrive_name = t ? (atoi(t) != 0 ? "OneDrive" : NULL) : plat_cloud_synced(rt_data_root());
+        g_onedrive = g_onedrive_name != NULL;
+        if (g_onedrive) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_onedrive_name,
                                 g_settings.onedrive_kept ? " (kept there)" : "", rt_data_root());
+#if PLAT_IOS
+        if (g_onedrive && plat_ios_cloud_offloaded(rt_data_root())) {
+            char msg[700];
+            snprintf(msg, sizeof msg, "%s\n\n%s", L("Some of LAS Recomp's files aren't on this iPhone. They download as the "
+                                                  "game reads them, so it may be very slow or close."), L(KEEP_DOWNLOADED));
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", msg, win);
+        }
+#endif
     }
     // the shader preparation of every later start: in the background (first setups and updates do theirs above)
     if (status.empty() && !g_busy && !getenv("LARECOMP_LAUNCHER_PREPARE")) start_background_prep();
@@ -2174,6 +2344,10 @@ extern "C" void launcher_run(const char *root) {
 #endif
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) exit(0);
+        }
+        {   // iOS: the app in the background - nothing drawn (a Metal drawable there is an error; metal.m)
+            extern bool ui_in_background(void);
+            if (ui_in_background()) { SDL_Delay(50); continue; }
         }
         // extraction finished: re-check, load the background
         pthread_mutex_lock(&g_lock);
@@ -2514,10 +2688,16 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::PopFont();
                 plastic_widgets(false);
                 ImGui::EndChild();
+#if LARECOMP_IOSEXPORT
+                bool to_ios = ios_export_page_requested();  // (Prelaunch's button: leave Settings for the export page)
+                if (to_ios) back = true;
+#else
+                bool to_ios = false;
+#endif
                 if (back) {
                     bind_capture_cancel();
                     settings_save();
-                    g_refocus = page, page = MAIN;
+                    g_refocus = page, page = to_ios ? IOS : MAIN;
                     std::string cur = choice ? seeds[choice - 1] : "";  // seeds made / renamed / deleted in the panel
                     seeds = list_seeds();
                     choose(cur.c_str());
@@ -2530,6 +2710,8 @@ extern "C" void launcher_run(const char *root) {
             } else {
                 // SETUP: the game files, in a window like Settings (option rows: runtime/ui/option_rows.h) - choose the
                 // folder with the game files, set up; once set up, delete. Each row's explanation on the right.
+                // IOS: the same window with the export rows (ios_export_rows).
+                bool ios_page = page == IOS;
                 float sc, w, h;
                 ImVec2 centre;
                 panel_layout(ds, &sc, &w, &h, &centre);
@@ -2551,7 +2733,7 @@ extern "C" void launcher_run(const char *root) {
                 plastic_widgets(true);
                 ImGui::PushFont(g_font_small);
                 ImGui::PushFont(g_font_menu);
-                ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Game Files"));
+                ImGui::TextColored(plastic_col(plastic_theme().title), "%s", ios_page ? L("Recomp for iOS") : L("Game Files"));
                 ImGui::PopFont();
                 bool back = false;
                 if (!busy) {  // close: the round X in the corner, as Settings (B / Esc too)
@@ -2582,7 +2764,7 @@ extern "C" void launcher_run(const char *root) {
                 // (the descriptions put together here in the menus' language: the row finds no English for them)
                 std::string src_d = L("Pick the folder with your extracted exefs and romfs from The Legend of Zelda: Link's "
                                       "Awakening for Switch. LAS Recomp doesn't include the game.");
-                if (!src.empty()) src_d += std::string("\n\n") + L("Chosen:") + " " + src;
+                if (!src.empty()) src_d += std::string("\n\n") + L("Chosen:") + " " + folder_shown(src.c_str());
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
                 std::string ex_d = L("Copies the files LAS Recomp needs and recompiles the game from them. You only do this "
@@ -2596,14 +2778,21 @@ extern "C" void launcher_run(const char *root) {
                 auto first_row = [&] {
                     if (focus_first > 0 && focus_first--) ImGui::SetFocusID(ImGui::GetItemID(), ImGui::GetCurrentWindow());
                 };
-                opt_begin("##files", sc, !ready);  // (before the setup: the example folder on the right)
+                opt_begin(ios_page ? "##ios" : "##files", sc, !ios_page && !ready);  // (before the setup: the example folder on the right)
+#if LARECOMP_IOSEXPORT
+                if (ios_page) {
+                    ios_export_rows(ready, busy, win);
+                    first_row();
+                } else
+#endif
                 if (!ready) {
 #ifdef __ANDROID__
                     storage_rows(busy);
 #endif
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
-                    if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true)) choose_game_folder(win);
+                    if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
+                        show_folder_dialog(picked, NULL, win);
                     check_left_of_value(src_v);
                     first_row();
                     opt_section("Set up");
@@ -2647,13 +2836,18 @@ extern "C" void launcher_run(const char *root) {
 #ifdef __ANDROID__
                 if (ready)  // (before the setup it's the first row: chosen before the game files are copied)
 #endif
-                storage_rows(busy);  // where all of it is kept: another folder (a bigger drive)
-                if (!busy && has_build_cache()) {
+                if (!ios_page) storage_rows(busy);  // where all of it is kept: another folder (a bigger drive)
+                if (!ios_page && !PLAT_IOS && !busy && has_build_cache()) {
                     opt_section("Build cache");
                     if (opt_action("Clear build cache", "", "Deletes the built game code. It gets rebuilt the next time you "
-                                   "set up.", true)) {
+                                   "set up.", true)) {  // (the iOS export's build too)
                         char why[512] = "";
                         g_build_cache_changed = true;
+#if LARECOMP_IOSEXPORT
+                        char ios_build[1100];
+                        iosexport_build_dir(ios_build, sizeof ios_build);
+                        plat_remove_tree(ios_build);
+#endif
                         if (build_cache_clear(g_root.c_str(), why, sizeof why)) set_job(LN("Build cache cleared."));
                         else set_job(LN("Couldn't clear the build cache."), true, why);
                     }
@@ -2713,7 +2907,8 @@ extern "C" void launcher_run(const char *root) {
                 if (back && !busy) {
                     settings_save();
                     g_confirm_delete = false;
-                    page = MAIN, g_refocus = SETUP;
+                    g_refocus = ios_page ? SETTINGS : SETUP;  // (the export page opens from Settings > Prelaunch)
+                    page = MAIN;
                 }
                 static bool test_busy = getenv("LARECOMP_LAUNCHER_SHOT") && (strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":extracting") ||
                                                                          strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":preparing") ||
@@ -2762,6 +2957,13 @@ extern "C" void launcher_run(const char *root) {
                 if (r == 1) onedrive_keep();
                 else if (r == 2) choose_data_folder();
             }
+#if PLAT_IOS
+            else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (the same place, when there is no cloud warning)
+                float w = fminf(ds.x * 0.42f, 560 * s);
+                ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
+                memory_notice(s, w);
+            }
+#endif
             if (const char *f = getenv("LARECOMP_LAUNCHER_FONT")) {  // (test) which typeface this window shows
                 const char *b = strrchr(f, '/');
                 ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetWindowPos().x + 20 * s, ImGui::GetWindowPos().y + 16 * s),
