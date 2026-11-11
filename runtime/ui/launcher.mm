@@ -31,6 +31,7 @@
 #include "plastic.h"
 #include "ios_export_ui.h"
 #include "live_preview.h"
+#include "menu.h"
 #include "mobile/touch_ui.h"
 static TouchUi g_touch;  // (touch screens: the start screen's pages)
 #ifdef __APPLE__
@@ -2374,10 +2375,7 @@ extern "C" void launcher_run(const char *root) {
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) exit(0);
         }
-        {   // iOS: the app in the background - nothing drawn (a Metal drawable there is an error; metal.m)
-            extern bool ui_in_background(void);
-            if (ui_in_background()) { SDL_Delay(50); continue; }
-        }
+        if (ui_in_background()) { SDL_Delay(50); continue; }  // (iOS: a Metal drawable there is an error)
         // extraction finished: re-check, load the background
         pthread_mutex_lock(&g_lock);
         bool busy = g_busy;

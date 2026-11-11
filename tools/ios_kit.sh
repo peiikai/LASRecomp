@@ -5,7 +5,7 @@
 #   Payload/LAS Recomp.app/  the app without game code (tools/bundle_ios.sh SKELETON=1); the .ipa is these entries
 #                            copied as they are plus Frameworks/LASGame.framework
 #   lld/<arch>-<os>/         the Mach-O linker for each desktop (tools/fetch_lld.sh: rust-lld, bin/ + lib/ +
-#                            LICENSE.TXT); the runtime extracts its host's set once (<data>/ios-kit/<kit id>/)
+#                            LICENSE.TXT); the runtime extracts its host's set once (<data>/cache/ios-kit/<kit id>/)
 #   include/any-darwin-any/  zig's Darwin libc headers (the bundled zig compiles for iOS with these; its own copy
 #                            is trimmed to the host's, tools/fetch_zig.sh)
 #   libSystem.B.tbd          the libSystem stub the link needs (runtime/platform/ios-sdk)
