@@ -35,6 +35,10 @@ typedef struct GameVersion {
 const GameVersion *game_version_by_build_id(const uint8_t id[20]);
 // The version whose main build ID starts with hex (upper-case, 16 digits or more: a game code library's id), or NULL.
 const GameVersion *game_version_by_build_prefix(const char *hex);
+// What a main program file (exefs/main) is: GAME_MAIN_NSO with its build ID in hex (40 upper-case digits), or why it
+// has none (hex ""). For the log when the version is refused: a build ID no version has, or no program at all (#696).
+typedef enum { GAME_MAIN_NSO, GAME_MAIN_MISSING, GAME_MAIN_NOT_NSO } GameMainKind;
+GameMainKind game_main_build_id(const char *main_path, char hex[41]);
 // The version of a main program file (exefs/main), or NULL (missing, unreadable or unknown).
 const GameVersion *game_version_of_main(const char *main_path);
 // The version of the game files in game_dir (its exefs/main), or NULL.
