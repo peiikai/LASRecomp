@@ -118,6 +118,23 @@ static int g_hold_miss, g_hold_up_votes;  // held: decisions in a row over the h
 static int g_hold_met_votes;              // held at 20: decisions in a row whose frames already met 30 (with G + W in its budget)
 static double g_hold_up_at = -100;        // when the hold last stepped up (20 -> 30)
 
+// The GPU's clock follows the load (Apple GPUs; iPad Pro M4 at 60 fps): with room to spare it clocks down until it is
+// ~90% busy, so G + W reads ~15 ms at every factor and says nothing about the room left. There a step down made each
+// frame no cheaper (game 13.4 + window 1.6 ms at 1.00, 8.8 + 6.0 at 0.32 - MetalFX starts below 1.00 - frames on time
+// throughout), and each looked over budget again: 1.00 -> the 540p floor in 3 s. A step down taken with the frames on
+// time is checked: the decision after it must show at least a third of its predicted saving in G + W (W counts: MetalFX
+// starts below 1.00). Two in a row that don't (the menu opening between a step and its check: one)
+// (or the scene getting heavier, or the part of G that doesn't scale) undo that whole run of steps down (back
+// to where it began, 1.00 on the iPad) and the GPU counts as paced
+// from then on: down only when frames come late (the clock is at its top then, G honest), up when they've been on time
+// (a raise that makes them late is undone, the raise wait doubling as usual).
+static bool g_paced;
+static double g_chk_from = -1, g_chk_gw, g_chk_pred;  // the last step down: the factor before, G + W then, predicted after
+static int g_futile;                                  // steps down in a row that saved too little
+static double g_futile_at;                            // when the last was seen
+static double g_chain_from = -1, g_chain_at;  // the factor before this run of steps down taken with frames on time; the last
+#define DYN_CHECK_SHARE 0.33  // a step down's measured saving at least this share of the predicted one
+
 static int hold_vsyncs(void) { return (int)lround(g_hold_dt * 60 / 1000); }
 static bool at_floor(void) { return g_dyn <= g_dyn_floor + 1e-6; }
 // the grid, the floor below its first step (and no step closer than half a step above the floor)
@@ -164,6 +181,7 @@ static void dyn_window_changed(double now, double from, double to) {
         g_probe_at = fmax(g_probe_at, now + g_probe_wait);  // (a probe for 60: once the hold has measured the new size)
     }
     g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0, g_prev_G = -1;
+    g_chk_from = g_chain_from = -1, g_futile = 0;  // (g_paced stays: it's the GPU's)
     memset(g_down_gw, 0, sizeof g_down_gw);
     g_dyn_raise_wait = DYN_RAISE_WAIT, g_dyn_raise_at = now + DYN_RAISE_WAIT, g_dyn_last_raise = g_dyn_last_lower = -100;
     g_dyn_cool_until = now + 1.0;
@@ -383,7 +401,33 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         g_probe_good = g_probing && g_hold_dt == 0 && avg_gpu <= DYN_BUDGET && avg_dt < 20 ? g_probe_good + 1 : 0;
         if (g_probe_good >= 4) g_probing = false, g_probe_good = 0, g_probe_ok_at = now, g_probe_wait = 10.0;
     }
+    // the last step down's check (see g_paced): its first measure
+    if (g_chk_from > 0 && g_dyn == g_chk_from) g_chk_from = -1;  // (undone already)
+    if (g_chk_from > 0 && gpu && g_hold_dt == 0 && !spikes) {
+        double pred_gain = g_chk_gw - g_chk_pred, gain = g_chk_gw - avg_gpu;
+        bool futile = pred_gain >= 0.5 && gain < DYN_CHECK_SHARE * pred_gain && avg_dt < 17.2;
+        if (futile) g_futile++, g_futile_at = now;
+        else g_futile = 0;
+        if (futile && g_futile < 2)
+            LOG("[dynres] %.2f -> %.2f saved %.1f of a predicted %.1f ms (gpu %.1f -> %.1f ms = game %.1f + window %.1f, frames every %.1f ms)\n",
+                g_chk_from, g_dyn, gain, pred_gain, g_chk_gw, avg_gpu, G, W, avg_dt);
+        if (futile && g_futile >= 2) {
+            double back = fmax(g_chain_from, g_chk_from);
+            LOG("[dynres] %.2f -> %.2f saved %.1f of a predicted %.1f ms (gpu %.1f -> %.1f ms = game %.1f + window %.1f, frames "
+                "every %.1f ms): the GPU's clock follows the load, back to %.2f; from now on down only when frames come late\n",
+                g_chk_from, g_dyn, gain, pred_gain, g_chk_gw, avg_gpu, G, W, avg_dt, back);
+            g_paced = true, g_dyn = back, g_chk_from = g_chain_from = -1, g_futile = 0;
+            g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0;
+            memset(g_down_gw, 0, sizeof g_down_gw);
+            g_dyn_last_lower = -100, g_dyn_raise_wait = DYN_RAISE_WAIT, g_dyn_raise_at = now + DYN_RAISE_WAIT;
+            goto decided;
+        }
+        g_chk_from = -1;
+    }
     bool slow = gpu ? avg_gpu > budget : avg_dt > 17.4;
+    // paced (see g_paced): the GPU's time is near the budget at any factor; late frames with the GPU busy are what count
+    bool paced = gpu && g_paced && g_hold_dt == 0;
+    if (paced) slow = avg_dt > 17.4 && avg_gpu > 0.8 * budget;
     // held, but the frames came slower than the hold's (the display waits one more refresh): over budget too
     if (gpu && g_hold_dt > 0 && avg_dt > 1.2 * g_hold_dt && avg_gpu > 0.8 * budget) slow = true;
     bool hold_wait = hold_up;  // held and over its budget, not yet long enough to act on it (or the hold just stepped up)
@@ -437,7 +481,8 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             down = fmax(down, g_dyn - DYN_MAX_DOWN);
             // a little over (or target 30's frames a little late): one small step - the next decision a quarter second
             // later takes another if it's still over; far over: straight to where it fits
-            if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget) down = g_dyn - DYN_STEP;
+            // (paced: a raise that made the frames late - the step before it fit)
+            if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || (paced && now - g_dyn_last_raise < 3.0)) down = g_dyn - DYN_STEP;
         }
         g_dyn = fmax(g_dyn_floor, down);
         g_dyn_good = 0;
@@ -452,7 +497,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         // next step is predicted to fit with room (G scales with the area); without: frames at 60
         double up = dyn_grid(g_dyn + DYN_STEP);
         double g_up = G * (up / g_dyn) * (up / g_dyn);
-        bool fits = !gpu ? avg_dt < 16.9 : g_hold_dt > 0 ? g_up + W <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + W <= budget;
+        bool fits = !gpu || paced ? avg_dt < 16.9 : g_hold_dt > 0 ? g_up + W <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + W <= budget;
         // (a decision with spikes - a level loading, a fade, a cutscene starting - says little about the scene ahead:
         // it starts the count over, so a raise doesn't come from a light loading screen)
         g_dyn_good = fits && !spikes ? g_dyn_good + 1 : 0;
@@ -464,6 +509,15 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         else if (now - g_dyn_last_lower > 30.0 && g_dyn_raise_wait > DYN_RAISE_WAIT) g_dyn_raise_wait = DYN_RAISE_WAIT;  // (30 s of calm: forget the hunting)
     }
     g_dyn = dyn_grid(g_dyn);
+    if (g_futile && (now - g_futile_at > 1.5 || g_dyn > prev)) g_futile = 0;  // (no step down soon after: not in a row)
+    if (g_dyn > prev || (g_dyn < prev && avg_dt >= 17.2) || now - g_chain_at > 5.0) g_chain_from = -1;
+    if (g_dyn < prev && gpu && g_hold_dt == 0 && !g_paced && !g_t30_limits && avg_dt < 17.2) {  // (checked at the next decision)
+        if (g_chain_from < 0) g_chain_from = prev;
+        g_chain_at = now;
+        double g2 = g_prev_G > 0 ? (G + g_prev_G) / 2 : G, w2 = g_prev_G > 0 ? (W + g_prev_W) / 2 : W;
+        g_chk_from = prev, g_chk_gw = g2 + w2, g_chk_pred = g2 * (g_dyn / prev) * (g_dyn / prev) + w2;
+    }
+decided:
     g_prev_G = gpu && g_dyn == prev ? G : -1, g_prev_W = W;  // (a change: the next decision measures the new factor)
     if (gpu && g_hold_dt > 0 && g_dyn != prev && !g_ref_pending && g_ref_g > 0)  // the floor's G as of now; G's new reference next time
         g_floor_g *= G / g_ref_g, g_ref_pending = true;
