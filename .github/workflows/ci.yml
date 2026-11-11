@@ -20,7 +20,39 @@ concurrency:  # (a newer push to the same branch / PR replaces a run still going
   cancel-in-progress: true
 
 jobs:
+  # Docs-only changes (Markdown anywhere, the docs/ screenshots; not docs/icon/, which the builds use) need no build:
+  # every job below is skipped then, and a skipped job passes the beta_* ruleset's required checks. Anything else, a
+  # manual run or a new branch runs them all.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) range="$PR_BASE...$PR_HEAD" ;;
+            push) [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && range="$BEFORE..$AFTER" ;;
+          esac
+          code=true
+          if [ -n "${range:-}" ] && files=$(git diff --name-only "$range") && [ -n "$files" ]; then
+            echo "$files"
+            echo "$files" | grep -qvE '(\.md$|^docs/[^/]+\.(jpg|png)$)' || code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   linux:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -155,6 +187,8 @@ jobs:
   # x86 SIMD rounding test (-mfma), the FP/SIMD lowering check (x86 lowers to C, aarch64 keeps the inline asm) and
   # the shader translator checks (the same on every platform; the x86-64 job runs them).
   linux-aarch64:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -260,6 +294,8 @@ jobs:
       - name: iOS game-code build from this desktop
         uses: ./.github/actions/ios-gamebuild-test
   macos:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     # (a fresh Tart VM per job on the maintainer's Mac, deleted after; forks have none: GitHub's macOS 15)
     runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
     steps:
@@ -367,6 +403,8 @@ jobs:
   # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
   # exercised in a real iOS process. The game is not run in the simulator (no game files; the macOS job runs it).
   ios:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
     steps:
       - uses: actions/checkout@v4
@@ -427,6 +465,8 @@ jobs:
           if-no-files-found: ignore
 
   windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-2022
     defaults:
       run:
@@ -540,6 +580,8 @@ jobs:
   # translator fuzz (the same on every platform; the x64 job runs it). -pthread on every test (CC for the Python ones):
   # CLANGARM64's libraries don't pull winpthreads in for us, as the Makefile's -lpthread there.
   windows-arm64:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-11-arm
     env:
       CC: clang -pthread  # (the Python tests' compiler)
@@ -620,6 +662,8 @@ jobs:
   # only the runtime, SDL, shaderc and the shipped fonts and icon - nothing of the game, whose code is built on the
   # device from the player's own extracted files.
   android:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
