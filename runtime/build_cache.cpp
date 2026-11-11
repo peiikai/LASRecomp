@@ -416,3 +416,15 @@ extern "C" bool build_cache_clear(const char *game_dir, char *why, size_t cap) {
         return false;
     }
 }
+extern "C" bool build_cache_file_sha256(const char *path, char out[65]) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    CacheSha256 hash;
+    static thread_local char block[1 << 16];
+    size_t n;
+    while ((n = fread(block, 1, sizeof block, f)) > 0) hash.add(block, n);
+    bool ok = !ferror(f);
+    fclose(f);
+    if (ok) snprintf(out, 65, "%s", hash.finish().c_str());
+    return ok;
+}
