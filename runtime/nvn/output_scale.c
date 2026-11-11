@@ -102,6 +102,8 @@ static double g_probe_fail_gw, g_probe_fail_at = -1000;      // the last failed 
 static double g_floor_g, g_ref_g;
 // Internal FPS target 30: G + W just under where the frames missed 30 (0: none yet), and when it last missed or eased
 static double g_t30_cap, g_t30_at;
+static int g_t30_late;  // (half seconds in a row with the frames late at target 30)
+static double g_t30_wait = 10, g_t30_off_at = -1e9;  // (on time this long lifts the cap; when it was last lifted)
 static bool g_ref_pending;
 static int g_hold_miss, g_hold_up_votes;  // held: decisions in a row over the hold's budget / with room for the next rate
 static int g_hold_met_votes;              // held at 20: decisions in a row whose frames already met 30 (with G + W in its budget)
@@ -235,7 +237,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         g_hold_dt = 2 * 1000 / 60.0, g_hold_w = W;
         g_floor_g = g_ref_g = G, g_ref_pending = false;
         g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
-        g_t30_cap = 0, g_t30_at = now;
+        g_t30_cap = 0, g_t30_at = now, g_t30_late = 0, g_t30_wait = 10, g_t30_off_at = -1e9;
     } else if (was_t30 && !t30 && g_hold_dt > 0) {
         LOG("[dynres] Internal FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
         g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
@@ -301,18 +303,32 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         }
         if (g_hold_dt > 0) budget = g_hold_dt * 0.87;
         // Target 30: the frames themselves must come every 33.3 ms. G + W fitting the hold's budget isn't enough where the
-        // CPU's part of a frame doesn't overlap the GPU's (Retroid Pocket 5, Mabe Village: G + W 19 ms at 1.00 under a 29 ms
-        // budget, frames every 39-50 ms). Frames slower than the hold with the GPU a real part of them cap G + W just under
-        // what it was: the factor steps down to fit and raises stay under it. 30 s of frames on time eases the cap 5%.
+        // CPU's part of a frame doesn't overlap the GPU's (Retroid Pocket 5, Mabe Village, the runtime built -O0: G + W 19
+        // ms at 1.00 under a 29 ms budget, frames every 39-50 ms). Frames slower than the hold with the GPU a real part of
+        // them, 1.5 s in a row, cap G + W just under what it was: the factor steps down to fit and raises stay under it.
+        // 10 s of frames on time lifts the cap (the normal raises take it back up); late again within 30 s of that, the
+        // next lift waits twice as long (at most 2 minutes; back to 10 s after a minute without a cap). It took one late
+        // half second and eased 5% every 30 s: the frames after a warp (shaders compiling, 35.5 ms with G + W 16 ms) kept
+        // R6 on the Retroid at 0.60 for minutes where 1.00 holds 30.
         if (t30 && g_hold_dt > 0 && hold_vsyncs() == 2) {
-            if (avg_dt > 1.06 * g_hold_dt && !spikes && avg_gpu > 0.4 * g_hold_dt && now >= g_dyn_cool_until) {
+            bool late = avg_dt > 1.06 * g_hold_dt && !spikes && avg_gpu > 0.4 * g_hold_dt;
+            g_t30_late = late ? g_t30_late + 1 : 0;
+            if (late && g_t30_late >= 3 && now >= g_dyn_cool_until) {
                 double cap = 0.92 * avg_gpu;
-                if (g_t30_cap <= 0 || cap < g_t30_cap)
+                if (g_t30_cap <= 0) {
+                    g_t30_wait = now - g_t30_off_at < 30.0 ? fmin(2 * g_t30_wait, 120.0) : now - g_t30_off_at > 60.0 ? 10.0 : g_t30_wait;
+                    LOG("[dynres] Internal FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
+                        "G + W kept under %.1f ms (lifted after %.0f s on time)\n", avg_dt, G, W, g_dyn, cap, g_t30_wait);
+                } else if (cap < g_t30_cap)
                     LOG("[dynres] Internal FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
                         "G + W kept under %.1f ms\n", avg_dt, G, W, g_dyn, cap);
                 g_t30_cap = g_t30_cap > 0 ? fmin(g_t30_cap, cap) : cap, g_t30_at = now;
-            } else if (g_t30_cap > 0 && avg_dt <= 1.02 * g_hold_dt && now - g_t30_at > 30.0)
-                g_t30_cap *= 1.05, g_t30_at = now;
+            } else if (late || avg_dt > 1.02 * g_hold_dt)
+                g_t30_at = now;  // (the lift waits for frames on time)
+            else if (g_t30_cap > 0 && now - g_t30_at >= g_t30_wait) {
+                LOG("[dynres] Internal FPS target 30: frames on time for %.0f s, the cap (%.1f ms) lifted\n", g_t30_wait, g_t30_cap);
+                g_t30_cap = 0, g_t30_off_at = now;
+            }
             if (g_t30_cap > 0) budget = fmin(budget, g_t30_cap);
         }
         // 60 out of reach at the floor and the frames wait for the display: lower gains nothing, hold that frame rate
