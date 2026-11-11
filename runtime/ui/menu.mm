@@ -844,8 +844,7 @@ static void tab_cosmetics(void) {
     opt_section("Screen");
     opt_preview("Screen filter", &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
                "Puts a filter over the whole screen, HUD included.");
-#ifdef __APPLE__  // (the Metal renderer draws it; Vulkan: not yet - the setting does nothing there)
-    {   // (the seed's weather cycle: "Seed", the seed's weather - locked)
+    {   // (the seed's weather cycle: "Seed", the seed's weather - locked; Metal and Vulkan both draw it: weather_vk.c)
         const char *names[N_WEATHERS];
         for (int i = 0; i < N_WEATHERS; i++) names[i] = g_weathers[i];
         bool cycle = weather_cycle_on();
@@ -854,7 +853,6 @@ static void tab_cosmetics(void) {
         opt_choice("Weather", cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
                    cycle ? "This seed picked the weather. Commit to it!" : "Rain, snow, a storm or a blizzard on the overworld.");
     }
-#endif
     opt_end();
 }
 
