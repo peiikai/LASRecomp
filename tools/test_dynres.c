@@ -184,7 +184,8 @@ int main(int argc, char **argv) {
         // x2 swinging +-15% (G 32.7 at the floor, 0.25): 20 fps, no hunting between 20 and 30
         {"4K bilinear, held 30, G x2 from 30 s, load swinging +-15% (fifo)", 14, 37.6, 0.9, 1, 0, 240, 0.15, 30, 2.0},
         // walking around, a fast GPU at the edge (5120x1440 class: G 13.6 + W 1 at 1.00, the load wandering +-10%):
-        // it hunted here - 45 steps in 6 min before. A few changes at most
+        // it hunted here in big steps - 45 in 6 min with frames missing. Now it follows the load in 0.05 steps (a step
+        // isn't seen, a missed frame is): 60 throughout, a step every ~6 s at most
         {"edge at 1.00, load wandering +-10% (fifo)", 1.6, 12, 1.0, 1, 0, 360, 0.01, 0, 0, 0, 0.10},
         // the same edge lower down (G 13.2 at 0.80), wandering +-15%
         {"edge at 0.80, load wandering +-15% (fifo)", 1.5, 18.3, 0.8, 1, 0, 360, 0.01, 0, 0, 0, 0.15},
@@ -249,7 +250,7 @@ int main(int argc, char **argv) {
     case 6: check(r.f_end >= 0.35 && r.fps_end > 58 && r.changes_last60 == 0, "4K bilinear f^2: 60 under 0.50"); break;
     case 7: check(r.f_end == 1.0 && r.fps_end > 58, "fast GPU: full resolution"); break;
     case 8: check(r.fps_end > 58 && r.changes_last60 <= 2, "4K bilinear +-15%: 60, steady"); break;
-    case 9: check(r.fps_end > 58 && r.changes_last60 <= 2, "1080p bilinear +-15%: 60, few steps"); break;
+    case 9: check(r.fps_end > 58 && r.changes_last60 <= 10, "1080p bilinear +-15%: 60, following the scene in small steps"); break;
     case 10: check(r.fps_end > 58 && r.changes_last60 == 0, "1080p game scaler off: 60"); break;
     case 11: check(r.fps_end > 29 && r.f_end < 0.26 && r.changes_last60 <= 2, "4K FSR 44 ms: 30 at the floor"); break;
     case 12: check(near(r.hold_end, 30) && r.fps_end > 28 && r.changes_last60 <= 2, "G x1.44: hold 30 at a lower factor"); break;
@@ -257,8 +258,8 @@ int main(int argc, char **argv) {
     case 14: check(near(r.hold_end, 30) && r.fps_end > 28 && r.changes_last60 <= 2 && r.back30_t > 0 && r.back30_t < 154,
                    "G x1.8 then back: 20, then 30 within a few seconds"); break;
     case 15: check(near(r.hold_end, 20) && r.fps_end > 19 && r.hold_changes <= 5, "G x2 +-15%: 20, no hunting"); break;
-    case 16: check(r.changes_settled <= 4 && r.fps_end > 58, "edge at 1.00 wandering: a few changes in 6 min"); break;
-    case 17: check(r.changes_settled <= 8 && r.fps_end > 58, "edge at 0.80 wandering: a few changes in 6 min"); break;
+    case 16: check(r.changes_settled <= 60 && r.fps_end > 58, "edge at 1.00 wandering: 60, small steps at most every ~6 s"); break;
+    case 17: check(r.changes_settled <= 60 && r.fps_end > 58, "edge at 0.80 wandering: 60, small steps at most every ~6 s"); break;
     case 18: check(r.fps_end > 58 && r.hold_end == 0 && r.hold_t < 150, "iGPU clock lock-in: back to 60 after the heavy stretch"); break;
     // (held 30 in a smaller window: the hold goes on - or 60 fits at the window's floor now, found by a probe)
     case 19: check(r.f_after >= r.f_before - 1e-6 && r.slow_after == 0 && (near(r.hold_end, 30) ? r.changes_after <= 1 : r.fps_end > 58),
