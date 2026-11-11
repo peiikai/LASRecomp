@@ -9,7 +9,7 @@
 > As with anything on the internet, you run the code at your own discretion.
 
 **LAS Recomp** is a static recompilation of *The Legend of Zelda: Link's Awakening* (Nintendo Switch, 2019) into a
-native Windows, macOS, Linux and Android application.
+native Windows, macOS, Linux, Android and iOS application.
 
 > [!NOTE]
 > Currently supported platforms:
@@ -17,6 +17,7 @@ native Windows, macOS, Linux and Android application.
 > - Windows - x86-64 only, Vulkan graphics backend
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
 > - Android - arm64, Vulkan graphics backend - **experimental**: the latest APK is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page
+> - iPhone and iPad - arm64, Metal graphics backend (sideloaded: see [iPhone and iPad](#iphone-and-ipad))
 > - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
 
@@ -50,6 +51,13 @@ These are the minimums during the beta and may change as development continues.
 > On low-end devices around this level, we recommend setting Internal resolution to Dynamic, Minimum resolution to 360p and
 > Internal FPS target to 30.
 
+**iPhone and iPad:**
+
+| | Minimum |
+|---|---|
+| OS | iOS or iPadOS 16 or newer |
+| Device | 8 GB of RAM: iPhone 15 Pro or newer, or an iPad with an M1 chip or newer |
+
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
 
 > [!NOTE]
@@ -77,6 +85,28 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 - Add the AppImage to Steam as a non-Steam game and play it from there. In Desktop Mode, games Steam didn't launch
   get Steam's desktop controller layout, which sends extra keyboard presses.
 - If it won't start, add this to the game's launch options in Steam: `APPIMAGE_EXTRACT_AND_RUN=1 %command%`
+
+## iPhone and iPad
+
+The iOS app is made on your computer from your own game files, then sideloaded.
+
+1. Set up LAS Recomp on a Mac, Windows or Linux computer as usual.
+2. From the same release, download `LAS Recomp-<version>-iOS.laskit`.
+3. On the start screen, open Settings > Game files > Recomp for iOS..., choose the kit, then Export iOS app.
+   The app is saved to your Downloads folder as `LAS Recomp-<version>-iOS.ipa`.
+4. Install the .ipa with a sideloading tool such as SideStore, AltStore or Sideloadly. A free Apple account works,
+   but the app then has to be refreshed every 7 days. LAS Recomp only makes the .ipa. Installing it is up to you,
+   and we can't help with these tools since they're made by others. The extra steps come from Apple's limits on
+   installing apps, not from LAS Recomp.
+5. Copy your game files folder (with `exefs` and `romfs` in it) to the phone or iPad:
+   - Mac: connect it with a cable, select it in Finder's sidebar, open the Files tab and drag the folder onto
+     LAS Recomp.
+   - Windows: the same in the Apple Devices app (or iTunes), under Files > LAS Recomp.
+   - USB-C drive: put the folder on the drive and plug it in (iPhone 15 or newer, USB-C iPads).
+   - iCloud Drive: upload the folder, then in the Files app move it to On My iPhone (or On My iPad). LAS Recomp
+     won't use game files that are still on iCloud Drive.
+6. Open the app and choose that folder when it asks for your game files. Use the same game version as the files
+   on your computer.
 
 ## Features
 
@@ -183,7 +213,8 @@ Where files live (game files, saves, seeds, settings and logs):
 - Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
 - Linux: `~/.local/share/lasrecomp/`
 - Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
-- You can move it to another folder or drive in Settings > Prelaunch > Data folder.
+- iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
+- You can move it to another folder or drive in Settings > Game files > Data folder.
 - `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
 
