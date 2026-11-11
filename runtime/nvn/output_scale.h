@@ -15,6 +15,8 @@ typedef struct {
 // unknown / not counted)
 void output_scale(double dw, double dh, bool reshape_allowed, double now, double game_ms, double win_ms, OutScale *o);
 double output_scale_dynamic_factor(void);
+// The size the game's frames are drawn at now (pixels: the render scale x 1920x1080); the FPS counter shows it with Dynamic
+void output_scale_render_size(int *w, int *h);
 double output_scale_dynamic_hold_fps(void);
 // The scale of the game's ambient occlusion targets (metal.m / vulkan/textures.c tex_ao) at allocation scale `al`: 1 =
 // the Switch's size, up to 2 (Video tab "Ambient occlusion"). 0: LARECOMP_AO_SCALED=1, they follow the render scale.

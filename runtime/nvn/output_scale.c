@@ -467,6 +467,8 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
 }
 
 double output_scale_dynamic_factor(void) { return g_dyn; }
+static volatile int g_render_w, g_render_h;  // (the last frame's render size: the FPS counter's, menu.mm)
+void output_scale_render_size(int *w, int *h) { *w = g_render_w, *h = g_render_h; }
 double output_scale_dynamic_hold_fps(void) { return g_hold_dt > 0 ? 1000 / g_hold_dt : 0; }
 
 // The game's ambient occlusion is drawn at a quarter of 1080p (480x270, then blurred, and a 240x135 level) and kept at
@@ -578,6 +580,7 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     if (cap < 1.0) { ax *= cap; ay *= cap; }
     o->ax = ax; o->ay = ay;
     o->sx = ax * dyn; o->sy = ay * dyn; o->shape = shape;
+    g_render_w = (int)lround(1920.0 * o->sx), g_render_h = (int)lround(1080.0 * o->sy);
     // where the image goes in the window: fills it when reshaped, else a fitted 16:9 box
     if (reshape) { o->vw = dw; o->vh = dh; }
     else { o->vw = 1920.0 * fit; o->vh = 1080.0 * fit; }
