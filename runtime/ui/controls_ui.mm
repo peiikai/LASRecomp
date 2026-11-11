@@ -395,18 +395,18 @@ extern "C" void touch_tab_draw(float scale) {
     opt_begin("##touch", scale);
     opt_section("Display");
     {
-        static const char *const modes[] = {"Auto (no controller)", "Always", "Off"};
-        row("Show", &g_settings.touch_mode, modes, 3, 0,
-            "On-screen buttons for the touch screen. The middle button at the top opens this menu.", true);
-        static const char *const which[] = {"What the game uses", "All"};
+        static const char *const modes[] = {LN("Auto (no controller)"), LN("Always"), LN("Off")};
+        row(LN("Show"), &g_settings.touch_mode, modes, 3, 0,
+            LN("On-screen buttons for the touch screen. The middle button at the top opens this menu."), true);
+        static const char *const which[] = {LN("What the game uses"), LN("All")};
         int v = g_settings.touch_all ? 1 : 0;
-        if (row("Buttons", &v, which, 2, 0,
-                "What the game uses: only the buttons that do something right now - B once Link has the sword, "
-                "R with the shield, X / Y with the items you equip. All: every button, all the time.", true))
+        if (row(LN("Buttons"), &v, which, 2, 0,
+                LN("What the game uses: only the buttons that do something right now - B once Link has the sword, "
+                   "R with the shield, X / Y with the items you equip. All: every button, all the time."), true))
             g_settings.touch_all = v != 0;
-        static const char *const off_on[] = {"Off", "On"};
+        static const char *const off_on[] = {LN("Off"), LN("On")};
         int hide = g_settings.touch_hide_xy_hud ? 1 : 0;
-        if (row("Hide X/Y item HUD", &hide, off_on, 2, 0, "Hides the game's own X / Y items while the on-screen buttons are shown.", true))
+        if (row(LN("Hide X/Y item HUD"), &hide, off_on, 2, 0, LN("Hides the game's own X / Y items while the on-screen buttons are shown."), true))
             g_settings.touch_hide_xy_hud = hide != 0;
     }
     opt_section("Appearance");
@@ -423,15 +423,16 @@ extern "C" void touch_tab_draw(float scale) {
         for (int i = 0; i < 18; i++) snprintf(op_text[i], 8, "%d%%", 15 + i * 5), op_names[i] = op_text[i];
         int sz = (int)lroundf((g_settings.touch_size * 100 - 60) / 5), op = (int)lroundf((g_settings.touch_opacity * 100 - 15) / 5);
         sz = sz < 0 ? 0 : sz > 20 ? 20 : sz, op = op < 0 ? 0 : op > 17 ? 17 : op;
-        if (row("Size", &sz, size_names, 21, 8, "The on-screen buttons' size.", false)) g_settings.touch_size = (60 + sz * 5) / 100.0f;
-        if (row("Opacity", &op, op_names, 18, 9, "How see-through the on-screen buttons are.", false))
+        if (row(LN("Size"), &sz, size_names, 21, 8, LN("The on-screen buttons' size."), false)) g_settings.touch_size = (60 + sz * 5) / 100.0f;
+        if (row(LN("Opacity"), &op, op_names, 18, 9, LN("How see-through the on-screen buttons are."), false))
             g_settings.touch_opacity = (15 + op * 5) / 100.0f;
     }
     opt_section("Layout");
     {
-        static const char *const move[] = {"Stick", "D-pad"};
+        // ("Joystick", not "Stick": that key is the trading item, in every language)
+        static const char *const move[] = {LN("Joystick"), LN("D-pad")};
         int v = g_settings.touch_dpad ? 1 : 0;
-        if (row("Movement", &v, move, 2, 0, "Stick: any direction. D-pad: eight directions.", true)) g_settings.touch_dpad = v != 0;
+        if (row(LN("Movement"), &v, move, 2, 0, LN("Joystick: any direction. D-pad: eight directions."), true)) g_settings.touch_dpad = v != 0;
         bool f = !g_settings.touch_stick_fixed;
         if (opt_toggle("Follow thumb", &f, true,
                        "On: it comes to where your thumb lands, anywhere on the lower left. Off: it stays where it is "

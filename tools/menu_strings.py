@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """The English text the menus show, and the translation tables' state (runtime/ui/i18n.mm, runtime/ui/lang/<code>.inc).
 
-    tools/menu_strings.py check                 what each table lacks (and has that nothing uses)
+    tools/menu_strings.py check [--strict]      what each table lacks (and has that nothing uses); fails on a
+                                                translation whose placeholders differ from the English, and with
+                                                --strict (release builds) also on a missing translation
     tools/menu_strings.py missing <code> [out]  the English a table lacks, as JSON {"English": ""} (to fill in)
     tools/menu_strings.py merge <code> <json>   adds {"English": "translation"} to the table (rewritten in order)
     tools/menu_strings.py keys                  every English text, with where it comes from
@@ -123,24 +125,26 @@ def shown(s):
 
 
 CALL = re.compile(r'\b(LN|L_line|L|opt_[a-z_]+)\s*\(')
+CALL_JAVA = re.compile(r'\b(tr)\s*\(')  # (Android's activity: LASRecompActivity.tr)
 
 
 def source_keys():
-    files = sorted(glob.glob(os.path.join(ROOT, 'runtime', 'ui', '*.mm')) + glob.glob(os.path.join(ROOT, 'runtime', 'ui', '*.h')) +
-                   glob.glob(os.path.join(ROOT, 'runtime', '*.c')) + glob.glob(os.path.join(ROOT, 'runtime', 'hle', '*.c')))
+    files = sorted(f for ext in ('c', 'cpp', 'm', 'mm', 'h') for f in glob.glob(os.path.join(ROOT, 'runtime', '**', '*.' + ext), recursive=True)
+                   if os.sep + 'ios-sdk' + os.sep not in f)
+    files += sorted(glob.glob(os.path.join(ROOT, 'android', 'app', 'src', 'main', 'java', '**', '*.java'), recursive=True))
     for f in files:
         name = os.path.relpath(f, ROOT)
-        if name.endswith(('warp_data.h', 'i18n.h', 'option_rows.h')):
+        if name.endswith(('warp_data.h', 'i18n.h', 'option_rows.h', 'i18n_mark.h')):
             continue
         src = strip_comments(open(f, encoding='utf-8').read())
-        for m in CALL.finditer(src):
+        for m in (CALL_JAVA if name.endswith('.java') else CALL).finditer(src):
             fn = m.group(1)
             if fn.startswith('opt_') and src[m.start() - 5:m.start()].strip().endswith(('bool', 'void', 'int')):
                 continue  # (a declaration / definition)
             args = call_args(src, m.end() - 1)
             for s in literals(args):
                 s = shown(s)
-                if s and name.endswith('.c') and fn == 'LN':
+                if s and name.endswith(('.c', '.cpp')) and fn == 'LN':
                     # (C text is filled in before the menus see it: they translate it with L_line, as a %s pattern)
                     s = re.sub(r'%[-0-9.]*(?:ll|l|z)?[dus]', '%s', s)
                 if s:
@@ -396,7 +400,12 @@ def main():
         return 0
     keys = all_keys()
     if cmd == 'check':
-        bad = 0
+        # Contributors write English only and we fill the tables after a merge (AGENTS.md), so a missing translation
+        # is a warning in pull requests and fails only a release (--strict). A wrong placeholder is always an error:
+        # the translation would print the wrong value or crash printf.
+        strict = '--strict' in sys.argv[2:]
+        gh = os.environ.get('GITHUB_ACTIONS') == 'true'
+        missing, wrong_n, report = 0, 0, []
         print(f'{len(keys)} texts')
         for code in CODES:
             t = read_table(code)
@@ -406,8 +415,34 @@ def main():
             print(f'{code:8} {len(t):6} translated, {len(miss):5} missing, {len(unused):4} unused, {len(wrong)} with other % than the English')
             for k in wrong[:10]:
                 print(f'    % mismatch: {k!r} -> {t[k]!r}')
-            bad += len(miss) + len(wrong)
-        return 1 if bad else 0
+                if gh:
+                    print(f'::error file=runtime/ui/lang/{code}.inc,title=Placeholders differ from the English::{json.dumps(k)}')
+            missing += len(miss)
+            wrong_n += len(wrong)
+            if miss:
+                report.append((code, miss))
+        if missing:
+            print(f'\n{missing} translations missing (tools/menu_strings.py missing <code> lists them to fill in):')
+            for code, miss in report:
+                for k in miss[:20]:
+                    print(f'    {code}: {json.dumps(k, ensure_ascii=False)}  ({keys.get(k)})')
+                if len(miss) > 20:
+                    print(f'    {code}: ... {len(miss) - 20} more')
+            if gh:
+                level = 'error' if strict else 'warning'
+                langs = ', '.join(f'{c} {len(m)}' for c, m in report)
+                print(f'::{level} title=Untranslated menu text::{missing} translations missing ({langs}). '
+                      'English shows until they are added: tools/menu_strings.py missing <code>, then merge.')
+                summary = os.environ.get('GITHUB_STEP_SUMMARY')
+                if summary:
+                    with open(summary, 'a', encoding='utf-8') as f:
+                        f.write(f'### Untranslated menu text: {missing} missing\n\n')
+                        for code, miss in report:
+                            f.write(f'<details><summary>{code}: {len(miss)}</summary>\n\n')
+                            for k in miss:
+                                f.write('- `' + k.replace('\n', ' ') + '`\n')
+                            f.write('\n</details>\n\n')
+        return 1 if wrong_n or (strict and missing) else 0
     if cmd == 'missing':
         code = sys.argv[2]
         t = read_table(code)

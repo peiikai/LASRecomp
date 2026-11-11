@@ -9,6 +9,7 @@
 #include <io.h>
 #include <wchar.h>
 
+#include "../i18n_mark.h"
 #include "../platform.h"
 
 void rt_crash_explain(char *out, size_t n, const char *log_path);  // runtime/crash_explain.c
@@ -493,7 +494,8 @@ static void require_cpu(void) {
 #else
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    MessageBoxA(NULL, "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
+    // (the box in the system's language: only the game code needs AVX2, not the lookup)
+    MessageBoxA(NULL, L("LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer)."),
                 "LAS Recomp", MB_ICONERROR | MB_OK);
     ExitProcess(1);
 #endif

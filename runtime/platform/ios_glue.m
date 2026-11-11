@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <stdatomic.h>
 
+#include "../i18n_mark.h"
 #include "../paths.h"
 #include "../platform.h"
 #include "ios_internal.h"
@@ -93,7 +94,7 @@ static void shortcuts_apply(void) {
                                                                     icon:[UIApplicationShortcutIcon iconWithSystemImageName:@"dice"]
                                                                 userInfo:@{@"seed": s[@"name"]}]];
     }
-    [items addObject:[[UIApplicationShortcutItem alloc] initWithType:@"metal-hud" localizedTitle:@"Metal HUD"
+    [items addObject:[[UIApplicationShortcutItem alloc] initWithType:@"metal-hud" localizedTitle:@(L("Metal HUD"))
                                                    localizedSubtitle:nil
                                                                 icon:[UIApplicationShortcutIcon iconWithSystemImageName:@"gauge.with.dots.needle.67percent"]
                                                             userInfo:nil]];

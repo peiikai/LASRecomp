@@ -95,8 +95,12 @@ static bool writable(const char *dir) {
     return true;
 }
 
-static void fail(const char *msg) {
+// (the log line in English, the box in the menus' language: the system's, as the settings aren't read yet)
+static void fail(const char *fmt, const char *path) {
+    char msg[1400];
+    snprintf(msg, sizeof msg, fmt, path);
     fprintf(stderr, "%s\n", msg);
+    snprintf(msg, sizeof msg, L(fmt), path);
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
     exit(1);
 }
@@ -338,17 +342,19 @@ void rt_paths_init(void) {
         char ptr[1024];
         while (pointer_root(g_home, ptr, sizeof ptr)) {  // another folder chosen on the start screen
             if (ptr[0] && is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
+            const char *fmt = !ptr[0] ? LN("LAS Recomp's data folder isn't available any more.\n\nIf it's on a drive "
+                                           "that isn't connected, connect it and try again.")  // (iOS: no path to show)
+                                      : LN("LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that "
+                                           "isn't connected, connect it and try again.");
             char msg[1400];
-            if (!ptr[0]) snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available any more.\n\nIf it's on a "
-                                  "drive that isn't connected, connect it and try again.");  // (iOS: no path to show)
-            else snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
-                          "connected, connect it and try again.", ptr);
-            const SDL_MessageBoxButtonData b[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Try again"},
-                                                  {0, 1, "Use the default folder"},
-                                                  {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"}};
+            snprintf(msg, sizeof msg, L(fmt), ptr);
+            const SDL_MessageBoxButtonData b[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, L("Try again")},
+                                                  {0, 1, L("Use the default folder")},
+                                                  {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, L("Quit")}};
             const SDL_MessageBoxData box = {SDL_MESSAGEBOX_WARNING, NULL, "LAS Recomp", msg, 3, b, NULL};
             int k = 2;
-            if (!SDL_ShowMessageBox(&box, &k)) fprintf(stderr, "%s\n", msg);
+            fprintf(stderr, "[paths] data folder not available: %s\n", ptr[0] ? ptr : "(no path)");
+            SDL_ShowMessageBox(&box, &k);
             if (k == 2) exit(1);
             if (k == 1) {  // (the data there stays; the start screen can switch back to it)
                 char p[1100];
@@ -358,16 +364,14 @@ void rt_paths_init(void) {
         }
     }
     mkdirs(root);
-    char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
 #ifdef _WIN32
-        snprintf(msg, sizeof msg, "LAS Recomp can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
-                 "next to the program. Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or "
-                 "Desktop, not Program Files) and start it again.", root);
+        fail(LN("LAS Recomp can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds next to the program. "
+                "Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or Desktop, not Program "
+                "Files) and start it again."), root);
 #else
-        snprintf(msg, sizeof msg, "LAS Recomp can't write to its data folder:\n%s", root);
+        fail(LN("LAS Recomp can't write to its data folder:\n%s"), root);
 #endif
-        fail(msg);
     }
     if (!getcwd(g_root, sizeof g_root)) snprintf(g_root, sizeof g_root, "%s", root);
     fprintf(stderr, "[paths] data: %s\n", g_root);
@@ -606,8 +610,13 @@ static void moved(Move *m, unsigned long long n) {
     if (m->progress) m->progress(m->step, m->total ? (double)m->done / (double)m->total : 1.0);
 }
 
+// what: an LN("... %s") pattern for the path, so the start screen can show the line in the menus' language
 static bool move_fail(Move *m, const char *what, const char *p) {
-    if (!m->err[0]) snprintf(m->err, m->errn, "%s %s (%s)", what, p, errno ? strerror(errno) : "differs");
+    if (m->err[0]) return false;
+    int e = errno;
+    char head[1300];
+    snprintf(head, sizeof head, what, p);
+    snprintf(m->err, m->errn, "%s (%s)", head, e ? strerror(e) : LN("differs"));
     return false;
 }
 
@@ -655,7 +664,7 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
     }
     if (out) ok &= fflush(out) == 0 && fsync(fileno(out)) == 0, ok &= fclose(out) == 0;
     if (in) fclose(in);
-    if (!ok) return move_fail(m, "Couldn't copy", s);
+    if (!ok) return move_fail(m, LN("Couldn't copy %s"), s);
     struct utimbuf u = {st->st_atime, st->st_mtime};
     utime(d, &u);
     return true;
@@ -663,23 +672,23 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
 
 static bool copy_tree(Move *m, const char *s, const char *d) {
     struct stat st;
-    if (lstat_(s, &st) != 0) return move_fail(m, "Couldn't read", s);
+    if (lstat_(s, &st) != 0) return move_fail(m, LN("Couldn't read %s"), s);
     if (S_ISLNK(st.st_mode)) {
 #ifndef _WIN32
         char t[PATH_MAX];
         ssize_t k = readlink(s, t, sizeof t - 1);
-        if (k < 0) return move_fail(m, "Couldn't read", s);
+        if (k < 0) return move_fail(m, LN("Couldn't read %s"), s);
         t[k] = 0;
         remove(d);
-        if (symlink(t, d) != 0) return move_fail(m, "Couldn't copy", s);
+        if (symlink(t, d) != 0) return move_fail(m, LN("Couldn't copy %s"), s);
 #endif
         return true;
     }
     if (S_ISREG(st.st_mode)) return copy_file(m, s, d, &st);
     if (!S_ISDIR(st.st_mode)) return true;  // (sockets and such: nothing of ours)
-    if (mkdir(d, 0755) != 0 && !is_dir(d)) return move_fail(m, "Couldn't create", d);
+    if (mkdir(d, 0755) != 0 && !is_dir(d)) return move_fail(m, LN("Couldn't create %s"), d);
     DIR *dir = opendir(s);
-    if (!dir) return move_fail(m, "Couldn't read", s);
+    if (!dir) return move_fail(m, LN("Couldn't read %s"), s);
     bool ok = true;
     struct dirent *e;
     while (ok && !move_cancelled(m) && (e = readdir(dir))) {
@@ -710,27 +719,27 @@ static bool same_bytes(Move *m, const char *a, const char *b) {
 static bool check_tree(Move *m, const char *s, const char *d) {
     struct stat a, b;
     errno = 0;
-    if (lstat_(s, &a) != 0 || lstat_(d, &b) != 0) return move_fail(m, "Missing in the copy:", d);
-    if ((a.st_mode & S_IFMT) != (b.st_mode & S_IFMT)) return move_fail(m, "Differs in the copy:", d);
+    if (lstat_(s, &a) != 0 || lstat_(d, &b) != 0) return move_fail(m, LN("Missing in the copy: %s"), d);
+    if ((a.st_mode & S_IFMT) != (b.st_mode & S_IFMT)) return move_fail(m, LN("Differs in the copy: %s"), d);
     if (S_ISREG(a.st_mode)) {
-        if (a.st_size != b.st_size) return move_fail(m, "Differs in the copy:", d);
+        if (a.st_size != b.st_size) return move_fail(m, LN("Differs in the copy: %s"), d);
 #ifndef _WIN32
         if (a.st_dev == b.st_dev && a.st_ino == b.st_ino) { moved(m, a.st_size); return true; }  // (the same file)
 #endif
         errno = 0;
-        return same_bytes(m, s, d) || move_fail(m, "Differs in the copy:", d);
+        return same_bytes(m, s, d) || move_fail(m, LN("Differs in the copy: %s"), d);
     }
 #ifndef _WIN32
     if (S_ISLNK(a.st_mode)) {
         char ta[PATH_MAX] = {0}, tb[PATH_MAX] = {0};
         if (readlink(s, ta, sizeof ta - 1) < 0 || readlink(d, tb, sizeof tb - 1) < 0 || strcmp(ta, tb))
-            return move_fail(m, "Differs in the copy:", d);
+            return move_fail(m, LN("Differs in the copy: %s"), d);
         return true;
     }
 #endif
     if (!S_ISDIR(a.st_mode)) return true;
     DIR *dir = opendir(s);
-    if (!dir) return move_fail(m, "Couldn't read", s);
+    if (!dir) return move_fail(m, LN("Couldn't read %s"), s);
     bool ok = true;
     struct dirent *e;
     while (ok && !move_cancelled(m) && (e = readdir(dir))) {
@@ -804,7 +813,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     join(p, sizeof p, abs_to, MARK_PARTIAL);
     join(q, sizeof q, from, NOTE_TO);
     bool ok = m.buf && m.buf2 && write_line(p, from) && write_note(q, abs_to);
-    if (!ok) move_fail(&m, "Couldn't write to", abs_to);
+    if (!ok) move_fail(&m, LN("Couldn't write to %s"), abs_to);
     fprintf(stderr, "[paths] moving the data (%.2f GB) from %s to %s\n", m.total / 1e9, from, abs_to);
     for (int step = 0; step < 2 && ok; step++) {  // copy, then check every file of the copy
         m.step = step, m.done = 0;
@@ -824,7 +833,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     if (ok) {
         join(q, sizeof q, abs_to, NOTE_FROM);
         ok = write_note(q, from) && remove(p) == 0;
-        if (!ok) move_fail(&m, "Couldn't write to", abs_to);
+        if (!ok) move_fail(&m, LN("Couldn't write to %s"), abs_to);
     }
     if (ok && !point_to(abs_to)) ok = false, snprintf(err, n, LN("Couldn't save the data folder's location in %s."), g_home);
     if (!ok) {

@@ -50,6 +50,18 @@ jobs:
           fi
           echo "code=$code" | tee -a "$GITHUB_OUTPUT"
 
+  # The menus' translation tables (runtime/ui/lang/): a translation whose placeholders differ from the English fails;
+  # text not translated yet is listed as a warning (contributors write English only: we translate after a merge, and
+  # release.yml fails while any is missing).
+  translations:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Translation tables (tools/menu_strings.py check)
+        run: python3 tools/menu_strings.py check
+
   linux:
     needs: changes
     if: needs.changes.outputs.code == 'true'

@@ -94,6 +94,10 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "platforms: $PLATFORMS"
           echo "$TAG: $SHA, LARECOMP_VERSION $VERSION"
+      # every menu text translated before a release (pull requests only warn: ci.yml); test builds may lack some
+      - name: Translation tables complete
+        if: steps.v.outputs.skip != 'true' && !startsWith(inputs.tag || github.event.release.tag_name, 'test-') && !startsWith(inputs.tag || github.event.release.tag_name, 'ci-test-')
+        run: python3 tools/menu_strings.py check --strict
 
   macos:
     needs: check

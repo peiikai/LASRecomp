@@ -227,7 +227,7 @@ public class LASRecompActivity extends SDLActivity {
         android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("LAS Recomp").setMessage(msg).setCancelable(false);
         if (snapdragon())  // (elsewhere no package can help: Close, or back to the phone's own driver)
-            b.setPositiveButton("Choose a driver package", (d, w) -> {
+            b.setPositiveButton(tr("Choose a driver package"), (d, w) -> {
                 Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 i.addCategory(Intent.CATEGORY_OPENABLE);
                 i.setType("*/*");
@@ -235,15 +235,15 @@ public class LASRecompActivity extends SDLActivity {
                     startActivityForResult(i, PICK_DRIVER_RECOVER);
                 } catch (Exception e) {
                     Log.e(TAG, "file picker: " + e);
-                    showDriverError("The file picker couldn't open.");
+                    showDriverError(tr("The file picker couldn't open."));
                 }
             });
-        b.setNegativeButton("Close", (d, w) -> {
+        b.setNegativeButton(tr("Close"), (d, w) -> {
             synchronized (dlgLock) { dlgDone = true; dlgLock.notifyAll(); }
         });
         File[] custom = new File(getExternalFilesDir(null), "drivers").listFiles((dir, n) -> n.endsWith(".so") || n.endsWith(".zip"));
         if (custom != null && custom.length > 0)
-            b.setNeutralButton("Use the phone's own driver", (d, w) -> {
+            b.setNeutralButton(tr("Use the phone's own driver"), (d, w) -> {
                 deleteTree(new File(getExternalFilesDir(null), "drivers"));
                 deleteTree(new File(getFilesDir(), "drivers"));
                 restartApp();
@@ -397,6 +397,12 @@ public class LASRecompActivity extends SDLActivity {
     private static final int PICK_GAME_FOLDER = 0x4c41;  // (SDL's own dialogs use other request codes)
     private static final int PICK_DRIVER = 0x4c42;
     private static final int PICK_DRIVER_RECOVER = 0x4c43;  // (from the driver error dialog: the package, then a restart)
+    static native String nativeText(String en);  // the menus' language (runtime/ui/i18n.mm), English when there is none
+    // Text the player sees, in the menus' language: tools/menu_strings.py collects tr("...") (the native library is
+    // loaded by SDL's activity; before that, English)
+    static String tr(String en) {
+        try { return nativeText(en); } catch (UnsatisfiedLinkError e) { return en; }
+    }
     static native void nativeDriverPicked(String result);  // a package's name, "-" the system's again, "" not a driver
 
     static native void nativeFolderPicked(String uri);  // null: cancelled
@@ -485,7 +491,7 @@ public class LASRecompActivity extends SDLActivity {
             Uri f = resultCode == RESULT_OK && data != null ? data.getData() : null;
             String name = f != null ? copyDriver(f) : "";
             if (!name.isEmpty()) restartApp();
-            else showDriverError(f != null ? "That file isn't a driver package (.zip or .so)." : null);
+            else showDriverError(f != null ? tr("That file isn't a driver package (.zip or .so).") : null);
             return;
         }
         if (requestCode == PICK_DRIVER) {

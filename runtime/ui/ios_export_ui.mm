@@ -67,12 +67,16 @@ static void *export_thread(void *) {
         g_host.lock();
         g_out = out;
         g_host.unlock();
-        g_host.set_job(std::string(LN("iOS app exported to")) + " " + out, false, "");
+        char line[1300];
+        snprintf(line, sizeof line, LN("iOS app exported to %s"), out.c_str());
+        g_host.set_job(line, false, "");
     } else if (g_host.cancelled()) {
         g_host.set_job(LN("Export cancelled. Completed files are kept."), false, "");
     } else {
         fprintf(stderr, "[launcher] iOS export: %s\n", why);
-        g_host.set_job(LN("The iOS app couldn't be exported"), true, std::string(why) + ". " + LN("Details are in the log."));
+        char hint[700];
+        snprintf(hint, sizeof hint, LN("%s. Details are in the log."), why);
+        g_host.set_job(LN("The iOS app couldn't be exported"), true, hint);
     }
     g_host.end_background_work();
     g_host.lock();
@@ -124,7 +128,8 @@ void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
     if (!kit.empty()) kit_d += std::string("\n\n") + L("Chosen:") + " " + kit;
     if (busy) opt_disable_next();
     if (opt_action("iOS kit", kit.empty() ? "Choose..." : "Selected", kit_d.c_str(), true)) {
-        static const SDL_DialogFileFilter kit_filters[] = {{"iOS kit", "laskit"}};
+        static SDL_DialogFileFilter kit_filters[] = {{NULL, "laskit"}};  // (kept until the dialog answers)
+        kit_filters[0].name = L("iOS kit");
         SDL_ShowOpenFileDialog(picked_kit, NULL, win, kit_filters, 1, NULL, false);
     }
     std::string src_d = L("The game files set up here, or your own copy of the game: any folder the setup would accept "
@@ -143,11 +148,12 @@ void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
                       "app or Finder.");
     bool have_src = !src.empty() || ready;
     if (kit.empty()) d += std::string("\n\n") + L("Choose the iOS kit first.");
-    else if (!can) d += std::string("\n\n") + L("Not available:") + " " + g_why + ".";
+    else if (!can) d += std::string("\n\n") + L("Not available:") + " " + L_line(g_why) + ".";
     else if (!have_src) d += std::string("\n\n") + L("Choose the game files folder first.");
     if (busy || !can || !have_src) opt_disable_next();
     if (opt_action("Export iOS app...", busy ? "Working..." : "", d.c_str(), true)) {
-        static const SDL_DialogFileFilter filters[] = {{"iOS app", "ipa"}};
+        static SDL_DialogFileFilter filters[] = {{NULL, "ipa"}};
+        filters[0].name = L("iOS app");
         char def[1100];
         iosexport_default_path(def, sizeof def);
         SDL_ShowSaveFileDialog(picked_save, NULL, win, filters, 1, def);

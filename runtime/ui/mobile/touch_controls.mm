@@ -30,6 +30,7 @@
 #include <string.h>
 
 #include "imgui.h"
+#include "../i18n.h"
 #include "../plastic.h"
 #include "../../game_addresses.h"
 
@@ -98,7 +99,7 @@ static int g_sel = -1;                                // the selected control
 static float g_epos[C_COUNT][2], g_escale[C_COUNT];   // the draft: positions (share of the screen) and sizes
 static bool g_ehid[C_COUNT];
 enum { E_SMALLER = 100, E_BIGGER, E_HIDE, E_RESET, E_CANCEL, E_DONE };
-static const char *const kEditBar[] = {"-", "+", "Hide", "Default", "Cancel", "Done"};
+static const char *const kEditBar[] = {"-", "+", LN("Hide"), LN("Default"), LN("Cancel"), LN("Done")};
 static float g_bar_x[6], g_bar_y, g_bar_w[6], g_bar_h;
 
 static void defaults(float w, float h) {
@@ -742,7 +743,7 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
     }
     int ts = ctx == X_TITLE && !g_editing ? title_screen() : 0;
     if (ts == 1 || (ts == 2 && !g_file_picked)) {  // what a tap does (past the file select: the game's own)
-        const char *t = ts == 2 ? "Tap a file to play" : "Tap to start";
+        const char *t = ts == 2 ? L("Tap a file to play") : L("Tap to start");
         // (the title screen: on its "Press L + R")
         float ty = ts == 2 ? h - 40 * tt : h * 0.735f;
         // the menus' own framed panel, solid (over the title's "Press L + R": a tap does that here), the words fading gently
@@ -770,12 +771,12 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
                     g_editing && g_sel == C_STICK);
     }
     if (g_editing) {  // the editor's hint and bar
-        label_text(dl, font, 30 * tt, ImVec2(w * 0.5f, h * 0.31f), "Drag the controls to move them. Tap one to resize or hide it.",
+        label_text(dl, font, 30 * tt, ImVec2(w * 0.5f, h * 0.31f), L("Drag the controls to move them. Tap one to resize or hide it."),
                    IM_COL32(255, 255, 255, 255), true);
         float bh = 64 * tt, gap = 14 * tt, pad = 26 * tt, fs = 30 * tt, tot = 0;
         const char *labs[6];
         for (int i = 0; i < 6; i++) {
-            labs[i] = i == 2 && g_sel >= 0 && g_ehid[g_sel] ? "Show" : kEditBar[i];
+            labs[i] = L(i == 2 && g_sel >= 0 && g_ehid[g_sel] ? LN("Show") : kEditBar[i]);
             g_bar_w[i] = font->CalcTextSizeA(fs, 1e9f, 0, labs[i]).x + 2 * pad;
             tot += g_bar_w[i] + (i ? gap : 0);
         }

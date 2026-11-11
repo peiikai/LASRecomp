@@ -207,19 +207,19 @@ int osk_keys(char *text, size_t cap, int max_chars, bool appearing, float scale,
         float sp = ImGui::GetStyle().ItemSpacing.x, w2 = k * 2 + sp;
         if (ImGui::Button(upper ? "abc" : "ABC", ImVec2(w2, k))) upper = !upper;
         ImGui::SameLine();
-        if (ImGui::Button("Space", ImVec2(w2, k)) && len > 0) add(' ');
+        if (ImGui::Button(L("Space"), ImVec2(w2, k)) && len > 0) add(' ');
         ImGui::SameLine();
-        if (ImGui::Button("Delete", ImVec2(w2, k))) del();
+        if (ImGui::Button(L("Delete"), ImVec2(w2, k))) del();
         ImGui::SameLine();
-        if (ImGui::Button("Cancel", ImVec2(w2, k))) r = -1;
+        if (ImGui::Button(L("Cancel"), ImVec2(w2, k))) r = -1;
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.80f, 0.60f, 0.15f, 0.85f));
-        if (ImGui::Button("OK", ImVec2(w2, k))) r = 1;
+        if (ImGui::Button(L("OK"), ImVec2(w2, k))) r = 1;
         ImGui::PopStyleColor();
         if (s_pad.load())
             ImGui::TextDisabled(L("%s  type      %s  delete      %s  OK      (%d / %d)"), L(ui_pad_confirm_label()),
                                 L(ui_pad_back_label()), L(ui_pad_start_label()), len, max_chars);
-        else ImGui::TextDisabled("Tap the letters, then OK      (%d / %d)", len, max_chars);
+        else ImGui::TextDisabled(L("Tap the letters, then OK      (%d / %d)"), len, max_chars);
         return r;
     }
     if (ImGui::Button(upper ? "abc" : "ABC", ImVec2(k * 2, k))) upper = !upper;

@@ -1,5 +1,6 @@
 // Zip archives over miniz (runtime/zipfile.h).
 #include "zipfile.h"
+#include "i18n_mark.h"  // (LN: the start screen shows these lines in the menus' language)
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -86,14 +87,14 @@ bool zip_extract(ZipReader *r, const char *prefix, const char *dir, char *why, s
     size_t plen = prefix ? strlen(prefix) : 0;
     int n = zip_count(r);
     for (int i = 0; i < n; i++) {
-        if (cancelled && cancelled()) { snprintf(why, why_size, "cancelled"); return false; }
+        if (cancelled && cancelled()) { snprintf(why, why_size, LN("cancelled")); return false; }
         ZipEntry e;
         if (!zip_entry_at(r, i, &e)) { zip_why(&r->z, "entry", why, why_size); return false; }
         if (plen && (strncmp(e.name, prefix, plen) != 0 || (e.name[plen] != '/' && e.name[plen] != 0))) continue;
         const char *rel = e.name + plen;
         while (*rel == '/') rel++;
         if (!*rel) continue;
-        if (strstr(rel, "..")) { snprintf(why, why_size, "%s: unsafe name", e.name); return false; }
+        if (strstr(rel, "..")) { snprintf(why, why_size, LN("%s: unsafe name"), e.name); return false; }
         char out[2048];
         snprintf(out, sizeof out, "%s" SEP "%s", dir, rel);
         for (char *c = out + strlen(dir) + 1; *c; c++) if (*c == '/') *c = SEP[0];
@@ -111,14 +112,14 @@ bool zip_extract(ZipReader *r, const char *prefix, const char *dir, char *why, s
             int ti = zip_find(r, tname);
             free(target);
             if (ti < 0 || !mz_zip_reader_extract_to_file(&r->z, (mz_uint)ti, out, 0)) {
-                snprintf(why, why_size, "%s: a link whose target isn't in the archive", e.name);
+                snprintf(why, why_size, LN("%s: a link whose target isn't in the archive"), e.name);
                 return false;
             }
 #else
             remove(out);
             int rc = symlink(target, out);
             free(target);
-            if (rc != 0) { snprintf(why, why_size, "%s: can't make the link", out); return false; }
+            if (rc != 0) { snprintf(why, why_size, LN("%s: can't make the link"), out); return false; }
 #endif
             continue;
         }

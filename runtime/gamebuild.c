@@ -359,25 +359,25 @@ bool gamebuild_available(void) {
 // The kit (tools/ios_kit.sh, a zip) opened and looked over: the app, the headers, the link stub, a linker for this
 // machine. NULL: why, for the player.
 static ZipReader *open_kit(const char *kit, char *why, size_t why_size) {
-    if (!kit || !*kit) { snprintf(why, why_size, "choose the iOS kit (.laskit) of this release"); return NULL; }
+    if (!kit || !*kit) { snprintf(why, why_size, LN("choose the iOS kit (.laskit) of this release")); return NULL; }
     struct stat st;
-    if (stat(kit, &st) != 0) { snprintf(why, why_size, "the iOS kit isn't there any more: %s", kit); return NULL; }
+    if (stat(kit, &st) != 0) { snprintf(why, why_size, LN("the iOS kit isn't there any more: %s"), kit); return NULL; }
     if (S_ISDIR(st.st_mode)) {
-        snprintf(why, why_size, "choose the .laskit file itself, not an unpacked folder - it is used as it is");
+        snprintf(why, why_size, LN("choose the .laskit file itself, not an unpacked folder - it is used as it is"));
         return NULL;
     }
     char zwhy[256];
     ZipReader *z = zip_open(kit, zwhy, sizeof zwhy);
-    if (!z) { snprintf(why, why_size, "that isn't an iOS kit (.laskit): %s", zwhy); return NULL; }
+    if (!z) { snprintf(why, why_size, LN("that isn't an iOS kit (.laskit): %s"), zwhy); return NULL; }
     if (zip_find(z, KIT_APP "/Info.plist") < 0 || zip_find(z, "include/any-darwin-any/stdlib.h") < 0 ||
         zip_find(z, "libSystem.B.tbd") < 0) {
-        snprintf(why, why_size, "that isn't an iOS kit (.laskit): no " KIT_APP ", include/ or libSystem.B.tbd in it");
+        snprintf(why, why_size, LN("that isn't an iOS kit (.laskit): no %s, include/ or libSystem.B.tbd in it"), KIT_APP);
         zip_close(z);
         return NULL;
     }
     const char *e = getenv("LARECOMP_IOS_LD");
     if (!(e && *e && file_exists(e)) && zip_find(z, KIT_LD) < 0) {
-        snprintf(why, why_size, "the iOS kit has no linker for this machine (" KIT_LLD ")");
+        snprintf(why, why_size, LN("the iOS kit has no linker for this machine (%s)"), KIT_LLD);
         zip_close(z);
         return NULL;
     }
@@ -390,13 +390,13 @@ static ZipReader *open_kit(const char *kit, char *why, size_t why_size) {
 static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size, void (*progress)(double, const char *),
                        char *why, size_t why_size) {
     char id[17];
-    if (!zip_file_id(kit, id)) { snprintf(why, why_size, "can't read the iOS kit"); return false; }
+    if (!zip_file_id(kit, id)) { snprintf(why, why_size, LN("can't read the iOS kit")); return false; }
     char kits[1100], mark[1200], tmp[1200];
     snprintf(kits, sizeof kits, "%s" SEP "cache" SEP "ios-kit", rt_data_root());
     snprintf(dir, dir_size, "%s" SEP "%s", kits, id);
     snprintf(mark, sizeof mark, "%s" SEP ".complete", dir);
     if (file_exists(mark)) return true;
-    if (progress) progress(0, "Unpacking the iOS tools...");
+    if (progress) progress(0, LN("Unpacking the iOS tools..."));
     snprintf(tmp, sizeof tmp, "%s.tmp", dir);
     plat_remove_tree(tmp);
     char parent[1100];
@@ -410,7 +410,7 @@ static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size
         snprintf(sub, sizeof sub, "%s" SEP "%s", tmp, parts[i]);
         for (char *c = sub + strlen(tmp) + 1; *c; c++) if (*c == '/') *c = SEP[0];
         if (!zip_extract(z, parts[i], sub, zwhy, sizeof zwhy, NULL)) {
-            snprintf(why, why_size, "couldn't unpack the iOS kit's %s: %s", parts[i], zwhy);
+            snprintf(why, why_size, LN("couldn't unpack the iOS kit's %s: %s"), parts[i], zwhy);
             plat_remove_tree(tmp);
             return false;
         }
@@ -422,12 +422,12 @@ static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size
     bool ok = f && fwrite(tbd, 1, n, f) == n;
     if (f) fclose(f);
     free(tbd);
-    if (!ok) { snprintf(why, why_size, "couldn't unpack the iOS kit's libSystem.B.tbd"); plat_remove_tree(tmp); return false; }
+    if (!ok) { snprintf(why, why_size, LN("couldn't unpack the iOS kit's libSystem.B.tbd")); plat_remove_tree(tmp); return false; }
     snprintf(sub, sizeof sub, "%s" SEP ".complete", tmp);
     f = fopen(sub, "wb");
     if (f) fclose(f);
     plat_remove_tree(dir);
-    if (rename(tmp, dir) != 0) { snprintf(why, why_size, "couldn't unpack the iOS kit into %s", dir); plat_remove_tree(tmp); return false; }
+    if (rename(tmp, dir) != 0) { snprintf(why, why_size, LN("couldn't unpack the iOS kit into %s"), dir); plat_remove_tree(tmp); return false; }
     // the other kits' folders (a release or two back) go
     DIR *d = opendir(kits);
     if (d) {
@@ -447,7 +447,7 @@ static bool unpack_kit(ZipReader *z, const char *kit, char *dir, size_t dir_size
 // unpack: the tools taken out of the kit (the build); else only looked for (the start screen's check)
 static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progress)(double, const char *), char *why,
                            size_t why_size) {
-    if (!find_tools(t) || !t->zig) { snprintf(why, why_size, "the game code builder is missing from this copy of LAS Recomp"); return false; }
+    if (!find_tools(t) || !t->zig) { snprintf(why, why_size, LN("the game code builder is missing from this copy of LAS Recomp")); return false; }
     t->ios = true;
     ZipReader *z = open_kit(kit, why, why_size);
     if (!z) return false;
@@ -466,7 +466,7 @@ static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progre
     char stdlib_h[1200];
     snprintf(stdlib_h, sizeof stdlib_h, "%s" SEP "stdlib.h", t->zig_libc);
     if (!file_exists(t->ld) || !file_exists(stdlib_h) || !file_exists(t->tbd)) {
-        snprintf(why, why_size, "the unpacked iOS tools are incomplete (%s)", dir);
+        snprintf(why, why_size, LN("the unpacked iOS tools are incomplete (%s)"), dir);
         return false;
     }
     return true;
@@ -480,7 +480,7 @@ bool gamebuild_ios_available(const char *kit, char *why, size_t why_size) {
 static bool find_ios_tools(Tools *t, const char *kit, bool unpack, void (*progress)(double, const char *), char *why,
                            size_t why_size) {
     (void)t, (void)kit, (void)unpack, (void)progress;
-    snprintf(why, why_size, "the iOS export isn't in this build of LAS Recomp");
+    snprintf(why, why_size, LN("the iOS export isn't in this build of LAS Recomp"));
     return false;
 }
 #endif

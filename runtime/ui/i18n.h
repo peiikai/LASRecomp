@@ -15,8 +15,7 @@
 // the menus' language: an index into g_language_codes (never LANG_AUTO)
 int i18n_lang(void);
 bool i18n_english(void);
-// English text -> the menu language's (the same pointer when there is none)
-const char *L(const char *en);
+// English text -> the menu language's (the same pointer when there is none): L(), declared in i18n_mark.h (C too)
 // a line put together from pieces (the spoiler log, warp spots, the tracker's places): the whole line if it has a
 // translation, else its parts - "a  ->  b", "%s" patterns ("Outside %s"), a bracketed end "x (y)", "a: b", "a, b"
 const std::string &L_line(const std::string &en);

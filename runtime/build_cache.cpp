@@ -1,5 +1,6 @@
 // The game-code builder's cache: receipts validate completed objects; an OS lock keeps builders apart.
 // Generated source and logs survive interruption, but are removed after successful publication.
+#include "i18n_mark.h"  // (LN: the errors are shown on the start screen, in the menus' language)
 #include "build_cache.h"
 #include "cache_sha256.h"
 #include <cerrno>
@@ -64,32 +65,32 @@ void plain(const fs::path &p) {
     for (const auto &c : fs::absolute(p)) {
         part /= c;
         if (c == ".gamebuild") inside = true;
-        if (inside) need(!is_link(part), "The build cache cannot contain symlinks or junctions.");
+        if (inside) need(!is_link(part), LN("The build cache cannot contain symlinks or junctions."));
     }
-    if (!inside) need(!is_link(p), "Build files cannot be symlinks or junctions.");
+    if (!inside) need(!is_link(p), LN("Build files cannot be symlinks or junctions."));
 }
 void plain_tree(const fs::path &p) {
     plain(p);
     for (auto it = fs::recursive_directory_iterator(p); it != fs::recursive_directory_iterator(); ++it)
-        need(it.depth() < 32 && !is_link(it->path()), "Unsafe build cache entry.");
+        need(it.depth() < 32 && !is_link(it->path()), LN("Unsafe build cache entry."));
 }
 std::string digest(const fs::path &p) {
     plain(p);
-    need(fs::is_regular_file(p), "A build input is missing.");
+    need(fs::is_regular_file(p), LN("A build input is missing."));
     std::ifstream f(p, std::ios::binary);
-    need(bool(f), "Cannot read a build input.");
+    need(bool(f), LN("Cannot read a build input."));
     CacheSha256 hash;
     char block[65536];
     while (f.read(block, sizeof block) || f.gcount())
         hash.add(block, (size_t)f.gcount());
-    need(f.eof(), "Cannot finish reading a build input.");
+    need(f.eof(), LN("Cannot finish reading a build input."));
     return hash.finish();
 }
 std::string read(const fs::path &p, uintmax_t limit = 1 << 20) {
     plain(p);
-    need(fs::file_size(p) <= limit, "Invalid build cache record.");
+    need(fs::file_size(p) <= limit, LN("Invalid build cache record."));
     std::ifstream f(p, std::ios::binary);
-    need(bool(f), "Cannot read the build cache.");
+    need(bool(f), LN("Cannot read the build cache."));
     return {std::istreambuf_iterator<char>(f), {}};
 }
 void replace(const fs::path &from, const fs::path &to) {
@@ -97,7 +98,7 @@ void replace(const fs::path &from, const fs::path &to) {
     plain(to);
 #ifdef _WIN32
     need(MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0,
-         "Cannot replace a build file.");
+         LN("Cannot replace a build file."));
 #else
     fs::rename(from, to);
 #endif
@@ -110,7 +111,7 @@ void write(const fs::path &p, const std::string &data) {
     std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
     f << data;
     f.close();
-    need(bool(f), "Cannot write a build cache record.");
+    need(bool(f), LN("Cannot write a build cache record."));
     replace(tmp, p);
 }
 bool valid_stem(const std::string &s) {
@@ -118,7 +119,7 @@ bool valid_stem(const std::string &s) {
            s.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789_") == std::string::npos;
 }
 std::string generation(BuildCache *c, const char *module, int chunks) {
-    need((!strcmp(module, "main") || !strcmp(module, "sdk")) && chunks > 0 && chunks <= 10000,
+    need((!strcmp(module, LN("main")) || !strcmp(module, "sdk")) && chunks > 0 && chunks <= 10000,
          "Invalid generated module.");
     std::ostringstream out;
     out << "LASGEN1\n" << chunks << '\n';
@@ -145,15 +146,15 @@ std::unique_ptr<BuildCache> acquire(const char *game_dir) {
 #ifdef _WIN32
     c->handle =
         CreateFileW(lock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    need(c->handle != INVALID_HANDLE_VALUE, "This game folder is already being compiled by another process.");
+    need(c->handle != INVALID_HANDLE_VALUE, LN("This game folder is already being compiled by another process."));
 #else
     c->handle = open(lock.c_str(), O_CREAT | O_RDWR, 0600);
-    need(c->handle >= 0, "Couldn't open the game folder's build lock.");
+    need(c->handle >= 0, LN("Couldn't open the game folder's build lock."));
     // Only a lock that another process holds stops the build. A file system without locks (Android's SD card through
     // FUSE: flock gives ENOSYS) builds unlocked - it said "already being compiled" there every time, so an update
     // that needed new game code sent the player back to setup.
     if (flock(c->handle, LOCK_EX | LOCK_NB) != 0) {
-        need(errno != EWOULDBLOCK, "This game folder is already being compiled by another process.");
+        need(errno != EWOULDBLOCK, LN("This game folder is already being compiled by another process."));
         fprintf(stderr, "[gamebuild] no file locks on this file system (%s): building without one\n", strerror(errno));
     }
 #endif
@@ -175,7 +176,7 @@ void recover(BuildCache *c) {
     int had_lib, had_id;
     need(bool(in >> magic >> name >> had_lib >> had_id) && magic == "LASINSTALL1" && library_name(name) &&
              (had_lib == 0 || had_lib == 1) && (had_id == 0 || had_id == 1),
-         "Invalid interrupted library installation.");
+         LN("Invalid interrupted library installation."));
     const char *old[] = {"previous-library", "previous-id"};
     for (int i = 0; i < 2; ++i) {
         auto destination = c->root.parent_path() / (name + (i ? ".id" : ""));
@@ -215,7 +216,7 @@ extern "C" BuildCache *build_cache_open(const char *game_dir, const char *spec, 
         auto c = acquire(game_dir);
         auto owner = c->root / "owner";
         if (fs::exists(owner))
-            need(read(owner, 64) == "LASBUILD3\n", "Unknown build cache; clear it from System and retry.");
+            need(read(owner, 64) == "LASBUILD3\n", LN("Unknown build cache; clear it from System and retry."));
         else {
             // Pre-receipt beta_5 caches are ours too; upgrade them without asking every existing player to clear.
             recover(c.get());
@@ -295,12 +296,12 @@ extern "C" bool build_cache_present(const char *game_dir) {
 }
 extern "C" bool build_cache_generation(BuildCache *c, const char *module, int *chunks) {
     try {
-        need(!strcmp(module, "main") || !strcmp(module, "sdk"), "Invalid module name.");
+        need(!strcmp(module, LN("main")) || !strcmp(module, "sdk"), "Invalid module name.");
         auto record = read(c->root / (std::string(module) + ".generation"));
         std::istringstream in(record);
         std::string magic;
         int n;
-        need(bool(in >> magic >> n) && magic == "LASGEN1", "Invalid generation record.");
+        need(bool(in >> magic >> n) && magic == "LASGEN1", LN("Invalid generation record."));
         if (record != generation(c, module, n))
             return false;
         *chunks = n;
@@ -327,7 +328,7 @@ extern "C" int build_cache_object(BuildCache *c, const char *stem, const char *s
         return -1;
     }
     try {
-        need(valid_stem(stem), "Invalid object name.");
+        need(valid_stem(stem), LN("Invalid object name."));
         std::string expected =
             "LASOBJ1\n" + std::string(source_hash) + "\n" + digest(c->root / (std::string(stem) + ".o")) + "\n";
         return read(c->root / (std::string(stem) + ".receipt"), 256) == expected ? 1 : 0;
@@ -338,10 +339,10 @@ extern "C" int build_cache_object(BuildCache *c, const char *stem, const char *s
 extern "C" bool build_cache_save_object(BuildCache *c, const char *stem, const char *source, const char *source_hash,
                                         char *why, size_t cap) {
     try {
-        need(valid_stem(stem), "Invalid object name.");
-        need(digest(fs::u8path(source)) == source_hash, "Generated source changed while being compiled.");
+        need(valid_stem(stem), LN("Invalid object name."));
+        need(digest(fs::u8path(source)) == source_hash, LN("Generated source changed while being compiled."));
         auto tmp = c->root / (std::string(stem) + ".o.tmp"), obj = c->root / (std::string(stem) + ".o");
-        need(fs::file_size(tmp) > 0, "The compiler did not produce an object.");
+        need(fs::file_size(tmp) > 0, LN("The compiler did not produce an object."));
         auto hash = digest(tmp);
         replace(tmp, obj);
         write(c->root / (std::string(stem) + ".receipt"), "LASOBJ1\n" + std::string(source_hash) + "\n" + hash + "\n");
@@ -354,13 +355,13 @@ extern "C" bool build_cache_save_object(BuildCache *c, const char *stem, const c
 extern "C" bool build_cache_publish(BuildCache *c, const char *name, const char *runtime_id,
                                     char *why, size_t cap) {
     try {
-        need(library_name(name), "Invalid game library filename.");
+        need(library_name(name), LN("Invalid game library filename."));
         auto lib = c->root.parent_path() / name, id = lib;
         id += ".id";
         plain(lib);
         plain(id);
         auto tmp = c->root / (std::string(name) + ".tmp");
-        need(fs::file_size(tmp) > 0, "The linker did not produce a game library.");
+        need(fs::file_size(tmp) > 0, LN("The linker did not produce a game library."));
         plain(tmp);
         write(c->root / "next-id", std::string(runtime_id) + "\n");
         bool had_lib = fs::exists(lib), had_id = fs::exists(id);

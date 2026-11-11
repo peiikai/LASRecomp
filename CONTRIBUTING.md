@@ -111,8 +111,11 @@ The comparison checks every generated C file byte-for-byte.
 
 ## Tests
 
-New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
-untranslated text shows in English.
+New menu text is written in English. Anything the player sees goes through the translation tables: `L("...")` where
+it's shown (C code too, for dialogs), `LN("...")` for text kept in a table or passed on and shown later. Run
+`python3 tools/menu_strings.py check` to see what each language is missing; untranslated text shows in English. CI
+lists missing translations as a warning (we add them after the merge) and fails when a translation's placeholders
+(`%s`, `%d`) differ from the English.
 
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 

@@ -18,6 +18,7 @@
 #include "../hle.h"
 #include "../rando.h"
 #include "../ipc.h"
+#include "../i18n_mark.h"
 #include "../platform.h"
 #include "../game_addresses.h"
 #include "../romfs_build.h"
@@ -619,8 +620,9 @@ static void save_failed(HostFs *fs, const char *what, const char *path, int erro
     if (told) return;
     told = true;
     char text[1400];
-    snprintf(text, sizeof text, "Your game could not be saved (the game may still say it was). Your previous save "
-             "is unchanged.\n\nMake sure this folder can be written to and the disk has free space:\n%s", fs->root);
+    snprintf(text, sizeof text, L("Your game could not be saved (the game may still say it was). Your previous save "
+                                  "is unchanged.\n\nMake sure this folder can be written to and the disk has free space:\n%s"),
+             fs->root);
     plat_notice(text);
 }
 

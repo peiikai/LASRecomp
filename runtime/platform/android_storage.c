@@ -1,4 +1,5 @@
 // Android: the game files folder (android_storage.h) - JNI glue to the activity's picker and copy.
+#include "../i18n_mark.h"
 #include "android_storage.h"
 
 #include <SDL3/SDL.h>
@@ -137,6 +138,15 @@ JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeFilesPicked(JN
 
 static void (*g_driver_done)(const char *);
 void android_on_driver(void (*done)(const char *)) { g_driver_done = done; }
+
+// LASRecompActivity.tr(): the activity's and its service's text in the menus' language (runtime/ui/i18n.mm)
+JNIEXPORT jstring JNICALL Java_com_lasrecomp_LASRecompActivity_nativeText(JNIEnv *env, jclass cls, jstring en) {
+    (void)cls;
+    const char *s = en ? (*env)->GetStringUTFChars(env, en, NULL) : NULL;
+    jstring r = (*env)->NewStringUTF(env, s ? L(s) : "");
+    if (s) (*env)->ReleaseStringUTFChars(env, en, s);
+    return r;
+}
 
 JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeDriverPicked(JNIEnv *env, jclass cls, jstring result) {
     (void)cls;

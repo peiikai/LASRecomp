@@ -207,9 +207,9 @@ static void sec_equipment(void) {
     static const char *const sword[] = {LN("None"), LN("Sword"), LN("Level 2")};
     static const char *const shield[] = {LN("None"), LN("Shield"), LN("Mirror Shield")};
     static const char *const bracelet[] = {LN("None"), LN("Power Bracelet"), LN("Level 2")};
-    level("Sword", 0, 0, 0, sword, "Link's sword. Level 2 is the Noble Sword from the Seashell Mansion.");
-    level("Shield", 1, 1, 2, shield, "Link's shield. The Mirror Shield blocks beams and fire.");
-    level("Power Bracelet", 10, 2, 13, bracelet, "Lifts pots and rocks. Level 2 lifts the heavy ones.");
+    level(LN("Sword"), 0, 0, 0, sword, LN("Link's sword. Level 2 is the Noble Sword from the Seashell Mansion."));
+    level(LN("Shield"), 1, 1, 2, shield, LN("Link's shield. The Mirror Shield blocks beams and fire."));
+    level(LN("Power Bracelet"), 10, 2, 13, bracelet, LN("Lifts pots and rocks. Level 2 lifts the heavy ones."));
     static const Bit items[] = {
         {LN("Bombs"), ITEMS, 2, 32, LN("The bomb bag."), 4},
         {LN("Bow"), ITEMS, 3, 32, LN("The bow."), 5},
@@ -236,9 +236,9 @@ static void sec_ammo(void) {
         {LN("Magic Powder upgrade"), UPGRADES, 3, 8, LN("Carry up to 40 Magic Powder instead of 20.")},
     };
     bit_rows(ups, 3);
-    ammo("Bombs", BOMBS, 4, 30, "Bombs carried.");
-    ammo("Arrows", ARROWS, 5, 30, "Arrows carried.");
-    ammo("Magic Powder", POWDER, 3, 20, "Magic Powder carried.");
+    ammo(LN("Bombs"), BOMBS, 4, 30, LN("Bombs carried."));
+    ammo(LN("Arrows"), ARROWS, 5, 30, LN("Arrows carried."));
+    ammo(LN("Magic Powder"), POWDER, 3, 20, LN("Magic Powder carried."));
 }
 
 static void sec_songs(void) {

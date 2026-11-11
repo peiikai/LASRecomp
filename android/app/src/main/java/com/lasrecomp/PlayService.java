@@ -37,7 +37,7 @@ public class PlayService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        NotificationChannel ch = new NotificationChannel(CHANNEL, "Game session", NotificationManager.IMPORTANCE_MIN);
+        NotificationChannel ch = new NotificationChannel(CHANNEL, LASRecompActivity.tr("Game session"), NotificationManager.IMPORTANCE_MIN);
         ch.setShowBadge(false);
         getSystemService(NotificationManager.class).createNotificationChannel(ch);
     }
@@ -48,8 +48,8 @@ public class PlayService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE);
         Notification n = new Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_pause)
-            .setContentTitle("LAS Recomp is open")
-            .setContentText("The game waits paused where you left it.")
+            .setContentTitle(LASRecompActivity.tr("LAS Recomp is open"))
+            .setContentText(LASRecompActivity.tr("The game waits paused where you left it."))
             .setOngoing(true)
             .setContentIntent(pi)
             .build();
