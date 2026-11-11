@@ -1964,3 +1964,5 @@
 {"Dynamic resolution", "동적 해상도"},
 {"Raises and lowers the resolution as needed to hold your FPS target, up to your screen's resolution. The Resolution setting is set aside while it's on.", "목표 FPS를 유지하도록 필요에 따라 해상도를 올리고 내립니다(최대 화면 해상도까지). 켜져 있는 동안 '해상도' 설정은 쓰이지 않습니다."},
 {"Does nothing unless the game renders below your screen's resolution: a lower Resolution, or Dynamic resolution.", "게임이 화면 해상도보다 낮게 렌더링될 때(낮은 '해상도' 또는 '동적 해상도')만 효과가 있습니다."},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPad, then choose it again.", "이 폴더는 iCloud Drive에 있습니다. 파일 앱에서 '나의 iPad'(으)로 옮긴 다음 다시 선택하세요."},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPhone, then choose it again.", "이 폴더는 iCloud Drive에 있습니다. 파일 앱에서 '나의 iPhone'(으)로 옮긴 다음 다시 선택하세요."},

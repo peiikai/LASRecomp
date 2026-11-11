@@ -718,6 +718,16 @@ static std::string picker_hint(const char *what) {
 static void SDLCALL picked(void *, const char *const *files, int) {
     if (!files) { set_job(PICKER_FAILED, true, picker_hint(LN("folder"))); return; }
     if (!files[0]) return;
+#if PLAT_IOS
+    // A folder in iCloud Drive: refused. iOS keeps some of its files only in the cloud, and setup can't copy those.
+    if (plat_cloud_synced(files[0])) {
+        fprintf(stderr, "[launcher] game files folder in %s: refused\n", plat_cloud_synced(files[0]));
+        set_job(plat_touch_tablet() ? LN("That folder is on iCloud Drive. In the Files app, move it to On My iPad, then choose it again.")
+                                    : LN("That folder is on iCloud Drive. In the Files app, move it to On My iPhone, then choose it again."),
+                true);
+        return;
+    }
+#endif
     pthread_mutex_lock(&g_lock);
     g_src = files[0];
     if (g_job == PICKER_FAILED) g_job.clear(), g_job_hint.clear(), g_job_failed = false;

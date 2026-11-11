@@ -1964,3 +1964,5 @@
 {"Dynamic resolution", "Динамическое разрешение"},
 {"Raises and lowers the resolution as needed to hold your FPS target, up to your screen's resolution. The Resolution setting is set aside while it's on.", "Повышает и понижает разрешение по мере необходимости, чтобы держать целевой FPS, вплоть до разрешения экрана. Пока включено, настройка «Разрешение» не используется."},
 {"Does nothing unless the game renders below your screen's resolution: a lower Resolution, or Dynamic resolution.", "Действует, только если игра рендерится ниже разрешения экрана: при меньшем «Разрешении» или с «Динамическим разрешением»."},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPad, then choose it again.", "Эта папка в iCloud Drive. В приложении «Файлы» перенесите её в «На iPad» и выберите снова."},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPhone, then choose it again.", "Эта папка в iCloud Drive. В приложении «Файлы» перенесите её в «На iPhone» и выберите снова."},

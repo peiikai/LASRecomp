@@ -1964,3 +1964,5 @@
 {"Dynamic resolution", "动态分辨率"},
 {"Raises and lowers the resolution as needed to hold your FPS target, up to your screen's resolution. The Resolution setting is set aside while it's on.", "按需升降分辨率以保持目标帧率，最高到屏幕的分辨率。开启时不使用“分辨率”设置。"},
 {"Does nothing unless the game renders below your screen's resolution: a lower Resolution, or Dynamic resolution.", "只有在游戏以低于屏幕的分辨率渲染时才有作用：较低的“分辨率”或“动态分辨率”。"},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPad, then choose it again.", "该文件夹位于 iCloud 云盘。请在“文件”App 中将它移到“我的iPad”，然后重新选择。"},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPhone, then choose it again.", "该文件夹位于 iCloud 云盘。请在“文件”App 中将它移到“我的iPhone”，然后重新选择。"},

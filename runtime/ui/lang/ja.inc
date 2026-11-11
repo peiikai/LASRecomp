@@ -1964,3 +1964,5 @@
 {"Dynamic resolution", "可変解像度"},
 {"Raises and lowers the resolution as needed to hold your FPS target, up to your screen's resolution. The Resolution setting is set aside while it's on.", "目標FPSを保てるよう、必要に応じて解像度を上げ下げします（最大で画面の解像度まで）。オンの間は「解像度」の設定は使われません。"},
 {"Does nothing unless the game renders below your screen's resolution: a lower Resolution, or Dynamic resolution.", "ゲームが画面の解像度より低く描画されるとき（低い「解像度」か「可変解像度」）だけ効果があります。"},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPad, then choose it again.", "そのフォルダはiCloud Driveにあります。ファイルAppで「このiPad内」に移動してから、もう一度選んでください。"},
+{"That folder is on iCloud Drive. In the Files app, move it to On My iPhone, then choose it again.", "そのフォルダはiCloud Driveにあります。ファイルAppで「このiPhone内」に移動してから、もう一度選んでください。"},
