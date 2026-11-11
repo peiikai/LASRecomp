@@ -60,8 +60,8 @@ int rt_game_dynres(void) {
 // for G + W = 17), going lower gains nothing, so the budget becomes 87% of that frame interval (whole 60 Hz refreshes:
 // 33.3 / 50 ms) and the factor goes back up as far as it fits there (a large W - 4K SMAA / FSR 1 on an integrated
 // GPU - or a slow GPU at a big window). A hold keeps measuring: G + W over the hold's budget for a second lowers the
-// factor; at the floor for 1.5 s, the hold steps down from 30 to 20 fps (G at the floor can grow after the hold began:
-// UHD 770 4K 19.4 -> 27.9 ms, frames every 49-65 ms while it said 30). It steps back up - 20 to 30, 30 to looking for
+// factor; at the floor it stays there, as close to 30 as it gets (it stepped down to 20 fps there before: UHD 770 4K
+// 19.4 -> 27.9 ms, frames every 49-65 ms - DYN_HOLD_MAX). It steps back up - 30 to looking for
 // 60 - only when the floor is predicted to fit the faster rate with 20% to spare for 2 s (after 10 s, doubling each
 // time that fails or is undone within 30 s), and starts over when W changes (another upscaler / anti-aliasing / window
 // size). Frames that don't wait (mailbox: a frame every G + W) keep going down to the floor: there every step down is
@@ -82,7 +82,10 @@ int rt_game_dynres(void) {
 #define DYN_DOWN_SMALL 1.15 // G + W over the budget by at most this: one step down (more: straight to where it fits)
 #define DYN_MAX_DOWN 0.3    // the most a step down lowers the factor at once
 #define DYN_HOLD_UP_FIT 0.8 // a hold steps up: the floor's predicted G + W under this share of the faster rate's budget
-#define DYN_HOLD_MAX 3      // vsyncs a hold waits at most (60 Hz: 20 fps)
+#define DYN_HOLD_MAX 2      // vsyncs a hold waits at most (60 Hz: 30 fps). It was 3 (20 fps): when even the floor
+                            // missed 30, the hold went to 20 and the factor climbed while 20 fit - a sharper image at
+                            // 20 fps. The floor as close to 30 as it gets is the better trade (Retroid Pocket 5 in
+                            // standard performance mode)
 static double g_dyn = 1.0;
 static double g_dyn_floor = 0.5;  // (set from the setting and the window: dyn_set_floor)
 static unsigned g_down_hist;  // the last decisions over budget (bit 0: the latest)
@@ -347,7 +350,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         }
         // 60 out of reach at the floor and the frames wait for the display: lower gains nothing, hold that frame rate
         // (whole refreshes of a 60 Hz display: a floor that alternates 1 and 2 of them - 40 fps - beats 30 at a higher
-        // factor; at most 3 refreshes, 20 fps)
+        // factor; at most 2 refreshes, 30 fps: DYN_HOLD_MAX)
         double vsyncs = fmin(floor(avg_dt / (1000 / 60.0) + 0.1), DYN_HOLD_MAX);
         static int votes;  // (a second in a row)
         bool held_back = g_hold_dt == 0 && at_floor() && avg_gpu > DYN_BUDGET && vsyncs >= 2 && avg_dt >= 1.25 * avg_gpu &&
@@ -386,10 +389,9 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     bool hold_wait = hold_up;  // held and over its budget, not yet long enough to act on it (or the hold just stepped up)
     if (gpu && g_hold_dt > 0) {
         g_hold_miss = slow && !hold_up ? g_hold_miss + 1 : 0;
-        // nothing lower: the hold steps down (30 -> 20 fps) - not at Internal FPS target 30: there the floor is the best
-        // it can do for 30 (the 20 hold's budget let the factor climb to 1.00 at 20 fps: Retroid Pocket 5, standard
-        // performance mode, the floor's frames on time but over the late-frame cap)
-        if (slow && at_floor() && g_hold_miss >= 6 && !t30) {
+        // nothing lower: the hold steps down to a slower rate, up to DYN_HOLD_MAX (30: so never - the floor is the best
+        // it can do for 30)
+        if (slow && at_floor() && g_hold_miss >= 6) {
             int vs = hold_vsyncs();
             if (vs < DYN_HOLD_MAX) {
                 LOG("[dynres] game %.1f + window %.1f ms at %.2f misses the %.0f fps hold's %.1f ms (a frame every %.1f ms): "

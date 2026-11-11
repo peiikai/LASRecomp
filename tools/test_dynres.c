@@ -176,12 +176,12 @@ int main(int argc, char **argv) {
         // a hold whose G grows (UHD 770 4K bilinear: 19.4 -> 27.9 ms at 0.50 after holding 30; G mostly fixed here):
         // x1.44 from 60 s - the floor still fits 30
         {"4K bilinear, G x1.44 from 60 s (G 19.4 at 0.50, fifo)", 10, 37.6, 0.9, 1, 0, 180, 0, 60, 1.44},
-        // a slower GPU holding 30 at the floor (G 18.2 there), G x1.8 from 60 s: not even the floor fits 30 any more
-        // (frames every 50 ms) - the hold steps down to 20
+        // a slower GPU holding 30 at the floor (G 18.2 there), G x1.8 from 60 s: not even the floor fits 30 any more -
+        // it stays at the floor, as close to 30 as it gets (the hold stepped down to 20 and climbed there before)
         {"4K bilinear, held 30, G x1.8 from 60 s (fifo)", 14, 37.6, 0.9, 1, 0, 180, 0, 60, 1.8},
-        // the same, x1.8 from 60 s to 150 s: 20, then back to 30 once the floor fits it with room
+        // the same, x1.8 from 60 s to 150 s: the floor, then climbing again once the scene is lighter
         {"4K bilinear, held 30, G x1.8 from 60 s to 150 s (fifo)", 14, 37.6, 0.9, 1, 0, 300, 0, 60, 1.8, 150},
-        // x2 swinging +-15% (G 32.7 at the floor, 0.25): 20 fps, no hunting between 20 and 30
+        // x2 swinging +-15% (G 32.7 at the floor, 0.25): at the floor, no hunting
         {"4K bilinear, held 30, G x2 from 30 s, load swinging +-15% (fifo)", 14, 37.6, 0.9, 1, 0, 240, 0.15, 30, 2.0},
         // walking around, a fast GPU at the edge (5120x1440 class: G 13.6 + W 1 at 1.00, the load wandering +-10%):
         // it hunted here in big steps - 45 in 6 min with frames missing. Now it follows the load in 0.05 steps (a step
@@ -260,10 +260,13 @@ int main(int argc, char **argv) {
     case 10: check(r.fps_end > 58 && r.changes_last60 == 0, "1080p game scaler off: 60"); break;
     case 11: check(r.fps_end > 29 && r.f_end < 0.26 && r.changes_last60 <= 2, "4K FSR 44 ms: 30 at the floor"); break;
     case 12: check(near(r.hold_end, 30) && r.fps_end > 28 && r.changes_last60 <= 2, "G x1.44: hold 30 at a lower factor"); break;
-    case 13: check(near(r.hold_end, 20) && r.fps_end > 19 && r.changes_last60 <= 2 && r.hold_changes <= 5, "G x2.2: hold steps down to 20"); break;
-    case 14: check(near(r.hold_end, 30) && r.fps_end > 28 && r.changes_last60 <= 2 && r.back30_t > 0 && r.back30_t < 154,
-                   "G x1.8 then back: 20, then 30 within a few seconds"); break;
-    case 15: check(near(r.hold_end, 20) && r.fps_end > 19 && r.hold_changes <= 5, "G x2 +-15%: 20, no hunting"); break;
+    case 13: check(near(r.hold_end, 30) && r.f_end < 0.26 && r.fps_end > 19 && r.changes_last60 <= 2 && r.hold_changes <= 5,
+                   "G x1.8: at the floor, as close to 30 as it gets - no 20 hold"); break;
+    // (or a look for 60 from the hold just began at the end)
+    case 14: check((near(r.hold_end, 30) || r.hold_t > 297) && r.fps_end > 28 && r.f_max_last60 >= 0.4,
+                   "G x1.8 then back: the floor, then climbing again"); break;
+    case 15: check(near(r.hold_end, 30) && r.f_end < 0.26 && r.fps_end > 19 && r.changes_last60 <= 2,
+                   "G x2 +-15%: at the floor, no hunting - no 20 hold"); break;
     case 16: check(r.changes_settled <= 60 && r.fps_end > 58, "edge at 1.00 wandering: 60, small steps at most every ~6 s"); break;
     case 17: check(r.changes_settled <= 60 && r.fps_end > 58, "edge at 0.80 wandering: 60, small steps at most every ~6 s"); break;
     case 18: check(r.fps_end > 58 && r.hold_end == 0 && r.hold_t < 150, "iGPU clock lock-in: back to 60 after the heavy stretch"); break;
@@ -287,6 +290,6 @@ int main(int argc, char **argv) {
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
     // a hold is real: the frames come at least at the rate it says (target 30 at its floor: as close as it gets)
-    if (r.hold_end > 0 && i != 31) check(r.fps_end >= 0.95 * r.hold_end, "the held frame rate is met");
+    if (r.hold_end > 0 && i != 31 && i != 13 && i != 15) check(r.fps_end >= 0.95 * r.hold_end, "the held frame rate is met");
     return g_fail;
 }
