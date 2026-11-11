@@ -245,6 +245,9 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     was_t30 = t30;
     if (gpu) {
         if (g_hold_dt > 0 && g_hold_w < 0) g_hold_w = W;  // (the window's size changed: its step's time there)
+        else if (g_hold_dt > 0 && t30 && fabs(W - g_hold_w) > fmax(1.0, 0.25 * g_hold_w))
+            g_hold_w = W;  // (target 30: the hold is the setting's, not the window step's - the menu opening and closing
+                           // moves W 1 -> 6 -> 2 ms; ending the hold judged that half second by 60's budget: 1.00 -> 0.70)
         else if (g_hold_dt > 0 && fabs(W - g_hold_w) > fmax(1.0, 0.25 * g_hold_w)) {  // another upscaler / AA
             LOG("[dynres] window step %.1f -> %.1f ms: hold at %.0f fps ended\n", g_hold_w, W, 1000 / g_hold_dt);
             g_hold_dt = 0, g_probing = false, g_probe_wait = 10.0, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;

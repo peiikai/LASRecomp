@@ -40,6 +40,8 @@ typedef struct {
     double cpu;         // > 0: CPU time per frame that doesn't overlap the GPU's (ms; the frame takes cpu + G + W)
     double stall_at, stall_until, stall_ms;  // > 0: frames that long later from stall_at to stall_until (s): shaders
                                              // compiling after a warp, the GPU idle
+    double wmenu_at, wmenu_until, wmenu;  // > 0: the window step takes wmenu ms from wmenu_at to wmenu_until (s): the
+                                          // menu open
 } Case;
 
 typedef struct {
@@ -105,6 +107,7 @@ static Result run(const Case *c) {
             scene *= exp(walk);
         }
         double g = (c->a + c->b * f * f * area) * scene * (0.98 + 0.04 * rnd()) * clk, w = c->w * area * (0.99 + 0.02 * rnd()) * clk;
+        if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
         if (c->clock_slow > 0) {  // under 60% busy: the clock drifts down (times up), over 80%: back up, over ~1 s
             double busy = gw / fmax(p, 16.667), target = busy < 0.6 ? c->clock_slow : busy > 0.8 ? 1.0 : clk;
@@ -220,6 +223,10 @@ int main(int argc, char **argv) {
         // + G + W 19.8 at 1.00 = frames every 50 ms. It must step down until cpu + G + W fits 33.3 ms, and stay there
         {.name = "target 30, CPU 20 ms not overlapping (G + W 19.8 at 1.00, fifo)", .a = 1, .b = 18, .w = 0.8, .fifo = 1,
          .secs = 180, .lines = 1080, .min_lines = 360, .t30 = 1, .cpu = 20},
+        // Internal FPS target 30 at 1.00 (Retroid: G 19 + W 1 ms in the field), the menu open 40-50 s (W 6 ms): the hold
+        // must go on. Before, W's change ended it and that half second was judged by 60's budget: 1.00 -> 0.70
+        {.name = "target 30 at 1.00, the menu open 40-50 s (W 1 -> 6 -> 1 ms, fifo)", .a = 1, .b = 18, .w = 1, .fifo = 1,
+         .secs = 120, .lines = 1080, .min_lines = 360, .t30 = 1, .wmenu_at = 40, .wmenu_until = 50, .wmenu = 6},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -262,6 +269,7 @@ int main(int argc, char **argv) {
     case 26: check(r.fps_end > 58 && r.f_min_last60 >= 0.66 && r.changes_last60 <= 2, "720p: never under 0.67"); break;
     case 27: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.9, "target 30, 1.00 fits: back at 1.00 after the warp"); break;
     case 28: check(r.fps_end > 29 && r.f_end < 0.8 && r.changes_last60 <= 2, "target 30, CPU not overlapping: steps down to 30, steady"); break;
+    case 29: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 29, "target 30, menu open and closed: stays at 1.00"); break;
     }
     // a hold is real: the frames come at least at the rate it says
     if (r.hold_end > 0) check(r.fps_end >= 0.95 * r.hold_end, "the held frame rate is met");
