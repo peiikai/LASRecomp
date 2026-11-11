@@ -631,7 +631,7 @@ extern "C" void renderer_get_scale(float *sx, float *sy);
 extern "C" int input_pad_family(void);  // runtime/hle/input.c
 extern "C" double output_scale_dynamic_factor(void);
 
-#if defined(__APPLE__) && !TARGET_OS_IPHONE
+#ifdef __APPLE__
 // Metal HUD turned on while its library isn't loaded (the game started with the setting off): it shows only after a
 // restart (runtime/main.c metal_hud_relaunch). LARECOMP_MENU_HUD_RESTART=1 (test): the note opens with the Video tab.
 static void metal_hud_restart_popup(float scale) {
@@ -674,7 +674,7 @@ static void tab_display(void) {
     opt_toggle("Frame Generation", &g_settings.frame_interp, false,
                "Experimental. Draws extra images between the game's frames for smoother motion, up to your display's "
                "refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.");
-#if defined(__APPLE__) && !TARGET_OS_IPHONE
+#ifdef __APPLE__
     if (opt_toggle("Metal HUD", &g_settings.metal_hud, false,
                    "Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a "
                    "restart.") &&
