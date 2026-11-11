@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <atomic>
 #include <string>
 #include "imgui.h"
 #include "i18n.h"
@@ -98,6 +99,49 @@ extern "C" int inventory_items_cursor(void) {
 }
 // dpad_items.c: the Items page's object (its cells: +0x598 + 0x280 * cell = the cell's item slot)
 extern "C" uint64_t inventory_items_obj(void) { return g_items_obj; }
+
+// A tap on an Items page cell or a file select file (runtime/ui/mobile/touch_controls.mm): where the next cursor move
+// goes, whatever the direction pressed, so the cursor goes straight there with the game's own move (tools/patches.py
+// ITEMS_NAV_SITE, FILE_SELECT_NAV_SITE). An ask lapses after 15 frames, so a later press of the player's own is never
+// taken over. LARECOMP_ITEMS_JUMP / LARECOMP_FILE_JUMP=<n> (tests): the first move there goes to n.
+struct NavJump {
+    std::atomic<int> to{-1};
+    std::atomic<uint64_t> frame{0};
+    int count;
+    const char *test_env;
+    bool test_read, test;
+    void ask(int n) { frame = renderer_present_count(), to = n >= 0 && n < count ? n : -1; }
+    int take(void) {  // (game thread) the place asked for, or -1
+        if (!test_read) {
+            test_read = true;
+            if (const char *e = getenv(test_env)) test = true, to = atoi(e);
+        }
+        int n = to.exchange(-1);
+        if (n < 0 || n >= count || (!test && renderer_present_count() - frame > 15)) return -1;
+        test = false;
+        return n;
+    }
+};
+static NavJump g_items_jump{{-1}, {0}, 12, "LARECOMP_ITEMS_JUMP", false, false};
+static NavJump g_file_jump{{-1}, {0}, 4, "LARECOMP_FILE_JUMP", false, false};
+extern "C" void inventory_items_jump(int cell) { g_items_jump.ask(cell); }
+extern "C" void file_select_jump(int file) { g_file_jump.ask(file); }
+// (game thread) the Items page: the cell a move goes to, the neighbour table's or the one a tap asked for
+extern "C" uint32_t rt_items_nav_pick(uint32_t next) {
+    int cell = g_items_jump.take();
+    if (cell < 0) return next;
+    LOG("[items] tap: cursor to cell %d\n", cell);
+    return (uint32_t)cell;
+}
+// (game thread) the file select, after its list moved the cursor or not: the file a tap asked for instead. Moved: the
+// game's own change of file then runs (the old file at cursor + 1).
+extern "C" int rt_file_nav_pick(uint64_t cursor, int moved) {
+    int file = g_file_jump.take();
+    if (file < 0) return moved;
+    ST8(cursor, (uint8_t)file);
+    LOG("[files] tap: cursor to file %d\n", file);
+    return LD8(cursor) != LD8(cursor + 1);
+}
 
 static bool companion_card(void) {
     int o[6];
