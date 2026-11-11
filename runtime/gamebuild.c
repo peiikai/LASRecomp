@@ -200,6 +200,23 @@ static void android_env(const char *work) {
     setenv("ZIG_LIB_DIR", v, 1);
 }
 
+#ifdef __ANDROID__
+// Whether flock works in dir. The SD card through FUSE has none (ENOSYS); a lock someone holds still counts as working.
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/file.h>
+static bool has_flock(const char *dir) {
+    char p[1200];
+    snprintf(p, sizeof p, "%s/.lockprobe", dir);
+    int fd = open(p, O_CREAT | O_RDWR, 0600);
+    if (fd < 0) return true;  // (not this check's question: whatever writes there next says why)
+    bool ok = flock(fd, LOCK_EX | LOCK_NB) == 0 || errno == EWOULDBLOCK;
+    close(fd);
+    unlink(p);
+    return ok;
+}
+#endif
+
 // Hot / cold: compiling the generated C at -O1 is most of the setup's minutes on a phone, and most of the game's
 // functions never run in a play session. gamelib-src/hot_functions.txt (the functions play sessions entered, from
 // LASRecomp-Android-Plus by Nycolazs, MIT) keeps those at -O1; every other function in a generated file gets optnone,
@@ -720,9 +737,22 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         LOG("[gamebuild] hot functions: %zu%s\n", g_nhot, g_nhot ? " (the rest compiled with optnone)" : " (all at -O1)");
     }
 #endif
+    char zc[1200];
+    bool zc_internal = false;
     if (t.zig) {  // keep its caches with this installation; the explicit Clear action removes them too
-        char zc[1200];
         snprintf(zc, sizeof zc, "%s" SEP "zig-cache", work);
+#ifdef __ANDROID__
+        // zig flocks its cache's manifests, so on a data folder without locks (the SD card: every compile failed with
+        // "checking cache failed: manifest_create Unexpected") the cache goes to the app's internal storage for this
+        // build and is removed after it. The build cache keeps the objects; zig's copies only matter within one build.
+        const char *gen = getenv("LARECOMP_GEN_DIR"), *cut = gen ? strrchr(gen, '/') : NULL;
+        if (cut && !has_flock(work)) {
+            snprintf(zc, sizeof zc, "%.*s/zig-cache", (int)(cut - gen), gen);
+            plat_remove_tree(zc);  // (a build that stopped before removing it)
+            zc_internal = true;
+            LOG("[gamebuild] no file locks in the data folder: compiler cache in internal storage (%s)\n", zc);
+        }
+#endif
 #ifdef _WIN32
         _putenv_s("ZIG_GLOBAL_CACHE_DIR", zc);
         _putenv_s("ZIG_LOCAL_CACHE_DIR", zc);
@@ -971,6 +1001,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     if (!ok && !cancelled) build_cache_failed(cache);
     free(units.u);
     build_cache_close(cache);
+    if (zc_internal) plat_remove_tree(zc);
     LOG("[gamebuild] reused %d objects, compiled %d objects\n", reused, compiled);
 #ifdef __ANDROID__
     if (g_nhot) LOG("[gamebuild] %llu of %llu functions cold (optnone)\n", g_cold_fns, g_all_fns);
