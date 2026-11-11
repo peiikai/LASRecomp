@@ -1642,15 +1642,20 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         ImGui::SetNextWindowBgAlpha(0.5f);
         ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                         ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        ImGui::Text(L("%.0f fps"), g_ov_cache ? g_fps_shown : io.Framerate);
-        if (g_settings.res_mode == RES_DYNAMIC) {  // (Dynamic resolution: the size it draws the game at now)
-            int rw, rh;
-            output_scale_render_size(&rw, &rh);
-            if (rw > 0) {  // (under the frame rate, smaller: the counter keeps about its width)
-                ImGui::SetWindowFontScale(0.7f);
-                ImGui::Text("%dx%d", rw, rh);
-                ImGui::SetWindowFontScale(1.0f);
-            }
+        char fps_text[32];
+        snprintf(fps_text, sizeof fps_text, L("%.0f fps"), g_ov_cache ? g_fps_shown : io.Framerate);
+        int rw = 0, rh = 0;  // (Dynamic resolution: the size it draws the game at now, under the frame rate)
+        if (g_settings.res_mode == RES_DYNAMIC) output_scale_render_size(&rw, &rh);
+        if (rw > 0) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0));
+        ImGui::TextUnformatted(fps_text);
+        if (rw > 0) {  // (small enough to fit the frame rate's width: the counter keeps its size, a short line taller)
+            char res_text[32];
+            snprintf(res_text, sizeof res_text, "%dx%d", rw, rh);
+            float k = fminf(0.55f, ImGui::CalcTextSize(fps_text).x / fmaxf(1.0f, ImGui::CalcTextSize(res_text).x));
+            ImGui::SetWindowFontScale(k);
+            ImGui::TextUnformatted(res_text);
+            ImGui::SetWindowFontScale(1.0f);
+            ImGui::PopStyleVar();
         }
         ImGui::End();
     }
