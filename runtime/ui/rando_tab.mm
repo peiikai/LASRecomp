@@ -428,6 +428,10 @@ static std::vector<std::string> generator_cmd(void) {
     }
 #endif
     char p[1024], s[1024];  // (runtime/paths.h: <exe dir>/rando-gen/, <exe dir>/../Resources/rando-gen/, the source tree)
+#if PLAT_IOS
+    // the script itself: plat_spawn runs it in the embedded Python (runtime/platform/ios_python.m)
+    if (rt_resource("rando-gen/las_headless.py", NULL, p, sizeof p)) return {p};
+#endif
     if (rt_resource("rando-gen/rando-gen" PLAT_EXE_SUFFIX, NULL, p, sizeof p)) return {p};
     if (rt_resource(NULL, "third_party/LAS-Randomizer/" PLAT_VENV_PYTHON, p, sizeof p) &&
         rt_resource(NULL, "tools/rando/las_headless.py", s, sizeof s)) return {p, s};

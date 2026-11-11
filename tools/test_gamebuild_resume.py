@@ -17,6 +17,9 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parent.parent
+MINIZ = ROOT/'build/miniz'  # (gamebuild.c's iOS kit code links runtime/zipfile.c: miniz, tools/fetch_miniz.sh)
+if not (MINIZ/'.fetched').exists():
+    subprocess.run(['bash', str(ROOT/'tools/fetch_miniz.sh')], check=True)
 BRIDGE = r'''
 #include "platform.h"
 #include <chrono>
@@ -36,6 +39,8 @@ extern "C" bool rt_resource(const char *,const char *dev,char *out,size_t n) {
     return std::filesystem::exists(std::filesystem::u8path(p)) && snprintf(out,n,"%s",p.c_str())<(int)n;
 }
 extern "C" bool rt_dev_mode() { return false; }
+extern "C" const char *rt_data_root() { return root.c_str(); }  // (the iOS kit cache; unused by GAMEBUILD_HOST)
+extern "C" bool plat_remove_tree(const char *d) { std::error_code ec; std::filesystem::remove_all(std::filesystem::u8path(d), ec); return !ec; }
 extern "C" uint64_t plat_now_ns() { return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 extern "C" void plat_sleep_until_ns(uint64_t t) { auto now=plat_now_ns(); if(t>now)std::this_thread::sleep_for(std::chrono::nanoseconds(t-now)); }
 extern "C" intptr_t plat_spawn(const char *const *a,const char *l,bool append) { return start_cb(a,l,append); }
@@ -81,9 +86,9 @@ with tempfile.TemporaryDirectory() as temporary:
         subprocess.run(cc+[str(stub),'-shared','-Wl,--out-implib,'+str(resources/'build/lasrecomp.dll.a'),
                            '-o',str(tmp/'stub.dll')],check=True)
     objects=[]
-    for source in ('runtime/gamebuild.c',):
+    for source in ('runtime/gamebuild.c','runtime/zipfile.c',str(MINIZ/'miniz.c')):
         obj=tmp/(Path(source).stem+'.o'); objects.append(str(obj))
-        subprocess.run(cc+['-std=gnu11','-fPIC','-Iruntime','-DGAMELIB_ID="cache-fixture"',
+        subprocess.run(cc+['-std=gnu11','-fPIC','-w','-Iruntime','-I'+str(MINIZ),'-DGAMELIB_ID="cache-fixture"',
                            '-DGAMELIB_CFLAGS="-O0 -fPIC"','-DGAMELIB_SHARED="-shared"',
                            '-c',source,'-o',str(obj)],cwd=ROOT,check=True)
     bridge=tmp/'bridge.cpp'; bridge.write_text(BRIDGE)
@@ -99,7 +104,8 @@ with tempfile.TemporaryDirectory() as temporary:
     PROGRESS=ct.CFUNCTYPE(None,ct.c_double,ct.c_char_p)
     CANCEL=ct.CFUNCTYPE(ct.c_bool)
     class Options(ct.Structure):
-        _fields_=[('progress',PROGRESS),('jobs',ct.c_int),('cancelled',CANCEL)]
+        _fields_=[('progress',PROGRESS),('jobs',ct.c_int),('cancelled',CANCEL),
+                  ('target',ct.c_int),('ios_kit',ct.c_char_p)]  # (GAMEBUILD_HOST, no kit)
     processes={}; launched=[]; next_id=0; fail_compile=False; fail_link=False
     @SPAWN
     def spawn(args, log, append):

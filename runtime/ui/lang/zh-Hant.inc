@@ -1816,3 +1816,13 @@
 {"Configure the smoothing of jagged edges. SMAA keeps textures sharp.", "設定鋸齒邊緣的平滑。SMAA 能保持材質清晰。"},
 {"Configure the shape of the picture. Unlocked fills the window, Original keeps 16:9.", "設定畫面的形狀。解除鎖定會填滿視窗，原始保持 16:9。"},
 {"Apply", "套用"},
+// iOS
+{"In the Files app, touch and hold the data folder and choose Keep Downloaded, so its files stay on this iPhone.", "在「檔案」App中按住資料檔案夾,選擇「保持已下載」,讓其檔案留在這台iPhone上。"},
+{"!  This folder is synced by %s", "!  這個資料夾由%s同步"},
+{"About %.0f GB of game files will upload to your %s.", "約%.0f GB的遊戲檔案會上傳到你的%s。"},
+{"On My iPad", "我的iPad"},
+{"On My iPhone", "我的iPhone"},
+{"This folder is synced by %s too.", "這個資料夾也由%s同步。"},
+{"LAS Recomp needs to restart to use the new folder. It closes now; open it again.", "LAS Recomp需要重新啟動才能使用新資料夾。現在會關閉,請重新開啟。"},
+{"Open in Files", "在「檔案」中打開"},
+{"Some of LAS Recomp's files aren't on this iPhone. They download as the game reads them, so it may be very slow or close.", "LAS Recomp的部分檔案不在這台iPhone上。它們會在遊戲讀取時下載,所以遊戲可能非常慢或關閉。"},

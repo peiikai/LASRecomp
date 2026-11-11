@@ -1816,3 +1816,13 @@
 {"Configure the smoothing of jagged edges. SMAA keeps textures sharp.", "ギザギザした輪郭のなめらかさを設定します。SMAAはテクスチャをくっきり保ちます。"},
 {"Configure the shape of the picture. Unlocked fills the window, Original keeps 16:9.", "画面の形を設定します。「制限なし」はウィンドウ全体に広がり、「オリジナル」は16:9のままです。"},
 {"Apply", "適用"},
+// iOS
+{"In the Files app, touch and hold the data folder and choose Keep Downloaded, so its files stay on this iPhone.", "ファイルAppでデータフォルダを長押しして「ダウンロードしたままにする」を選ぶと、ファイルがこのiPhoneに残ります。"},
+{"!  This folder is synced by %s", "!  このフォルダは%sで同期されています"},
+{"About %.0f GB of game files will upload to your %s.", "約%.0f GBのゲームファイルが%sにアップロードされます。"},
+{"On My iPad", "このiPad内"},
+{"On My iPhone", "このiPhone内"},
+{"This folder is synced by %s too.", "このフォルダも%sで同期されています。"},
+{"LAS Recomp needs to restart to use the new folder. It closes now; open it again.", "新しいフォルダを使うにはLAS Recompの再起動が必要です。いったん閉じるので、もう一度開いてください。"},
+{"Open in Files", "ファイルAppで開く"},
+{"Some of LAS Recomp's files aren't on this iPhone. They download as the game reads them, so it may be very slow or close.", "LAS Recompのファイルの一部がこのiPhoneにありません。ゲームが読み込むたびにダウンロードされるため、とても遅くなったり終了したりすることがあります。"},

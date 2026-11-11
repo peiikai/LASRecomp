@@ -13,7 +13,7 @@ ARG PBS_PYTHON=3.12.15
 ARG PBS_SHA256_X86_64=7d6ef1164fb94c4b60d913340610fc7e0ef8e3d1b705aa5628b299b08cbdd4b5
 ARG PBS_SHA256_AARCH64=6d129ebdfa88ef11a78c42bd11426c17fad28a42ae20257c1b242cb7e971a235
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git file xz-utils patchelf make cmake ninja-build pkg-config nasm python3 \
+        ca-certificates curl git file xz-utils unzip patch patchelf make cmake ninja-build pkg-config nasm python3 \
         g++ \
         # SDL3's video / audio / input backends (it loads them at run time; the headers decide what it can use)
         libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \

@@ -282,7 +282,7 @@ the start screen's setup otherwise).
 | `LARECOMP_GAME_LIB` | file path | Load the game code library from this path first. |
 | `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `lasgen`. |
 | `LARECOMP_CC` | file path | Compiler to use instead of the bundled zig. |
-| `LARECOMP_GUEST_BASE` | hex address | Builds with `DYN_BASE=1` only: start the guest window here (4 GB aligned, ending below 2^39). Without it a desktop `DYN_BASE` build uses `0x7100000000`, so the game runs away from its own addresses. |
+| `LARECOMP_GUEST_BASE` | hex address | Builds with `DYN_BASE=1` only: start the guest window here (4 GB aligned, ending below 2^39). Without it a desktop `DYN_BASE` build uses `0x7100000000`, so the game runs away from its own addresses. iOS (always `DYN_BASE`) ignores it: the window goes into a free gap found at start-up, 1 GB aligned (`plat_place_guest`). |
 
 ## Tool scripts
 
