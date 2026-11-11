@@ -291,6 +291,8 @@ none of their files are used):
 - An MIT-licensed open-source project's audio renderer and shader instruction decoders (license and copyright notice:
   `third_party/ryujinx/LICENSE.txt`) - the audio renderer's reverb is a port of its reverb code and the mixer is
   modelled on its renderer; its instruction decoders were the bit-layout reference for parts of the shader translator
+- [XC2-Recomp-Contributions](https://github.com/circerio/XC2-Recomp-Contributions) by circerio (MIT) - the
+  branch-phi test shader in the shader translator's control-flow test (`tools/test_translate_flow.c`)
 - **Dusklight** by the TwilitRealm team (https://github.com/TwilitRealm/dusklight) - design inspiration for the start
   screen (Play / Settings / Game Files layout)
 - **SuperMarioWonderRecomp** by BelmanteGu (https://github.com/BelmanteGu/SuperMarioWonderRecomp) - its
