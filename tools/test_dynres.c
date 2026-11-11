@@ -16,7 +16,8 @@ Settings g_settings = {.res_mode = RES_DYNAMIC, .dyn_min = 540};  // (Minimum re
 bool g_gpu_integrated = true;
 void pace_hitch(const char *why) { (void)why; }  // (output_scale.c's render scale changes: nvn/pace.c)
 void pace_settings_changed(const char *what) { (void)what; }  // (output_scale.c's setting watch: nvn/pace.c)
-bool pace_target_30(void) { return false; }  // (output_scale.c's Internal FPS target: nvn/pace.c)
+static int g_t30;  // (the case's Internal FPS target is 30)
+bool pace_target_30(void) { return g_t30; }  // (output_scale.c's Internal FPS target: nvn/pace.c)
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
@@ -35,6 +36,12 @@ typedef struct {
     double resize_at, lines2;  // > 0: the window's height becomes lines2 then (fullscreen <-> windowed): G's scaling part
                                // and W follow the window's area
     int min_lines;      // Minimum resolution (0: 540, the default; 360 or 720)
+    int t30;            // Internal FPS target 30: frames paced to whole 33.3 ms
+    double cpu;         // > 0: CPU time per frame that doesn't overlap the GPU's (ms; the frame takes cpu + G + W)
+    double stall_at, stall_until, stall_ms;  // > 0: frames that long later from stall_at to stall_until (s): shaders
+                                             // compiling after a warp, the GPU idle
+    double wmenu_at, wmenu_until, wmenu;  // > 0: the window step takes wmenu ms from wmenu_at to wmenu_until (s): the
+                                          // menu open
 } Case;
 
 typedef struct {
@@ -53,6 +60,7 @@ typedef struct {
 static int near30(double h) { return fabs(h - 30) < 0.5; }
 static Result run(const Case *c) {
     g_rng = 7;
+    g_t30 = c->t30;
     g_settings.dyn_min = c->min_lines ? c->min_lines : 540;
     double now = 1.0, f = output_scale_dynamic_factor(), g_prev = -1, w_prev = -1;
     double frames_end = 0, t_end = 0, last_f = f, f_min = 1, f_max = 0, last_hold = 0, hold_t = 0;
@@ -99,11 +107,15 @@ static Result run(const Case *c) {
             scene *= exp(walk);
         }
         double g = (c->a + c->b * f * f * area) * scene * (0.98 + 0.04 * rnd()) * clk, w = c->w * area * (0.99 + 0.02 * rnd()) * clk;
+        if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
         if (c->clock_slow > 0) {  // under 60% busy: the clock drifts down (times up), over 80%: back up, over ~1 s
             double busy = gw / fmax(p, 16.667), target = busy < 0.6 ? c->clock_slow : busy > 0.8 ? 1.0 : clk;
             clk += (target - clk) * fmin(1.0, p / 1000.0);
         }
+        if (c->cpu > 0) p = c->fifo ? ceil((c->cpu + gw) / 16.667 - 1e-9) * 16.667 : c->cpu + gw;
+        if (c->t30 && p < 33.333) p = 33.333;
+        if (c->stall_at > 0 && now > c->stall_at && now < c->stall_until) p += c->stall_ms;
         if (p < 16.667) p = 16.667;
         if (c->resize_at > 0 && now > c->resize_at - 3 && now <= c->resize_at) p_before = fmax(p_before, p);
         if (resized && now < c->resize_at + 5 && p > p_before + 1) slow_after++;
@@ -172,7 +184,8 @@ int main(int argc, char **argv) {
         // x2 swinging +-15% (G 32.7 at the floor, 0.25): 20 fps, no hunting between 20 and 30
         {"4K bilinear, held 30, G x2 from 30 s, load swinging +-15% (fifo)", 14, 37.6, 0.9, 1, 0, 240, 0.15, 30, 2.0},
         // walking around, a fast GPU at the edge (5120x1440 class: G 13.6 + W 1 at 1.00, the load wandering +-10%):
-        // it hunted here - 45 steps in 6 min before. A few changes at most
+        // it hunted here in big steps - 45 in 6 min with frames missing. Now it follows the load in 0.05 steps (a step
+        // isn't seen, a missed frame is): 60 throughout, a step every ~6 s at most
         {"edge at 1.00, load wandering +-10% (fifo)", 1.6, 12, 1.0, 1, 0, 360, 0.01, 0, 0, 0, 0.10},
         // the same edge lower down (G 13.2 at 0.80), wandering +-15%
         {"edge at 0.80, load wandering +-15% (fifo)", 1.5, 18.3, 0.8, 1, 0, 360, 0.01, 0, 0, 0, 0.15},
@@ -202,6 +215,24 @@ int main(int argc, char **argv) {
         {"4K heavy, Minimum resolution 360p (fifo)", 4, 200, 0.9, 1, 0, 180, 0, 0, 0, 0, 0, 2160, 0, 0, 0, 360},
         // Minimum resolution 720p: case 2 (settles at 0.70 in a 1080p window), the floor 0.67
         {"1080p bilinear, Minimum resolution 720p (fifo)", 0.3, 25.1, 0.2, 1, 0, 180, 0.05, 0, 0, 0, 0, 1080, 0, 0, 0, 720},
+        // Internal FPS target 30, Retroid Pocket 5 (Turnip R6, Field): G + W 15.6 ms at 1.00 in a 1080p window - 1.00
+        // holds 30. A warp at 30 s: 3 s of frames 2.5 ms late (shaders compiling, the GPU idle). It went to 0.60 for
+        // minutes before (one late half second capped G + W at 15 ms, easing 5% every 30 s); back at 1.00 soon now
+        {.name = "target 30, 1.00 fits, 3 s of late frames after a warp at 30 s (fifo)", .a = 1, .b = 13.8, .w = 0.8,
+         .fifo = 1, .secs = 150, .lines = 1080, .min_lines = 360, .t30 = 1, .stall_at = 30, .stall_until = 33, .stall_ms = 2.5},
+        // Internal FPS target 30 where the CPU's part doesn't overlap the GPU's (Retroid, Mabe, runtime -O0): 20 ms of CPU
+        // + G + W 19.8 at 1.00 = frames every 50 ms. It must step down until cpu + G + W fits 33.3 ms, and stay there
+        {.name = "target 30, CPU 20 ms not overlapping (G + W 19.8 at 1.00, fifo)", .a = 1, .b = 18, .w = 0.8, .fifo = 1,
+         .secs = 180, .lines = 1080, .min_lines = 360, .t30 = 1, .cpu = 20},
+        // Internal FPS target 30 at 1.00 (Retroid: G 19 + W 1 ms in the field), the menu open 40-50 s (W 6 ms): the hold
+        // must go on. Before, W's change ended it and that half second was judged by 60's budget: 1.00 -> 0.70
+        {.name = "target 30 at 1.00, the menu open 40-50 s (W 1 -> 6 -> 1 ms, fifo)", .a = 1, .b = 18, .w = 1, .fifo = 1,
+         .secs = 120, .lines = 1080, .min_lines = 360, .t30 = 1, .wmenu_at = 40, .wmenu_until = 50, .wmenu = 6},
+        // Internal FPS target 30, a heavier stretch 30-110 s (Retroid, R6: G 24.5 at 1.00, frames every 38-40 ms with 12
+        // ms of CPU not overlapping; the upscaler's window step 2.8 ms below 1.00): one step down (0.90 fits) - it went
+        // 1.00 -> 0.80 -> 0.70 before (a big first step, then a second for the window step's growth) - and back to 1.00
+        {.name = "target 30, a heavier stretch 30-110 s, 1.00 a little late (mailbox)", .a = 1, .b = 14, .w = 0.8,
+         .secs = 170, .lines = 1080, .min_lines = 360, .t30 = 1, .cpu = 12, .heavy_at = 30, .heavy = 1.6, .heavy_until = 110},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -219,7 +250,7 @@ int main(int argc, char **argv) {
     case 6: check(r.f_end >= 0.35 && r.fps_end > 58 && r.changes_last60 == 0, "4K bilinear f^2: 60 under 0.50"); break;
     case 7: check(r.f_end == 1.0 && r.fps_end > 58, "fast GPU: full resolution"); break;
     case 8: check(r.fps_end > 58 && r.changes_last60 <= 2, "4K bilinear +-15%: 60, steady"); break;
-    case 9: check(r.fps_end > 58 && r.changes_last60 <= 2, "1080p bilinear +-15%: 60, few steps"); break;
+    case 9: check(r.fps_end > 58 && r.changes_last60 <= 10, "1080p bilinear +-15%: 60, following the scene in small steps"); break;
     case 10: check(r.fps_end > 58 && r.changes_last60 == 0, "1080p game scaler off: 60"); break;
     case 11: check(r.fps_end > 29 && r.f_end < 0.26 && r.changes_last60 <= 2, "4K FSR 44 ms: 30 at the floor"); break;
     case 12: check(near(r.hold_end, 30) && r.fps_end > 28 && r.changes_last60 <= 2, "G x1.44: hold 30 at a lower factor"); break;
@@ -227,8 +258,8 @@ int main(int argc, char **argv) {
     case 14: check(near(r.hold_end, 30) && r.fps_end > 28 && r.changes_last60 <= 2 && r.back30_t > 0 && r.back30_t < 154,
                    "G x1.8 then back: 20, then 30 within a few seconds"); break;
     case 15: check(near(r.hold_end, 20) && r.fps_end > 19 && r.hold_changes <= 5, "G x2 +-15%: 20, no hunting"); break;
-    case 16: check(r.changes_settled <= 4 && r.fps_end > 58, "edge at 1.00 wandering: a few changes in 6 min"); break;
-    case 17: check(r.changes_settled <= 8 && r.fps_end > 58, "edge at 0.80 wandering: a few changes in 6 min"); break;
+    case 16: check(r.changes_settled <= 60 && r.fps_end > 58, "edge at 1.00 wandering: 60, small steps at most every ~6 s"); break;
+    case 17: check(r.changes_settled <= 60 && r.fps_end > 58, "edge at 0.80 wandering: 60, small steps at most every ~6 s"); break;
     case 18: check(r.fps_end > 58 && r.hold_end == 0 && r.hold_t < 150, "iGPU clock lock-in: back to 60 after the heavy stretch"); break;
     // (held 30 in a smaller window: the hold goes on - or 60 fits at the window's floor now, found by a probe)
     case 19: check(r.f_after >= r.f_before - 1e-6 && r.slow_after == 0 && (near(r.hold_end, 30) ? r.changes_after <= 1 : r.fps_end > 58),
@@ -242,6 +273,10 @@ int main(int argc, char **argv) {
     case 24: check(near(r.hold_end, 30) && r.fps_end > 29 && r.f_min_last60 >= 0.25 && r.changes_last60 <= 2, "4K heavy 540p: 30 at 0.25"); break;
     case 25: check(r.fps_end > 58 && r.f_end < 0.25 && r.changes_last60 <= 2, "4K heavy 360p: 60 under 0.25"); break;
     case 26: check(r.fps_end > 58 && r.f_min_last60 >= 0.66 && r.changes_last60 <= 2, "720p: never under 0.67"); break;
+    case 27: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.9, "target 30, 1.00 fits: back at 1.00 after the warp"); break;
+    case 28: check(r.fps_end > 29 && r.f_end < 0.8 && r.changes_last60 <= 2, "target 30, CPU not overlapping: steps down to 30, steady"); break;
+    case 29: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 29, "target 30, menu open and closed: stays at 1.00"); break;
+    case 30: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.89, "target 30, heavier stretch: one step down, then back"); break;
     }
     // a hold is real: the frames come at least at the rate it says
     if (r.hold_end > 0) check(r.fps_end >= 0.95 * r.hold_end, "the held frame rate is met");
