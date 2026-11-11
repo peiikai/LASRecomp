@@ -699,7 +699,7 @@ static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *
 #endif
 }
 
-// ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on iOS)
+// ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on macOS / iOS)
 // A data root inside a synced folder uploads every game file to the player's cloud drive: a warning on the start
 // screen with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep
 // here (settings.onedrive_kept). Checked once per launch on the current data root (plat_cloud_synced); the size in
@@ -708,9 +708,23 @@ static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *
 #define GAME_FILES_GB 6.3   // exefs + romfs, as players bring them
 #define SETUP_ADDS_GB 0.4   // the built game code and its kept pieces (0.23, a beta_5 setup), shader caches
 static const char *g_onedrive_name;        // the service's name (the English text names it); NULL: not synced
-// (iOS: the system offloads a cloud folder's files it thinks unused; the game then waits for each one it reads)
+// (the drive offloads a synced folder's files it thinks unused; the game then waits for each one it reads)
+#if PLAT_IOS
 static const char *const KEEP_DOWNLOADED = LN("In the Files app, touch and hold the data folder and choose Keep "
                                               "Downloaded, so its files stay on this iPhone.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files aren't on this iPhone. They download as the "
+                                       "game reads them, so it may be very slow or close.");
+#elif defined(__APPLE__)
+static const char *const KEEP_DOWNLOADED = LN("In Finder, Control-click the data folder and choose Keep Downloaded, "
+                                              "so its files stay on this Mac.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files aren't on this Mac. They download as the "
+                                       "game reads them, so it may be very slow or close.");
+#else  // (OneDrive)
+static const char *const KEEP_DOWNLOADED = LN("In File Explorer, right-click the data folder and choose Always keep on "
+                                              "this device, so its files stay on this PC.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files aren't on this PC. They download as the "
+                                       "game reads them, so it may be very slow or close.");
+#endif
 static int g_onedrive = -1;                // -1: not checked yet
 static std::atomic<double> g_od_gb{-1};    // the estimate (-1: not known yet)
 static std::atomic<int> g_od_job;
@@ -758,7 +772,9 @@ static int onedrive_notice(float s, float w, bool ready) {
     ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_onedrive_name);
     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your %s."),
                        fmax(1.0, gb), g_onedrive_name);
-    if (PLAT_IOS) ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
+#ifdef __APPLE__
+    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
+#endif
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 4 * s));
     int r = 0;
@@ -2271,14 +2287,11 @@ extern "C" void launcher_run(const char *root) {
         g_onedrive = g_onedrive_name != NULL;
         if (g_onedrive) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_onedrive_name,
                                 g_settings.onedrive_kept ? " (kept there)" : "", rt_data_root());
-#if PLAT_IOS
-        if (g_onedrive && plat_ios_cloud_offloaded(rt_data_root())) {
+        if (g_onedrive && plat_cloud_offloaded(rt_data_root())) {
             char msg[700];
-            snprintf(msg, sizeof msg, "%s\n\n%s", L("Some of LAS Recomp's files aren't on this iPhone. They download as the "
-                                                  "game reads them, so it may be very slow or close."), L(KEEP_DOWNLOADED));
+            snprintf(msg, sizeof msg, "%s\n\n%s", L(NOT_HERE), L(KEEP_DOWNLOADED));
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", msg, win);
         }
-#endif
     }
     // the shader preparation of every later start: in the background (first setups and updates do theirs above)
     if (status.empty() && !g_busy && !getenv("LARECOMP_LAUNCHER_PREPARE")) start_background_prep();

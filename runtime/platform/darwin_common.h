@@ -1,9 +1,12 @@
-// What the macOS and iOS host layers share (runtime/platform.h): the Mach / POSIX pieces that are the same on both.
+// What the macOS and iOS host layers share (runtime/platform.h): the Mach / POSIX pieces that are the same on both,
+// and iCloud Drive.
 // Included once by each one's host layer (macos.c, ios.c), as posix_log.h is by macos.c and linux.c.
 #pragma once
+#include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <execinfo.h>
+#include <fts.h>
 #include <ftw.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
@@ -14,6 +17,7 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
@@ -169,3 +173,52 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
+
+// A folder in iCloud Drive: its files may not be on the device, and a write there is a sync. The start screen
+// warns, as it does for OneDrive on Windows. (Other providers - Google Drive, Dropbox - look just like On My iPhone
+// from here: all of them are folders under some app group's File Provider Storage; no warning for those.)
+const char *plat_cloud_synced(const char *dir) {
+    static char name[128];
+    CFURLRef u = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)dir, (CFIndex)strlen(dir), true);
+    if (!u) return NULL;
+    CFBooleanRef ubi = NULL;
+    bool synced = CFURLCopyResourcePropertyForKey(u, kCFURLIsUbiquitousItemKey, &ubi, NULL) && ubi && CFBooleanGetValue(ubi);
+    if (ubi) CFRelease(ubi);
+    if (synced) {
+        // (the key has no CoreFoundation name; it is NSURLUbiquitousItemContainerDisplayNameKey's own string)
+        CFStringRef shown = NULL;
+        if (!CFURLCopyResourcePropertyForKey(u, CFSTR("NSURLUbiquitousItemContainerDisplayNameKey"), &shown, NULL) || !shown
+            || !CFStringGetCString(shown, name, sizeof name, kCFStringEncodingUTF8) || !name[0])
+            snprintf(name, sizeof name, "iCloud Drive");
+        if (shown) CFRelease(shown);
+    }
+    CFRelease(u);
+    return synced ? name : NULL;
+}
+
+// A file under dir (iCloud) the system has offloaded: the game would wait for each as it reads it. Read from the
+// file system's own mark (SF_DATALESS), entry by entry. No folder answers for its files: a folder's
+// NSURLUbiquitousItemDownloadingStatusKey stays Current with files in it offloaded, with Keep Downloaded set on it
+// too (macOS then brings an offloaded file back, 20 to 60 s later). The same key read per file names the same
+// files as the mark, but takes seconds (4800 entries: 6 to 7.6 s against 20 ms on an iPhone 15 Pro, 5.5 s against
+// 13 ms on macOS 26).
+bool plat_cloud_offloaded(const char *dir) {
+    uint64_t t0 = plat_now_ns();
+    char *paths[] = {(char *)dir, NULL};
+    FTS *f = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
+    if (!f) return false;
+    int n = 0;
+    bool off = false;
+    for (FTSENT *e; !off && (e = fts_read(f));) {
+        if (e->fts_info == FTS_DP) continue;
+        n++;
+        // (a folder with the mark hasn't its list here either: listing it would be a download)
+        if ((e->fts_info == FTS_F || e->fts_info == FTS_D) && (e->fts_statp->st_flags & SF_DATALESS)) {
+            fprintf(stderr, "[cloud] not on the device: %s\n", e->fts_path);
+            off = true;
+        }
+    }
+    fts_close(f);
+    fprintf(stderr, "[cloud] %d entries checked in %.0f ms\n", n, (plat_now_ns() - t0) / 1e6);
+    return off;
+}

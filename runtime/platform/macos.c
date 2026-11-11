@@ -137,5 +137,3 @@ int plat_proc_wait(PlatProc p, bool block) {
     if (r < 0) return 255;
     return WIFEXITED(st) ? WEXITSTATUS(st) : WIFSIGNALED(st) ? PLAT_PROC_SIGNALED + WTERMSIG(st) : 255;
 }
-
-const char *plat_cloud_synced(const char *dir) { (void)dir; return NULL; }

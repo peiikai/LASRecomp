@@ -965,5 +965,9 @@ const char *plat_cloud_synced(const char *dir) {
     return NULL;
 }
 
+// TODO: a file under dir that OneDrive keeps online only (Files On-Demand). Not written: it needs a OneDrive
+// setup to check against. The start screen already asks at launch and shows its box on true (runtime/ui/launcher.mm).
+bool plat_cloud_offloaded(const char *dir) { (void)dir; return false; }
+
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
 void plat_terminate(void) { publish_log(); TerminateProcess(GetCurrentProcess(), 0); }

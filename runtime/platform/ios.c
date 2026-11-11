@@ -1,8 +1,8 @@
 // iOS host layer (runtime/platform.h): macOS's Mach / POSIX pieces, minus what an iOS app can't do (start
 // processes, re-exec itself, show an alert from any thread). The data folder is the app's Documents (runtime/paths.c),
 // visible in Files with UIFileSharingEnabled: game files, saves, seeds and the log go there.
-// The pieces shared with macOS (timers, the thread policies, symbols, the crash handler, plat_remove_tree) are
-// darwin_common.h's.
+// The pieces shared with macOS (timers, the thread policies, symbols, the crash handler, plat_remove_tree, iCloud
+// Drive) are darwin_common.h's.
 #include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
 #include <mach/mach.h>
