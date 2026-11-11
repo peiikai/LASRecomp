@@ -1,4 +1,5 @@
-"""The guest heap goes lazy where its system memory heap can't hold one import (issue #205), and only there."""
+"""The guest heap goes lazy where its system memory heap can't hold one import (issue #205), and only there;
+Android phones without the RAM to pin the whole heap use copies instead (issue #693)."""
 import os
 from pathlib import Path
 import re
@@ -53,6 +54,15 @@ int main(void) {
     // no host-visible heap at all: no opinion (the import fails on its own)
     ImportHeap none[] = {{4 * 1024 * MB, 0, true, false}};
     assert(import_heap_room(none, 1, &room) < 0 && !lazy(none, 1));
+    // issue #693: Galaxy S25 FE (Android, Xclipse 940, 7 GB): the heap and its budget hold one import, the phone's
+    // RAM doesn't (the import pins HEAP_MAX and the low-memory killer ended the game): copies instead
+    ImportHeap s25fe[] = {{5316 * MB, 5050 * MB, true, true}, {64 * MB, 60 * MB, true, true}};
+    assert(!lazy(s25fe, 2) && import_heap_room(s25fe, 2, &room) == 0 && room < IMPORT_PROBE_BELOW);
+    assert(!android_import_ram_ok(7168 * MB));
+    assert(!android_import_ram_ok(7680 * MB));     // other 8 GB phones
+    assert(android_import_ram_ok(11 * 1024 * MB));  // 12 GB phones keep the import
+    assert(android_import_ram_ok(0));               // RAM unknown: as before
+    puts("PASS: issue #693 phone takes copies;");
     puts("PASS: issue #205 laptop lazy; RTX, 8 GB desktop and big unified memory keep one import, 8 GB desktop probed");
 }
 '''
