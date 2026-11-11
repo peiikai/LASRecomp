@@ -530,17 +530,32 @@ static uint64_t s_replays;
 static const char *const cut_name[9] = {"level/forced", "no previous frame", "few matches", "jumps", "object freed", "loading/hitch", "camera jump", "game ahead", "storage rewritten"};
 
 static double img_replay_ms = -1, img_compose_ms = -1;  // (moving averages: an in-between's GPU time)
+static double img_game_ms = -1;  // (the game's own GPU time a frame when those were measured)
 void interp_replay_gpu(double ms) {  // (completion handlers)
     atomic_fetch_add(&s_gpu_n, 1);
     s_replay_gpu += ms;
     img_replay_ms = img_replay_ms < 0 ? ms : img_replay_ms + (ms - img_replay_ms) * 0.1;
+    extern double pace_gpu_frame_ms(void);
+    double g = pace_gpu_frame_ms();
+    if (g > 0) img_game_ms = img_game_ms < 0 ? g : img_game_ms + (g - img_game_ms) * 0.1;
 }
 void interp_compose_gpu(double ms) {
     atomic_fetch_add(&s_compose_n, 1);
     s_compose_gpu += ms;
     img_compose_ms = img_compose_ms < 0 ? ms : img_compose_ms + (ms - img_compose_ms) * 0.1;
 }
-double interp_image_gpu_ms(void) { return img_replay_ms < 0 ? -1 : img_replay_ms + (img_compose_ms > 0 ? img_compose_ms : 0); }
+// An in-between's replay draws what the game's frame draws, so its cost follows the game's: scaled by how the game's
+// GPU time changed since it was measured. Measured only when one is made, it stuck: a high cost (full resolution on an
+// iPad M4, game 10 ms + in-between 7.5 ms) kept the budget at none after the resolution went down to 25% (game 4.5 ms,
+// GPU busy about a quarter of the time) - none made, so none measured again. The compose pass is at the window's size.
+double interp_image_gpu_ms(void) {
+    if (img_replay_ms < 0) return -1;
+    double r = img_replay_ms;
+    extern double pace_gpu_frame_ms(void);
+    double g = pace_gpu_frame_ms();
+    if (g > 0 && img_game_ms > 0) r *= fmin(fmax(g / img_game_ms, 0.25), 4.0);
+    return r + (img_compose_ms > 0 ? img_compose_ms : 0);
+}
 
 
 static void log_cut(int why, const char *more) {
