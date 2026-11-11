@@ -230,23 +230,33 @@ static void seq_add(uint64_t bits, float on, float off) {
     if (g_seq_n < SEQ_MAX) g_seq[g_seq_n++] = {bits, on, off};
 }
 
+// The game's menus are laid out on a 16:9 page, sized by the screen's height on wider screens (phones) and by its width
+// on narrower ones (an iPad's 4:3: the page then sits in the middle, bands above and below - seen on a 1024x768
+// window). page_at: a point as (across from the page's middle, down from its top), in shares of the page's height.
+static void page_at(float x, float y, float *u, float *v) {
+    float ph = fminf(g_h, g_w * 9.0f / 16.0f), top = (g_h - ph) * 0.5f;
+    *u = (x - g_w * 0.5f) / ph, *v = (y - top) / ph;
+}
+
 // The Items page's 12 slots (4 x 3, cursor 0..11 row by row), measured on the phone (2400x1080): the first slot's centre
-// 0.170 of the screen's height right of its middle and 0.304 down, 0.144 apart both ways (the page keeps its size by
-// the height, centred, whatever the window's shape)
+// 0.170 of the page's height right of its middle and 0.304 down, 0.144 apart both ways
 static const float kGridX0 = 0.1704f, kGridY0 = 0.3037f, kGridD = 0.1444f;
 static std::atomic<int> g_item_target{-1};  // the slot a tap asked for (the render thread steps the cursor there)
 static int item_slot_at(float x, float y) {
-    float u = (x - g_w * 0.5f) / g_h, v = y / g_h;
+    float u, v;
+    page_at(x, y, &u, &v);
     int col = (int)floorf((u - (kGridX0 - kGridD * 0.5f)) / kGridD), row = (int)floorf((v - (kGridY0 - kGridD * 0.5f)) / kGridD);
     return col >= 0 && col < 4 && row >= 0 && row < 3 ? row * 4 + col : -1;
 }
 
 // The file select's four files (three diaries and the autosave), measured the same way: their centres down the
-// screen, each 0.19 of its height tall, 0.57 of it either side of the middle
+// page, each 0.19 of its height tall, 0.57 of it either side of the middle
 static const float kFileY[4] = {0.195f, 0.400f, 0.605f, 0.856f};
 static int file_at(float x, float y) {
-    if (fabsf(x - g_w * 0.5f) > 0.57f * g_h) return -1;
-    for (int i = 0; i < 4; i++) if (fabsf(y / g_h - kFileY[i]) < 0.095f) return i;
+    float u, v;
+    page_at(x, y, &u, &v);
+    if (fabsf(u) > 0.57f) return -1;
+    for (int i = 0; i < 4; i++) if (fabsf(v - kFileY[i]) < 0.095f) return i;
     return -1;
 }
 // The file select's "load this file?" is up: a file was tapped and the file select is still shown
