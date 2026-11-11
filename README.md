@@ -36,8 +36,6 @@ These are the minimums during the beta and may change as development continues.
 | RAM | 8 GB (16 GB recommended) |
 | Disk | About 12 GB free for setup |
 
-Not supported: Intel UHD 600-series and older Intel integrated graphics, and anything slower than a Switch. Linux on ARM (aarch64) is experimental.
-
 **Android:**
 
 | | Minimum |
