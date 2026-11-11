@@ -45,7 +45,7 @@ if [ -z "$SKELETON" ]; then
     [ -f "$LIB" ] && [ -f "$LIB.id" ] || { echo "no $LIB (make PLATFORM=ios gen, then make PLATFORM=ios)"; exit 1; }
 fi
 # the app must hold no game code (grep without -q: with pipefail, nm cut off early would hide a match)
-if nm "$EXE" | grep ' _f_8' >/dev/null; then echo "$EXE has game code linked in"; exit 1; fi
+if nm "$EXE" | grep ' _f_70' >/dev/null; then echo "$EXE has game code linked in"; exit 1; fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Frameworks"
