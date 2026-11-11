@@ -183,7 +183,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: make git curl tar xz diffutils zip unzip patch
+          install: make git curl tar xz diffutils zip unzip
           pacboy: clang:p lld:p binutils:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p nasm:p
       - name: Deps cache
@@ -270,8 +270,8 @@ jobs:
           for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows aarch64-windows; do LLD_TARGET=$t tools/fetch_lld.sh; done
       - name: Kit
         run: make -j"$(sysctl -n hw.ncpu)" ios-kit
-      # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (the iOS game code is
-      # f_8..., at the iOS guest base), no game files; and the kit as the runtime reads it: the app under Payload/,
+      # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (f_70...: the game's own
+      # addresses, under --dyn-base too), no game files; and the kit as the runtime reads it: the app under Payload/,
       # no symlink entries in it (an iOS install drops them; zipinfo's 'l'), every host's linker in it
       - name: No game code; the kit's layout
         run: |
