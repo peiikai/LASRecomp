@@ -194,8 +194,17 @@ static void stick_to(float x, float y) {
     if (d > r) dx *= r / d, dy *= r / d;
     g_knob_x = g_stick_cx + dx, g_knob_y = g_stick_cy + dy;
     float nx = dx / r, ny = -dy / r, m = sqrtf(nx * nx + ny * ny);
-    if (m < 0.12f) nx = ny = 0;  // dead zone
-    else if (g_settings.touch_dpad) {  // eight ways, full tilt (the game walks by the stick: its D-pad is a setting of its own)
+    // Link has two speeds: he walks from about a third of the stick's tilt (11500 of 32767) and runs only at full tilt
+    // (28000 still walks; measured with scripted stick holds). A thumb rarely holds a steady part-way tilt, so the
+    // stick has two zones: a short one near the middle that walks (0.6: well inside the game's walking range) and the
+    // rest, which runs. Once running it stays so down to 0.32, so a thumb at the edge doesn't flick between the two.
+    static bool running;
+    if (m < 0.12f) nx = ny = 0, running = false;  // dead zone
+    else if (!g_settings.touch_dpad) {
+        running = m >= (running ? 0.32f : 0.40f);
+        float k = (running ? 1.0f : 0.6f) / m;
+        nx *= k, ny *= k;
+    } else {  // eight ways, full tilt (the game walks by the stick: its D-pad is a setting of its own)
         if (m < 0.25f) nx = ny = 0;
         else {
             float a = roundf(atan2f(ny, nx) / (3.14159265f / 4)) * (3.14159265f / 4);
