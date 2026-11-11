@@ -223,7 +223,7 @@ without touching the installed game, your game files or your saves.
   summary (#582), an FFmpeg licence check that really checks (#583), the GPU driver in the log bot's summary (#588),
   each attached log counted once (#589), the game files check in the log bot's summary (#600), summaries for
   logs attached by editing a comment (#601), and a Linux AppImage build that stops when its container fails (#653)
-- **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319), touch menus and on-screen controls for phones (#634), and the frame interpolation presenter on CADisplayLink (#649)
+- **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319), touch menus and on-screen controls for phones (#634), the frame interpolation presenter on CADisplayLink (#649), and the iOS port: the game on iPhone and iPad (#238)
 - **[@theb0rg](https://github.com/theb0rg)** - the fix for AMD integrated graphics on Windows (#335)
 - **[@gtf-dot](https://github.com/gtf-dot)** - the game-text font on Linux (#330)
 - **[@cfcosta](https://github.com/cfcosta)** - full speed on Linux AMD handhelds like the Steam Deck and ROG Ally (#392)
