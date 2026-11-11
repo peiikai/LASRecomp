@@ -94,7 +94,7 @@ The iOS app is made on your computer from your own game files, then sideloaded.
 
 1. Set up LAS Recomp on a Mac, Windows or Linux computer as usual.
 2. From the same release, download `LAS Recomp-<version>-iOS.laskit`.
-3. On the start screen, open Settings > Prelaunch > Recomp for iOS..., choose the kit, then Export iOS app.
+3. On the start screen, open Settings > Game files > Recomp for iOS..., choose the kit, then Export iOS app.
    The app is saved to your Downloads folder as `LAS Recomp-<version>-iOS.ipa`.
 4. Install the .ipa with a sideloading tool such as SideStore, AltStore or Sideloadly. A free Apple account works,
    but the app then has to be refreshed every 7 days. LAS Recomp only makes the .ipa. Installing it is up to you,
@@ -216,7 +216,7 @@ Where files live (game files, saves, seeds, settings and logs):
 - Linux: `~/.local/share/lasrecomp/`
 - Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
 - iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
-- You can move it to another folder or drive in Settings > Prelaunch > Data folder.
+- You can move it to another folder or drive in Settings > Game files > Data folder.
 - `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
 
