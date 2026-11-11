@@ -377,6 +377,7 @@ extern "C" void rt_window_remember(void *w) {
 }
 
 extern "C" uint32_t g_window_resize_request;  // (test scripts: runtime/hle/input.c "resize")
+extern "C" uint64_t g_window_move_request;    // ("move")
 void menu_apply_window_requests(void *win) {
     SDL_Window *w = (SDL_Window *)win;
     g_pixel_density = SDL_GetWindowPixelDensity(w);
@@ -418,6 +419,8 @@ void menu_apply_window_requests(void *win) {
     }
     if (uint32_t r = __atomic_exchange_n(&g_window_resize_request, 0u, __ATOMIC_RELAXED))
         SDL_SetWindowSize(w, (int)(r >> 16), (int)(r & 0xffff));
+    if (uint64_t m = __atomic_exchange_n(&g_window_move_request, 0ull, __ATOMIC_RELAXED))
+        SDL_SetWindowPosition(w, (int)((m >> 16) & 0xffff) - 32768, (int)(m & 0xffff) - 32768);
 }
 
 // ------------------------------------------------------------------ render thread

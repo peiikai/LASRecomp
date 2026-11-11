@@ -584,6 +584,7 @@ static void push_key(SDL_Scancode sc, SDL_Keymod mod, bool down) {
     SDL_PushEvent(&e);
 }
 uint32_t g_window_resize_request;  // (W << 16 | H: menu_apply_window_requests applies it)
+uint64_t g_window_move_request;    // ((x + 32768) << 16 | (y + 32768), bit 63 set: a move to x,y - another display in tests)
 static void test_push(uint64_t frame, unsigned long start, unsigned long len, const char *dev, const char *arg) {
     SDL_Event e;
     memset(&e, 0, sizeof e);
@@ -592,6 +593,14 @@ static void test_push(uint64_t frame, unsigned long start, unsigned long len, co
         if (frame == start && sscanf(arg, "%ux%u", &w, &h) == 2 && w && h && w < 65536 && h < 65536) {
             LOG("[input] test: window to %ux%u\n", w, h);
             __atomic_store_n(&g_window_resize_request, w << 16 | h, __ATOMIC_RELAXED);
+        }
+        return;
+    }
+    if (!strcmp(dev, "move")) {
+        int x = 0, y = 0;
+        if (frame == start && sscanf(arg, "%d/%d", &x, &y) == 2 && abs(x) < 32768 && abs(y) < 32768) {
+            LOG("[input] test: window moved to %d,%d\n", x, y);
+            __atomic_store_n(&g_window_move_request, 1ull << 63 | (uint64_t)(unsigned)(x + 32768) << 16 | (unsigned)(y + 32768), __ATOMIC_RELAXED);
         }
         return;
     }
@@ -695,7 +704,7 @@ static void host_test_frame(uint64_t frame) {
             char dev[8] = "", name[400] = "";
             if (sscanf(tok, "%lu:%7[a-z]:%399[^:]:%lu", &start, dev, name, &len) < 3) continue;
             if (!strcmp(dev, "type") || !strcmp(dev, "sdlpad") || !strcmp(dev, "sdlaxis") || !strcmp(dev, "sdlkey") || !strcmp(dev, "shot") ||
-                !strcmp(dev, "resize") || !strcmp(dev, "mouse")) {
+                !strcmp(dev, "resize") || !strcmp(dev, "move") || !strcmp(dev, "mouse")) {
                 test_push(frame, start, len, dev, name);
                 continue;
             }
