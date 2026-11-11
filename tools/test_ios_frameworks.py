@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """tools/ios_frameworks.py on a fixture app: the stdlib's and site-packages' extensions become frameworks, a .fwork
-points at each, keystone's dylib gets a relative symlink, and the module
-names / bundle ids are what CPython's importer and the signer expect."""
+points at each, keystone's dylib becomes a framework with nothing left in its place (no symlink in the app), and the
+module names / bundle ids are what CPython's importer and the signer expect."""
 import os
 import plistlib
 import subprocess

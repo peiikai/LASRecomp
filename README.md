@@ -253,8 +253,9 @@ without touching the installed game, your game files or your saves.
   empty the font (#490), a message box on Linux for a CPU without AVX2 (#491), the build and system in the log bot's
   summary (#582), an FFmpeg licence check that really checks (#583), the GPU driver in the log bot's summary (#588),
   each attached log counted once (#589), the game files check in the log bot's summary (#600), summaries for
-  logs attached by editing a comment (#601), and a Linux AppImage build that stops when its container fails (#653)
-- **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319), touch menus and on-screen controls for phones (#634), the frame interpolation presenter on CADisplayLink (#649), and one shared macOS and iOS host layer (#685)
+  logs attached by editing a comment (#601), a Linux AppImage build that stops when its container fails (#653), and
+  a zig download that starts over after being cut off (#667)
+- **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319), touch menus and on-screen controls for phones (#634), the frame interpolation presenter on CADisplayLink (#649), one shared macOS and iOS host layer (#685), the iOS cleanup after #238 (#697), and iOS fixes for saves, errors and Files (#690)
 - **[@theb0rg](https://github.com/theb0rg)** - the fix for AMD integrated graphics on Windows (#335)
 - **[@gtf-dot](https://github.com/gtf-dot)** - the game-text font on Linux (#330)
 - **[@cfcosta](https://github.com/cfcosta)** - full speed on Linux AMD handhelds like the Steam Deck and ROG Ally (#392)

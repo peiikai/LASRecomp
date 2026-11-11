@@ -293,6 +293,41 @@ def _items_page(gen, a):
 PATCHES[ITEMS_PAGE_SITE] = _items_page
 
 
+# The Items page's cursor move: main+0xeb7fdc loads the cell the pressed direction leads to (the page's neighbour
+# table; 0x27 none). A tap on a cell (touch screens) asks for that cell there, so one press moves the cursor straight to
+# it through the game's own move (the old cell let go, the new one picked, its sound): rt_items_nav_pick.
+ITEMS_NAV_SITE = A.ITEMS_NAV_SITE
+
+
+def _items_nav(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xb9400116, hex(w)  # ldr w22, [x8]
+    return ('{ extern uint32_t rt_items_nav_pick(uint32_t); c->x[22] = rt_items_nav_pick(LD32(c->x[8])); }'
+            f'  /* {a:#x}: ldr w22, [x8] (items page: the next cell) */')
+
+
+PATCHES[ITEMS_NAV_SITE] = _items_nav
+
+
+# The file select's cursor (main+0xe61040, each frame while it is shown): a list helper (main+0xe6b160) moves the cursor
+# byte (+0x159b0, the one before it at +0x159b1) up or down among the four files and says whether it moved; on a move
+# the game lets the old file go, picks the new one and plays its sound. A tap on a file (touch screens) puts the cursor
+# there right after the helper, so one press goes straight to it: rt_file_nav_pick.
+FILE_SELECT_NAV_SITE = A.FILE_SELECT_NAV_SITE
+
+
+def _file_select_nav(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x370003c0, hex(w)  # tbnz w0, #0, <moved>
+    t = a + ((w >> 5) & 0x3FFF) * 4
+    return (f'{{ extern int rt_file_nav_pick(uint64_t cursor, int moved); '
+            f'if (rt_file_nav_pick(c->x[19], (int)(c->x[0] & 1))) goto L_{t:x}; }}'
+            f'  /* {a:#x}: tbnz w0, #0 (file select: the cursor moved) */')
+
+
+PATCHES[FILE_SELECT_NAV_SITE] = _file_select_nav
+
+
 # Check tracker (runtime/ui/tracker_overlay.mm): main+0xe93800 runs once per frame only while the pause menu's
 # Map page is shown (fnprof diff of Map vs Items/System/closed). Its prologue reports that.
 MAP_PAGE_SITE = A.MAP_PAGE_SITE

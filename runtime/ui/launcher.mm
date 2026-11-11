@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include <pthread.h>
+#include <set>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -31,6 +32,7 @@
 #include "plastic.h"
 #include "ios_export_ui.h"
 #include "live_preview.h"
+#include "menu.h"
 #include "mobile/touch_ui.h"
 static TouchUi g_touch;  // (touch screens: the start screen's pages)
 #ifdef __APPLE__
@@ -315,10 +317,45 @@ static std::string shown(const std::string &en) {
     return L_line(en);
 }
 
+// Game files of no supported version: what their exefs/main is, in the log once per folder and build ID (the start
+// screen checks every frame, setup on every try). #696's log said only "an unsupported version", not which build.
+// Returns the build ID's first 16 hex digits for the message ("": no program there).
+static std::string refused_main(const std::string &exefs) {
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    static std::set<std::string> logged;
+    char hex[41];
+    GameMainKind k = game_main_build_id((exefs + "/main").c_str(), hex);
+    pthread_mutex_lock(&lock);
+    bool first = logged.insert(exefs + "|" + std::to_string((int)k) + hex).second;
+    pthread_mutex_unlock(&lock);
+    if (first && k == GAME_MAIN_MISSING) fprintf(stderr, "[launcher] game files: no exefs/main, or it can't be read\n");
+    if (first && k == GAME_MAIN_NOT_NSO)
+        fprintf(stderr, "[launcher] game files: exefs/main isn't the game's program (no NSO0 header)\n");
+    if (first && k == GAME_MAIN_NSO)
+        fprintf(stderr, "[launcher] game files: an unsupported version (main build ID %s; supported: 1.0.0, 1.0.1, "
+                "1.1.0)\n", hex);
+    return k == GAME_MAIN_NSO ? std::string(hex, 16) : std::string();
+}
+// (with the build ID's first 16 hex digits; without one, the line alone)
+static const char *const VERSION_HINT = LN("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.");
+static const char *const VERSION_ID_HINT = LN("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game. These game "
+                                              "files have build ID %s.");
+// (English, as the setup lines: shown() puts it in the menus' language)
+static std::string version_hint(const std::string &exefs) {
+    std::string id = refused_main(exefs);
+    if (id.empty()) return VERSION_HINT;
+    char b[320];
+    snprintf(b, sizeof b, VERSION_ID_HINT, id.c_str());
+    return b;
+}
+
 // The copied game files alone ("" = there), without the game code built from them
 static std::string check_copied_files(const std::string &root) {
     if (!file_exists(root + "/exefs/main")) return LN("No game files yet");
-    if (!game_version_of(root.c_str())) return LN("Wrong version of the game");
+    if (!game_version_of(root.c_str())) {
+        refused_main(root + "/exefs");  // (the log line)
+        return LN("Wrong version of the game");
+    }
     if (!file_exists(root + "/romfs/region_common")) return incomplete(0);
     if (g_romfs_count < 0) {
         g_romfs_bytes = 0;
@@ -390,7 +427,11 @@ static const char *status_hint(const std::string &why) {
     if (why.rfind("Game files incomplete", 0) == 0)
         return L("Some of the game's files are missing, usually from a copy or unzip that stopped partway. Copy your game "
                  "files again, then choose that folder and set them up again.");
-    if (why == "Wrong version of the game") return L("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.");
+    if (why == "Wrong version of the game") {
+        static std::string h;
+        h = shown(version_hint(g_root + "/exefs"));
+        return h.c_str();
+    }
     if (why == "Game not built yet")
         return L("Set up the game files to build it. It takes a few minutes and you only do it once.");
 #if PLAT_IOS
@@ -438,7 +479,7 @@ static void set_failure(int k, int have = -1, const char *reason = NULL) {
         PICK_FOLDER_HINT,
         LN("LAS Recomp needs the extracted exefs and romfs folders, not .xci, .nsp or .nca files."),
         LN("Make sure there's about 12 GB free and try again."),
-        LN("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game."),
+        VERSION_HINT,
         LN("Some of the game's files are missing, usually from a copy or unzip that stopped partway. Copy them again "
            "and choose the folder again."),
         LN("Make sure there's about 2 GB free and try again. If it keeps happening, report it on GitHub.")};
@@ -464,8 +505,13 @@ static void find_game(const std::string &dir, std::string &exefs, std::string &r
 static bool build_id_ok(const std::string &exefs) {
     char label[32];
     const char *v = game_release_label(exefs.c_str(), label, sizeof label);
-    fprintf(stderr, "[launcher] game files: %s\n", v ? (std::string("version ") + v).c_str() : "an unsupported version");
+    if (v) fprintf(stderr, "[launcher] game files: version %s\n", v);
+    else refused_main(exefs);
     return v != NULL;
+}
+// Wrong version: the failure, its hint with the build ID
+static void set_version_failure(const std::string &exefs) {
+    set_job(LN("Wrong version of the game"), true, version_hint(exefs));
 }
 
 // progress (the overlay's bar): the romfs copy (bytes)
@@ -572,7 +618,7 @@ static void *extract_thread(void *) {
         mkdir(g_root.c_str(), 0755);
         int r = android_import_game(src.c_str(), g_root.c_str(), import_progress, build_cancelled);
         if (r) { set_failure(r == 1 ? FAIL_NOT_FOUND : r == 2 ? FAIL_UNUSABLE : FAIL_COPY); goto done; }
-        if (!build_id_ok(g_root + "/exefs")) { set_failure(FAIL_VERSION); goto done; }
+        if (!build_id_ok(g_root + "/exefs")) { set_version_failure(g_root + "/exefs"); goto done; }
         if (int have = count_files(g_root + "/romfs"); have < ROMFS_FILES) { set_failure(FAIL_MISSING, have); goto done; }
         g_phase_base = g_total, g_done = (unsigned long long)g_total;
         pthread_mutex_lock(&g_lock);
@@ -585,7 +631,7 @@ static void *extract_thread(void *) {
     set_job(LN("Looking for the game files..."));
     find_game(src, exefs, romfs, unusable);
     if (exefs.empty() || romfs.empty()) { set_failure(unusable ? FAIL_UNUSABLE : FAIL_NOT_FOUND); goto done; }
-    if (!build_id_ok(exefs)) { set_failure(FAIL_VERSION); goto done; }
+    if (!build_id_ok(exefs)) { set_version_failure(exefs); goto done; }
 #if PLAT_IOS
     {  // (refused before the earlier copy is removed: the app's game code wouldn't run them)
         std::string app_v, files_v, parent = exefs.substr(0, exefs.find_last_of("/\\"));
@@ -642,7 +688,7 @@ check:
             set_job(OTHER_VERSION, true, other_version_hint(a, f));
         }
 #endif
-        else if (why.find("version") != std::string::npos) set_failure(FAIL_VERSION);
+        else if (why.find("version") != std::string::npos) set_version_failure(g_root + "/exefs");
         else set_failure(FAIL_MISSING, g_romfs_count);
     }
 done:
@@ -2374,10 +2420,7 @@ extern "C" void launcher_run(const char *root) {
             if (!launcher_pad_event(e)) ImGui_ImplSDL3_ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) exit(0);
         }
-        {   // iOS: the app in the background - nothing drawn (a Metal drawable there is an error; metal.m)
-            extern bool ui_in_background(void);
-            if (ui_in_background()) { SDL_Delay(50); continue; }
-        }
+        if (ui_in_background()) { SDL_Delay(50); continue; }  // (iOS: a Metal drawable there is an error)
         // extraction finished: re-check, load the background
         pthread_mutex_lock(&g_lock);
         bool busy = g_busy;
