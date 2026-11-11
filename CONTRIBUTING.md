@@ -64,7 +64,8 @@ them, then `make -j10`. The randomizer needs its Python environment in
 
 - `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
   `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
-  word, so a wrong address fails loudly instead of silently.
+  word, so a wrong address fails loudly instead of silently. `tools/chunk_bounds.py` holds where the C is split into
+  files (made with `gen.py --new-chunk-bounds`; new cuts make every file compile once).
 - `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
   by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
   patch generator (read by `tools/game_addresses.py`, part of the game-library identity) and `runtime_<version>.h`

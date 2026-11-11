@@ -37,7 +37,7 @@ endfunction()
 file(GLOB PATCH_TABLES RELATIVE ${R} ${R}/runtime/game_addresses/patches_v*.h)
 list(SORT PATCH_TABLES)
 las_id(GAMELIB_ID 16 tools/game_addresses.py runtime/game_addresses/versions.h ${PATCH_TABLES} tools/gen.py tools/lifter.py
-       tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/simd_c.py tools/rando/patch_variants.json
+       tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/chunk_bounds.py tools/simd_c.py tools/rando/patch_variants.json
        tools/gamelib_entry.c runtime/hle/hle_symbols.txt runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
        "${GAMELIB_CFLAGS}\n")
 las_id(GAMELIB_BASE_ID 16 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/fetch_zig.sh
