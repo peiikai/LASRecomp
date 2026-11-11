@@ -118,6 +118,9 @@ untranslated text shows in English.
 
 `python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
 
+`third_party/LAS-Randomizer/venv/bin/python tools/test_keysanity_text.py [<romfs>]` checks that keysanity dungeon
+items picked up anywhere, floor key spots included, get a message naming their dungeon.
+
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.
 On Windows, also run `python tools/test_windows_processes.py` to check independent
