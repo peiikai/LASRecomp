@@ -18,6 +18,8 @@ bool menu_handle_event(const SDL_Event *e);
 bool menu_is_open(void);
 // Main thread: apply window requests (fullscreen) made from the menu.
 void menu_apply_window_requests(void *sdl_window);
+// iOS: the app is in the background, nothing may be drawn (metal.m; false elsewhere)
+bool ui_in_background(void);
 // Before the window is made: its opening size, the remembered one (Remember window size), else left as is.
 void rt_window_size(int *w, int *h);
 // The window made: its size is saved at exit (Remember window size).
