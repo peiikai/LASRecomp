@@ -81,6 +81,7 @@ typedef struct {
     bool ts_win;                        // the window image's submission: a 3rd timestamp after its acquire wait
     bool ts_interp;                     // Frame Generation's: an in-between's replay or its window image (vk_ip_mid)
     uint64_t seq;
+    bool held;                          // submitted, its command buffers not reset yet (g_vk.cb_early_reset)
     // (its descriptor pools: record.c, per slot)
 } Sub;
 static Sub subs[SUBS];
@@ -388,6 +389,7 @@ static Sub *sub(void) {
         rec_reset_pools(cur_sub);  // (its sets went with the submission; the recorder resets in order)
         pthread_mutex_lock(&seq_lock);
         s->main_begun = s->upload_begun = false;
+        s->held = false;  // (the begin resets it anyway)
         s->seq = submit_seq + 1;
         pthread_mutex_unlock(&seq_lock);
     }
@@ -564,6 +566,21 @@ void vk_gpuprof_report(void) {
     gp_n = 0;
 }
 
+// (g_vk.cb_early_reset, device.c) The command buffers of the slots whose submissions are complete, reset now instead
+// of at the slot's next use (24 submissions later): PanVK keeps a command buffer's shader scratch memory until its
+// reset (from Mesa 25.3 on the pool's free list, where the next command buffer reuses it). s: the slot just submitted.
+static void cb_early_reset(Sub *s) {
+    s->held = true;
+    uint64_t done = vk_completed_seq();
+    for (int i = 0; i < SUBS; i++) {
+        Sub *o = &subs[i];
+        if (!o->held || o->seq > done) continue;
+        rec_ResetCommandBuffer(o->main);
+        rec_ResetCommandBuffer(o->upload);
+        o->held = false;
+    }
+}
+
 // Submit the pending work (if any). wait/signal: binary semaphores for presentation (may be null).
 void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra) {
     (void)extra;
@@ -600,6 +617,7 @@ void vk_submit_extra(VkSemaphore wait, VkSemaphore signal, VkCommandBuffer extra
     submit_seq++;
     cur_sub = (cur_sub + 1) % SUBS;
     pthread_mutex_unlock(&seq_lock);
+    if (g_vk.cb_early_reset) cb_early_reset(s);
     passes_in_sub = 0;
     stat_flushes++;
     cum_submits++;

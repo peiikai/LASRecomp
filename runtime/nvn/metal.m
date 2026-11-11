@@ -2054,9 +2054,12 @@ static NSWindow *ip_window(void) {
 #if TARGET_OS_IPHONE
             LOG("[interp] display period %.2f -> %.2f ms\n", last_per / 1e6, per * 1e3);
 #else
-            NSScreen *s = ip_window().screen;
-            LOG("[interp] display period %.2f -> %.2f ms (display %u, %ld Hz)\n", last_per / 1e6, per * 1e3,
-                [s.deviceDescription[@"NSScreenNumber"] unsignedIntValue], (long)s.maximumFramesPerSecond);
+            double was = last_per / 1e6, ms = per * 1e3;
+            dispatch_async(dispatch_get_main_queue(), ^{  // (AppKit)
+                NSScreen *s = ip_window().screen;
+                LOG("[interp] display period %.2f -> %.2f ms (display %u, %ld Hz)\n", was, ms,
+                    [s.deviceDescription[@"NSScreenNumber"] unsignedIntValue], (long)s.maximumFramesPerSecond);
+            });
 #endif
         }
         last_per = p;
@@ -2075,7 +2078,8 @@ static NSWindow *ip_window(void) {
 static CADisplayLink *ip_link;
 static InterpLink *ip_link_target;
 static CFRunLoopRef ip_link_loop;
-static _Atomic int ip_link_state;  // 0 not started, 1 running, -1 couldn't be made
+static _Atomic int ip_link_state;  // 0 not started, 2 starting, 1 running, -1 couldn't be made
+static _Atomic bool ip_link_paused;
 static void *ip_link_thread(void *arg) {
     (void)arg;
     pthread_setname_np("interp display link");
@@ -2084,25 +2088,30 @@ static void *ip_link_thread(void *arg) {
         ip_link_target = [InterpLink new];
 #if TARGET_OS_IPHONE
         ip_link = [CADisplayLink displayLinkWithTarget:ip_link_target selector:@selector(tick:)];
-        unsigned disp = 0;
         long hz = UIScreen.mainScreen.maximumFramesPerSecond;
         ip_link.preferredFrameRateRange = CAFrameRateRangeMake(60, hz, hz);  // (ProMotion: 60 unless asked for more)
+        if (ip_link) LOG("[interp] frame interpolation presenter: display 0, %ld Hz\n", hz);
 #else
-        NSWindow *w = ip_window();
-        ip_link = [w displayLinkWithTarget:ip_link_target selector:@selector(tick:)];
-        unsigned disp = [w.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
-        long hz = w.screen.maximumFramesPerSecond;
+        // (AppKit: the window is the main thread's. This thread waits for it, the render thread doesn't.)
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            NSWindow *w = ip_window();
+            ip_link = [w displayLinkWithTarget:ip_link_target selector:@selector(tick:)];
+            if (ip_link) LOG("[interp] frame interpolation presenter: display %u, %ld Hz\n",
+                             [w.screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue], (long)w.screen.maximumFramesPerSecond);
+        });
 #endif
-        if (!ip_link) { atomic_store(&ip_link_state, -1); return NULL; }
+        if (!ip_link) { LOG("[interp] no display link for the window\n"); atomic_store(&ip_link_state, -1); return NULL; }
         [ip_link addToRunLoop:NSRunLoop.currentRunLoop forMode:NSRunLoopCommonModes];
         ip_link_loop = CFRunLoopGetCurrent();
-        LOG("[interp] frame interpolation presenter: display %u, %ld Hz\n", disp, hz);
         atomic_store(&ip_link_state, 1);
+        ip_link.paused = atomic_load(&ip_link_paused);  // (stopped while it was starting)
     }
     for (;;) CFRunLoopRun();
     return NULL;
 }
 static void ip_link_pause(bool paused) {  // (the link's own thread sets it)
+    atomic_store(&ip_link_paused, paused);
+    if (atomic_load(&ip_link_state) != 1) return;  // (still starting: it reads ip_link_paused)
     CADisplayLink *l = ip_link;
     CFRunLoopPerformBlock(ip_link_loop, kCFRunLoopCommonModes, ^{ l.paused = paused; });
     CFRunLoopWakeUp(ip_link_loop);
@@ -2133,13 +2142,13 @@ static bool ip_link_start(void) {
         if (getenv("LARECOMP_INTERP_WAKE_MS")) ip_wake_ns = (uint64_t)(atof(getenv("LARECOMP_INTERP_WAKE_MS")) * 1e6);
         if (ip_wake_ns) { pthread_t th; pthread_create(&th, NULL, ip_presenter, NULL); }
         ip_queue = [dev newCommandQueue];
+        atomic_store(&ip_link_state, 2);
         pthread_t th;
         pthread_create(&th, NULL, ip_link_thread, NULL);
-        while (atomic_load(&ip_link_state) == 0) usleep(1000);
     } else if (atomic_load(&ip_link_state) > 0) {
         ip_link_pause(false);
     }
-    return atomic_load(&ip_link_state) > 0;
+    return atomic_load(&ip_link_state) > 0;  // (ip_start waits for the link's first call)
 }
 static void ip_link_stop(void) { if (atomic_load(&ip_link_state) > 0) ip_link_pause(true); }
 

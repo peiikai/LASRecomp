@@ -675,8 +675,12 @@ static char **self_argv(void) {
 
 void plat_exec(char *const argv[]) {
 #ifdef __ANDROID__
+    // (an app process can't replace itself: the activity starts the app again and ends this process - argv isn't
+    // used, a new process starts as the launcher icon would. Still here after a while: the caller reports the failure)
     (void)argv;
-    return;  // (an app process can't replace itself: the caller reports the failure)
+    extern bool android_call(const char *method);
+    if (android_call("restartApp")) sleep(10);
+    return;
 #endif
     if (argv) { execv(argv[0], argv); return; }
     char path[4096];

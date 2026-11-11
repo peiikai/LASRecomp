@@ -409,6 +409,24 @@ static std::string clean_name(const char *in) {  // a seed name as a folder name
 // `stage <fraction> <label>` lines.
 static std::vector<std::string> generator_cmd(void) {
     if (const char *g = getenv("LARECOMP_RANDO_GEN")) return {g};
+#ifdef __ANDROID__
+    // Android: no rando-gen (PyInstaller has no Android target): the app's own Python runs tools/rando/las_headless.py
+    // from the files the activity unpacks into LARECOMP_GEN_DIR, with the modules android/deps/build_gen_deps.sh builds
+    // in its site/. Its environment is the game code builder's (runtime/gamebuild.c android_env: the same values, so a
+    // build running meanwhile is unaffected); the room shuffle's scratch folder and Python's temp files go in internal
+    // storage, as Android's shared storage, where the seed is written, has no symlinks.
+    const char *lib = getenv("LARECOMP_NATIVE_LIB_DIR"), *gen = getenv("LARECOMP_GEN_DIR");
+    if (lib && *lib && gen && *gen) {
+        std::string g = gen, tmp = g + "/../rando_tmp";
+        mkdir(tmp.c_str(), 0700);
+        setenv("PYTHONHOME", (g + "/python").c_str(), 1);
+        setenv("PYTHONPATH", (g + "/site:" + g + "/tools").c_str(), 1);
+        setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
+        setenv("LD_LIBRARY_PATH", lib, 1);
+        setenv("LARECOMP_RANDO_SCRATCH", tmp.c_str(), 1);
+        return {std::string(lib) + "/libpymain.so", g + "/tools/rando/las_headless.py"};
+    }
+#endif
     char p[1024], s[1024];  // (runtime/paths.h: <exe dir>/rando-gen/, <exe dir>/../Resources/rando-gen/, the source tree)
 #if PLAT_IOS
     // the script itself: plat_spawn runs it in the embedded Python (runtime/platform/ios_python.m)

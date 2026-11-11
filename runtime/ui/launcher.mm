@@ -1684,6 +1684,7 @@ static std::atomic<int> g_df_step{0}, g_df_result{0};  // result: 0 running, 1 m
 static std::atomic<float> g_df_frac{0};
 static char g_df_err[600];
 static bool g_df_auto_move, g_df_auto_fresh;  // (test: LARECOMP_LAUNCHER_DATA_PICK=<folder>:move / :fresh)
+static bool g_df_cancelling;                  // Cancel pressed during the move: waiting for it to stop
 
 // A folder as the player knows it: its path; on iOS as Files names it ("iCloud Drive › LASData"), the full path
 // when the place isn't recognized
@@ -1731,6 +1732,18 @@ static void df_restart(void) {
 #endif
 }
 
+#ifdef __ANDROID__
+// Android: the folder is on the SD card - the app's folder there (LARECOMP_ANDROID_SD_DIR) or one inside it (a
+// "LAS Recomp" folder a move made there when the card's folder had other files)
+static bool android_on_sd(const char *p) {
+    const char *sd = getenv("LARECOMP_ANDROID_SD_DIR");
+    char a[PATH_MAX], b[PATH_MAX];
+    if (!sd || !*sd || !realpath(p, a) || !realpath(sd, b)) return false;
+    size_t n = strlen(b);
+    return !strncmp(a, b, n) && (a[n] == 0 || a[n] == '/');
+}
+#endif
+
 // The question / the move's progress, in front of everything (called at the start screen's top level)
 static void data_folder_popup(float s) {
     float sc = s * 720.0f / 1080.0f;
@@ -1758,6 +1771,14 @@ static void data_folder_popup(float s) {
     ImGui::PopFont();
     ImGui::PushTextWrapPos(900 * sc);
     bool close = false, esc = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+#ifdef __ANDROID__
+    // Android: where the data goes as the Storage row names it (the paths say nothing to a player): "Internal storage
+    // -> SD card" (the menu font's arrow when it has one)
+    auto on_sd = android_on_sd;
+    const char *arrow = ImGui::GetFont()->FindGlyphNoFallback(0x2192) ? " \xe2\x86\x92 " : " -> ";
+    std::string dir = std::string(L(on_sd(rt_data_root()) ? "SD card" : "Internal storage")) + arrow +
+                      L(on_sd(t.path) ? "SD card" : "Internal storage");
+#endif
     auto use_it = [&] {
         stop_background_prep();
         settings_save();
@@ -1765,7 +1786,11 @@ static void data_folder_popup(float s) {
         else g_df = DF_FAILED;
     };
     if (g_df == DF_ASK) {
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());
+#else
         ImGui::TextDisabled("%s", folder_shown(t.path).c_str());
+#endif
         if (g_df_cloud) ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("This folder is synced by %s too."), g_df_cloud);
         ImGui::Spacing();
         if (t.refuse[0]) {
@@ -1804,11 +1829,23 @@ static void data_folder_popup(float s) {
     } else if (g_df == DF_MOVING) {
         static const char *const steps[] = {LN("Copying..."), LN("Checking the copy..."), LN("Removing the old copy...")};
         int r = g_df_result, k = g_df_step;
-        ImGui::Text("%s", r == 1 ? L("Restarting...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
+        ImGui::Text("%s", r == 1 ? L("Restarting...") : g_df_cancelling ? L("Cancelling...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
         ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
-        ImGui::TextDisabled("%s", folder_shown(t.path).c_str());
+#ifdef __ANDROID__
+        ImGui::TextDisabled("%s", dir.c_str());  // (under the bar: which way it goes)
+#endif
+        // Cancel: while it copies or checks (the copy is removed, the data stays where it was); not once the switch
+        // is made and the old copy is being removed
+        if (r == 0 && k < 2) {
+            ImGui::Spacing();
+            ImGui::BeginDisabled(g_df_cancelling);
+            if (ImGui::Button(L("Cancel"), bw) || (esc && !g_df_cancelling)) g_df_cancelling = true, rt_data_move_cancel();
+            ImGui::EndDisabled();
+        }
         if (r == 1) df_restart();
+        else if (r == -1 && g_df_cancelling) close = true;  // (cancelled: nothing to report)
         else if (r == -1) g_df = DF_FAILED;
+        if (r != 0) g_df_cancelling = false;
     } else if (g_df == DF_RESTART) {
         ImGui::TextUnformatted(L("LAS Recomp needs to restart to use the new folder. It closes now; open it again."));
         ImGui::Spacing();
@@ -1825,6 +1862,32 @@ static void data_folder_popup(float s) {
     ImGui::EndPopup();
 }
 
+// The Storage section (Settings > Prelaunch, the Game Files window). Android: the app's own folder in internal
+// storage or on the SD card - the only places it can use by path (runtime/paths.c rt_data_root_fixed); another one
+// picked goes through the same question as on the desktop (move the data there, or start fresh).
+static void storage_rows(bool busy) {
+    const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
+    std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
+                    data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
+    opt_section("Storage");
+#ifdef __ANDROID__
+    const char *sd = getenv("LARECOMP_ANDROID_SD_DIR"), *home = rt_data_home();
+    bool have_sd = sd && *sd;
+    int cur = have_sd && android_on_sd(rt_data_root()) ? 1 : 0, pick = cur;
+    static const char *const where[] = {LN("Internal storage"), LN("SD card")};
+    if (!have_sd && !cur) d += std::string("\n\n") + L("Put in an SD card to keep it there.");
+    if (busy || fixed || (!have_sd && !cur)) opt_disable_next();
+    if (opt_choice("Data folder", &pick, where, 2, 0, d.c_str(), false) && pick != cur) {
+        pthread_mutex_lock(&g_lock);
+        g_df_pick = pick ? sd : home;
+        pthread_mutex_unlock(&g_lock);
+    }
+#else
+    if (busy || fixed) opt_disable_next();
+    if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
+#endif
+}
+
 #ifdef __ANDROID__
 // The Vulkan driver package (Settings > Game files): the activity copies a picked one into the drivers folder, and the
 // driver is loaded at the next start (runtime/nvn/vulkan/android_driver.c). From LASRecompAndroid by mamcjr (MIT).
@@ -1832,19 +1895,18 @@ static std::string g_driver_msg;
 static bool g_driver_restart;
 static void driver_picked(const char *r) {  // (another thread)
     pthread_mutex_lock(&g_lock);
-    g_driver_msg = !strcmp(r, "-") ? L("The phone's own driver from the next start. Restart LAS Recomp to use it.")
-                   : *r ? L("Driver package added. Restart LAS Recomp to use it.")
-                        : L("That file isn't a driver package (.zip or .so).");
-    g_driver_restart = *r != 0;
+    g_driver_msg = *r ? "" : L("That file isn't a driver package (.zip or .so).");
+    g_driver_restart = *r != 0;  // (a package, or the phone's own again: driver_rows restarts on it)
     pthread_mutex_unlock(&g_lock);
 }
 
+extern "C" uint32_t vk_gpu_vendor(void);  // runtime/nvn/vulkan/device.c
 static void driver_rows(void) {
     android_on_driver(driver_picked);
     auto base = [](const char *p) { const char *s = p ? strrchr(p, '/') : NULL; return std::string(s ? s + 1 : p ? p : ""); };
     std::string want = base(getenv("LARECOMP_VK_DRIVER")), used = base(getenv("LARECOMP_VK_DRIVER_IN_USE"));
-    std::string d = L("The Vulkan driver the game runs on. On Adreno GPUs a Turnip driver package (.zip, as other "
-                      "emulators use) can run it better than the phone's own driver. A new one applies from the next start.");
+    std::string d = L("The Vulkan driver the game runs on. On some Adreno GPUs a custom Turnip driver package may be "
+                      "required to run or may provide better performance.");
     if (!want.empty() && used.empty()) {
         char b[400];
         snprintf(b, sizeof b, L("%s couldn't run here, so the phone's own driver is in use."), want.c_str());
@@ -1853,16 +1915,27 @@ static void driver_rows(void) {
     pthread_mutex_lock(&g_lock);
     std::string msg = g_driver_msg;
     bool restart = g_driver_restart;
+    g_driver_restart = false;
     pthread_mutex_unlock(&g_lock);
+    // the driver is loaded at the start (runtime/nvn/vulkan/android_driver.c): a new one takes a restart, made at once
+    if (restart) {
+        stop_background_prep();
+        settings_save();
+        android_call("restartApp");
+    }
     if (!msg.empty()) d += "\n\n" + msg;
+    // Driver packages (Turnip) exist only for Adreno: the replacement driver has to talk to the phone's own kernel
+    // driver, and only Mesa's Turnip does (Qualcomm's KGSL); Mesa's Mali, Xclipse and PowerVR drivers need kernel
+    // drivers phones don't ship. Elsewhere the section is hidden - unless a package is set anyway (settings from
+    // another phone), so it can be cleared. Vendor not known yet (0): shown.
+    uint32_t vendor = vk_gpu_vendor();
+    if (vendor && vendor != 0x5143 && want.empty()) return;
     opt_section("Graphics driver");
     if (opt_action("Vulkan driver", used.empty() ? LN("Phone's own") : used.c_str(), d.c_str(), true))
         android_call("pickDriver");
-    if (!want.empty() && opt_action("Use the phone's own driver", "", "Goes back to the phone's own Vulkan driver from the "
-                                    "next start.", true))
+    if (!want.empty() && opt_action("Use the phone's own driver", "", "Goes back to the phone's own Vulkan driver. "
+                                    "LAS Recomp restarts to use it.", true))
         android_call("useSystemDriver");
-    if (restart && opt_action("Restart now", "", "Starts LAS Recomp again with the driver you chose.", true))
-        android_call("restartApp");
 }
 #endif
 
@@ -1925,14 +1998,7 @@ static void prelaunch_tab(float sc) {
         ios_export_prelaunch(busy);
     }
 #endif
-    {   // where all of it is kept (as the setup window's Storage row)
-        const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
-        std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                        data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
-        opt_section("Storage");
-        if (fixed) opt_disable_next();
-        if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
-    }
+    storage_rows(false);  // where all of it is kept (as the setup window's Storage row)
 #ifdef __ANDROID__
     driver_rows();
 #endif
@@ -2705,6 +2771,9 @@ extern "C" void launcher_run(const char *root) {
                 } else
 #endif
                 if (!ready) {
+#ifdef __ANDROID__
+                    storage_rows(busy);
+#endif
                     opt_section("Your copy of the game");
                     if (busy) opt_disable_next();
                     if (opt_action("Game files folder", src_v.c_str(), src_d.c_str(), true))
@@ -2749,14 +2818,10 @@ extern "C" void launcher_run(const char *root) {
                         if (opt_action("Cancel", "", "Keeps the game files.", true)) g_confirm_delete = false;
                     }
                 }
-                if (!ios_page) {  // where all of it is kept: another folder (a bigger drive)
-                    const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
-                    std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
-                                    data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
-                    opt_section("Storage");
-                    if (busy || fixed) opt_disable_next();
-                    if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
-                }
+#ifdef __ANDROID__
+                if (ready)  // (before the setup it's the first row: chosen before the game files are copied)
+#endif
+                if (!ios_page) storage_rows(busy);  // where all of it is kept: another folder (a bigger drive)
                 if (!ios_page && !PLAT_IOS && !busy && has_build_cache()) {
                     opt_section("Build cache");
                     if (opt_action("Clear build cache", "", "Deletes the built game code. It gets rebuilt the next time you "
@@ -2933,11 +2998,11 @@ extern "C" void launcher_run(const char *root) {
             ImGui::PopFont();
             }
             ImGui::EndDisabled();
-            {   // (another data folder picked: move / start fresh, then restart; from Settings: in its look)
-                bool in_settings = page == SETTINGS || page == RANDO;
-                if (in_settings) menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
+            {   // (another data folder picked: move / start fresh, then restart; in the menus' look from every page -
+                // Settings, the Game Files window at the first setup)
+                menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
                 data_folder_popup(s);
-                if (in_settings) plastic_widgets(false), menu_style_end();
+                plastic_widgets(false), menu_style_end();
             }
             ImGui::End();
             ImGui::PopStyleColor();

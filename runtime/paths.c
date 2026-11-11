@@ -375,6 +375,7 @@ void rt_paths_init(void) {
 }
 
 const char *rt_data_root(void) { return g_root; }
+const char *rt_data_home(void) { return g_home; }
 
 bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     char c[4][1100] = {{0}};
@@ -505,9 +506,6 @@ const char *rt_data_root_fixed(void) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) return LN("Set by LARECOMP_DATA_ROOT.");
     if (g_dev) return LN("A source checkout uses its own folder.");
-#ifdef __ANDROID__
-    return LN("On Android this is the app's own folder.");
-#endif
     return NULL;
 }
 
@@ -528,8 +526,11 @@ static bool empty_dir(const char *dir) {
     bool empty = true;
     while (empty && (e = readdir(d))) {
         const char *n = e->d_name;
+        size_t k = strlen(n);  // (LAS Recomp's own logs too - a start there before: logs stay where they are, and an
+                               //  SD card's app folder on Android held one, so the data went into "LAS Recomp" in it)
         empty = !strcmp(n, ".") || !strcmp(n, "..") || !strcmp(n, ".DS_Store") || !strcmp(n, ".localized") ||
-                !strcmp(n, "desktop.ini") || !strcmp(n, "Thumbs.db");
+                !strcmp(n, "desktop.ini") || !strcmp(n, "Thumbs.db") ||
+                (!strncmp(n, "lasrecomp", 9) && k > 4 && !strcmp(n + k - 4, ".log"));
     }
     closedir(d);
     return empty;
@@ -610,6 +611,16 @@ static bool move_fail(Move *m, const char *what, const char *p) {
     return false;
 }
 
+// Cancel pressed (rt_data_move_cancel, from the start screen's thread): the copy or its check stops at the next file
+// or block, and the move fails as any failed move does - the copy removed, the data where it was
+static SDL_AtomicInt g_move_cancel;
+void rt_data_move_cancel(void) { SDL_SetAtomicInt(&g_move_cancel, 1); }
+static bool move_cancelled(Move *m) {
+    if (!SDL_GetAtomicInt(&g_move_cancel)) return false;
+    if (!m->err[0]) snprintf(m->err, m->errn, "%s", LN("Move cancelled."));
+    return true;
+}
+
 #ifdef _WIN32
 static int lstat_(const char *p, struct stat *st) {
     if (is_link(p)) { errno = EPERM; return -1; }  // (links in the data folder: not moved on Windows)
@@ -636,6 +647,7 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
     bool ok = in && out;
     errno = 0;
     while (ok) {
+        if (move_cancelled(m)) { ok = false; break; }
         size_t k = fread(m->buf, 1, MOVE_BUF, in);
         if (!k) { ok = !ferror(in); break; }
         ok = fwrite(m->buf, 1, k, out) == k;
@@ -670,7 +682,7 @@ static bool copy_tree(Move *m, const char *s, const char *d) {
     if (!dir) return move_fail(m, "Couldn't read", s);
     bool ok = true;
     struct dirent *e;
-    while (ok && (e = readdir(dir))) {
+    while (ok && !move_cancelled(m) && (e = readdir(dir))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strncmp(e->d_name, "._", 2)) continue;  // (._: macOS
         char cs[4096], cd[4096];                                                                         //  metadata)
         join(cs, sizeof cs, s, e->d_name);
@@ -684,7 +696,7 @@ static bool copy_tree(Move *m, const char *s, const char *d) {
 static bool same_bytes(Move *m, const char *a, const char *b) {
     FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
     bool ok = fa && fb;
-    while (ok) {
+    while (ok && !move_cancelled(m)) {
         size_t k = fread(m->buf, 1, MOVE_BUF, fa), j = fread(m->buf2, 1, MOVE_BUF, fb);
         ok = k == j && !memcmp(m->buf, m->buf2, k) && !ferror(fa) && !ferror(fb);
         moved(m, k);
@@ -692,7 +704,7 @@ static bool same_bytes(Move *m, const char *a, const char *b) {
     }
     if (fa) fclose(fa);
     if (fb) fclose(fb);
-    return ok;
+    return ok && !move_cancelled(m);
 }
 
 static bool check_tree(Move *m, const char *s, const char *d) {
@@ -721,7 +733,7 @@ static bool check_tree(Move *m, const char *s, const char *d) {
     if (!dir) return move_fail(m, "Couldn't read", s);
     bool ok = true;
     struct dirent *e;
-    while (ok && (e = readdir(dir))) {
+    while (ok && !move_cancelled(m) && (e = readdir(dir))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strncmp(e->d_name, "._", 2)) continue;  // (._: macOS
         char cs[4096], cd[4096];                                                                         //  metadata)
         join(cs, sizeof cs, s, e->d_name);
@@ -787,6 +799,7 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
         snprintf(err, n, LN("That folder already has LAS Recomp data."));
         return false;
     }
+    SDL_SetAtomicInt(&g_move_cancel, 0);
     Move m = {progress, 0, entries_size(from), 0, err, n, malloc(MOVE_BUF), malloc(MOVE_BUF)};
     join(p, sizeof p, abs_to, MARK_PARTIAL);
     join(q, sizeof q, from, NOTE_TO);
@@ -801,12 +814,13 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
             join(s, sizeof s, from, DATA_ENTRIES[i]);
             join(d, sizeof d, abs_to, DATA_ENTRIES[i]);
             if (!exists(s) && !is_link(s)) continue;
-            ok = step ? check_tree(&m, s, d) : copy_tree(&m, s, d);
+            ok = (step ? check_tree(&m, s, d) : copy_tree(&m, s, d)) && !move_cancelled(&m);
         }
     }
     free(m.buf), free(m.buf2);
     // checked: the copy names its source (emptied once it's in use), stops being unfinished, and becomes the data
     // folder. Until the switch the old folder is the one in use, and its note undoes the copy at the next start.
+    if (ok && move_cancelled(&m)) ok = false;  // (the last chance: after this the switch is made)
     if (ok) {
         join(q, sizeof q, abs_to, NOTE_FROM);
         ok = write_note(q, from) && remove(p) == 0;
