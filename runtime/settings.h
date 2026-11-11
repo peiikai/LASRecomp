@@ -94,6 +94,7 @@ typedef struct {
     float diff_damage;   // damage taken multiplier (1 = normal)
     float walk_speed;    // Link's walking speed multiplier (1 = normal; Gameplay tab, runtime/hle/qol.c)
     bool walk_speed_dungeons;  // walk speed also indoors: houses, caves, dungeons (Gameplay tab, under Walk speed)
+    int text_speed;      // TEXT_SPEED_*: how fast message text appears (Gameplay tab; runtime/hle/text_speed.c)
     bool diff_ohko;      // any hit kills
     bool diff_hero;      // Hero Mode flag forced on in the loaded save (2x damage, no recovery hearts)
     // cosmetics (Cosmetics tab, runtime/ui/menu.mm), live, never part of a seed: colour rows of the shared palette
@@ -138,6 +139,8 @@ typedef struct {
 
 
 enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 4, N_WEATHERS = 6 };
+enum { TEXT_SPEED_NORMAL, TEXT_SPEED_FAST, TEXT_SPEED_INSTANT, N_TEXT_SPEEDS };
+extern const char *const g_text_speeds[N_TEXT_SPEEDS];  // (the menu's names: Normal, Fast, Instant)
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
 extern const char *const g_audio_outs[N_AUDIO_OUTS];  // (the menu's names: Stereo, 5.1)
 extern const char *const g_weathers[N_WEATHERS];  // (the menu's names: Off, Rain, Snow, Storm, Blizzard, Random)

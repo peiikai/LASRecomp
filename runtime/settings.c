@@ -36,6 +36,8 @@ const char *const g_audio_outs[N_AUDIO_OUTS] = {LN("Stereo"), LN("5.1")};
 static const char *const k_audio_out_keys[N_AUDIO_OUTS] = {"stereo", "5.1"};  // (else: stereo)
 const char *const g_weathers[N_WEATHERS] = {LN("Off"), LN("Rain"), LN("Snow"), LN("Storm"), LN("Blizzard"), LN("Random")};
 static const char *const k_weather_keys[N_WEATHERS] = {"off", "rain", "snow", "storm", "blizzard", "random"};  // (else: off)
+const char *const g_text_speeds[N_TEXT_SPEEDS] = {LN("Normal"), LN("Fast"), LN("Instant")};
+static const char *const k_text_speed_keys[N_TEXT_SPEEDS] = {"normal", "fast", "instant"};  // (else: normal)
 
 // the on-screen controls' ini names (touch_ctl_<name>; runtime/ui/mobile/touch_controls.mm's order)
 const char *touch_control_name(int i) {
@@ -329,6 +331,10 @@ void settings_load(void) {
         else if (!strcmp(key, "diff_damage")) g_settings.diff_damage = (float)atof(val);
         else if (!strcmp(key, "walk_speed")) g_settings.walk_speed = (float)atof(val);
         else if (!strcmp(key, "walk_speed_dungeons")) g_settings.walk_speed_dungeons = atoi(val) != 0;
+        else if (!strcmp(key, "text_speed")) {
+            g_settings.text_speed = TEXT_SPEED_NORMAL;
+            for (int i = 0; i < N_TEXT_SPEEDS; i++) if (!strcmp(val, k_text_speed_keys[i])) g_settings.text_speed = i;
+        }
         else if (!strcmp(key, "diff_ohko")) g_settings.diff_ohko = atoi(val) != 0;
         else if (!strcmp(key, "diff_hero")) g_settings.diff_hero = atoi(val) != 0;
         else if (!strcmp(key, "timer")) g_settings.timer = atoi(val) != 0;
@@ -466,6 +472,7 @@ void settings_save(void) {
             g_settings.diff_hero);
     fprintf(f, "walk_speed = %.2f\n", g_settings.walk_speed);
     fprintf(f, "walk_speed_dungeons = %d\n", g_settings.walk_speed_dungeons);
+    fprintf(f, "text_speed = %s\n", k_text_speed_keys[g_settings.text_speed]);
     fprintf(f, "timer_position = %s\n", g_settings.timer_pos == TIMER_POS_RIGHT ? "right" : "left");
     fprintf(f, "timer = %d\nlivesplit = %d\nlivesplit_host = %s\n", g_settings.timer, g_settings.livesplit,
             g_settings.livesplit_host);

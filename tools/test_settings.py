@@ -81,6 +81,15 @@ with tempfile.TemporaryDirectory() as directory:
                        check=True, capture_output=True)
         assert f'powerup_music = {value}\n' in ini.read_text()
         count += 1
+    # Text speed (#681): Normal in old files and for an unknown value; Fast and Instant survive a roundtrip.
+    for lines, value in [([], 'normal'), (['text_speed = fast'], 'fast'), (['text_speed = instant'], 'instant'),
+                         (['text_speed = normal'], 'normal'), (['text_speed = turbo'], 'normal')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'text_speed = {value}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'
     ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\n')
