@@ -30,6 +30,17 @@ void ipc_return_object(IpcResp *r, Service *s) { abort(); }
 int game_in_play(void) { abort(); }
 int cheats_link_health(int *max) { abort(); }
 int bind_label_family(void) { abort(); }
+int g_start_screen;
+const GameAddrs *g_ga;
+bool menu_input_captured(void) { return false; }
+SDL_Window *ui_window(void) { return NULL; }
+uint64_t renderer_present_count(void) { return 0; }
+uint64_t doorjump_player(uint64_t frame) { (void)frame; return 0; }
+bool widescreen_project(float x, float y, float z, float *sx, float *sy) {
+    (void)x; (void)y; (void)z; (void)sx; (void)sy; return false;
+}
+bool mirror_input(void) { return false; }
+bool world_on_screen(void) { return false; }
 int16_t g_bind_pad[BIND_PAD_COUNT], g_bind_key[BIND_KEY_COUNT];  // (A on the bottom button, as by default)
 int bind_pad_host(int slot) { return g_bind_pad[slot]; }  // (by position: "Buttons match labels" off)
 

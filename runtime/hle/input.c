@@ -710,8 +710,9 @@ static void layout_of_mouse(float *lx, float *ly) {
     *ly = 360.f - (my - oy) / u;
 }
 // One d-pad tap toward the pointer, then wait. If the game's cursor pane does not move, stop: a held
-// direction is the stick the pointer was replacing.
-static void mouse_menu_chase(int *hold_l, int *hold_r, int *hold_u, int *hold_d) {
+// direction is the stick the pointer was replacing. 0: the highlight is on the pointer (stop chasing
+// until the pointer moves again).
+static int mouse_menu_chase(int *hold_l, int *hold_r, int *hold_u, int *hold_d) {
     extern uint64_t renderer_present_count(void);
     uint64_t frame = renderer_present_count();
     int live = 0;
@@ -719,7 +720,7 @@ static void mouse_menu_chase(int *hold_l, int *hold_r, int *hold_u, int *hold_d)
         if (cursor_pane_at(g_panes[i])) g_panes[live++] = g_panes[i];
     g_npanes = live;
     if (!g_npanes && g_scan_tries < 2 && frame - g_pane_scan_frame > 30) scan_cursor_panes(frame), g_scan_tries++;
-    if (!g_npanes || !atomic_load(&mouse_pos_ok)) return;
+    if (!g_npanes || !atomic_load(&mouse_pos_ok)) return 1;
     float mlx, mly;
     layout_of_mouse(&mlx, &mly);
     uint64_t best = 0;
@@ -730,25 +731,26 @@ static void mouse_menu_chase(int *hold_l, int *hold_r, int *hold_u, int *hold_d)
         float d = (x - mlx) * (x - mlx) + (y - mly) * (y - mly);
         if (d < best_d) best_d = d, best = g_panes[i], px = x, py = y;
     }
-    if (!best) return;
+    if (!best) return 1;
     static float last_x, last_y, give_x, give_y;
     static int cooldown, stuck, gave_up;
     static uint64_t last_best;
     if (best != last_best) last_best = best, last_x = px, last_y = py, stuck = 0, gave_up = 0;
     if (gave_up) {
         float dx = mlx - give_x, dy = mly - give_y;
-        if (dx * dx + dy * dy < 80.f * 80.f) return;
+        if (dx * dx + dy * dy < 80.f * 80.f) return 1;
         gave_up = 0, stuck = 0;
     }
     if (fabsf(px - last_x) > 2.f || fabsf(py - last_y) > 2.f) stuck = 0, last_x = px, last_y = py;
     float dx = mlx - px, dy = mly - py;
-    if (dx * dx + dy * dy < 48.f * 48.f) return;
-    if (stuck >= 2) { gave_up = 1, give_x = mlx, give_y = mly; return; }
-    if (cooldown > 0) { cooldown--; return; }
+    if (dx * dx + dy * dy < 48.f * 48.f) return 0;
+    if (stuck >= 2) { gave_up = 1, give_x = mlx, give_y = mly; return 1; }
+    if (cooldown > 0) { cooldown--; return 1; }
     if (fabsf(dx) >= fabsf(dy)) { if (dx > 0) *hold_r = 4; else *hold_l = 4; }
     else { if (dy > 0) *hold_u = 4; else *hold_d = 4; }
     cooldown = 8;
     stuck++;
+    return 1;
 }
 
 // Buttons from the mouse, for this presented frame. Drains the event totals either way, so strokes made
@@ -769,8 +771,7 @@ static uint64_t mouse_menu_bits(bool menu) {
         if (hold_d) hold_d--;
         if (hold_a) hold_a--;
         if (hold_b) hold_b--;
-        atomic_exchange(&mouse_ax, 0);
-        atomic_exchange(&mouse_ay, 0);
+        int ax = atomic_exchange(&mouse_ax, 0), ay = atomic_exchange(&mouse_ay, 0);
         int wheel = atomic_exchange(&mouse_wheel, 0);
         // The arm is a short click (menus, the opening-movie skip). Gameplay keeps the button until release,
         // the way a held key does: a six-frame shield starts the pose and then drops it.
@@ -785,15 +786,16 @@ static uint64_t mouse_menu_bits(bool menu) {
         if (right || b) {
             if (latch_r < 0 && game) latch_r = game == MOUSE_LOOK ? BTN_R : BTN_B;
         } else latch_r = -1;
-        static int was_menu;
-        if (menu && !was_menu) g_npanes = 0, g_scan_tries = 0, g_pane_scan_frame = 0;
+        static int was_menu, chase;  // chase: the pointer moved since the highlight last reached it
+        if (menu && !was_menu) chase = 0, g_npanes = 0, g_scan_tries = 0, g_pane_scan_frame = 0;
+        if (ax || ay) chase = 1;
         was_menu = menu;
         if (menu) {
             if (a && latch_l < 0) hold_a = a;
             if (b && latch_r < 0) hold_b = b;
             if (wheel > 0) hold_u = 5;
             else if (wheel < 0) hold_d = 5;
-            else mouse_menu_chase(&hold_l, &hold_r, &hold_u, &hold_d);
+            else if (chase) chase = mouse_menu_chase(&hold_l, &hold_r, &hold_u, &hold_d);
         }
     }
     uint64_t bits = 0;
