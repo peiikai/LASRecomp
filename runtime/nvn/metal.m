@@ -1741,10 +1741,29 @@ static void slots_drop(void) {  // (the presenter stops / restarts: nothing old 
 
 // ---- what reached the screen (presented handlers): images per second, their spacing
 static pthread_mutex_t st_mx = PTHREAD_MUTEX_INITIALIZER;
+// The FPS counter's number with frame interpolation on: different images on screen per second (game frames and
+// in-betweens, not repeats), over half-second windows. The overlay itself is drawn on every vsync, so its own rate
+// would be the display's.
+static _Atomic double ip_fps_val;
+static _Atomic uint64_t ip_fps_when;  // (plat_now_ns of the last window; 0: none)
+double ui_interp_fps(void) {
+    uint64_t w = atomic_load(&ip_fps_when);
+    if (!atomic_load(&ip_on) || !w || plat_now_ns() - w > 1000000000ull) return -1;
+    return atomic_load(&ip_fps_val);
+}
 static void ip_presented(double t, double target, int kind) {
-    static double last, win0, sum, sum2, dmin = 1e9, dmax, late, period_ms;
-    static uint64_t nd, shown[3], dropped, even;
+    static double last, win0, sum, sum2, dmin = 1e9, dmax, late, period_ms, f_t0;
+    static uint64_t nd, shown[3], dropped, even, f_n;
     pthread_mutex_lock(&st_mx);
+    if (t > 0) {
+        if (!f_t0 || t < f_t0) f_t0 = t, f_n = 0;
+        if (kind != K_REPEAT) f_n++;
+        if (t - f_t0 >= 0.5) {
+            atomic_store(&ip_fps_val, f_n / (t - f_t0));
+            atomic_store(&ip_fps_when, plat_now_ns());
+            f_t0 = t, f_n = 0;
+        }
+    }
     if (t <= 0) dropped++;
     else {
         if (last > 0 && t > last) {

@@ -1273,6 +1273,16 @@ int interp_schedule(uint64_t s0u, uint64_t s1u, uint64_t nowu, uint64_t phaseu, 
     static int extrap = -1;  // LARECOMP_INTERP_MODE=extrapolate: the frame at once, images after it from its motion
     if (extrap < 0) { const char *e = getenv("LARECOMP_INTERP_MODE"); extrap = e && !strcmp(e, "extrapolate"); }
     double need = blend && !extrap ? now + 1e6 + per_image - s0 : now + 2e6 - s1;
+    // A frame the render thread only reached long after the game made it (the app was in the background on iOS, a
+    // long stall): shown at once, and not taken as the latency the next frames need. Taken, it put every frame after
+    // it seconds in the future, and the screen kept the old image until the latency came down again (about 6 s).
+    if (now - s1 > 250e6) {
+        log_cut(5, NULL);
+        out[0] = (InterpShot){nowu, 1.0f};
+        last_at = (double)nowu;
+        s_shots++;
+        return 1;
+    }
     win_need[win_i] = need;
     win_i = (win_i + 1) % 120;
     if (win_n < 120) win_n++;
