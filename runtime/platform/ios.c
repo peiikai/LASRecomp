@@ -4,6 +4,7 @@
 // The shared pieces (timers, the thread policies, symbols, the crash handler, plat_remove_tree) are macos.c's: a
 // change there is carried over here by hand.
 #include <CoreFoundation/CoreFoundation.h>
+#include <SDL3/SDL.h>
 #include <dlfcn.h>
 #include <execinfo.h>
 #include <mach-o/dyld.h>
@@ -326,7 +327,19 @@ void plat_fatal_notice(void) {
     fflush(stderr);
 }
 
-void plat_notice(const char *text) { fprintf(stderr, "[notice] %s\n", text); }
+// SDL's box: an alert on the main thread, over the game. It returns when closed, so it is shown from a thread.
+static void *notice_thread(void *text) {
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", text, NULL);
+    free(text);
+    return NULL;
+}
+void plat_notice(const char *text) {
+    if (!g_log_path[0]) return;
+    pthread_t t;
+    char *copy = strdup(text);
+    if (copy && !pthread_create(&t, NULL, notice_thread, copy)) pthread_detach(t);
+    else free(copy);
+}
 
 void plat_print_backtrace(void) {
     void *bt[64];
