@@ -98,7 +98,8 @@ def test_constant_give():
     fc = flow.flowchart
     event_tools.addEntryPoint(fc, 'npc')
     event_tools.createActionChain(fc, 'npc', [
-        ('Link', 'GenericItemGetSequenceByKey', {'itemKey': 'SmallKey', 'keepCarry': False, 'messageEntry': 'SmallKey'}),
+        ('Link', 'GenericItemGetSequenceByKey',
+         {'itemKey': 'SmallKey', 'keepCarry': False, 'messageEntry': 'SmallKey'}),
         ('Inventory', 'AddItemByKey', {'itemKey': 'SmallKey', 'count': 1, 'index': 4, 'autoEquip': False})])
     n = kt.patch_flow(flow, {('SmallKey', 4)}, event_tools)
     g = gets(chain(fc, 'npc'))
