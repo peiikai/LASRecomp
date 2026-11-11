@@ -386,7 +386,10 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     bool hold_wait = hold_up;  // held and over its budget, not yet long enough to act on it (or the hold just stepped up)
     if (gpu && g_hold_dt > 0) {
         g_hold_miss = slow && !hold_up ? g_hold_miss + 1 : 0;
-        if (slow && at_floor() && g_hold_miss >= 6) {  // nothing lower: the hold steps down (30 -> 20 fps)
+        // nothing lower: the hold steps down (30 -> 20 fps) - not at Internal FPS target 30: there the floor is the best
+        // it can do for 30 (the 20 hold's budget let the factor climb to 1.00 at 20 fps: Retroid Pocket 5, standard
+        // performance mode, the floor's frames on time but over the late-frame cap)
+        if (slow && at_floor() && g_hold_miss >= 6 && !t30) {
             int vs = hold_vsyncs();
             if (vs < DYN_HOLD_MAX) {
                 LOG("[dynres] game %.1f + window %.1f ms at %.2f misses the %.0f fps hold's %.1f ms (a frame every %.1f ms): "
