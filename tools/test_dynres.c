@@ -227,6 +227,11 @@ int main(int argc, char **argv) {
         // must go on. Before, W's change ended it and that half second was judged by 60's budget: 1.00 -> 0.70
         {.name = "target 30 at 1.00, the menu open 40-50 s (W 1 -> 6 -> 1 ms, fifo)", .a = 1, .b = 18, .w = 1, .fifo = 1,
          .secs = 120, .lines = 1080, .min_lines = 360, .t30 = 1, .wmenu_at = 40, .wmenu_until = 50, .wmenu = 6},
+        // Internal FPS target 30, a heavier stretch 30-110 s (Retroid, R6: G 24.5 at 1.00, frames every 38-40 ms with 12
+        // ms of CPU not overlapping; the upscaler's window step 2.8 ms below 1.00): one step down (0.90 fits) - it went
+        // 1.00 -> 0.80 -> 0.70 before (a big first step, then a second for the window step's growth) - and back to 1.00
+        {.name = "target 30, a heavier stretch 30-110 s, 1.00 a little late (mailbox)", .a = 1, .b = 14, .w = 0.8,
+         .secs = 170, .lines = 1080, .min_lines = 360, .t30 = 1, .cpu = 12, .heavy_at = 30, .heavy = 1.6, .heavy_until = 110},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -270,6 +275,7 @@ int main(int argc, char **argv) {
     case 27: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.9, "target 30, 1.00 fits: back at 1.00 after the warp"); break;
     case 28: check(r.fps_end > 29 && r.f_end < 0.8 && r.changes_last60 <= 2, "target 30, CPU not overlapping: steps down to 30, steady"); break;
     case 29: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 29, "target 30, menu open and closed: stays at 1.00"); break;
+    case 30: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.89, "target 30, heavier stretch: one step down, then back"); break;
     }
     // a hold is real: the frames come at least at the rate it says
     if (r.hold_end > 0) check(r.fps_end >= 0.95 * r.hold_end, "the held frame rate is met");
