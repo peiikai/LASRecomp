@@ -1175,6 +1175,7 @@
 {"Load a save to warp.", "워프하려면 세이브 데이터를 불러오세요."},
 {"Search", "검색"},
 {"Search places...", "장소 검색..."},
+{"Places", "장소"},
 {"Link is here", "링크가 있는 곳"},
 // warp_data.h
 {"Dungeons", "던전"},

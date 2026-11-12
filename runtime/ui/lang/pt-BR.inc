@@ -1175,6 +1175,7 @@
 {"Load a save to warp.", "Carregue um arquivo salvo para se teleportar."},
 {"Search", "Buscar"},
 {"Search places...", "Buscar lugares..."},
+{"Places", "Lugares"},
 {"Link is here", "Link está aqui"},
 // warp_data.h
 {"Dungeons", "Masmorras"},
