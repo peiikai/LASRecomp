@@ -823,15 +823,17 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
             label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, ink, !disc, true);
         }
         const char *hn = g_editing ? NULL : hint(ctx, i);
-        if (hn && *hn) {  // what it does here, under it (above when there's no room)
-            float hs = fmaxf(r * 0.48f, 26 * tt);
-            ImVec2 hz = font->CalcTextSizeA(hs, 1e9f, 0, hn);
-            float hy = c.y + r * 1.08f;
-            if (hy + hz.y > h) hy = c.y - r * 1.1f - hz.y;
-            ImVec2 q(c.x - hz.x * 0.5f, hy);
-            dl->AddRectFilled(ImVec2(q.x - 8 * th, q.y - 2 * th), ImVec2(q.x + hz.x + 8 * th, q.y + hz.y + 2 * th),
-                              col(10, 40, 70, 0.70f), 8 * th);
-            dl->AddText(font, hs, q, IM_COL32(255, 255, 255, 255), hn);
+        if (hn && *hn) {  // what it does here: a small brown tab on the button's bottom rim (the top one when there's
+                          // no room), in the menu's font (Baloo 2)
+            float hs = fmaxf(r * 0.36f, 20 * tt);
+            ImVec2 hz = menu_font->CalcTextSizeA(hs, 1e9f, 0, hn);
+            float ph = hs * 1.05f, pw = hz.x + hs * 0.8f, ty = c.y + r - ph * 0.15f;
+            if (ty + ph * 0.5f > h) ty = c.y - r + ph * 0.15f;
+            ImVec2 p0(c.x - pw * 0.5f, ty - ph * 0.5f), p1(c.x + pw * 0.5f, ty + ph * 0.5f);
+            dl->AddRectFilled(ImVec2(p0.x + 2 * th, p0.y + 4 * th), ImVec2(p1.x + 2 * th, p1.y + 4 * th), col(0, 0, 0, 0.35f), ph * 0.5f);
+            dl->AddRectFilled(p0, p1, col(74, 52, 26, 0.92f), ph * 0.5f);
+            dl->AddRect(p0, p1, col(235, 192, 130, 1), ph * 0.5f, 0, 2.5f * th);
+            dl->AddText(menu_font, hs, ImVec2(c.x - hz.x * 0.5f, ty - hz.y * 0.5f - hs * 0.04f), col(250, 236, 200, 1), hn);
         }
     }
     int ts = ctx == X_TITLE && !g_editing ? title_screen() : 0;
