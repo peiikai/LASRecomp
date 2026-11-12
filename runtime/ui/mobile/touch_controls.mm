@@ -584,8 +584,8 @@ static bool slot_disc(ImDrawList *dl, ImVec2 c, float r, bool on, float a, float
     a = fmaxf(a, 0.55f) * 0.85f;  // (a little see-through)
     if (on) {
         disc(green, r, 96.0f / 66, col(255, 255, 255, fminf(1, a + 0.15f)));
-        disc(pale, r * 0.84f, 72.0f / 59, col(250, 240, 210, fminf(1, a + 0.15f)));
-    } else disc(dark, r, 96.0f / 66, col(255, 255, 255, a));
+        disc(pale, r * 0.90f, 72.0f / 59, col(235, 192, 130, fminf(1, a + 0.15f)));
+    } else disc(dark, r, 96.0f / 66, col(249, 205, 206, a));  // (the tints: the shades the game draws them in)
     if (sel) dl->AddCircle(c, r * 1.02f, col(236, 194, 84, 1), 48, 5.0f * th);
     return true;
 }
