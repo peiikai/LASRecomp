@@ -581,7 +581,7 @@ static bool slot_disc(ImDrawList *dl, ImVec2 c, float r, bool on, float a, float
         float s = rad * span;
         dl->AddImage(t, ImVec2(c.x - s, c.y - s), ImVec2(c.x + s, c.y + s), ImVec2(0, 0), ImVec2(1, 1), tint);
     };
-    a = fmaxf(a, 0.55f) * 0.85f;  // (a little see-through)
+    a = fminf(1, 0.55f + 0.5f * a);  // (mostly solid: 0.85 at the opacity setting's default)
     if (on) {
         disc(green, r, 96.0f / 66, col(255, 255, 255, fminf(1, a + 0.15f)));
         disc(pale, r * 0.90f, 72.0f / 59, col(235, 192, 130, fminf(1, a + 0.15f)));
