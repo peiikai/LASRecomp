@@ -815,9 +815,11 @@ extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 // Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c), and recolours by draw (runtime/nvn/recolour*.c);
 // a seed made with "Random cosmetics" puts its own set into the rows the first time it's played (cosmetics_seed.c),
 // and they stay the player's to change: "Seed's look" puts the seed's back, "Default all" the game's own
-// Touch screens, the bar's Cosmetics and Cheats: the page's own X at its top right with the first section's heading on
-// its line, the rows under it - as the Randomizer's right pane (rando_tab.mm pane_heading). The X in the screen's corner
-// was under the rows' scrolling panel. True when the heading was drawn here: the caller skips that opt_section.
+// Touch screens, the bar's Cosmetics and Cheats: called right after opt_begin, as the Randomizer's right pane
+// (rando_tab.mm pane_heading): the page's own X at the top right of the rows' panel with the first section's heading
+// on its line, then the rows in a list under them that scrolls on its own (the panel itself doesn't, so the X stays).
+// The X in the screen's corner was under the panel. True when the head was drawn: the caller skips that opt_section
+// and closes the list (opt_list_end) before opt_end.
 static bool g_page_x, g_page_x_pressed;
 extern "C" bool menu_page_head(const char *section, float scale) {
 #if PLAT_TOUCH
@@ -827,6 +829,7 @@ extern "C" bool menu_page_head(const char *section, float scale) {
     ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
     ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(section)).c_str());
     ImGui::SetCursorPosY(top + bx + 4 * scale);
+    opt_list_begin();
     return true;
 #else
     (void)section, (void)scale;
@@ -836,8 +839,8 @@ extern "C" bool menu_page_head(const char *section, float scale) {
 
 static void tab_cosmetics(void) {
     float cs = ImGui::GetFontSize() / 34;
-    bool head = menu_page_head("General", cs);
     opt_begin("##cosmetics", cs);
+    bool head = menu_page_head("General", cs);
     if (!head) opt_section("General");
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
@@ -902,6 +905,7 @@ static void tab_cosmetics(void) {
         opt_choice("Weather", cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
                    cycle ? "This seed picked the weather. Commit to it!" : "Rain, snow, a storm or a blizzard on the overworld.");
     }
+    if (head) opt_list_end();
     opt_end();
 }
 

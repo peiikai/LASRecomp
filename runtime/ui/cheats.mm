@@ -71,8 +71,8 @@ extern "C" void cheats_draw(float scale) {
         ImGui::TextDisabled("%s", L("Load a save to use cheats."));
         return;
     }
-    bool head = menu_page_head("Always on", scale);  // (touch: on the X's line, menu.mm)
     opt_begin("##cheats", scale);
+    bool head = menu_page_head("Always on", scale);  // (touch: on the X's line, menu.mm)
     if (!head) opt_section("Always on");
     if (opt_toggle("Infinite hearts", &g_settings.cheat_hearts, false, "Health refills to full whenever Link is hurt."))
         settings_save();
@@ -108,5 +108,6 @@ extern "C" void cheats_draw(float scale) {
                        "certain companion."))
             F<uint8_t>(0x555D) = (uint8_t)cur;
     }
+    if (head) opt_list_end();
     opt_end();
 }
