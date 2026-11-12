@@ -817,6 +817,7 @@ extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 // and they stay the player's to change: "Seed's look" puts the seed's back, "Default all" the game's own
 static void tab_cosmetics(void) {
     opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
+    opt_section("General");  // (as every page: a header first - a row at the very top ran under the touch screen's X)
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};
