@@ -51,7 +51,7 @@ ImTextureID ui_game_icon(const char *name);  // runtime/ui/triforce_icons.mm
 enum { BTN_A = 0, BTN_B, BTN_X, BTN_Y, BTN_L = 6, BTN_R, BTN_ZL, BTN_ZR, BTN_PLUS, BTN_MINUS,
        BTN_LEFT, BTN_UP, BTN_RIGHT, BTN_DOWN };  // (input.c's bits)
 #define BIT(b) (1ull << (b))
-enum { C_STICK = 0, C_A, C_B, C_X, C_Y, C_L, C_R, C_ZL, C_ZR, C_PLUS, C_MINUS, C_MENU, C_START, C_COUNT };
+enum { C_STICK = 0, C_A, C_B, C_X, C_Y, C_L, C_R, C_ZL, C_ZR, C_PLUS, C_MINUS, C_MENU, C_START, C_EDIT, C_COUNT };
 static_assert(C_COUNT == TOUCH_NCTL, "settings.h TOUCH_NCTL");
 // (the ini names: settings.c's touch_control_name, this order)
 
@@ -59,12 +59,13 @@ static_assert(C_COUNT == TOUCH_NCTL, "settings.h TOUCH_NCTL");
 enum { X_PLAY = 0, X_TITLE, X_ITEMS, X_MAP, X_COUNT };
 #define M(c) (1u << (c))
 static const uint32_t kShown[X_COUNT] = {
-    M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
+    M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU) | M(C_EDIT),
     M(C_STICK) | M(C_A) | M(C_B) | M(C_MENU),  // (Start only where the player put it: a tap anywhere does its work)
     M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
     M(C_STICK) | M(C_A) | M(C_B) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
 };
-#define EDITABLE (kShown[X_PLAY] | M(C_ZL) | M(C_ZR))  // (the editor: play's controls; ZL / ZR to show them by choice)
+// (the editor: play's controls; ZL / ZR to show them by choice; the editor's own button while the setting shows it)
+#define EDITABLE ((kShown[X_PLAY] | M(C_ZL) | M(C_ZR)) & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT)))
 
 typedef struct {
     float x, y, r;       // centre and radius (round) / half height (pills: width 2.2 * r)
@@ -84,7 +85,7 @@ static std::atomic<int> g_ctx{X_PLAY};     // what the game shows, as of the las
 static std::atomic<uint32_t> g_want{0};    // the controls on screen now (context and what Link has)
 static float g_stick_cx, g_stick_cy;       // where the stick's base is now (it follows the thumb's first touch)
 static float g_knob_x, g_knob_y;
-static bool g_menu_down;
+static bool g_menu_down, g_edit_down;
 static double g_last_touch, g_last_pad;    // (SDL_GetTicks seconds) Auto: shown when a touch came after the pad's last use
 #define MAX_FINGERS 10
 static struct { SDL_FingerID id; int ctl; float dx, dy; } g_fingers[MAX_FINGERS];  // ctl -1 = free slot
@@ -120,8 +121,9 @@ static void defaults(float w, float h) {
     g_ctl[C_ZR] = {w - 0.26f * s, 0.10f * s, sr * 0.8f, BIT(BTN_ZR), "ZR", false};
     float mr = 0.040f * s;
     g_ctl[C_MINUS] = {w * 0.5f - 0.13f * s, 0.06f * s, mr, BIT(BTN_MINUS), "-", false};
-    g_ctl[C_PLUS] = {w * 0.5f + 0.13f * s, 0.06f * s, mr, BIT(BTN_PLUS), "+", false};
+    g_ctl[C_PLUS] = {w * 0.5f + 0.20f * s, 0.06f * s, mr, BIT(BTN_PLUS), "+", false};
     g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};
+    g_ctl[C_EDIT] = {w * 0.5f + 0.10f * s, 0.06f * s, mr * 0.8f, 0, "", false};  // (the layout editor: between the menu's and +)
     g_ctl[C_START] = {w * 0.5f, h - 0.07f * s, 0.05f * s, BIT(BTN_L) | BIT(BTN_R) | BIT(BTN_A), "Start", true};
     g_ctl[C_STICK] = {0.25f * s, h - 0.27f * s, 0.14f * s, 0, "", false};
 }
@@ -234,7 +236,7 @@ static void release_all(void) {
     for (int i = 0; i < MAX_FINGERS; i++) g_fingers[i].ctl = -1;
     g_buttons = 0, g_lx = 0, g_ly = 0;
     g_knob_x = g_stick_cx = g_ctl[C_STICK].x, g_knob_y = g_stick_cy = g_ctl[C_STICK].y;
-    g_menu_down = false;
+    g_menu_down = false, g_edit_down = false;
 }
 
 // Everything let go (the overlay menu opened: it takes the touches, the lifts included)
@@ -394,8 +396,7 @@ extern "C" bool touch_preview_event(const SDL_Event *e) {
 
 // ---- the editor
 extern "C" bool touch_edit_available(void) { return g_w > 0 && game_in_play(); }
-extern "C" void touch_edit_begin(void) {
-    std::lock_guard<std::mutex> l(g_lock);
+static void edit_begin(void) {  // (g_lock held)
     for (int i = 0; i < C_COUNT; i++) {
         g_epos[i][0] = g_settings.touch_moved[i] ? g_settings.touch_pos[i][0] : -1;
         g_epos[i][1] = g_settings.touch_pos[i][1];
@@ -405,6 +406,10 @@ extern "C" void touch_edit_begin(void) {
     g_editing = true, g_sel = -1;
     release_all();
     g_layout_dirty = 1;
+}
+extern "C" void touch_edit_begin(void) {
+    std::lock_guard<std::mutex> l(g_lock);
+    edit_begin();
 }
 static void edit_end(bool save) {
     if (save) {
@@ -508,6 +513,8 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
         if (c == C_STICK) stick_down(x, y);
         else if (c == C_MENU) {
             g_menu_down = true;
+        } else if (c == C_EDIT) {
+            g_edit_down = true;
         }
         recompute();
         return true;
@@ -529,6 +536,10 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
     if (c == C_MENU && g_menu_down) {
         g_menu_down = false;
         if (e->type == SDL_EVENT_FINGER_UP) *toggle_menu = true;
+    }
+    if (c == C_EDIT && g_edit_down) {  // (let go on it: the layout editor, over the game)
+        g_edit_down = false;
+        if (e->type == SDL_EVENT_FINGER_UP && game_in_play()) { edit_begin(); return true; }
     }
     recompute();
     return true;
@@ -557,7 +568,7 @@ static const char *slot_icon(int slot) {
 static uint32_t g_items_word;
 static int g_slot_x, g_slot_y;  // (0 / 1, the sword's and shield's slots, never sit on X / Y: an empty one reads 0)
 static uint32_t wanted(int ctx) {
-    uint32_t m = kShown[ctx];
+    uint32_t m = kShown[ctx] & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT));
     if (ctx == X_PLAY || ctx == X_ITEMS) {  // (the items page too: X / Y show what's just been equipped)
         g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
         g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
@@ -799,7 +810,7 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         if (!(want >> i & 1) || (!g_editing && hidden(i))) continue;
         float fa = a * (g_editing && hidden(i) ? 0.35f : 1.0f);  // (hidden: faint while editing)
         const Control &c = g_ctl[i];
-        bool on = !g_editing && (((c.bits & b) && (c.bits & b) == c.bits) || (i == C_MENU && g_menu_down));
+        bool on = !g_editing && (((c.bits & b) && (c.bits & b) == c.bits) || (i == C_MENU && g_menu_down) || (i == C_EDIT && g_edit_down));
         bool sel = g_editing && i == g_sel;
         ImVec2 p(c.x, c.y);
         float r = on ? c.r * 0.95f : c.r;
@@ -813,6 +824,14 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         bool disc = slot_disc(dl, p, r, on, fa, th, sel);
         if (!disc) bubble(dl, p, r, on, i == C_A, fa, th, sel);
         ImU32 ink = disc ? col(74, 52, 26, fmaxf(fa, 0.9f)) : col(255, 255, 255, fmaxf(fa, 0.85f));  // (on a disc: the game's brown)
+        if (i == C_EDIT) {  // a pencil, tip down to the left
+            float u = r * 0.55f, d = 0.7071f, wd = u * 0.24f;
+            ImVec2 a(c.x - u * 0.55f, c.y + u * 0.55f), z(c.x + u * 0.62f, c.y - u * 0.62f);  // (the tip's base, the top)
+            ImVec2 n(d * wd, d * wd);  // (across the body)
+            dl->AddQuadFilled(ImVec2(a.x - n.x, a.y - n.y), ImVec2(z.x - n.x, z.y - n.y), ImVec2(z.x + n.x, z.y + n.y), ImVec2(a.x + n.x, a.y + n.y), ink);
+            dl->AddTriangleFilled(ImVec2(a.x - n.x, a.y - n.y), ImVec2(a.x + n.x, a.y + n.y), ImVec2(a.x - u * 0.35f, a.y + u * 0.35f), ink);
+            continue;
+        }
         if (i == C_MENU) {  // three bars
             float u = r * 0.42f;
             for (int k = -1; k <= 1; k++)
