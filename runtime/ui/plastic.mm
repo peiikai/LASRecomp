@@ -486,7 +486,10 @@ void main() {
     vec2 corner = vec2(gl_VertexIndex & 1, gl_VertexIndex >> 1);
     float m = piece_margin(s);
     vec2 px = mix(s.rect.xy - m, s.rect.zw + m, corner);
-    gl_Position = vec4(px.x / pc.f0.x * 2.0 - 1.0, px.y / pc.f0.y * 2.0 - 1.0, 0.0, 1.0);
+    vec2 c = vec2(px.x / pc.f0.x * 2.0 - 1.0, px.y / pc.f0.y * 2.0 - 1.0);
+    // f1.w: the Vulkan swapchain's pre-rotation in quarter turns (vulkan/plastic_vk.c, device.c vk_sc_rect)
+    if (pc.f1.w > 0.5) c = pc.f1.w < 2.0 ? vec2(-c.y, c.x) : vec2(c.y, -c.x);
+    gl_Position = vec4(c, 0.0, 1.0);
     o_px = px;
     o_lum = scene_lum();
 }
