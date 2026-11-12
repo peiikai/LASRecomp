@@ -964,8 +964,10 @@ static void ask_popup(float scale) {
 
 // Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the General and Gameplay
 // tabs (but the language, Hero Mode icon and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio
-// otherwise and the controls stay. A seed being played ends: the game boots again without it (as the Randomizer tab's Switch to vanilla).
-static void reset_to_vanilla(void) {
+// otherwise and the controls stay. A seed being played ends: the game boots again without it (as the Randomizer tab's
+// Switch to vanilla). On the start screen (in_game false) nothing runs yet: its caller drops the seed PLAY would start
+// (menu_reset_corner).
+static void reset_to_vanilla(bool in_game) {
     Settings &s = g_settings;
     s.aspect = ASPECT_ORIGINAL;
     s.cheat_hookshot = s.no_buff_drops = s.mirror_mode = false;
@@ -979,16 +981,18 @@ static void reset_to_vanilla(void) {
                          &s.fences, &s.walls, &s.houses})
         c->pick = COL_DEFAULT;
     s.enemy_colours = 0, s.screen_filter = 0;
-    LOG("[menu] reset to vanilla%s\n", rando_seed_dir() ? " (leaving the seed)" : "");
+    LOG("[menu] reset to vanilla%s\n", !in_game ? " (start screen)" : rando_seed_dir() ? " (leaving the seed)" : "");
     settings_save();
-    if (rando_seed_dir()) {
+    if (in_game && rando_seed_dir()) {
         rando_select("");
         rt_request_reboot(RT_REBOOT_GAME);
         set_open(false);
     }
 }
 
-static void vanilla_popup(float scale) {
+// seed: a seed would be left (the one being played, or on the start screen the one PLAY would start). True when Reset
+// was pressed.
+static bool vanilla_popup(float scale, bool seed, bool in_game) {
     // LARECOMP_MENU_VANILLA=ask / reset / cancel (test): the question opens with the menu; reset / cancel press that
     // button a few frames later
     static const char *test = getenv("LARECOMP_MENU_VANILLA");
@@ -997,13 +1001,13 @@ static void vanilla_popup(float scale) {
     bool test_reset = test && test_frames == 30 && !strcmp(test, "reset");
     bool test_cancel = test && test_frames == 30 && !strcmp(test, "cancel");
     if (!ImGui::BeginPopupModal("##vanilla", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
-        return;
+        return false;
     ImGui::PushFont(g_font_big);
     ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Reset to vanilla?"));
     ImGui::PopFont();
     ImGui::Spacing();
     ImGui::TextUnformatted(L("This resets your settings to the vanilla game experience.\nYour controls stay as they are."));
-    if (rando_seed_dir()) {
+    if (seed) {
         ImGui::Spacing();
         ImGui::TextUnformatted(L("This also ends the current randomizer seed.\nIts save files are kept."));
     }
@@ -1012,9 +1016,11 @@ static void vanilla_popup(float scale) {
     ImVec2 bs(220 * scale, 0);
     for (const char *s : {L("Reset"), L("Cancel")})
         bs.x = fmaxf(bs.x, ImGui::CalcTextSize(s).x + 2 * ImGui::GetStyle().FramePadding.x + 16 * scale);
+    bool reset = false;
     if (ImGui::Button(L("Reset"), bs) || test_reset) {
         ImGui::CloseCurrentPopup();
-        reset_to_vanilla();
+        reset_to_vanilla(in_game);
+        reset = true;
     }
     ImGui::SameLine();
     ImGui::SetItemDefaultFocus();
@@ -1024,6 +1030,7 @@ static void vanilla_popup(float scale) {
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
+    return reset;
 }
 
 extern "C" bool inventory_overlay_wanted(void);
@@ -1521,6 +1528,22 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     g_font = f0, g_font_big = f1;
 }
 
+// The start screen's Settings: Reset to vanilla beside its close X, as in game (user 2026-11-11). seed: PLAY would
+// start a seed. True when Reset was pressed (the caller drops that seed: nothing is running to reboot).
+bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bool seed) {
+    ImFont *f0 = g_font, *f1 = g_font_big;
+    g_font = font, g_font_big = font_big;
+    ImGuiStyle saved = ImGui::GetStyle();  // (the question in the menu's look, as menu_tabs_draw's pages)
+    style_init();
+    style_parchment(ImGui::GetStyle());
+    ImGui::GetStyle().ScaleAllSizes(scale);
+    if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
+    bool r = vanilla_popup(scale, seed, false);
+    ImGui::GetStyle() = saved;
+    g_font = f0, g_font_big = f1;
+    return r;
+}
+
 // The menu bar (in game; its window is drawn in the menu's font), only while no page is open: left / right (d-pad,
 // stick, arrows, L / R, Q / E) move the cursor, A / Enter opens the entry, B / Esc closes the menu. The mouse lights
 // the entry under it, a click opens it (the page is drawn from the next frame: the press that opened it isn't the
@@ -1842,7 +1865,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                 if (!(PLAT_TOUCH && page != BAR_SETTINGS) && plastic_close_corner(bx, scale)) back = true;
                 if (page == BAR_SETTINGS) {
                     if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
-                    vanilla_popup(scale);
+                    vanilla_popup(scale, rando_seed_dir() != NULL, true);
                 }
             }
 
