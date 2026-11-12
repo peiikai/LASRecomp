@@ -439,7 +439,7 @@ extern "C" void touch_tab_draw(float scale) {
             g_settings.touch_stick_fixed = !f;
         // the layout editor (mobile/touch_controls.mm): over the game, so only while it plays
         if (!touch_edit_available()) opt_disable_next();
-        if (opt_action("Edit touch layout", "", "Move the on-screen buttons, change each one's size or hide it, over the game. "
+        if (opt_action("Edit touch layout", "", "Move the on-screen buttons and change each one's size, over the game. "
                        "Available while playing.")) {
             touch_edit_begin();
             menu_toggle();  // (closes this menu: the editing happens on the game's screen)
