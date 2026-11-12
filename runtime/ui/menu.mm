@@ -816,25 +816,25 @@ extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 // a seed made with "Random cosmetics" puts its own set into the rows the first time it's played (cosmetics_seed.c),
 // and they stay the player's to change: "Seed's look" puts the seed's back, "Default all" the game's own
 // Touch screens, the bar's Cosmetics and Cheats: called right after opt_begin, as the Randomizer's right pane
-// (rando_tab.mm pane_heading): the page's own X at the top right of the rows' panel with the first section's heading
-// on its line, then the rows in a list under them that scrolls on its own (the panel itself doesn't, so the X stays).
-// The X in the screen's corner was under the panel. True when the head was drawn: the caller skips that opt_section
-// and closes the list (opt_list_end) before opt_end.
+// (rando_tab.mm pane_heading): the page's own X at the top right of the rows' panel with the page's name on its line
+// (a title for the whole page, as the Randomizer's column headings: the sections scroll under it), then the rows in a
+// list that scrolls on its own (the panel itself doesn't, so the X stays). The X in the screen's corner was under the
+// panel. True when the head was drawn: the caller closes the list (opt_list_end) before opt_end.
 static bool g_page_x, g_page_x_pressed;
 static float g_page_x_scale;  // (the menu's scale: every page's X and heading the same size, whatever the page's own)
-extern "C" bool menu_page_head(const char *section, float scale) {
+extern "C" bool menu_page_head(const char *title, float scale) {
 #if PLAT_TOUCH
     if (!g_page_x) return false;
     scale = g_page_x_scale;
     float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
     if (plastic_close_pane(44 * scale, scale)) g_page_x_pressed = true;
     ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
-    ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(section)).c_str());
+    ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(title)).c_str());
     ImGui::SetCursorPosY(top + bx + 4 * scale);
     opt_list_begin();
     return true;
 #else
-    (void)section, (void)scale;
+    (void)title, (void)scale;
     return false;
 #endif
 }
@@ -842,8 +842,8 @@ extern "C" bool menu_page_head(const char *section, float scale) {
 static void tab_cosmetics(void) {
     float cs = ImGui::GetFontSize() / 34;
     opt_begin("##cosmetics", cs);
-    bool head = menu_page_head("General", cs);
-    if (!head) opt_section("General");
+    bool head = menu_page_head("Cosmetics", cs);
+    opt_section("General");
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};

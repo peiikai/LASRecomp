@@ -72,8 +72,8 @@ extern "C" void cheats_draw(float scale) {
         return;
     }
     opt_begin("##cheats", scale);
-    bool head = menu_page_head("Always on", scale);  // (touch: on the X's line, menu.mm)
-    if (!head) opt_section("Always on");
+    bool head = menu_page_head("Cheats", scale);  // (touch: the page's name on the X's line, menu.mm)
+    opt_section("Always on");
     if (opt_toggle("Infinite hearts", &g_settings.cheat_hearts, false, "Health refills to full whenever Link is hurt."))
         settings_save();
     if (opt_toggle("Infinite ammo", &g_settings.cheat_ammo, false,
