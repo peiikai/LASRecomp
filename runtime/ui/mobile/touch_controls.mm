@@ -44,6 +44,7 @@ int game_in_play(void);              // runtime/hle/warp.c
 int inventory_items_cursor(void);    // runtime/ui/inventory_overlay.mm
 bool tracker_map_page_shown(void);   // runtime/ui/tracker_overlay.mm
 bool chaos_dgnmap_shown(void);       // runtime/ui/chaos_overlay.mm
+bool pause_menu_shown(void);         // runtime/ui/inventory_overlay.mm
 int texpatch_title_screen(void);     // runtime/nvn/texpatch.c
 }
 ImTextureID ui_game_icon(const char *name);  // runtime/ui/triforce_icons.mm
@@ -557,7 +558,8 @@ extern "C" void touch_stick(int32_t *lx, int32_t *ly) { *lx = g_editing ? 0 : g_
 static int context(void) {
     if (!game_in_play()) return X_TITLE;
     if (inventory_items_cursor() >= 0) return X_ITEMS;
-    if (tracker_map_page_shown() || chaos_dgnmap_shown()) return X_MAP;
+    // (the Map and System pages, and the turn between pages: the menu's buttons - L / R turn pages, their letters)
+    if (tracker_map_page_shown() || chaos_dgnmap_shown() || pause_menu_shown()) return X_MAP;
     return X_PLAY;
 }
 
