@@ -13,6 +13,8 @@ root = Path(__file__).resolve().parents[1]
 source = (root / 'runtime/nvn/vulkan/exec.c').read_text()
 defer = source[source.index('static uint64_t overlap_defer('):source.index('\nuint64_t renderer_fence_seq(')]
 snap = source[source.index('#define SNAP_HALF'):source.index('// (debug) LARECOMP_LOG_BINDS=1:')]
+assert snap.count('f - e->wrun < 30') == 1, 'a GPU output / unknown range is copied after 30 frames of writes (#555)'
+snap = snap.replace('f - e->wrun < 30', 'f - e->wrun < wrun_frames')
 gmap = source[source.index('// ---- gmap_build (tools/test_vulkan_overlap.py'):source.index('// ---- end gmap_build')]
 decide = source[source.index('#define VK_OVERLAP_DEFAULT'):source.index('static _Atomic uint64_t g_last_gpu_frame_ticks;')]
 merge = source[source.index('// ---- gmir_merge_words (tools/test_vulkan_overlap.py'):source.index('// ---- end gmir_merge_words')]
@@ -179,6 +181,16 @@ static int pages_cpu_written(uint64_t addr, uint64_t size, uint32_t since, uint3
 static bool userptr;
 static bool overlap_on(void) { return true; }
 static bool gmir_on(void) { return false; }
+static uint64_t wrun_frames = 30;  // (exec.c's 30, a variable here: watch_tests)
+// (heap_note_type and heap_clean sit in the slice now: the import's memory type and the CPU cache maintenance - none
+// here, the heap's type is never noted, so heap_cc stays "not known" and heap_clean does nothing)
+typedef struct { uint32_t propertyFlags; } VkMemoryType;
+typedef struct { uint32_t memoryTypeCount; VkMemoryType memoryTypes[32]; } VkPhysicalDeviceMemoryProperties;
+#define VK_MEMORY_PROPERTY_HOST_COHERENT_BIT 4u
+static struct { void *phys; } g_vk;
+static void vkGetPhysicalDeviceMemoryProperties(void *phys, VkPhysicalDeviceMemoryProperties *mp) { (void)phys; memset(mp, 0, sizeof *mp); }
+static void plat_cache_op(uint64_t addr, uint64_t size, bool invalidate) { (void)addr, (void)size, (void)invalidate; assert(!"no cache maintenance on a coherent heap"); }
+#define TRACK_PROBE_PAGE (HEAP_BASE + HEAP_MAX - 4096)  // (exec.c: the write tracking probe's page)
 static uint64_t completed, pending = 1, issued, waited;
 static uint64_t vk_completed_seq(void) { return completed; }
 static uint64_t vk_pending_seq(void) { return pending; }
@@ -211,6 +223,9 @@ static bool in_half(uint64_t a, int h) { return a >= ring_lo() + h * SNAP_HALF &
 // tracking shows a CPU write on their pages; no page protection anywhere
 static void watch_tests(void) {
     assert(snap_on() && watch_on());
+    // (W1-W17: the page heuristics, with writes that keep coming copied at once as before #555 - wrun_frames 0; the
+    //  30 frames a GPU output or a range of unknown use waits since then: W18)
+    wrun_frames = 0;
     uint64_t A = HEAP_BASE + 0x1000, B = HEAP_BASE + 0x20000, B2 = HEAP_BASE + 0x20800, C = HEAP_BASE + 0x40000, D = HEAP_BASE + 0x60000;
     // W1. a compute-only range starts in place; its pages are looked at (stamped) once, and once per frame after
     unsigned l = looks;
@@ -482,7 +497,7 @@ static void watch_tests(void) {
         const uint64_t Z[4] = {32640, 32640, 2040, 2040};
         frame++;
         for (int i = 0; i < 4; i++) { snap_slot_class = i < 2 ? 0 : 1; assert(snap_storage(R[i], Z[i], true) == R[i]); }
-        for (int f = 0; f < 2; f++) {
+        for (int f = 0; f < 4; f++) {  // (the big lists copied for their own pages first, the small ones a frame or two later: #463)
             for (uint64_t pg = L; pg < L + 0x10800 + 2040; pg += 1024) cpu_wrote(pg);
             gpu_wrote(R[2], 2040);
             frame++;
@@ -491,7 +506,20 @@ static void watch_tests(void) {
         for (int i = 0; i < 4; i++) { snap_slot_class = i < 2 ? 0 : 1; assert(snap_storage(R[i], Z[i], true) != R[i]); }
     }
     snap_slot_class = -1;
-    puts("PASS: write watch - in place + tracked, CPU writes that keep coming make a copy for good (a single one doesn't), no demotion on level / idle, GPU writes ignored, a shared page marks both, a page shared with a small parameter block doesn't, nor a store beside a GPU output on its shared pages (#355, both Linux layouts), learning: a store between look and hash, reuse after a gap / level, per part, the GPU's slot report (outputs never copied by neighbours' stores, inputs at once, the lists), the lists at any page offset, a prior write is consumed, draw reads copy, other lookers");
+    // W18 (#555): a range of unknown use or a GPU output whose CPU writes keep coming is copied only after 30 frames of
+    //     them (BowWow's setup bursts stayed in place); a known input at once
+    wrun_frames = 30;
+    for (int cls = -1; cls <= 1; cls++) {
+        uint64_t G = HEAP_BASE + 0x780000 + (uint64_t)(cls + 1) * 0x10000;
+        snap_slot_class = cls;
+        frame++;
+        assert(snap_storage(G, 8192, true) == G);
+        int n = 0;
+        for (got = G; got == G && n < 40; n++) { cpu_wrote(G + 0x1000); frame++; got = snap_storage(G, 8192, true); }
+        assert(got != G && (cls == 0 ? n == 2 : n == 31));
+    }
+    snap_slot_class = -1;
+    puts("PASS: write watch - in place + tracked, CPU writes that keep coming make a copy for good (a single one doesn't), no demotion on level / idle, GPU writes ignored, a shared page marks both, a page shared with a small parameter block doesn't, nor a store beside a GPU output on its shared pages (#355, both Linux layouts), learning: a store between look and hash, reuse after a gap / level, per part, the GPU's slot report (outputs never copied by neighbours' stores, inputs at once, the lists), the lists at any page offset, a prior write is consumed, draw reads copy, other lookers, outputs / unknown ranges after 30 frames of writes (#555)");
 }
 
 int main(int argc, char **argv) {
