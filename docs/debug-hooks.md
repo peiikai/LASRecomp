@@ -200,6 +200,7 @@ These work on both Metal and Vulkan unless noted.
 | `LARECOMP_NO_FRAME_CLEAR` | 1 (Vulkan: 0 / 1) | Don't clear scene render targets at their first use each frame. On Vulkan the default is no clears on integrated GPUs. |
 | `LARECOMP_TEX_FULLHASH` | 1 | Hash every texture in full each time instead of the faster partial checks. |
 | `LARECOMP_NO_WIDESCREEN` | 1 | Turn the widescreen view off (16:9 framing everywhere). |
+| `LARECOMP_NO_PAUSE_FILL` | 1 | Keep the pause screen's backdrop in the 16:9 box on other window shapes (the game shows around it). |
 | `LARECOMP_WIDE_TEST` | ratio | Pretend the window has this shape, relative to 16:9 (e.g. `1.3125` for 21:9). |
 
 ## Metal

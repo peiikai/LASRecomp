@@ -10,6 +10,7 @@
 // (centred stretch k) and a copy of their uniforms with the projection's x row divided by k: an unmoved pane lands on the
 // same pixels, a moved one in the bars. Boxed rooms are cropped to 16:9 at present, so while the HUD is there the
 // bars are cleared after the scene composite and the frame is shown whole (widescreen_present_crop).
+// The render-thread part also serves the pause screen's backdrop on every platform (runtime/hle/pause_fill.c).
 #include "../game_addresses.h"
 #include <stdbool.h>
 #include <stdlib.h>
@@ -29,9 +30,12 @@ float hud_corners_left(void) { return g_left; }
 float hud_corners_right(void) { return g_right; }
 float hud_corners_up(void) { return g_up; }
 
+static volatile bool g_active;  // (game thread: the HUD's groups are moved)
+bool pause_fill_frame(uint64_t frame);  // runtime/hle/pause_fill.c: the pause screen fills the window too
+extern uint64_t renderer_exec_frame(void);
+
 #if PLAT_TOUCH
 
-static volatile bool g_active;
 bool touch_visible(void);
 void menu_safe_insets(float *l, float *r);  // share of the window's width
 
@@ -141,11 +145,17 @@ void rt_hud_corners_tick(uint64_t hud) {
     g_moved = want, g_active = want, g_left = l, g_right = r, g_up = up;
 }
 
+#else
+
+void rt_hud_corners_tick(uint64_t hud) { (void)hud; }
+
+#endif
+
 // ---- render thread
 static uint64_t g_bars_frame = ~0ull, g_crop_frame = ~0ull;
 static float g_crop_u0, g_crop_u1, g_crop_v0, g_crop_v1;
 
-bool hud_corners_active(void) { return g_active; }
+bool hud_corners_active(void) { return g_active || pause_fill_frame(renderer_exec_frame()); }
 
 // A copy of a layout draw's vertex uniforms for the window-wide viewport (stretch k), NULL when this isn't one.
 const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky) {
@@ -162,24 +172,13 @@ const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky) {
 void hud_corners_note_crop(uint64_t frame, float u0, float u1, float v0, float v1) {
     g_crop_frame = frame, g_crop_u0 = u0, g_crop_u1 = u1, g_crop_v0 = v0, g_crop_v1 = v1;
 }
-bool hud_corners_shown_whole(uint64_t frame) { return g_active && g_bars_frame == frame; }
+bool hud_corners_shown_whole(uint64_t frame) { return (g_active || pause_fill_frame(frame)) && g_bars_frame == frame; }
 
 // (the scene composite is drawn) the bars to clear before the HUD, in the target's pixels: false when the last frame had none
 bool hud_corners_bars(uint64_t frame, int w, int h, int bar[4]) {
-    if (!g_active || g_crop_frame + 2 < frame || g_crop_frame > frame) return false;
+    if (!(g_active || pause_fill_frame(frame)) || g_crop_frame + 2 < frame || g_crop_frame > frame) return false;
     g_bars_frame = frame;
     bar[0] = (int)(w * g_crop_u0), bar[1] = (int)(w * g_crop_u1 + 0.999f);
     bar[2] = (int)(h * g_crop_v0), bar[3] = (int)(h * g_crop_v1 + 0.999f);
     return bar[0] > 0 || bar[1] < w || bar[2] > 0 || bar[3] < h;
 }
-
-#else
-
-void rt_hud_corners_tick(uint64_t hud) { (void)hud; }
-bool hud_corners_active(void) { return false; }
-const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky) { (void)u, (void)size, (void)k, (void)ky; return NULL; }
-void hud_corners_note_crop(uint64_t frame, float u0, float u1, float v0, float v1) { (void)frame, (void)u0, (void)u1, (void)v0, (void)v1; }
-bool hud_corners_shown_whole(uint64_t frame) { (void)frame; return false; }
-bool hud_corners_bars(uint64_t frame, int w, int h, int bar[4]) { (void)frame, (void)w, (void)h, (void)bar; return false; }
-
-#endif

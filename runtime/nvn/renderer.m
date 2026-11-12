@@ -3391,6 +3391,7 @@ static id prep_find_pipe(NSString *body) {
 }
 
 static bool wx_composite, wx_mirror;  // (draw_one: this draw is the scene composite - the weather goes on right after it)
+static bool pause_backdrop;  // (draw_one: the pause screen's blurred scene, runtime/hle/pause_fill.c)
 static NvnTexture *wx_depth;  // the frame's scene depth (the latest scene-camera draw's depth attachment)
 static uint64_t wx_depth_frame = ~0ull;
 static float wx_zn, wx_zf = 1;  // (its depth range: the viewport's)
@@ -4600,6 +4601,9 @@ static void draw_one(CmdRec *r, bool indexed) {
         // (single-texture draws only: the menu's frosted panels sample the same blurred copy but are UI pieces)
         if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1))
             reads_scene = true;
+        extern bool pause_fill_backdrop(int w, int h);
+        if (reads_scene && fullscreen_quad && pr->fi->ntex == 1 && pause_fill_backdrop(tex_wh[1][0][0], tex_wh[1][0][1]))
+            pause_backdrop = true;
         extern uint64_t renderer_present_count(void);
         static uint64_t wide_frame = ~0ull;  // the latest draw this frame filled the window (nothing boxed since)
         extern uint64_t renderer_exec_frame(void);  // (the frame being translated)
@@ -4613,6 +4617,12 @@ static void draw_one(CmdRec *r, bool indexed) {
             fade_fill = black || white;
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
+        if (!composite && fullscreen_quad) {  // (the pause screen's frosted layers over its blurred scene: the window too)
+            bool reshaped = false;
+            for (int i = 0; i < pr->fi->ntex && i < 64; i++) reshaped |= tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1;
+            extern bool pause_fill_scene_pane(bool reshaped, const float *u, uint64_t size);
+            composite = pause_fill_scene_pane(reshaped, (const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
+        }
         if (!composite) wide_frame = ~0ull;
         static int log_fills = -1;  // LARECOMP_LOG_FILLS: every full-screen untextured fill (fs hash, colour cbuf, decision)
         if (log_fills < 0) log_fills = getenv("LARECOMP_LOG_FILLS") != NULL;
@@ -4652,6 +4662,8 @@ static void draw_one(CmdRec *r, bool indexed) {
             hud_k = (float)pw_ / (st.rt.color[0]->width * vp_sx), hud_ky = (float)ph_ / (st.rt.color[0]->height * vp_sy);
             extern const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky);
             hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
+            extern const void *pause_fill_ubo(const float *u, uint64_t size, float k, float ky);  // (the pause screen's backdrop)
+            if (!hud_u) hud_u = pause_fill_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
         }
     }
     {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
@@ -5503,9 +5515,9 @@ static void draw(CmdRec *r, bool indexed) {
     static bool hud_bars;  // (the scene composite was drawn, its bars not cleared yet)
     extern bool hud_corners_active(void);
     if (hud_bars && hud_bars_clear()) hud_bars = false;
-    wx_composite = wx_mirror = false;
+    wx_composite = wx_mirror = pause_backdrop = false;
     draw_one(r, indexed);
-    hud_bars = (hud_bars || wx_composite) && hud_corners_active();
+    hud_bars = (hud_bars || wx_composite || pause_backdrop) && hud_corners_active();
     if (wx_composite) weather_encode();
 }
 

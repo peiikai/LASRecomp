@@ -6517,6 +6517,7 @@ static void prep_check(const PipeKey *k, uint64_t vh, uint64_t fh, const ShaderR
 // weather_vk.c). As renderer.m: the scene's draws give the camera and the depth they draw into (wx_*), and right after
 // the scene composite into the window image the weather goes on it
 static bool wx_composite, wx_mirror, wx_dm1;
+static bool pause_backdrop;  // (draw_: the pause screen's blurred scene, runtime/hle/pause_fill.c)
 static NvnTexture *wx_depth;
 static uint64_t wx_depth_frame;
 static float wx_zn, wx_zf;
@@ -6804,9 +6805,9 @@ static void draw(CmdRec *r, bool indexed) {
     static bool hud_bars;  // (the scene composite was drawn, its bars not cleared yet)
     extern bool hud_corners_active(void);
     if (hud_bars && hud_bars_clear()) hud_bars = false;
-    wx_composite = wx_mirror = false;
+    wx_composite = wx_mirror = pause_backdrop = false;
     draw_(r, indexed);
-    hud_bars = (hud_bars || wx_composite) && hud_corners_active();
+    hud_bars = (hud_bars || wx_composite || pause_backdrop) && hud_corners_active();
     if (wx_composite) weather_encode();
     PROF_ADD(prof_draw);
 }
@@ -7209,6 +7210,9 @@ static void draw_(CmdRec *r, bool indexed) {
         bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad &&
                                !widescreen_ui_pane_partial((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1)) reads_scene = true;
+        extern bool pause_fill_backdrop(int w, int h);
+        if (reads_scene && fullscreen_quad && pr->fi->ntex == 1 && pause_fill_backdrop(tex_wh[1][0][0], tex_wh[1][0][1]))
+            pause_backdrop = true;
         static uint64_t wide_frame = ~0ull;
         extern uint64_t renderer_exec_frame(void);  // (the frame being translated)
         if (reads_scene) wide_frame = renderer_exec_frame();
@@ -7219,6 +7223,12 @@ static void draw_(CmdRec *r, bool indexed) {
             fade_fill = black || white;
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
+        if (!composite && fullscreen_quad) {  // (the pause screen's frosted layers over its blurred scene: the window too)
+            bool reshaped = false;
+            for (int i = 0; i < pr->fi->ntex && i < 64; i++) reshaped |= tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1;
+            extern bool pause_fill_scene_pane(bool reshaped, const float *u, uint64_t size);
+            composite = pause_fill_scene_pane(reshaped, (const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
+        }
         if (!composite) wide_frame = ~0ull;
         if (!composite) {
             int pw, ph;
@@ -7237,6 +7247,8 @@ static void draw_(CmdRec *r, bool indexed) {
             hud_k = (float)pw_ / (st.rt.color[0]->width * vp_sx), hud_ky = (float)ph_ / (st.rt.color[0]->height * vp_sy);
             extern const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky);
             hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
+            extern const void *pause_fill_ubo(const float *u, uint64_t size, float k, float ky);  // (the pause screen's backdrop)
+            if (!hud_u) hud_u = pause_fill_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
         }
     }
     Range hud_ubuf = st.ubuf[0][0];
