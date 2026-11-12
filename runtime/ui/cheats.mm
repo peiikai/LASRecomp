@@ -65,13 +65,15 @@ extern "C" void cheats_frame(void) {
     if (g_settings.cheat_rupees && F<uint32_t>(RUPEES) != 9999) F<uint32_t>(RUPEES) = 9999;
 }
 
+extern "C" bool menu_page_head(const char *section, float scale);  // menu.mm
 extern "C" void cheats_draw(float scale) {
     if (!game_in_play()) {
         ImGui::TextDisabled("%s", L("Load a save to use cheats."));
         return;
     }
+    bool head = menu_page_head("Always on", scale);  // (touch: on the X's line, menu.mm)
     opt_begin("##cheats", scale);
-    opt_section("Always on");
+    if (!head) opt_section("Always on");
     if (opt_toggle("Infinite hearts", &g_settings.cheat_hearts, false, "Health refills to full whenever Link is hurt."))
         settings_save();
     if (opt_toggle("Infinite ammo", &g_settings.cheat_ammo, false,
