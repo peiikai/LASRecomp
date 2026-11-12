@@ -23,7 +23,9 @@ extern int game_in_play(void);
 
 static volatile uint64_t g_frame = ~0ull;  // the frame being translated drew the pause screen's blurred scene
 
-bool pause_fill_frame(uint64_t frame) { return g_frame == frame; }
+// (and the next two: the screen's last fade-out frame is drawn over the live world, without the blurred copy, and its
+// backdrop showed boxed for that frame)
+bool pause_fill_frame(uint64_t frame) { return g_frame != ~0ull && frame >= g_frame && frame - g_frame <= 2; }
 
 // (render thread) a composite sampling a w x h texture: the pause screen's blurred scene?
 bool pause_fill_backdrop(int w, int h) {
