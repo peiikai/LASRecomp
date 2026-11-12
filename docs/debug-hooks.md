@@ -237,6 +237,7 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_VK_NO_GMEM` | 1 | Don't bind the guest heap to shaders as storage buffers. |
 | `LARECOMP_VK_GMEM_LAZY` | 0 / 1 | Import the heap to the GPU in chunks on demand. Default on where one import can't hold it. |
 | `LARECOMP_VK_NO_HOST_IMPORT` | 1 | Act as if the driver can't import host memory (tests the copy path on any GPU). |
+| `LARECOMP_VK_CPU_BC` | 1 | Decode BC1-BC5 textures on the CPU even where the driver lists them (tests the path used on drivers without BC4 / BC5, issue #693). |
 | `LARECOMP_VK_RECORDER` | 0 / 1 | Record Vulkan commands on a separate thread. Default on, except on Mali. |
 | `LARECOMP_VK_PIPELINE_BINARY` | 0 / 1 | Our own pipeline binaries cache. Default on for AMD drivers only. |
 | `LARECOMP_VK_DYN_VERTEX` | 0 | Keep the vertex layout in each pipeline instead of dynamic vertex input. |
