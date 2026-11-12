@@ -173,6 +173,9 @@ static void page_open(int page) {
         menu_tabs_focus(!opened);  // selected one
         opened = true;
     } else menu_tabs_focus(false);  // (a page alone: the first Down goes to its first row)
+    // (Warp and the Save Editor need a save: before one is loaded, a note over the bar instead of an empty page -
+    // on a touch screen the empty Save Editor had no X to leave by)
+    if ((page == BAR_WARP || page == BAR_EDITOR) && !game_in_play()) { g_ask = page; return; }
     if (page == BAR_EDITOR) save_editor_on_open();
     if (page == BAR_RESET || page == BAR_QUIT) { g_ask = page; return; }  // (a question over the bar: ask_popup)
     g_page = page;
@@ -907,6 +910,18 @@ static void ask_popup(float scale) {
     if (!ImGui::BeginPopupModal("##ask", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
                                                    ImGuiWindowFlags_NoMove))
         return;
+    if (g_ask == BAR_WARP || g_ask == BAR_EDITOR) {  // (no save loaded: page_open)
+        ImGui::TextUnformatted(L("Load a save first."));
+        ImGui::Spacing();
+        if (ImGui::Button(L("OK"), ImVec2(200 * scale, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            menu_sfx_play(MENU_SFX_CANCEL);
+            g_ask = -1, ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::EndPopup();
+        return;
+    }
     bool quit = g_ask == BAR_QUIT;
     // LARECOMP_MENU_ASK=cancel / launcher / reset (test): presses that button a few frames after the question opens
     static const char *test = getenv("LARECOMP_MENU_ASK");
