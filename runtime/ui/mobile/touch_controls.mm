@@ -128,7 +128,7 @@ static void defaults(float w, float h) {
     g_ctl[C_PLUS] = {g_ctl[C_R].x, fy - 0.42f * s, mr, BIT(BTN_PLUS), "+", false};
     g_ctl[C_MINUS] = {fx - 0.43f * s, fy + 0.23f * s, mr, BIT(BTN_MINUS), "-", false};
     g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};  // (the top: the menu's button, the layout editor's beside it)
-    g_ctl[C_EDIT] = {w * 0.5f + 0.10f * s, 0.06f * s, mr * 0.8f, 0, "", false};
+    g_ctl[C_EDIT] = {w * 0.5f + 0.11f * s, 0.06f * s, mr, 0, "", false};  // (the menu's size, a gap of 0.03 between them)
     g_ctl[C_START] = {w * 0.5f, h - 0.07f * s, 0.05f * s, BIT(BTN_L) | BIT(BTN_R) | BIT(BTN_A), "Start", true};
     g_ctl[C_STICK] = {0.25f * s, h - 0.27f * s, 0.14f * s, 0, "", false};
 }
