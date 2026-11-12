@@ -572,6 +572,24 @@ static void bubble(ImDrawList *dl, ImVec2 c, float r, bool on, bool teal, float 
     dl->AddCircle(c, r * 0.90f, sel ? col(236, 194, 84, 1) : col(185, 232, 255, 0.95f * a), 48, (sel ? 5.0f : 2.8f) * th);
 }
 
+// The inventory's own item slot, from the game's UI textures (Game.arc): the cork disc, and pressed, lit as the slot
+// of an equipped item - the green ring round a pale disc. false: the textures aren't there (the bubble instead).
+static bool slot_disc(ImDrawList *dl, ImVec2 c, float r, bool on, float a, float th, bool sel) {
+    ImTextureID dark = ui_game_icon("ItemBG_00^q"), green = ui_game_icon("ItemSetBG_00^q"), pale = ui_game_icon("ItemBG_01^q");
+    if (!dark || !green || !pale) return false;
+    auto disc = [&](ImTextureID t, float rad, float span, ImU32 tint) {  // (span: the image's half width per disc radius)
+        float s = rad * span;
+        dl->AddImage(t, ImVec2(c.x - s, c.y - s), ImVec2(c.x + s, c.y + s), ImVec2(0, 0), ImVec2(1, 1), tint);
+    };
+    a = fmaxf(a, 0.55f) * 0.85f;  // (a little see-through)
+    if (on) {
+        disc(green, r, 96.0f / 66, col(255, 255, 255, fminf(1, a + 0.15f)));
+        disc(pale, r * 0.84f, 72.0f / 59, col(250, 240, 210, fminf(1, a + 0.15f)));
+    } else disc(dark, r, 96.0f / 66, col(255, 255, 255, a));
+    if (sel) dl->AddCircle(c, r * 1.02f, col(236, 194, 84, 1), 48, 5.0f * th);
+    return true;
+}
+
 // the Switch button's letter on a small white badge, upper left of the bubble
 static void badge(ImDrawList *dl, ImFont *font, ImVec2 c, float r, const char *lab, float a) {
     float br = fmaxf(r * 0.34f, 11.0f);
@@ -712,7 +730,7 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
             label_text(dl, font, c.r * 0.85f, p, "Start", col(255, 255, 255, fmaxf(fa, 0.8f)), true);
             continue;
         }
-        bubble(dl, p, r, on, i == C_A, fa, th, sel);
+        if (!slot_disc(dl, p, r, on, fa, th, sel)) bubble(dl, p, r, on, i == C_A, fa, th, sel);
         if (i == C_MENU) {  // three bars
             float u = r * 0.42f;
             for (int k = -1; k <= 1; k++)
