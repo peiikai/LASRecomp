@@ -119,13 +119,13 @@ typedef struct {
     int touch_mode;      // 0 Auto (while no controller is connected), 1 Always, 2 Off
     bool touch_stick_fixed;  // the touch stick stays in its place (else its base comes to the thumb)
     bool touch_dpad;  // the on-screen stick drawn and read as an 8-way D-pad (mobile/touch_controls.mm)
-    bool touch_all;      // every play button on screen, not only those the game uses now
+    bool touch_edit_button;  // the on-screen button (top, beside the menu's) that opens the layout editor
     bool touch_hide_xy_hud;  // the game's own X / Y item HUD hidden while the on-screen controls are shown
     float touch_opacity; // 0.15 .. 1
     float touch_size;    // 0.6 .. 1.6 (1 = the default layout)
     // the layout editor (touch_controls.mm): per control, moved (its place: share of the screen), size (x), hidden;
     // saved as touch_ctl_<name> = x, y, size, hidden
-#define TOUCH_NCTL 13
+#define TOUCH_NCTL 14
     bool touch_moved[TOUCH_NCTL];
     float touch_pos[TOUCH_NCTL][2];
     float touch_scale[TOUCH_NCTL];

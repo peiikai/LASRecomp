@@ -486,7 +486,10 @@ void main() {
     vec2 corner = vec2(gl_VertexIndex & 1, gl_VertexIndex >> 1);
     float m = piece_margin(s);
     vec2 px = mix(s.rect.xy - m, s.rect.zw + m, corner);
-    gl_Position = vec4(px.x / pc.f0.x * 2.0 - 1.0, px.y / pc.f0.y * 2.0 - 1.0, 0.0, 1.0);
+    vec2 c = vec2(px.x / pc.f0.x * 2.0 - 1.0, px.y / pc.f0.y * 2.0 - 1.0);
+    // f1.w: the Vulkan swapchain's pre-rotation in quarter turns (vulkan/plastic_vk.c, device.c vk_sc_rect)
+    if (pc.f1.w > 0.5) c = pc.f1.w < 2.0 ? vec2(-c.y, c.x) : vec2(c.y, -c.x);
+    gl_Position = vec4(c, 0.0, 1.0);
     o_px = px;
     o_lum = scene_lum();
 }
@@ -682,6 +685,8 @@ static bool round_button(const char *id, float bx, float scale, bool reset) {
 bool plastic_close_button(float bx, float scale) { return round_button("##close", bx, scale, false); }
 
 float g_plastic_corner_r;
+float g_plastic_pane_close_cy;
+int g_plastic_pane_close_frame = -10;
 
 float plastic_corner_clear(float cy, float r) {
     float R = g_plastic_corner_r, dy = R - cy, a = R - r * 1.15f;  // (a: the centre's room inside the curve, a margin kept)
@@ -707,6 +712,7 @@ static bool corner_button(float bx, float scale, int slot, bool reset, bool in_p
         float r = bx * 0.5f, need = plastic_corner_clear(y + r - vp->Pos.y, r), have = vp->Pos.x + vp->Size.x - (x + r);
         if (need > have) x -= need - have;
     }
+    if (PLAT_TOUCH && in_pane) g_plastic_pane_close_cy = y + bx * 0.5f, g_plastic_pane_close_frame = ImGui::GetFrameCount();
     ImGui::SetCursorScreenPos(ImVec2(x - slot * (bx + 12 * scale), y));
     bool r = round_button(reset ? "##reset" : "##close", bx, scale, reset);
     w->DC.CursorPos = keep.CursorPos, w->DC.CursorPosPrevLine = keep.CursorPosPrevLine;

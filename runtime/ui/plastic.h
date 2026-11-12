@@ -50,6 +50,10 @@ bool plastic_close_pane(float size, float scale);
 bool plastic_reset_corner(float size, float scale);
 // iPhone: the screen's rounded corners' radius, in the current window's units (0 elsewhere); the menus set it each frame
 extern float g_plastic_corner_r;
+// touch screens: the centre height of the last pane's close X (plastic_close_pane) and the ImGui frame it was drawn in -
+// a page's corner icon lines up with it
+extern float g_plastic_pane_close_cy;
+extern int g_plastic_pane_close_frame;
 // how far from the screen's side the centre of a round button (centre cy below the top, radius r) has to be to clear
 // a rounded corner
 float plastic_corner_clear(float cy, float r);

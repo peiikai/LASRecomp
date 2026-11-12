@@ -1018,6 +1018,7 @@ static bool g_menu_small;  // sub pages: buttons in the small font
 void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float),
                     int only = -1000);  // menu.mm
 bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bool seed);  // menu.mm
+void menu_bar_picture(float width, float scale);  // menu.mm
 void menu_style_begin(float scale);  // (menu.mm: the menu's look, until menu_style_end)
 bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big);  // (menu.mm: true while a live preview is up)
 void menu_style_end(void);
@@ -1122,6 +1123,8 @@ static bool menu_tip(float s) {
         ImGui::Text(L("Open it in game with F1 or Esc, or press the %s or %s together on a controller."), L(home[fam]),
                     L(pad[fam]));
         ImGui::PopTextWrapPos();
+        ImGui::Dummy(ImVec2(0, 10 * s));
+        menu_bar_picture(ImGui::GetContentRegionAvail().x, s);
         ImGui::Dummy(ImVec2(0, 14 * s));
         ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 180 * s) * 0.5f);
         ImGui::SetItemDefaultFocus();
