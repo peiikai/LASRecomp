@@ -647,6 +647,14 @@ static bool round_button(const char *id, float bx, float scale, bool reset) {
 
 bool plastic_close_button(float bx, float scale) { return round_button("##close", bx, scale, false); }
 
+float g_plastic_corner_r;
+
+float plastic_corner_clear(float cy, float r) {
+    float R = g_plastic_corner_r, dy = R - cy, a = R - r * 1.15f;  // (a: the centre's room inside the curve, a margin kept)
+    if (R <= 0 || dy <= 0) return 0;  // (no rounded corner, or below it)
+    return a > dy ? R - sqrtf(a * a - dy * dy) : R;
+}
+
 // slot 0: the corner itself; each slot further one button (and a gap) to the left
 static bool corner_button(float bx, float scale, int slot, bool reset, bool in_pane = false) {
     // in the window's top right corner, clear of the frame (its moulding ends 20 px in), and out of the layout: the
@@ -659,7 +667,13 @@ static bool corner_button(float bx, float scale, int slot, bool reset, bool in_p
         y = ImGui::GetMainViewport()->Pos.y + 12 * scale;
         if (in_pane) m = 10 * scale, y = w->Pos.y + m;  // (inside a pane's box: the current window is the pane)
     }
-    ImGui::SetCursorScreenPos(ImVec2(w->Pos.x + w->Size.x - m - bx - slot * (bx + 12 * scale), y));
+    float x = w->Pos.x + w->Size.x - m - bx;
+    if (PLAT_TOUCH) {  // (iPhone: in from the rounded corner as far as it takes)
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        float r = bx * 0.5f, need = plastic_corner_clear(y + r - vp->Pos.y, r), have = vp->Pos.x + vp->Size.x - (x + r);
+        if (need > have) x -= need - have;
+    }
+    ImGui::SetCursorScreenPos(ImVec2(x - slot * (bx + 12 * scale), y));
     bool r = round_button(reset ? "##reset" : "##close", bx, scale, reset);
     w->DC.CursorPos = keep.CursorPos, w->DC.CursorPosPrevLine = keep.CursorPosPrevLine;
     w->DC.CursorMaxPos = keep.CursorMaxPos, w->DC.IdealMaxPos = keep.IdealMaxPos;

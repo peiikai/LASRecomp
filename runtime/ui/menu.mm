@@ -1212,8 +1212,13 @@ bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big) {
 #if PLAT_TOUCH
 // A menu page's title on a touch screen: an icon in the screen's corner (a notch or a camera hole sits mid-height, clear
 // of it). tab: -1000 Settings (a gear), 3 Randomizer (a die), 4 Warp (a map pin), 2 Save Editor (a floppy disk)
+// (its left edge: 14 px in, or further on an iPhone, clear of the screen's rounded corner)
+static float page_corner_x(float scale) {
+    float bs = 44 * 1.35f * scale;
+    return fmaxf(14 * scale, plastic_corner_clear(12 * scale + bs * 0.5f, bs * 0.5f) - bs * 0.5f);
+}
 static void page_corner_icon(int tab, float scale) {
-    float bs = 44 * 1.35f * scale, ox = 14 * scale, oy = 12 * scale;
+    float bs = 44 * 1.35f * scale, ox = page_corner_x(scale), oy = 12 * scale;
     ImVec2 vp = ImGui::GetMainViewport()->Pos, c(vp.x + ox + bs * 0.5f, vp.y + oy + bs * 0.5f);
     float r = bs * 0.42f;
     ImU32 gc = ImGui::ColorConvertFloat4ToU32(plastic_col(plastic_theme().title));
@@ -1260,7 +1265,7 @@ extern "C" float menu_page_corner(int tab, float scale) {
     page_corner_icon(tab, scale);
     float bs = 44 * 1.35f * scale;
     ImVec2 vp = ImGui::GetMainViewport()->Pos, p = ImGui::GetCursorScreenPos();
-    float indent = fmaxf(0, vp.x + (14 + 8) * scale + bs - p.x);
+    float indent = fmaxf(0, vp.x + page_corner_x(scale) + 8 * scale + bs - p.x);
     ImGui::SetCursorScreenPos(ImVec2(p.x, vp.y + 14 * scale));
     if (indent > 0) ImGui::Indent(indent);
     return indent;
@@ -1369,12 +1374,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         {   // the Settings window on a touch screen: a gear in the screen's corner for its title (a notch or a camera
             // hole sits mid-height, clear of it), the tabs beside it on the top row, short of the corner buttons
             // (plastic.mm corner_button)
-            float bs = 44 * 1.35f * scale, ox = 14 * scale, oy = 12 * scale;
+            float bs = 44 * 1.35f * scale, ox = page_corner_x(scale), oy = 12 * scale;
             ImVec2 vp = ImGui::GetMainViewport()->Pos;
             page_corner_icon(-1000, scale);
             ImVec2 p = ImGui::GetCursorScreenPos();
             ImGui::SetCursorScreenPos(ImVec2(fmaxf(p.x, vp.x + ox + bs + gap), vp.y + oy + (bs - th) * 0.5f));
             tabs_cut = 2 * bs + 8 * scale;  // (the corner buttons, side by side on the tabs' row)
+            tabs_cut += fmaxf(0, plastic_corner_clear(oy + bs * 0.5f, bs * 0.5f) - (16 * scale + bs * 0.5f));  // (iPhone: moved in)
         }
 #endif
         float tw[16], text_w[16], total = 0, avail = ImGui::GetContentRegionAvail().x - 4 * scale - tabs_cut;
@@ -1805,6 +1811,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                 // there (Android's bars are hidden but still reported), and past the edges by the window's padding, so
                 // the page runs to them.
                 float sl = g_cushion_l, pad = ImGui::GetStyle().WindowPadding.y, top = 14 * scale - pad;
+                g_plastic_corner_r = touch_corner_radius(g_safe_l, g_safe_r);  // (the corner buttons keep off the curve)
                 // (to the screen's right edge, for the corner buttons: what's on the page keeps the inset, below)
                 w = io.DisplaySize.x - sl, h = io.DisplaySize.y + pad - 8 * scale - top;
                 centre = ImVec2(sl + w * 0.5f, top + h * 0.5f);
