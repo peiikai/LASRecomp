@@ -952,9 +952,71 @@ const char *plat_cloud_synced(const char *dir) {
     return NULL;
 }
 
-// TODO: a file under dir that OneDrive keeps online only (Files On-Demand). Not written: it needs a OneDrive
-// setup to check against. The start screen already asks at launch and shows its box on true (runtime/ui/launcher.mm).
-bool plat_cloud_offloaded(const char *dir) { (void)dir; return false; }
+#ifndef FILE_ATTRIBUTE_RECALL_ON_OPEN
+#define FILE_ATTRIBUTE_RECALL_ON_OPEN 0x00040000
+#endif
+// A file or folder under dir that OneDrive keeps online only (Files On-Demand): the attributes the folder listing
+// already carries, so nothing is opened or downloaded. Folders go in only when they are plain or a cloud
+// placeholder (IO_REPARSE_TAG_CLOUD_*), never through another link.
+bool plat_cloud_offloaded(const char *dir) {
+    uint64_t t0 = plat_now_ns();
+    enum { LEN = 32768 };
+    wchar_t *root = malloc(LEN * sizeof(wchar_t));
+    if (!root || MultiByteToWideChar(CP_UTF8, 0, dir, -1, root, LEN) <= 1) { free(root); return false; }
+    int cap = 64, top = 0, n = 0;
+    wchar_t **stack = malloc(cap * sizeof *stack);
+    if (!stack) { free(root); return false; }
+    stack[top++] = root;
+    bool off = false;
+    WIN32_FIND_DATAW fd;
+    while (top && !off) {
+        wchar_t *d = stack[--top];
+        size_t l = wcslen(d);
+        wchar_t *pat = malloc((l + 3) * sizeof(wchar_t));
+        if (pat) {
+            swprintf(pat, l + 3, L"%ls\\*", d);
+            HANDLE h = FindFirstFileExW(pat, FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
+            free(pat);
+            if (h != INVALID_HANDLE_VALUE) {
+                do {
+                    const wchar_t *nm = fd.cFileName;
+                    if (nm[0] == L'.' && (!nm[1] || (nm[1] == L'.' && !nm[2]))) continue;
+                    n++;
+                    DWORD a = fd.dwFileAttributes;
+                    bool dirent = a & FILE_ATTRIBUTE_DIRECTORY;
+                    if (a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_OFFLINE)) {
+                        wchar_t w[1100];
+                        char u[3300];
+                        swprintf(w, 1100, L"%ls\\%ls", d, nm);
+                        if (!WideCharToMultiByte(CP_UTF8, 0, w, -1, u, sizeof u, NULL, NULL)) u[0] = 0;
+                        fprintf(stderr, "[cloud] not on the device: %s\n", u);
+                        off = true;
+                        break;
+                    }
+                    bool cloud_link = (a & FILE_ATTRIBUTE_REPARSE_POINT) && (fd.dwReserved0 & 0xFFFF0FFF) == 0x9000001A;
+                    if (dirent && (!(a & FILE_ATTRIBUTE_REPARSE_POINT) || cloud_link)) {
+                        size_t m = l + 1 + wcslen(nm) + 1;
+                        wchar_t *sub = m <= LEN ? malloc(m * sizeof(wchar_t)) : NULL;
+                        if (!sub) continue;
+                        swprintf(sub, m, L"%ls\\%ls", d, nm);
+                        if (top == cap) {
+                            wchar_t **grown = realloc(stack, (cap *= 2) * sizeof *stack);
+                            if (!grown) { free(sub); continue; }
+                            stack = grown;
+                        }
+                        stack[top++] = sub;
+                    }
+                } while (FindNextFileW(h, &fd));
+                FindClose(h);
+            }
+        }
+        free(d);
+    }
+    while (top) free(stack[--top]);
+    free(stack);
+    fprintf(stderr, "[cloud] %d entries checked in %.0f ms\n", n, (plat_now_ns() - t0) / 1e6);
+    return off;
+}
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
 void plat_terminate(void) { publish_log(); TerminateProcess(GetCurrentProcess(), 0); }
