@@ -7523,9 +7523,9 @@ static void copy_buffer_to_texture(uint64_t src, const TexRefRec *dst) {
     TexBackend *b = vk_tex(t, false);  // prior CPU contents uploaded first
     renderer_mark_gpu_owned(t);
     if (b->aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) return;
-    if (b->astc_bw) {  // (blocks would need the CPU decode: not seen in the game yet)
+    if (b->astc_bw || b->cpu_bc) {  // (blocks would need the CPU decode: not seen in the game yet)
         static int nlog;
-        if (nlog++ < 5) LOG("[vk] buffer -> ASTC texture copy skipped (%ux%u)\n", t->width, t->height);
+        if (nlog++ < 5) LOG("[vk] buffer -> CPU-decoded (ASTC / BC) texture copy skipped (%ux%u)\n", t->width, t->height);
         return;
     }
     bool array = b->layers > 1 && b->depth == 1;
