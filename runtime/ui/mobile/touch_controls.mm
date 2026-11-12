@@ -730,11 +730,13 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
             label_text(dl, font, c.r * 0.85f, p, "Start", col(255, 255, 255, fmaxf(fa, 0.8f)), true);
             continue;
         }
-        if (!slot_disc(dl, p, r, on, fa, th, sel)) bubble(dl, p, r, on, i == C_A, fa, th, sel);
+        bool disc = slot_disc(dl, p, r, on, fa, th, sel);
+        if (!disc) bubble(dl, p, r, on, i == C_A, fa, th, sel);
+        ImU32 ink = disc ? col(74, 52, 26, fmaxf(fa, 0.9f)) : col(255, 255, 255, fmaxf(fa, 0.85f));  // (on a disc: the game's brown)
         if (i == C_MENU) {  // three bars
             float u = r * 0.42f;
             for (int k = -1; k <= 1; k++)
-                dl->AddLine(ImVec2(c.x - u, c.y + k * u * 0.6f), ImVec2(c.x + u, c.y + k * u * 0.6f), col(255, 255, 255, fmaxf(fa, 0.8f)), 3 * th);
+                dl->AddLine(ImVec2(c.x - u, c.y + k * u * 0.6f), ImVec2(c.x + u, c.y + k * u * 0.6f), ink, 3 * th);
             continue;
         }
         const char *in = g_editing && i != C_X && i != C_Y ? icon_of(X_PLAY, i) : icon_of(ctx, i);
@@ -744,7 +746,7 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
             badge(dl, font, p, r, c.label, fa);
         } else {  // no icon: the letter in the middle
             bool pm = c.label[0] == '+' || c.label[0] == '-';
-            label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, col(255, 255, 255, fmaxf(fa, 0.85f)), true, true);
+            label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, ink, !disc, true);
         }
         const char *hn = g_editing ? NULL : hint(ctx, i);
         if (hn && *hn) {  // what it does here, under it (above when there's no room)
