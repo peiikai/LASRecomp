@@ -570,12 +570,12 @@ static const char *slot_icon(int slot) {
     return slot >= 0 && slot < 16 ? names[slot] : NULL;
 }
 
-static uint32_t g_items_word;
+static uint32_t g_items_word, g_upgrades;  // (the live save's: the items owned; the upgrades, the Mirror Shield bit 1)
 static int g_slot_x, g_slot_y;  // (0 / 1, the sword's and shield's slots, never sit on X / Y: an empty one reads 0)
 static uint32_t wanted(int ctx) {
     uint32_t m = kShown[ctx] & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT));
     if (ctx == X_PLAY || ctx == X_ITEMS) {  // (the items page too: X / Y show what's just been equipped)
-        g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
+        g_items_word = LD32(GA(LIVE_SAVE) + 0x5568), g_upgrades = LD8(GA(LIVE_SAVE) + 0x555C);
         g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
     }
     return m;  // (play: every button, whatever Link has - the icons show what he has)
@@ -584,7 +584,7 @@ static uint32_t wanted(int ctx) {
 static const char *icon_of(int ctx, int i) {
     if (ctx == X_PLAY || ctx == X_ITEMS) {
         if (i == C_B && ctx == X_PLAY) return slot_icon(0);
-        if (i == C_R && ctx == X_PLAY) return slot_icon(1);
+        if (i == C_R && ctx == X_PLAY) return !(g_items_word & 2) ? NULL : g_upgrades & 2 ? "EqShield_01^q" : slot_icon(1);  // (the Mirror Shield)
         if (i == C_L && ctx == X_PLAY) return slot_icon(11);
         if (i == C_X && g_slot_x > 1) return slot_icon(g_slot_x);
         if (i == C_Y && g_slot_y > 1) return slot_icon(g_slot_y);
@@ -834,6 +834,8 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         if (tex) {
             icon(dl, tex, p, r, fa);
             badge(dl, font, p, r, c.label, fa);
+        } else if (i == C_R && (ctx == X_PLAY || g_editing) && !(g_items_word & 2)) {
+            // no shield (not found yet, or a Like Like ate it): R blank, as the game's own shield slot
         } else {  // no icon: the letter in the middle
             bool pm = c.label[0] == '+' || c.label[0] == '-';
             label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, ink, !disc, true);
