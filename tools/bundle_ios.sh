@@ -193,6 +193,7 @@ if [ -f "$PYSLICE/Python.framework/Python" ]; then
     find "$APP/python/lib" -name "__pycache__" -type d -prune -exec rm -rf {} +
     find "$APP/python/lib" -name "*_test*.so" -o -name "xx*.so" | xargs rm -f  # (the test extensions)
     [ -d "$DEPS/python/site-packages" ] && cp -R "$DEPS/python/site-packages" "$APP/python/site-packages"
+    cp runtime/platform/ios_pyproc.py "$APP/python/site-packages/"  # (what runs the scripts: ios_python.m)
     # the generator's sources: tools/rando as it is (less the desktop helper's venv / spec and caches), the randomizer's
     # core and resources
     mkdir -p "$APP/rando-gen"

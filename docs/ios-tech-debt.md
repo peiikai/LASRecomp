@@ -36,7 +36,21 @@ Done (kept here as the record of what the build now guarantees):
   checks its log and compares the seed it generated with the same seed generated here, file by file.
 
 Still open:
-- **The generator's modules are reset by hand** (`ios_python.m`'s runner drops every module under `rando-gen`,
+- **A script is a process only as far as [runtime/platform/ios_pyproc.py](../runtime/platform/ios_pyproc.py) makes
+  it one.** The generator's `os.chdir` and its re-run of itself through `subprocess` (dungeon room shuffle's next
+  layout) work there unchanged, with these shortcuts:
+  - The working directory is the thread's, through `pthread_chdir_np` / `pthread_fchdir_np`: exported by libSystem
+    since iOS 10, in no SDK header. A thread that is already running when another one calls `chdir` stays where
+    it was (the script's log says so; a real process would move it), and a `chdir` made by C code still moves the
+    whole app.
+  - A child runs on the calling thread, to its end, before `Popen` returns: no pipe to a running child, no two at
+    once, and each waiting parent keeps its memory. Only this Python (`sys.executable`) with a script, `-m` or
+    `-c` runs at all.
+  - The environment is swapped through `os.environ._data`, a private field of CPython's `os` module.
+
+  [tools/test_ios_pyproc.py](../tools/test_ios_pyproc.py) (the layer under a desktop Python, in CI) and the
+  self-test's `process` step (in CI's Simulator run) fail when one of these stops holding.
+- **The generator's modules are reset by hand** (`ios_pyproc.py` drops every module under `rando-gen`,
   by real path, and the PySide6 stubs from `sys.modules` before a run; the C extensions stay loaded). A
   sub-interpreter per run was tried (b2013266) and taken back in the PR review: oead and quicktex are pybind11
   modules without `multiple_interpreters` support - CPython's legacy kind let them in, but their types and
