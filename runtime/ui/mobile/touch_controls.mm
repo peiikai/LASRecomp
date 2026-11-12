@@ -51,7 +51,7 @@ ImTextureID ui_game_icon(const char *name);  // runtime/ui/triforce_icons.mm
 enum { BTN_A = 0, BTN_B, BTN_X, BTN_Y, BTN_L = 6, BTN_R, BTN_ZL, BTN_ZR, BTN_PLUS, BTN_MINUS,
        BTN_LEFT, BTN_UP, BTN_RIGHT, BTN_DOWN };  // (input.c's bits)
 #define BIT(b) (1ull << (b))
-enum { C_STICK = 0, C_A, C_B, C_X, C_Y, C_L, C_R, C_ZL, C_ZR, C_PLUS, C_MINUS, C_MENU, C_START, C_COUNT };
+enum { C_STICK = 0, C_A, C_B, C_X, C_Y, C_L, C_R, C_ZL, C_ZR, C_PLUS, C_MINUS, C_MENU, C_START, C_EDIT, C_COUNT };
 static_assert(C_COUNT == TOUCH_NCTL, "settings.h TOUCH_NCTL");
 // (the ini names: settings.c's touch_control_name, this order)
 
@@ -59,12 +59,13 @@ static_assert(C_COUNT == TOUCH_NCTL, "settings.h TOUCH_NCTL");
 enum { X_PLAY = 0, X_TITLE, X_ITEMS, X_MAP, X_COUNT };
 #define M(c) (1u << (c))
 static const uint32_t kShown[X_COUNT] = {
-    M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
+    M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU) | M(C_EDIT),
     M(C_STICK) | M(C_A) | M(C_B) | M(C_MENU),  // (Start only where the player put it: a tap anywhere does its work)
     M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
     M(C_STICK) | M(C_A) | M(C_B) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
 };
-#define EDITABLE (kShown[X_PLAY] | M(C_ZL) | M(C_ZR))  // (the editor: play's controls; ZL / ZR to show them by choice)
+// (the editor: play's controls; ZL / ZR to show them by choice; the editor's own button while the setting shows it)
+#define EDITABLE ((kShown[X_PLAY] | M(C_ZL) | M(C_ZR)) & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT)))
 
 typedef struct {
     float x, y, r;       // centre and radius (round) / half height (pills: width 2.2 * r)
@@ -84,7 +85,7 @@ static std::atomic<int> g_ctx{X_PLAY};     // what the game shows, as of the las
 static std::atomic<uint32_t> g_want{0};    // the controls on screen now (context and what Link has)
 static float g_stick_cx, g_stick_cy;       // where the stick's base is now (it follows the thumb's first touch)
 static float g_knob_x, g_knob_y;
-static bool g_menu_down;
+static bool g_menu_down, g_edit_down;
 static double g_last_touch, g_last_pad;    // (SDL_GetTicks seconds) Auto: shown when a touch came after the pad's last use
 #define MAX_FINGERS 10
 static struct { SDL_FingerID id; int ctl; float dx, dy; } g_fingers[MAX_FINGERS];  // ctl -1 = free slot
@@ -98,8 +99,10 @@ static int g_sel = -1;                                // the selected control
 static float g_epos[C_COUNT][2], g_escale[C_COUNT];   // the draft: positions (share of the screen) and sizes
 static bool g_ehid[C_COUNT];
 enum { E_SMALLER = 100, E_BIGGER, E_HIDE, E_RESET, E_CANCEL, E_DONE };
-static const char *const kEditBar[] = {"-", "+", "Hide", "Default", "Cancel", "Done"};
-static float g_bar_x[6], g_bar_y, g_bar_w[6], g_bar_h;
+// the editor's buttons: - and + next to the selected control, Default / Cancel / Done in a row at the top
+static const char *const kEditBar[] = {"Default", "Cancel", "Done"};
+static float g_bar_x[3], g_bar_y, g_bar_w[3], g_bar_h;
+static float g_tool_x[2], g_tool_y[2], g_tool_r;  // (- and +: none while nothing is selected)
 
 static void defaults(float w, float h) {
     // (a tablet's screen is far taller than a thumb's reach: the layout a phone's size there, measured on an iPad)
@@ -118,8 +121,9 @@ static void defaults(float w, float h) {
     g_ctl[C_ZR] = {w - 0.26f * s, 0.10f * s, sr * 0.8f, BIT(BTN_ZR), "ZR", false};
     float mr = 0.040f * s;
     g_ctl[C_MINUS] = {w * 0.5f - 0.13f * s, 0.06f * s, mr, BIT(BTN_MINUS), "-", false};
-    g_ctl[C_PLUS] = {w * 0.5f + 0.13f * s, 0.06f * s, mr, BIT(BTN_PLUS), "+", false};
+    g_ctl[C_PLUS] = {w * 0.5f + 0.20f * s, 0.06f * s, mr, BIT(BTN_PLUS), "+", false};
     g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};
+    g_ctl[C_EDIT] = {w * 0.5f + 0.10f * s, 0.06f * s, mr * 0.8f, 0, "", false};  // (the layout editor: between the menu's and +)
     g_ctl[C_START] = {w * 0.5f, h - 0.07f * s, 0.05f * s, BIT(BTN_L) | BIT(BTN_R) | BIT(BTN_A), "Start", true};
     g_ctl[C_STICK] = {0.25f * s, h - 0.27f * s, 0.14f * s, 0, "", false};
 }
@@ -232,7 +236,7 @@ static void release_all(void) {
     for (int i = 0; i < MAX_FINGERS; i++) g_fingers[i].ctl = -1;
     g_buttons = 0, g_lx = 0, g_ly = 0;
     g_knob_x = g_stick_cx = g_ctl[C_STICK].x, g_knob_y = g_stick_cy = g_ctl[C_STICK].y;
-    g_menu_down = false;
+    g_menu_down = false, g_edit_down = false;
 }
 
 // Everything let go (the overlay menu opened: it takes the touches, the lifts included)
@@ -392,8 +396,7 @@ extern "C" bool touch_preview_event(const SDL_Event *e) {
 
 // ---- the editor
 extern "C" bool touch_edit_available(void) { return g_w > 0 && game_in_play(); }
-extern "C" void touch_edit_begin(void) {
-    std::lock_guard<std::mutex> l(g_lock);
+static void edit_begin(void) {  // (g_lock held)
     for (int i = 0; i < C_COUNT; i++) {
         g_epos[i][0] = g_settings.touch_moved[i] ? g_settings.touch_pos[i][0] : -1;
         g_epos[i][1] = g_settings.touch_pos[i][1];
@@ -403,6 +406,10 @@ extern "C" void touch_edit_begin(void) {
     g_editing = true, g_sel = -1;
     release_all();
     g_layout_dirty = 1;
+}
+extern "C" void touch_edit_begin(void) {
+    std::lock_guard<std::mutex> l(g_lock);
+    edit_begin();
 }
 static void edit_end(bool save) {
     if (save) {
@@ -434,8 +441,13 @@ extern "C" bool touch_edit_back(void) {
 }
 
 static int bar_hit(float x, float y) {
-    for (int i = 0; i < 6; i++)
-        if (x >= g_bar_x[i] && x <= g_bar_x[i] + g_bar_w[i] && y >= g_bar_y && y <= g_bar_y + g_bar_h) return E_SMALLER + i;
+    if (g_sel >= 0)
+        for (int i = 0; i < 2; i++) {
+            float dx = x - g_tool_x[i], dy = y - g_tool_y[i], r = g_tool_r * 1.2f;
+            if (dx * dx + dy * dy <= r * r) return E_SMALLER + i;
+        }
+    for (int i = 0; i < 3; i++)
+        if (x >= g_bar_x[i] && x <= g_bar_x[i] + g_bar_w[i] && y >= g_bar_y && y <= g_bar_y + g_bar_h) return E_RESET + i;
     return -1;
 }
 
@@ -446,7 +458,6 @@ static bool edit_event(const SDL_Event *e, float x, float y, int slot) {
             int s = g_sel;
             if (b == E_SMALLER && s >= 0) g_escale[s] = clampf(g_escale[s] - 0.1f, 0.5f, 2.0f);
             if (b == E_BIGGER && s >= 0) g_escale[s] = clampf(g_escale[s] + 0.1f, 0.5f, 2.0f);
-            if (b == E_HIDE && s >= 0) g_ehid[s] = !g_ehid[s];
             if (b == E_RESET) for (int i = 0; i < C_COUNT; i++) g_epos[i][0] = -1, g_escale[i] = 1, g_ehid[i] = false;
             if (b == E_CANCEL || b == E_DONE) { edit_end(b == E_DONE); return true; }
             g_layout_dirty = 1;
@@ -502,6 +513,8 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
         if (c == C_STICK) stick_down(x, y);
         else if (c == C_MENU) {
             g_menu_down = true;
+        } else if (c == C_EDIT) {
+            g_edit_down = true;
         }
         recompute();
         return true;
@@ -523,6 +536,10 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
     if (c == C_MENU && g_menu_down) {
         g_menu_down = false;
         if (e->type == SDL_EVENT_FINGER_UP) *toggle_menu = true;
+    }
+    if (c == C_EDIT && g_edit_down) {  // (let go on it: the layout editor, over the game)
+        g_edit_down = false;
+        if (e->type == SDL_EVENT_FINGER_UP && game_in_play()) { edit_begin(); return true; }
     }
     recompute();
     return true;
@@ -551,7 +568,7 @@ static const char *slot_icon(int slot) {
 static uint32_t g_items_word;
 static int g_slot_x, g_slot_y;  // (0 / 1, the sword's and shield's slots, never sit on X / Y: an empty one reads 0)
 static uint32_t wanted(int ctx) {
-    uint32_t m = kShown[ctx];
+    uint32_t m = kShown[ctx] & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT));
     if (ctx == X_PLAY || ctx == X_ITEMS) {  // (the items page too: X / Y show what's just been equipped)
         g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
         g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
@@ -793,7 +810,7 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         if (!(want >> i & 1) || (!g_editing && hidden(i))) continue;
         float fa = a * (g_editing && hidden(i) ? 0.35f : 1.0f);  // (hidden: faint while editing)
         const Control &c = g_ctl[i];
-        bool on = !g_editing && (((c.bits & b) && (c.bits & b) == c.bits) || (i == C_MENU && g_menu_down));
+        bool on = !g_editing && (((c.bits & b) && (c.bits & b) == c.bits) || (i == C_MENU && g_menu_down) || (i == C_EDIT && g_edit_down));
         bool sel = g_editing && i == g_sel;
         ImVec2 p(c.x, c.y);
         float r = on ? c.r * 0.95f : c.r;
@@ -807,6 +824,14 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         bool disc = slot_disc(dl, p, r, on, fa, th, sel);
         if (!disc) bubble(dl, p, r, on, i == C_A, fa, th, sel);
         ImU32 ink = disc ? col(74, 52, 26, fmaxf(fa, 0.9f)) : col(255, 255, 255, fmaxf(fa, 0.85f));  // (on a disc: the game's brown)
+        if (i == C_EDIT) {  // a pencil, tip down to the left
+            float u = r * 0.55f, d = 0.7071f, wd = u * 0.24f;
+            ImVec2 a(c.x - u * 0.55f, c.y + u * 0.55f), z(c.x + u * 0.62f, c.y - u * 0.62f);  // (the tip's base, the top)
+            ImVec2 n(d * wd, d * wd);  // (across the body)
+            dl->AddQuadFilled(ImVec2(a.x - n.x, a.y - n.y), ImVec2(z.x - n.x, z.y - n.y), ImVec2(z.x + n.x, z.y + n.y), ImVec2(a.x + n.x, a.y + n.y), ink);
+            dl->AddTriangleFilled(ImVec2(a.x - n.x, a.y - n.y), ImVec2(a.x + n.x, a.y + n.y), ImVec2(a.x - u * 0.35f, a.y + u * 0.35f), ink);
+            continue;
+        }
         if (i == C_MENU) {  // three bars
             float u = r * 0.42f;
             for (int k = -1; k <= 1; k++)
@@ -867,26 +892,54 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         } else if (!compass_disc(dl, sc, s.r, ImVec2(knob_x, knob_y), sa, th, ssel))
             compass(dl, sc, s.r, ImVec2(knob_x, knob_y), sa, th, ssel);
     }
-    if (g_editing) {  // the editor's hint and bar
-        label_text(dl, font, 30 * tt, ImVec2(w * 0.5f, h * 0.31f), "Drag the controls to move them. Tap one to resize or hide it.",
-                   IM_COL32(255, 255, 255, 255), true);
-        float bh = 64 * tt, gap = 14 * tt, pad = 26 * tt, fs = 30 * tt, tot = 0;
-        const char *labs[6];
-        for (int i = 0; i < 6; i++) {
-            labs[i] = i == 2 && g_sel >= 0 && g_ehid[g_sel] ? "Show" : kEditBar[i];
-            g_bar_w[i] = font->CalcTextSizeA(fs, 1e9f, 0, labs[i]).x + 2 * pad;
+    if (g_editing) {  // the editor: the hint and Default / Cancel / Done at the top, - and + by the selected control
+        // (in the menus' look: Baloo 2, brown pills edged in tan, Done in gold)
+        ImU32 edge = col(200, 185, 126, 1), cream = col(255, 240, 216, 1), ink = col(74, 52, 26, 1);
+        auto pill = [&](ImVec2 p0, ImVec2 p1, bool gold) {
+            float rr = (p1.y - p0.y) * 0.5f;
+            dl->AddRectFilled(ImVec2(p0.x + 3 * th, p0.y + 6 * th), ImVec2(p1.x + 3 * th, p1.y + 6 * th), col(0, 0, 0, 0.40f), rr);
+            dl->AddRectFilled(p0, p1, gold ? col(214, 174, 88, 1) : col(108, 79, 55, 1), rr);
+            dl->AddRectFilled(ImVec2(p0.x + 3 * th, p0.y + 3 * th), ImVec2(p1.x - 3 * th, p0.y + (p1.y - p0.y) * 0.5f),
+                              gold ? col(244, 212, 130, 1) : col(134, 102, 77, 1), rr, ImDrawFlags_RoundCornersTop);  // (lit from above)
+            dl->AddRect(p0, p1, gold ? col(255, 238, 178, 1) : edge, rr, 0, 3 * th);
+        };
+        const char *tip = "Drag the controls to move them. Tap one to resize it.";
+        float hs = 30 * tt;
+        ImVec2 hz = menu_font->CalcTextSizeA(hs, 1e9f, 0, tip);
+        float hy = h * 0.115f, hh = hs * 1.5f, hw = hz.x + hs * 1.6f;
+        dl->AddRectFilled(ImVec2((w - hw) * 0.5f, hy - hh * 0.5f), ImVec2((w + hw) * 0.5f, hy + hh * 0.5f), col(59, 48, 17, 0.90f), hh * 0.5f);
+        dl->AddRect(ImVec2((w - hw) * 0.5f, hy - hh * 0.5f), ImVec2((w + hw) * 0.5f, hy + hh * 0.5f), edge, hh * 0.5f, 0, 2.5f * th);
+        dl->AddText(menu_font, hs, ImVec2((w - hz.x) * 0.5f, hy - hz.y * 0.5f), cream, tip);
+        float bh = 56 * tt, gap = 16 * tt, fs = 32 * tt, minw = 150 * tt, tot = 0;
+        for (int i = 0; i < 3; i++) {
+            g_bar_w[i] = fmaxf(menu_font->CalcTextSizeA(fs, 1e9f, 0, kEditBar[i]).x + 44 * tt, minw);
             tot += g_bar_w[i] + (i ? gap : 0);
         }
         float x = (w - tot) * 0.5f;
-        g_bar_y = h * 0.40f, g_bar_h = bh;
-        for (int i = 0; i < 6; i++) {
-            bool off = i < 3 && g_sel < 0;
+        g_bar_y = hy + hh * 0.5f + 14 * tt, g_bar_h = bh;
+        for (int i = 0; i < 3; i++) {
             g_bar_x[i] = x;
-            ImU32 bgc = i == 5 ? IM_COL32(236, 194, 84, 235) : IM_COL32(30, 60, 90, 235);
-            dl->AddRectFilled(ImVec2(x, g_bar_y), ImVec2(x + g_bar_w[i], g_bar_y + bh), bgc, bh * 0.5f);
-            label_text(dl, font, fs, ImVec2(x + g_bar_w[i] * 0.5f, g_bar_y + bh * 0.5f), labs[i],
-                       i == 5 ? IM_COL32(20, 20, 20, 255) : IM_COL32(255, 255, 255, off ? 90 : 255), false);
+            pill(ImVec2(x, g_bar_y), ImVec2(x + g_bar_w[i], g_bar_y + bh), i == 2);
+            ImVec2 tz = menu_font->CalcTextSizeA(fs, 1e9f, 0, kEditBar[i]);
+            dl->AddText(menu_font, fs, ImVec2(x + (g_bar_w[i] - tz.x) * 0.5f, g_bar_y + (bh - tz.y) * 0.5f), i == 2 ? ink : cream, kEditBar[i]);
             x += g_bar_w[i] + gap;
+        }
+        if (g_sel >= 0) {  // - and +: side by side above the control (below it when there's no room), on the screen
+            const Control &c = g_ctl[g_sel];
+            ImVec2 cc = g_sel == C_STICK ? ImVec2(g_stick_cx, g_stick_cy) : ImVec2(c.x, c.y);
+            float cr = c.pill ? c.r * 1.2f : c.r, br = 30 * tt, sp = 12 * tt, m = 8 * tt;
+            float ty = cc.y - cr - sp - br;
+            if (ty - br < g_bar_y + bh + m) ty = cc.y + cr + sp + br;
+            float tx = clampf(cc.x, 2 * br + sp * 0.5f + m, w - 2 * br - sp * 0.5f - m);
+            g_tool_r = br;
+            for (int k = 0; k < 2; k++) {
+                g_tool_x[k] = tx + (k ? 1 : -1) * (br + sp * 0.5f), g_tool_y[k] = ty;
+                ImVec2 p(g_tool_x[k], ty);
+                pill(ImVec2(p.x - br, p.y - br), ImVec2(p.x + br, p.y + br), false);
+                float u = br * 0.42f, lw = 5 * th;
+                dl->AddLine(ImVec2(p.x - u, p.y), ImVec2(p.x + u, p.y), cream, lw);
+                if (k) dl->AddLine(ImVec2(p.x, p.y - u), ImVec2(p.x, p.y + u), cream, lw);
+            }
         }
     }
 }

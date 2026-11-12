@@ -41,7 +41,7 @@ static const char *const k_text_speed_keys[N_TEXT_SPEEDS] = {"normal", "fast", "
 
 // the on-screen controls' ini names (touch_ctl_<name>; runtime/ui/mobile/touch_controls.mm's order)
 const char *touch_control_name(int i) {
-    static const char *const names[TOUCH_NCTL] = {"stick", "a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "menu", "start"};
+    static const char *const names[TOUCH_NCTL] = {"stick", "a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "menu", "start", "edit"};
     return i >= 0 && i < TOUCH_NCTL ? names[i] : "";
 }
 
@@ -60,6 +60,7 @@ Settings g_settings = {
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
     .show_fps = FPS_OFF,
     .touch_opacity = 0.6f,
+    .touch_edit_button = true,
     .touch_size = 1.0f,
     .inv_keys = true,
     .tracker = true,
@@ -277,6 +278,7 @@ void settings_load(void) {
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
         else if (!strcmp(key, "touch_all")) g_settings.touch_all = atoi(val) != 0;
         else if (!strcmp(key, "touch_stick_fixed")) g_settings.touch_stick_fixed = atoi(val) != 0;
+        else if (!strcmp(key, "touch_edit_button")) g_settings.touch_edit_button = atoi(val) != 0;
         else if (!strcmp(key, "touch_hide_xy_hud")) g_settings.touch_hide_xy_hud = atoi(val) != 0;
         else if (!strcmp(key, "touch_dpad")) g_settings.touch_dpad = atoi(val) != 0;
         else if (!strcmp(key, "touch_size")) g_settings.touch_size = (float)atof(val);
@@ -429,8 +431,8 @@ void settings_save(void) {
     fprintf(f, "dpad_mode = %s\n", g_settings.dpad_mode == DPAD_ITEMS ? "items" : g_settings.dpad_mode == DPAD_MOVE ? "move" : "nothing");
     fprintf(f, "touch_controls = %s\n", g_settings.touch_mode == 1 ? "always" : g_settings.touch_mode == 2 ? "off" : "auto");
     fprintf(f, "touch_opacity = %.2f\n", g_settings.touch_opacity);
-    fprintf(f, "touch_all = %d\ntouch_stick_fixed = %d\ntouch_hide_xy_hud = %d\n", g_settings.touch_all, g_settings.touch_stick_fixed,
-            g_settings.touch_hide_xy_hud);
+    fprintf(f, "touch_all = %d\ntouch_stick_fixed = %d\ntouch_hide_xy_hud = %d\ntouch_edit_button = %d\n", g_settings.touch_all,
+            g_settings.touch_stick_fixed, g_settings.touch_hide_xy_hud, g_settings.touch_edit_button);
     fprintf(f, "touch_size = %.2f\n", g_settings.touch_size);
     fprintf(f, "touch_dpad = %d\n", g_settings.touch_dpad);
     {
