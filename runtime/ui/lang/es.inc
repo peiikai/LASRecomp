@@ -34,6 +34,7 @@
 {"Pink", "Rosa"},
 {"White", "Blanco"},
 {"Black", "Negro"},
+{"Gray", "Gris"},
 {"Silver", "Plateado"},
 {"Random", "Aleatorio"},
 {"Custom", "Personalizado"},

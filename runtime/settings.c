@@ -354,11 +354,11 @@ void settings_load(void) {
         else if (!strcmp(key, "shield")) col_parse(&g_settings.shield, val);
         else if (!strcmp(key, "skin")) col_parse(&g_settings.skin, val);
         else if (!strcmp(key, "leaves")) col_parse(&g_settings.leaves, val);
-        else if (!strcmp(key, "grass")) col_parse(&g_settings.grass, val);
+        else if (!strcmp(key, "grass")) col_parse(&g_settings.grass, val), col_fix(&g_settings.grass, COL_SLOT_GRASS);
         else if (!strcmp(key, "sand")) col_parse(&g_settings.sand, val);
         else if (!strcmp(key, "water")) col_parse(&g_settings.water, val);
         else if (!strcmp(key, "fences")) col_parse(&g_settings.fences, val);
-        else if (!strcmp(key, "walls")) col_parse(&g_settings.walls, val);
+        else if (!strcmp(key, "walls")) col_parse(&g_settings.walls, val), col_fix(&g_settings.walls, COL_SLOT_WALLS);
         else if (!strcmp(key, "houses")) col_parse(&g_settings.houses, val);
         else if (!strcmp(key, "screen_filter")) {
             for (int i = 0; i < N_SCREEN_FILTERS; i++) if (!strcmp(val, k_screen_filter_keys[i])) g_settings.screen_filter = i;
