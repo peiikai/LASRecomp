@@ -620,7 +620,7 @@ static void gen_overlay(float scale) {
         int secs = (int)(ImGui::GetTime() - g_gen_start);
         snprintf(over, sizeof over, "%d:%02d", secs / 60, secs % 60);
         ImGui::TextUnformatted(g_gen_status.c_str());
-        ImGui::ProgressBar(g_gen_frac > 0.005f ? g_gen_frac : -0.3f * (float)ImGui::GetTime(), ImVec2(-1, 0), over);
+        plastic_progress_bar(g_gen_frac > 0.005f ? g_gen_frac : -0.3f * (float)ImGui::GetTime(), ImVec2(-1, 0), over, scale);
     } else {
         float bw = 230 * scale;
         bool close = false;
@@ -633,7 +633,7 @@ static void gen_overlay(float scale) {
             ImGui::SetItemDefaultFocus();
         } else {
             ImGui::TextUnformatted(L("Seed ready."));
-            ImGui::ProgressBar(1, ImVec2(-1, 0), L("Done"));
+            plastic_progress_bar(1, ImVec2(-1, 0), L("Done"), scale);
             ImGui::Spacing();
             if (ImGui::Button(L("Play now"), ImVec2(bw, 0)) || test_play) {  // (switches in place: the game reboots on the new seed)
                 g_gen_done = false;

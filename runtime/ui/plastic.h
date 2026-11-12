@@ -34,6 +34,12 @@ void plastic_panel(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale);
 void plastic_panel_full(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale);
 // a well (recessed) - the panes, text fields
 void plastic_well(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale);
+// a progress bar: a recessed track, the done part a pill (frac 0..1; below 0, ImGui::ProgressBar's -time * speed: a
+// piece sliding along, the amount not known)
+void plastic_progress(ImDrawList *dl, ImVec2 a, ImVec2 b, float frac, float scale);
+// the same as an item at the cursor (size.x <= 0: the width left; size.y <= 0: a frame's height), the overlay text
+// (or none) beside it on the right
+void plastic_progress_bar(float frac, ImVec2 size, const char *overlay, float scale);
 // the round close X at the cursor (size: its diameter); true when clicked
 bool plastic_close_button(float size, float scale);
 // that X in the current window's top right corner, inside the frame; the layout is left as it was
