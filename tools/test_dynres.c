@@ -18,6 +18,8 @@ void pace_hitch(const char *why) { (void)why; }  // (output_scale.c's render sca
 void pace_settings_changed(const char *what) { (void)what; }  // (output_scale.c's setting watch: nvn/pace.c)
 static int g_t30;  // (the case's Internal FPS target is 30)
 bool pace_target_30(void) { return g_t30; }  // (output_scale.c's Internal FPS target: nvn/pace.c)
+static bool g_menu;  // (the case's menu is open: wmenu_at .. wmenu_until)
+bool menu_is_open(void) { return g_menu; }  // (output_scale.c holds Dynamic while the menu is open: runtime/ui/menu.mm)
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
@@ -77,6 +79,7 @@ static Result run(const Case *c) {
     int col = 0;
     while (now < c->secs) {
         OutScale o;
+        g_menu = c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until;
         double lines0 = c->lines > 0 ? c->lines : 2160;
         bool resized = c->resize_at > 0 && now > c->resize_at;
         double lines = resized ? c->lines2 : lines0, area = (lines / lines0) * (lines / lines0);
@@ -257,6 +260,10 @@ int main(int argc, char **argv) {
         // 1.00 after it
         {.name = "iPad M4, clock follows the load, heavy 40-80 s (fifo)", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
          .secs = 160, .lines = 1668, .paced = 2.5, .heavy_at = 40, .heavy = 3, .heavy_until = 80},
+        // the same iPad, the menu open 40-60 s: its window step 0.9 -> 5 ms, G + W 17.5 ms, frames a millisecond late.
+        // Dynamic stepped 1.00 -> 0.55 behind the menu; it must stay at 1.00, with the menu open and after it closes
+        {.name = "iPad M4, clock follows the load, the menu open 40-60 s (W 5 ms, fifo)", .a = 2.5, .b = 4.5, .w = 1.6,
+         .w1 = 0.8, .fifo = 1, .secs = 120, .lines = 1668, .paced = 2.5, .wmenu_at = 40, .wmenu_until = 60, .wmenu = 5},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -306,6 +313,7 @@ int main(int argc, char **argv) {
     case 30: check(r.f_end == 1.0 && r.fps_end > 29 && r.f_min_last60 >= 0.89, "target 30, heavier stretch: one step down, then back"); break;
     case 32: check(r.f_end == 1.0 && r.f_min_last60 == 1.0 && r.fps_end > 58 && r.changes_settled <= 2,
                    "iPad M4, clock follows the load: stays at 1.00"); break;
+    case 34: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 58, "iPad M4, menu open and closed: stays at 1.00"); break;
     case 33: check(r.f_end == 1.0 && r.fps_end > 58, "iPad M4, heavy stretch: back to 1.00 after it"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
