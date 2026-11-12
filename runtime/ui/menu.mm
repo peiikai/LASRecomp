@@ -1231,6 +1231,8 @@ static float page_corner_x(float scale) {
 static void page_corner_icon(int tab, float scale) {
     float bs = 44 * 1.35f * scale, ox = page_corner_x(scale), oy = 12 * scale;
     ImVec2 vp = ImGui::GetMainViewport()->Pos, c(vp.x + ox + bs * 0.5f, vp.y + oy + bs * 0.5f);
+    // (a page whose X is in a pane (the Randomizer, Warp, Save Editor): level with that X, last frame's)
+    if (ImGui::GetFrameCount() - g_plastic_pane_close_frame <= 1) c.y = g_plastic_pane_close_cy;
     float r = bs * 0.42f;
     ImU32 gc = ImGui::ColorConvertFloat4ToU32(plastic_col(plastic_theme().title));
     ImVec4 p = plastic_theme().panel;
