@@ -144,7 +144,10 @@ extern "C" void touch_reset(void);  // mobile/touch_controls.mm (on-screen contr
 extern "C" bool touch_visible(void);
 extern "C" bool touch_title_box(void);
 extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFont *menu_font);
+extern "C" void touch_preview_play(bool on);
+extern "C" bool touch_preview_event(const SDL_Event *e);
 #else
+static void touch_preview_play(bool) {}
 static void touch_reset(void) {}
 static bool touch_visible(void) { return false; }
 static bool touch_title_box(void) { return false; }
@@ -355,6 +358,7 @@ bool menu_handle_event(const SDL_Event *e) {
 #if PLAT_TOUCH
     case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_CANCELED:
         if (!capturing()) return false;
+        if (touch_preview_event(e)) return true;  // (the Touch tab's preview: its stick / D-pad takes the thumb)
         {   // touch screens (touch_ui.h, on the render thread: drain_events)
             QEvent q = {};
             q.kind = QEvent::FINGER, q.finger = *e;
@@ -1710,6 +1714,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     // (on-screen controls: mobile/touch_controls.mm; also under the live preview of their own settings)
     bool touch = (!open && !kbd && touch_visible()) || (PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
+    touch_preview_play(PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
     if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)

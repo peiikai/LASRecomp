@@ -214,6 +214,20 @@ static void stick_to(float x, float y) {
     g_lx = (int32_t)lrintf(clampf(nx, -1, 1) * 32767), g_ly = (int32_t)lrintf(clampf(ny, -1, 1) * 32767);
 }
 
+// the stick taken / let go: the base comes to the thumb (kept on screen) - or stays where it is (Fixed)
+static void stick_down(float x, float y) {
+    float r = g_ctl[C_STICK].r;
+    if (!g_settings.touch_stick_fixed)
+        // (a whole radius plus a thumb's width clear of the edges: a base at the rim left no room to push the knob out
+        // that way)
+        g_stick_cx = clampf(x, r * 1.45f, g_w * 0.42f), g_stick_cy = clampf(y, g_h * 0.30f + r * 0.5f, g_h - r * 1.45f);
+    stick_to(x, y);
+}
+static void stick_up(void) {
+    g_lx = 0, g_ly = 0;
+    g_knob_x = g_stick_cx = g_ctl[C_STICK].x, g_knob_y = g_stick_cy = g_ctl[C_STICK].y;
+}
+
 static void release_all(void) {
     for (int i = 0; i < MAX_FINGERS; i++) g_fingers[i].ctl = -1;
     g_buttons = 0, g_lx = 0, g_ly = 0;
@@ -347,6 +361,35 @@ extern "C" bool touch_handle_event(const SDL_Event *e) {
     return r;
 }
 
+// The Touch tab's live preview (menu.mm): the stick / D-pad drawn over the game takes the thumb, to try each one
+// before keeping it. Only the controls move: the game doesn't get the stick while the menu is open (input.c).
+static bool g_preview_play;
+extern "C" void touch_preview_play(bool on) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (g_preview_play && !on) release_all();  // (a thumb still on it as the preview closed)
+    g_preview_play = on;
+}
+extern "C" bool touch_preview_event(const SDL_Event *e) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (!g_preview_play || !g_w || g_editing) return false;
+    float x = e->tfinger.x * g_w, y = e->tfinger.y * g_h;
+    int slot = -1;
+    for (int i = 0; i < MAX_FINGERS; i++)
+        if (g_fingers[i].ctl == C_STICK && g_fingers[i].id == e->tfinger.fingerID) slot = i;
+    if (e->type == SDL_EVENT_FINGER_DOWN) {
+        if (slot >= 0 || hit(x, y) != C_STICK) return false;  // (anything else: the menu's)
+        for (int i = 0; i < MAX_FINGERS && slot < 0; i++) if (g_fingers[i].ctl < 0) slot = i;
+        if (slot < 0) return false;
+        g_fingers[slot].id = e->tfinger.fingerID, g_fingers[slot].ctl = C_STICK;
+        stick_down(x, y);
+        return true;
+    }
+    if (slot < 0) return false;
+    if (e->type == SDL_EVENT_FINGER_MOTION) stick_to(x, y);
+    else g_fingers[slot].ctl = -1, stick_up();
+    return true;
+}
+
 // ---- the editor
 extern "C" bool touch_edit_available(void) { return g_w > 0 && game_in_play(); }
 extern "C" void touch_edit_begin(void) {
@@ -456,14 +499,8 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
         g_fingers[slot].id = e->tfinger.fingerID, g_fingers[slot].ctl = c;
         if (c > C_STICK) g_held_until[c] = now_s() + 0.08;
         if (g_ctx.load() == X_TITLE && c == C_B) g_file_picked = false;  // (B backs out of "load this file?")
-        if (c == C_STICK) {  // the base comes to the thumb (kept on screen) - or stays where it is (Fixed)
-            float r = g_ctl[C_STICK].r;
-            if (!g_settings.touch_stick_fixed)
-                // (a whole radius plus a thumb's width clear of the edges: a base at the rim left no room to push
-                // the knob out that way)
-                g_stick_cx = clampf(x, r * 1.45f, g_w * 0.42f), g_stick_cy = clampf(y, g_h * 0.30f + r * 0.5f, g_h - r * 1.45f);
-            stick_to(x, y);
-        } else if (c == C_MENU) {
+        if (c == C_STICK) stick_down(x, y);
+        else if (c == C_MENU) {
             g_menu_down = true;
         }
         recompute();
@@ -482,10 +519,7 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
     }
     // up / cancelled
     g_fingers[slot].ctl = -1;
-    if (c == C_STICK) {
-        g_lx = 0, g_ly = 0;
-        g_knob_x = g_stick_cx = g_ctl[C_STICK].x, g_knob_y = g_stick_cy = g_ctl[C_STICK].y;
-    }
+    if (c == C_STICK) stick_up();
     if (c == C_MENU && g_menu_down) {
         g_menu_down = false;
         if (e->type == SDL_EVENT_FINGER_UP) *toggle_menu = true;
@@ -572,6 +606,24 @@ static void bubble(ImDrawList *dl, ImVec2 c, float r, bool on, bool teal, float 
     dl->AddCircle(c, r * 0.90f, sel ? col(236, 194, 84, 1) : col(185, 232, 255, 0.95f * a), 48, (sel ? 5.0f : 2.8f) * th);
 }
 
+// The inventory's own item slot, from the game's UI textures (Game.arc): the cork disc, and pressed, lit as the slot
+// of an equipped item - the green ring round a pale disc. false: the textures aren't there (the bubble instead).
+static bool slot_disc(ImDrawList *dl, ImVec2 c, float r, bool on, float a, float th, bool sel) {
+    ImTextureID dark = ui_game_icon("ItemBG_00^q"), green = ui_game_icon("ItemSetBG_00^q"), pale = ui_game_icon("ItemBG_01^q");
+    if (!dark || !green || !pale) return false;
+    auto disc = [&](ImTextureID t, float rad, float span, ImU32 tint) {  // (span: the image's half width per disc radius)
+        float s = rad * span;
+        dl->AddImage(t, ImVec2(c.x - s, c.y - s), ImVec2(c.x + s, c.y + s), ImVec2(0, 0), ImVec2(1, 1), tint);
+    };
+    a = fminf(1, 0.55f + 0.5f * a);  // (mostly solid: 0.85 at the opacity setting's default)
+    if (on) {
+        disc(green, r, 96.0f / 66, col(255, 255, 255, fminf(1, a + 0.15f)));
+        disc(pale, r * 0.90f, 72.0f / 59, col(235, 192, 130, fminf(1, a + 0.15f)));
+    } else disc(dark, r, 96.0f / 66, col(249, 205, 206, a));  // (the tints: the shades the game draws them in)
+    if (sel) dl->AddCircle(c, r * 1.02f, col(236, 194, 84, 1), 48, 5.0f * th);
+    return true;
+}
+
 // the Switch button's letter on a small white badge, upper left of the bubble
 static void badge(ImDrawList *dl, ImFont *font, ImVec2 c, float r, const char *lab, float a) {
     float br = fmaxf(r * 0.34f, 11.0f);
@@ -651,6 +703,46 @@ static void dpad(ImDrawList *dl, ImVec2 c, float r, int32_t lx, int32_t ly, floa
     dl->AddTriangleFilled(ImVec2(c.x + t, c.y), ImVec2(c.x + h, c.y + s), ImVec2(c.x + h, c.y - s), ar);
 }
 
+// The stick and the D-pad to go with the slot discs: the cork disc for a base. The stick: the compass points engraved
+// in brown, the knob a small slot disc, lit while it's held. The D-pad: a cross in the lit slot's tan, edged in brown,
+// the arms held down green. false: the textures aren't there (the blue ones instead).
+static bool compass_disc(ImDrawList *dl, ImVec2 c, float r, ImVec2 knob, float a, float th, bool sel) {
+    if (!slot_disc(dl, c, r, false, a, th, sel)) return false;
+    float ea = fminf(1, 0.55f + 0.5f * a);
+    for (int k = 0; k < 8; k++) {
+        float ang = k * 3.14159265f / 4, len = k % 2 ? 0.62f : 0.92f, wd = k % 2 ? 0.10f : 0.14f;
+        ImVec2 tip(c.x + cosf(ang) * r * len, c.y + sinf(ang) * r * len);
+        ImVec2 s1(c.x + cosf(ang + 1.5708f) * r * wd, c.y + sinf(ang + 1.5708f) * r * wd);
+        ImVec2 s2(c.x - cosf(ang + 1.5708f) * r * wd, c.y - sinf(ang + 1.5708f) * r * wd);
+        dl->AddTriangleFilled(tip, s1, s2, col(74, 52, 26, (k % 2 ? 0.45f : 0.70f) * ea));
+    }
+    bool held = hypotf(knob.x - c.x, knob.y - c.y) > r * 0.04f;
+    slot_disc(dl, knob, r * 0.42f, held, 1.0f, th, false);
+    return true;
+}
+
+static bool dpad_disc(ImDrawList *dl, ImVec2 c, float r, int32_t lx, int32_t ly, float a, float th, bool sel) {
+    if (!slot_disc(dl, c, r, false, a, th, sel)) return false;
+    float ea = fminf(1, 0.55f + 0.5f * a), len = r * 0.84f, w = r * 0.29f, rnd = r * 0.08f;
+    ImU32 tan = col(235, 192, 130, ea), lit = col(140, 220, 70, ea), ink = col(74, 52, 26, ea);
+    dl->AddRectFilled(ImVec2(c.x - w, c.y - len), ImVec2(c.x + w, c.y + len), tan, rnd);
+    dl->AddRectFilled(ImVec2(c.x - len, c.y - w), ImVec2(c.x + len, c.y + w), tan, rnd);
+    float in = 2.5f * th;  // (the held arm inside the edge)
+    if (ly > 8000) dl->AddRectFilled(ImVec2(c.x - w + in, c.y - len + in), ImVec2(c.x + w - in, c.y - w), lit, rnd);
+    if (ly < -8000) dl->AddRectFilled(ImVec2(c.x - w + in, c.y + w), ImVec2(c.x + w - in, c.y + len - in), lit, rnd);
+    if (lx < -8000) dl->AddRectFilled(ImVec2(c.x - len + in, c.y - w + in), ImVec2(c.x - w, c.y + w - in), lit, rnd);
+    if (lx > 8000) dl->AddRectFilled(ImVec2(c.x + w, c.y - w + in), ImVec2(c.x + len - in, c.y + w - in), lit, rnd);
+    ImVec2 o[12] = {{c.x - w, c.y - len}, {c.x + w, c.y - len}, {c.x + w, c.y - w}, {c.x + len, c.y - w}, {c.x + len, c.y + w}, {c.x + w, c.y + w},
+                    {c.x + w, c.y + len}, {c.x - w, c.y + len}, {c.x - w, c.y + w}, {c.x - len, c.y + w}, {c.x - len, c.y - w}, {c.x - w, c.y - w}};
+    dl->AddPolyline(o, 12, ink, ImDrawFlags_Closed, 3.5f * th);
+    float t = len * 0.90f, h = len * 0.62f, s = r * 0.14f;
+    dl->AddTriangleFilled(ImVec2(c.x, c.y - t), ImVec2(c.x + s, c.y - h), ImVec2(c.x - s, c.y - h), ink);
+    dl->AddTriangleFilled(ImVec2(c.x, c.y + t), ImVec2(c.x - s, c.y + h), ImVec2(c.x + s, c.y + h), ink);
+    dl->AddTriangleFilled(ImVec2(c.x - t, c.y), ImVec2(c.x - h, c.y - s), ImVec2(c.x - h, c.y + s), ink);
+    dl->AddTriangleFilled(ImVec2(c.x + t, c.y), ImVec2(c.x + h, c.y + s), ImVec2(c.x + h, c.y - s), ink);
+    return true;
+}
+
 static void label_text(ImDrawList *dl, ImFont *font, float fs, ImVec2 c, const char *t, ImU32 colr, bool shadow, bool bold = false) {
     ImVec2 ts = font->CalcTextSizeA(fs, 1e9f, 0, t);
     ImVec2 p(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f);
@@ -712,11 +804,13 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
             label_text(dl, font, c.r * 0.85f, p, "Start", col(255, 255, 255, fmaxf(fa, 0.8f)), true);
             continue;
         }
-        bubble(dl, p, r, on, i == C_A, fa, th, sel);
+        bool disc = slot_disc(dl, p, r, on, fa, th, sel);
+        if (!disc) bubble(dl, p, r, on, i == C_A, fa, th, sel);
+        ImU32 ink = disc ? col(74, 52, 26, fmaxf(fa, 0.9f)) : col(255, 255, 255, fmaxf(fa, 0.85f));  // (on a disc: the game's brown)
         if (i == C_MENU) {  // three bars
             float u = r * 0.42f;
             for (int k = -1; k <= 1; k++)
-                dl->AddLine(ImVec2(c.x - u, c.y + k * u * 0.6f), ImVec2(c.x + u, c.y + k * u * 0.6f), col(255, 255, 255, fmaxf(fa, 0.8f)), 3 * th);
+                dl->AddLine(ImVec2(c.x - u, c.y + k * u * 0.6f), ImVec2(c.x + u, c.y + k * u * 0.6f), ink, 3 * th);
             continue;
         }
         const char *in = g_editing && i != C_X && i != C_Y ? icon_of(X_PLAY, i) : icon_of(ctx, i);
@@ -726,7 +820,7 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
             badge(dl, font, p, r, c.label, fa);
         } else {  // no icon: the letter in the middle
             bool pm = c.label[0] == '+' || c.label[0] == '-';
-            label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, col(255, 255, 255, fmaxf(fa, 0.85f)), true, true);
+            label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, ink, !disc, true);
         }
         const char *hn = g_editing ? NULL : hint(ctx, i);
         if (hn && *hn) {  // what it does here, under it (above when there's no room)
@@ -762,12 +856,14 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
     }
     if ((want & 1) && (g_editing || !hidden(C_STICK))) {
         const Control &s = g_ctl[C_STICK];
-        if (g_settings.touch_dpad)
-            dpad(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, g_editing ? 0 : g_lx.load(), g_editing ? 0 : g_ly.load(),
-                 a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th, g_editing && g_sel == C_STICK);
-        else
-            compass(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, ImVec2(knob_x, knob_y), a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th,
-                    g_editing && g_sel == C_STICK);
+        ImVec2 sc(g_stick_cx, g_stick_cy);
+        float sa = a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f);
+        bool ssel = g_editing && g_sel == C_STICK;
+        int32_t lx = g_editing ? 0 : g_lx.load(), ly = g_editing ? 0 : g_ly.load();
+        if (g_settings.touch_dpad) {
+            if (!dpad_disc(dl, sc, s.r, lx, ly, sa, th, ssel)) dpad(dl, sc, s.r, lx, ly, sa, th, ssel);
+        } else if (!compass_disc(dl, sc, s.r, ImVec2(knob_x, knob_y), sa, th, ssel))
+            compass(dl, sc, s.r, ImVec2(knob_x, knob_y), sa, th, ssel);
     }
     if (g_editing) {  // the editor's hint and bar
         label_text(dl, font, 30 * tt, ImVec2(w * 0.5f, h * 0.31f), "Drag the controls to move them. Tap one to resize or hide it.",
