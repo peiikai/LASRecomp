@@ -1017,6 +1017,7 @@ static int g_refocus = MAIN;  // back on the main page: select the item of the p
 static bool g_menu_small;  // sub pages: buttons in the small font
 void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, void (*prelaunch)(float),
                     int only = -1000);  // menu.mm
+bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bool seed);  // menu.mm
 void menu_style_begin(float scale);  // (menu.mm: the menu's look, until menu_style_end)
 bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big);  // (menu.mm: true while a live preview is up)
 void menu_style_end(void);
@@ -2751,6 +2752,13 @@ extern "C" void launcher_run(const char *root) {
                 {  // close: the round X in the corner (B / Esc too); touch, the Randomizer: in its own pane (rando_tab.mm)
                     float bx = 44 * sc;
                     if (!(PLAT_TOUCH && page == RANDO)) back = plastic_close_corner(bx, sc);
+                    // (Settings: Reset to vanilla beside it, as in game; PLAY then starts the vanilla game)
+                    // (the seed is dropped from the saved settings too, as the reset's other settings are)
+                    if (page != RANDO && menu_reset_corner(bx, sc, g_font_small, g_font_menu, !start_seed.empty())) {
+                        start_seed.clear();
+                        g_settings.rando_seed[0] = 0;
+                        settings_save();
+                    }
                 }
                 bool popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId);  // (before the pages run, like the menu)
                 if (page == RANDO) {
