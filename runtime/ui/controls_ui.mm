@@ -398,12 +398,6 @@ extern "C" void touch_tab_draw(float scale) {
         static const char *const modes[] = {"Auto (no controller)", "Always", "Off"};
         row("Show", &g_settings.touch_mode, modes, 3, 0,
             "On-screen buttons for the touch screen. The middle button at the top opens this menu.", true);
-        static const char *const which[] = {"What the game uses", "All"};
-        int v = g_settings.touch_all ? 1 : 0;
-        if (row("Buttons", &v, which, 2, 0,
-                "What the game uses: only the buttons that do something right now - B once Link has the sword, "
-                "R with the shield, X / Y with the items you equip. All: every button, all the time.", true))
-            g_settings.touch_all = v != 0;
         static const char *const off_on[] = {"Off", "On"};
         int hide = g_settings.touch_hide_xy_hud ? 1 : 0;
         if (row("Hide X/Y item HUD", &hide, off_on, 2, 0, "Hides the game's own X / Y items while the on-screen buttons are shown.", true))

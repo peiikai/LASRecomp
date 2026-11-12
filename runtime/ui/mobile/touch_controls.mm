@@ -64,8 +64,9 @@ static const uint32_t kShown[X_COUNT] = {
     M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
     M(C_STICK) | M(C_A) | M(C_B) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
 };
-// (the editor: play's controls; ZL / ZR to show them by choice; the editor's own button while the setting shows it)
-#define EDITABLE ((kShown[X_PLAY] | M(C_ZL) | M(C_ZR)) & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT)))
+// (the editor: play's controls; the editor's own button while the setting shows it. ZL / ZR do nothing in the game:
+// never shown, their slots kept for the settings file)
+#define EDITABLE (kShown[X_PLAY] & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT)))
 
 typedef struct {
     float x, y, r;       // centre and radius (round) / half height (pills: width 2.2 * r)
@@ -114,16 +115,20 @@ static void defaults(float w, float h) {
     g_ctl[C_B] = {fx - 0.01f * s, fy + gap, br, BIT(BTN_B), "B", false};
     g_ctl[C_X] = {fx, fy - gap, br, BIT(BTN_X), "X", false};
     g_ctl[C_Y] = {fx - gap, fy, br, BIT(BTN_Y), "Y", false};
-    float sr = 0.064f * s;  // shoulders: round, in the top corners (ZL / ZR beside them, off unless chosen)
-    g_ctl[C_L] = {0.12f * s, 0.30f * s, sr, BIT(BTN_L), "L", false};  // (below the hearts / the fps counter)
-    g_ctl[C_R] = {w - 0.12f * s, 0.30f * s, sr, BIT(BTN_R), "R", false};
+    // L and R on the diamond's diagonal, as far out as each other (0.27), each angled to clear its two neighbours
+    // evenly: R between X and A (up right), L between Y and B (down left). + straight above R, - out past L along
+    // the bottom. ZL / ZR: never shown (wanted)
+    float sr = 0.064f * s, d = 0.27f * s;
+    const float ra = -46 * 3.14159265f / 180, la = 137 * 3.14159265f / 180;
+    g_ctl[C_R] = {fx + cosf(ra) * d, fy + sinf(ra) * d, sr, BIT(BTN_R), "R", false};
+    g_ctl[C_L] = {fx + cosf(la) * d, fy + sinf(la) * d, sr, BIT(BTN_L), "L", false};
     g_ctl[C_ZL] = {0.26f * s, 0.10f * s, sr * 0.8f, BIT(BTN_ZL), "ZL", false};
     g_ctl[C_ZR] = {w - 0.26f * s, 0.10f * s, sr * 0.8f, BIT(BTN_ZR), "ZR", false};
     float mr = 0.040f * s;
-    g_ctl[C_MINUS] = {w * 0.5f - 0.13f * s, 0.06f * s, mr, BIT(BTN_MINUS), "-", false};
-    g_ctl[C_PLUS] = {w * 0.5f + 0.20f * s, 0.06f * s, mr, BIT(BTN_PLUS), "+", false};
-    g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};
-    g_ctl[C_EDIT] = {w * 0.5f + 0.10f * s, 0.06f * s, mr * 0.8f, 0, "", false};  // (the layout editor: between the menu's and +)
+    g_ctl[C_PLUS] = {g_ctl[C_R].x, fy - 0.42f * s, mr, BIT(BTN_PLUS), "+", false};
+    g_ctl[C_MINUS] = {fx - 0.43f * s, fy + 0.23f * s, mr, BIT(BTN_MINUS), "-", false};
+    g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};  // (the top: the menu's button, the layout editor's beside it)
+    g_ctl[C_EDIT] = {w * 0.5f + 0.11f * s, 0.06f * s, mr, 0, "", false};  // (the menu's size, a gap of 0.03 between them)
     g_ctl[C_START] = {w * 0.5f, h - 0.07f * s, 0.05f * s, BIT(BTN_L) | BIT(BTN_R) | BIT(BTN_A), "Start", true};
     g_ctl[C_STICK] = {0.25f * s, h - 0.27f * s, 0.14f * s, 0, "", false};
 }
@@ -573,21 +578,7 @@ static uint32_t wanted(int ctx) {
         g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
         g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
     }
-    if (ctx == X_PLAY && g_settings.touch_all) {  // (every button, whatever Link has)
-        for (int i = 0; i < C_COUNT; i++)
-            if ((i == C_ZL || i == C_ZR) && g_settings.touch_moved[i] && !g_settings.touch_hidden[i]) m |= M(i);
-        return m;
-    }
-    if (ctx == X_PLAY) {
-        if (!(g_items_word & 1)) m &= ~M(C_B);           // the sword
-        if (!(g_items_word & 2)) m &= ~M(C_R);           // the shield
-        if (!(g_items_word >> 11 & 1)) m &= ~M(C_L);     // the Pegasus Boots
-        if (g_slot_x <= 1 || g_slot_x > 15) m &= ~M(C_X);
-        if (g_slot_y <= 1 || g_slot_y > 15) m &= ~M(C_Y);
-        for (int i = 0; i < C_COUNT; i++)  // (ZL / ZR and the like: only where the player put them)
-            if ((i == C_ZL || i == C_ZR) && g_settings.touch_moved[i] && !g_settings.touch_hidden[i]) m |= M(i);
-    }
-    return m;
+    return m;  // (play: every button, whatever Link has - the icons show what he has)
 }
 
 static const char *icon_of(int ctx, int i) {
