@@ -9,10 +9,14 @@ SHA=ada38db0b703a56d3dd6d57bf84a9c5d664921d870d8fea4db153979fb5332c5
 DL=build/miniz-dl
 OUT=build/miniz
 mkdir -p "$DL"
-[ -f "$DL/miniz-$VER.zip" ] || curl -fsSL --proto '=https' -o "$DL/miniz-$VER.zip" \
-    "https://github.com/richgel999/miniz/releases/download/$VER/miniz-$VER.zip"
+if [ ! -f "$DL/miniz-$VER.zip" ]; then  # (a .part file until it's whole: a download cut off partway is fetched again)
+    curl -fsSL --proto '=https' -o "$DL/miniz-$VER.zip.part" \
+        "https://github.com/richgel999/miniz/releases/download/$VER/miniz-$VER.zip"
+    mv "$DL/miniz-$VER.zip.part" "$DL/miniz-$VER.zip"
+fi
 GOT=$( (shasum -a 256 2>/dev/null || sha256sum) < "$DL/miniz-$VER.zip" | cut -d' ' -f1)
-[ "$GOT" = "$SHA" ] || { echo "miniz-$VER.zip: sha256 $GOT, expected $SHA"; exit 1; }
+# (a zip with the wrong hash is deleted, so the next run downloads it again instead of failing the same way: #737)
+[ "$GOT" = "$SHA" ] || { echo "miniz-$VER.zip: sha256 $GOT, expected $SHA"; rm -f "$DL/miniz-$VER.zip"; exit 1; }
 # Git Bash on Windows has no unzip, and its own tar is GNU tar, which can't read zips (Windows' bsdtar can). So try
 # each extractor in turn and keep the first that produces all three files.
 FILES="miniz.c miniz.h LICENSE"
