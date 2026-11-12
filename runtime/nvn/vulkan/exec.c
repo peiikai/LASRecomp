@@ -116,6 +116,14 @@ static uint64_t stat_snap_bytes, stat_snap_copies;  // storage copies made (snap
 // container without userfaultfd, a Windows window reserved without write watch) the overlap turns itself off: the
 // full fence wait as before. LARECOMP_GPU_OVERLAP=1 forces it on anyway (tests; the hash probe stands in for the
 // watch then), =0 turns it off.
+// Shader global memory as copies (gmir_on: no heap import - phones, panvk, issue #693) needs no watch: the GPU reads
+// nothing of guest memory in place there. Storage and uniform ranges are copied when their draw or dispatch is
+// translated, vertex and index data likewise (or come from a slot, the GPU's own copy), and the game's fence wait
+// still waits for the translation (rq_wait_item); only the wait for the GPU is a frame late. What the GPU stored then
+// reaches guest memory a frame later too, as in place, and gmir_merge_words keeps the CPU's writes made meanwhile.
+// So the overlap is on there without page write tracking (the Galaxy S25 FE: CPU 6.4 + GPU 13.0 ms a frame in turn
+// held 30 fps), and the storage snapshots are off (snap_on: nothing to protect, and a snapshot's address would move a
+// range away from its slot).
 static int pages_cpu_written(uint64_t addr, uint64_t size, uint32_t since, uint32_t *now);  // (the page tables below)
 static const char *heap_tracking_reason(void);  // (why the heap has no page write tracking, for the log)
 static bool gmir_on(void);         // (shader global memory as copies: no heap import, issue #483)
@@ -131,9 +139,10 @@ static bool overlap_on(void) {
     if (on < 0) {
         const char *e = getenv("LARECOMP_GPU_OVERLAP"), *w = getenv("LARECOMP_OVERLAP_WATCH");
         uint32_t g;
-        if (!e && gmir_on()) {  // (the GPU's stores reach guest memory only at the fence waits: the game must wait)
-            on = 0;
-            LOG("[vk] GPU overlap off: shader global memory goes through copies here\n");
+        if (gmir_on()) {  // (no watch needed: see above)
+            on = !e || atoi(e) != 0;
+            LOG("[vk] GPU overlap %s with shader global memory as copies (the game's frame fence waited one frame late; "
+                "LARECOMP_GPU_OVERLAP=%d: %s)\n", on ? "on" : "off", !on, on ? "off" : "on");
             return on;
         }
         bool tracked = (!w || atoi(w) != 0) && pages_cpu_written(TRACK_PROBE_PAGE, 4096, 0, &g) >= 0;
@@ -713,6 +722,7 @@ void renderer_wait_seq(uint64_t seq) {
             wait_why = NULL;
             cq_resolve_done(done);  // (the game reads its timing counters now: what is complete so far)
             gw_inval_done(done);
+            gmir_writeback();  // (copies: what the GPU stored in the submissions done so far)
             return;
         }
         seq = w;
@@ -3093,7 +3103,7 @@ static bool snap_on(void) {
     uint64_t heap = kernel_heap_size();
     if (!heap) return false;  // (not decided yet)
     const char *e = getenv("LARECOMP_OVERLAP_SNAP");
-    snap_state = (!e || atoi(e) != 0) && overlap_on();
+    snap_state = (!e || atoi(e) != 0) && overlap_on() && !gmir_on();  // (copies: nothing read in place, see overlap_on)
     if (snap_state) {
         snap_base = (heap + 0xFFFF) & ~0xFFFFull;  // (minImportedHostPointerAlignment: 64 KB at most)
         if (snap_base + SNAP_RING > HEAP_MAX) {
@@ -4897,6 +4907,7 @@ typedef struct {
     uint8_t *base;                     // guest memory as of the last merge
     uint64_t rb_off[GMIR_RB], rb_seq[GMIR_RB];  // readback areas: the slot after a storing dispatch, until merged
     uint8_t *rb_base[GMIR_RB];         // ... and the base each started from
+    uint8_t *rb_cpu[GMIR_RB];          // ... and a bit per word the CPU's changes went in after it (gmir_merge_words)
     bool used;
 } GmirSlot;
 static VkBuffer gmir_buf;
@@ -4981,6 +4992,29 @@ static uint64_t gmir_ring_alloc(uint64_t size) {
 static uint64_t gmir_stride(const GmirSlot *m) { return (m->hi - m->lo + 255) & ~255ull; }
 static uint64_t gmir_slot_end(const GmirSlot *m) { return m->off + (uint64_t)(GMIR_RB + 1) * gmir_stride(m); }
 
+// ---- gmir_merge_words (tools/test_vulkan_overlap.py)
+// One readback (n words: gpu, the slot after a storing dispatch; was, the base it started from) into guest memory.
+// A word the GPU changed goes in unless the CPU wrote it since: the CPU's write is the later one (with the overlap the
+// game builds the next frame while the GPU runs this one - it resets a list the GPU fills, for that next frame - and
+// as with the storage snapshots' merge, rs_copy_make, the CPU wins where both changed). Two ways the CPU wrote since:
+//  - its change already went into the slot after this readback (cpu, a bit per word, gmir_cpu_changes): skipped;
+//  - not yet (guest differs from base, what the slot was last given): guest keeps it, and base takes the slot's value,
+//    so the next gmir_cpu_changes sees the CPU's word as a change and puts it in the slot. The compare and the store
+//    are one atomic step: the game thread may write the word meanwhile (this runs at submissions too).
+// The newer readbacks started from an older base: what this one brings in is theirs too, or they'd take these words
+// for GPU changes again and undo what the CPU wrote in between.
+static void gmir_merge_words(uint64_t n, const uint32_t *gpu, const uint32_t *was, const uint8_t *cpu, uint32_t *guest,
+                             uint32_t *base, uint32_t *const *newer, int nn) {
+    for (uint64_t w = 0; w < n; w++) {
+        if (gpu[w] == was[w] || (cpu[w >> 3] >> (w & 7) & 1)) continue;
+        uint32_t expect = base[w];
+        __atomic_compare_exchange_n(&guest[w], &expect, gpu[w], false, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+        base[w] = gpu[w];
+        for (int j = 0; j < nn; j++) newer[j][w] = gpu[w];
+    }
+}
+// ---- end gmir_merge_words
+
 // The readbacks whose submission is done, oldest first per slot: the words the GPU changed, into guest memory (gmir_lock)
 static void gmir_merge_locked(void) {
     uint64_t done = vk_completed_seq();
@@ -4995,18 +5029,11 @@ static void gmir_merge_locked(void) {
             uint64_t n = (m->hi - m->lo) / 4;
             vmaInvalidateAllocation(g_vk.vma, gmir_mem, m->rb_off[k], n * 4);
             const uint32_t *gpu = (const uint32_t *)(gmir_ptr + m->rb_off[k]), *was = (const uint32_t *)m->rb_base[k];
-            uint32_t *guest = (uint32_t *)(uintptr_t)m->lo, *base = (uint32_t *)m->base;
-            // the newer readbacks started from an older base: what this one brings in is theirs too, or they'd take
-            // these words for GPU changes again and undo what the CPU wrote in between
             uint32_t *newer[GMIR_RB];
             int nn = 0;
             for (int j = 0; j < GMIR_RB; j++)
                 if (j != k && m->rb_seq[j] > m->rb_seq[k]) newer[nn++] = (uint32_t *)m->rb_base[j];
-            for (uint64_t w = 0; w < n; w++)
-                if (gpu[w] != was[w]) {
-                    guest[w] = base[w] = gpu[w];
-                    for (int j = 0; j < nn; j++) newer[j][w] = gpu[w];
-                }
+            gmir_merge_words(n, gpu, was, m->rb_cpu[k], (uint32_t *)(uintptr_t)m->lo, (uint32_t *)m->base, newer, nn);
             m->rb_seq[k] = 0;
         }
     }
@@ -5026,7 +5053,7 @@ static bool gmir_slot_idle(const GmirSlot *m, uint64_t done) {
 }
 static void gmir_slot_drop(GmirSlot *m) {
     free(m->base);
-    for (int j = 0; j < GMIR_RB; j++) free(m->rb_base[j]);
+    for (int j = 0; j < GMIR_RB; j++) free(m->rb_base[j]), free(m->rb_cpu[j]);
     memset(m, 0, sizeof *m);
 }
 // Idle slots unused since before submission `before` go; none of those and lru: the least recently used idle one
@@ -5066,15 +5093,27 @@ static void gmir_cpu_changes(GmirSlot *m, VkCommandBuffer cb) {
     const uint32_t *guest = (const uint32_t *)(uintptr_t)m->lo;
     uint32_t *base = (uint32_t *)m->base;
     if (!memcmp(guest, base, n * 4)) return;
+    // Readbacks still to be merged: the slot holds the GPU's stores, which base doesn't have yet. Only the words the CPU
+    // changed go in then (a joined gap would put base's stale words over them), each marked in those readbacks: they
+    // were stored before the CPU's word, which wins (gmir_merge_words).
+    uint8_t *mark[GMIR_RB];
+    int nm = 0;
+    bool exact = false;
+    for (int j = 0; j < GMIR_RB; j++) {
+        exact |= m->rb_seq[j] != 0;
+        if (m->rb_seq[j] && m->rb_seq[j] < pending) mark[nm++] = m->rb_cpu[j];  // (this submission's come after: none)
+    }
     bool any = false;
     for (uint64_t w = 0; w < n;) {
         if (guest[w] == base[w]) { w++; continue; }
         uint64_t e = w;
-        while (e < n && (guest[e] != base[e] || (e + 16 < n && memcmp(guest + e, base + e, 64)))) e++;  // (small gaps join)
+        while (e < n && (guest[e] != base[e] || (!exact && e + 16 < n && memcmp(guest + e, base + e, 64)))) e++;  // (small gaps join)
         VkSpan sp = vk_transient_copy(guest + w, (e - w) * 4, 16);
         VkBufferCopy c = {sp.off, m->off + w * 4, (e - w) * 4};
         rec_CmdCopyBuffer(cb, sp.buf, gmir_buf, 1, &c);
         memcpy(base + w, guest + w, (e - w) * 4);
+        for (int j = 0; j < nm; j++)
+            for (uint64_t x = w; x < e; x++) mark[j][x >> 3] |= (uint8_t)(1u << (x & 7));
         stat_upload_bytes += (e - w) * 4;
         any = true;
         w = e;
@@ -5140,7 +5179,8 @@ static void gmir_table(int stage, bool store, VkCommandBuffer cb, uint32_t *tab)
                 slot = &gmir_slot[k];
                 *slot = (GmirSlot){.lo = lo, .hi = hi, .off = at, .used = true, .base = malloc(hi - lo)};
                 for (int j = 0; j < GMIR_RB; j++)
-                    slot->rb_off[j] = at + (uint64_t)(j + 1) * gmir_stride(slot), slot->rb_base[j] = malloc(hi - lo);
+                    slot->rb_off[j] = at + (uint64_t)(j + 1) * gmir_stride(slot), slot->rb_base[j] = malloc(hi - lo),
+                    slot->rb_cpu[j] = malloc((hi - lo) / 32 + 1);
                 memcpy(slot->base, (const void *)(uintptr_t)lo, hi - lo);
                 memcpy(gmir_ptr + at, slot->base, hi - lo);
                 vmaFlushAllocation(g_vk.vma, gmir_mem, at, hi - lo);
@@ -5212,7 +5252,10 @@ static void gmir_after_dispatch(VkCommandBuffer cb) {
             gmir_merge_locked();
         }
         if (k < 0) continue;
-        if (m->rb_seq[k] != pending) memcpy(m->rb_base[k], m->base, m->hi - m->lo);
+        if (m->rb_seq[k] != pending) {
+            memcpy(m->rb_base[k], m->base, m->hi - m->lo);
+            memset(m->rb_cpu[k], 0, (m->hi - m->lo) / 32 + 1);
+        }
         VkBufferCopy c = {m->off, m->rb_off[k], m->hi - m->lo};
         rec_CmdCopyBuffer(cb, gmir_buf, gmir_buf, 1, &c);
         m->rb_seq[k] = pending;
