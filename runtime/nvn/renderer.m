@@ -4660,10 +4660,12 @@ static void draw_one(CmdRec *r, bool indexed) {
             int pw_, ph_;
             pass_size(&pw_, &ph_);
             hud_k = (float)pw_ / (st.rt.color[0]->width * vp_sx), hud_ky = (float)ph_ / (st.rt.color[0]->height * vp_sy);
+            // (the pause screen's backdrop first: the HUD's stretch stays on for the pause screen's first frames, while
+            // the world still counts as on screen, and would keep the backdrop boxed until it went off)
+            extern const void *pause_fill_ubo(const float *u, uint64_t size, float k, float ky);
+            hud_u = pause_fill_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
             extern const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky);
-            hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
-            extern const void *pause_fill_ubo(const float *u, uint64_t size, float k, float ky);  // (the pause screen's backdrop)
-            if (!hud_u) hud_u = pause_fill_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
+            if (!hud_u) hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
         }
     }
     {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
