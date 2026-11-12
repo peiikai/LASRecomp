@@ -348,7 +348,7 @@ VkFormat vk_view_format(TexBackend *b, VkFormat want) {
     return b->format;
 }
 
-// The bc.h kind a BC format decodes as (BC_NONE: not BC1-BC5)
+// The bc.h kind a BC format decodes as (BC_NONE: not a BC format)
 static int bc_kind(VkFormat f) {
     switch (f) {
     case VK_FORMAT_BC1_RGB_UNORM_BLOCK: case VK_FORMAT_BC1_RGB_SRGB_BLOCK: return BC1_RGB;
@@ -359,6 +359,9 @@ static int bc_kind(VkFormat f) {
     case VK_FORMAT_BC4_SNORM_BLOCK: return BC4_SNORM;
     case VK_FORMAT_BC5_UNORM_BLOCK: return BC5_UNORM;
     case VK_FORMAT_BC5_SNORM_BLOCK: return BC5_SNORM;
+    case VK_FORMAT_BC6H_UFLOAT_BLOCK: return BC6H_UFLOAT;
+    case VK_FORMAT_BC6H_SFLOAT_BLOCK: return BC6H_SFLOAT;
+    case VK_FORMAT_BC7_UNORM_BLOCK: case VK_FORMAT_BC7_SRGB_BLOCK: return BC7;
     default: return BC_NONE;
     }
 }
@@ -399,7 +402,7 @@ static void create_image(NvnTexture *t, TexBackend *b) {
     VkFormatFeatureFlags need = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
     b->astc_bw = b->astc_bh = 0;
     b->cpu_bc = BC_NONE;
-    static int cpu_bc = -1;  // LARECOMP_VK_CPU_BC=1: BC1-BC5 decoded on the CPU although the driver lists them (tests)
+    static int cpu_bc = -1;  // LARECOMP_VK_CPU_BC=1: BC formats decoded on the CPU although the driver lists them (tests)
     if (cpu_bc < 0) { const char *e = getenv("LARECOMP_VK_CPU_BC"); cpu_bc = e && atoi(e); }
     if (!format_supports(vf, need) || (cpu_bc && bc_kind(vf) != BC_NONE) || (g_vk.cpu_astc && vf >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && vf <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK)) {
         bool astc = vf >= VK_FORMAT_ASTC_4x4_UNORM_BLOCK && vf <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
@@ -410,12 +413,14 @@ static void create_image(NvnTexture *t, TexBackend *b) {
             b->astc_srgb = t->format >= 0x87;
             vf = b->astc_srgb ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
         } else if ((b->cpu_bc = bc_kind(vf)) != BC_NONE && fi && fi->bw == 4 && fi->bh == 4 && fi->bpb == bc_block_bytes(b->cpu_bc)) {
-            // (Xclipse 940, driver 25.3.3: no BC4 / BC5 - the button glyphs and menu frames were never filled, #693)
+            // (Xclipse 940, driver 25.3.3: no BC4 / BC5 - the button glyphs and menu frames were never filled - nor BC7:
+            // house walls drew their raw blocks, #693)
             static int nlog;
-            if (nlog++ < 20) LOG("[vk] format %d (nvn %#x) not supported: decoded to RGBA8 on upload\n", vf, t->format);
+            if (nlog++ < 20) LOG("[vk] format %d (nvn %#x) not supported: decoded on upload\n", vf, t->format);
             vf = b->cpu_bc == BC4_SNORM || b->cpu_bc == BC5_SNORM ? VK_FORMAT_R8G8B8A8_SNORM
+                 : b->cpu_bc == BC6H_UFLOAT || b->cpu_bc == BC6H_SFLOAT ? VK_FORMAT_R16G16B16A16_SFLOAT
                  : vf == VK_FORMAT_BC1_RGB_SRGB_BLOCK || vf == VK_FORMAT_BC1_RGBA_SRGB_BLOCK || vf == VK_FORMAT_BC2_SRGB_BLOCK ||
-                   vf == VK_FORMAT_BC3_SRGB_BLOCK ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+                   vf == VK_FORMAT_BC3_SRGB_BLOCK || vf == VK_FORMAT_BC7_SRGB_BLOCK ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
         } else {
             b->cpu_bc = BC_NONE;
             static int nlog;
@@ -721,14 +726,14 @@ static void upload_texture(NvnTexture *t, TexBackend *b) {
     for (uint32_t layer = 0; layer < layers; layer++) {
         for (uint32_t lv = 0; lv < levels; lv++) {
             LevelLayout l = tegra_level(&t->layout, lv);
-            if (b->astc_bw || b->cpu_bc) {  // blocks -> linear block rows -> RGBA8 texels
+            if (b->astc_bw || b->cpu_bc) {  // blocks -> linear block rows -> RGBA8 (BC6H: RGBA16F) texels
                 const uint8_t *src = (const uint8_t *)(uintptr_t)t->addr + layer * layer_size + l.offset;
                 uint32_t bpb = fi->bpb, brow = l.wb * bpb;
                 uint8_t *blocks = malloc((uint64_t)brow * l.hb);
                 if (linear) for (uint32_t y = 0; y < l.hb; y++) memcpy(blocks + (uint64_t)y * brow, src + (uint64_t)y * t->stride, brow);
                 else tegra_deswizzle(src, blocks, l.wb, l.hb, 1, bpb, l.block_height_log2, l.block_depth_log2);
                 if (b->tp > 0 && layer == 0) texpatch_apply(b->tp - 1, lv, blocks, l.w, l.h, brow);
-                VkSpan s = vk_transient((uint64_t)l.w * l.h * 4, 16);
+                VkSpan s = vk_transient((uint64_t)l.w * l.h * (b->cpu_bc ? bc_texel_bytes(b->cpu_bc) : 4), 16);
                 if (b->cpu_bc) bc_decode(b->cpu_bc, blocks, l.w, l.h, s.ptr);
                 else astc_decode_ldr(blocks, l.w, l.h, b->astc_bw, b->astc_bh, b->astc_srgb, s.ptr);
                 free(blocks);
