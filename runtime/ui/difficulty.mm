@@ -1,4 +1,4 @@
-// Gameplay tab (was Difficulty): walk speed (runtime/hle/qol.c rt_walk_speed), damage taken multiplier / one-hit KO
+// Gameplay and General tabs (Gameplay was Difficulty): walk speed (runtime/hle/qol.c rt_walk_speed), damage taken multiplier / one-hit KO
 // (applied where the game computes Link's damage, see tools/patches.py DAMAGE_*_SITES); rt_hero_mode() reads the game's own Hero Mode flag (PlayerStatus+0x120 = save
 // 0x55E0). Settings persist in larecomp.ini (g_settings.diff_*).
 #include "../game_addresses.h"
@@ -50,9 +50,10 @@ extern "C" int32_t rt_damage(int32_t dmg, int32_t shift) {
 // Mode keeps the game's own flag.)
 extern "C" void difficulty_frame(void) {}
 
-// Plain levers, each at the game's own value by default (Default, off), as option rows (option_rows.h).
-extern "C" void difficulty_draw(float scale) {
-    opt_begin("##gameplay", scale);
+// General tab: the menus' and the game's language, text speed, the Hero Mode icon and the speedrun timer - settings
+// that change how the game is shown, not how it plays (user, 2026-11-11). The start screen's System tab stays apart.
+extern "C" void general_draw(float scale) {
+    opt_begin("##general", scale);
     opt_section("General");
     {
         // what the game is told the console's language is: its text follows this (runtime/settings.c), and the menus
@@ -72,56 +73,8 @@ extern "C" void difficulty_draw(float scale) {
                                   : "The language of the menus and the game's text. The game's text changes after a restart."))
             settings_save();
     }
-    if (rt_hookshot_seed_forced()) {  // (the seed's logic counts on it: always on, the toggle greyed out)
-        bool on = true;
-        opt_disable_next();
-        opt_toggle("Hookshot anything", &on, false,
-                   "This seed was made with Hookshot Anything, so it stays on.");
-    } else if (opt_toggle("Hookshot anything", &g_settings.cheat_hookshot, false,
-                          "The Hookshot latches onto any wall or object, not just Hookshot targets."))
-        settings_save();
-    if (rt_no_buff_seed_forced()) {
-        bool on = true;
-        opt_disable_next();
-        opt_toggle("Disable Guardian Acorns / Pieces of Power", &on, false,
-                   "This seed was made with it, so it stays on.");
-    } else if (opt_toggle("Disable Guardian Acorns / Pieces of Power", &g_settings.no_buff_drops, false,
-                          "Disables Guardian Acorns and Pieces of Power from spawning."))
-        settings_save();
-    if (opt_toggle("Mirror mode", &g_settings.mirror_mode, false,
-                   "Mirrors the game world."))
-        settings_save();
-    {
-        static const char *const names[] = {LN("Normal"), LN("Brisk"), LN("Running"), LN("Sprinting"), LN("Zoomies")};
-        static const float mult[] = {1, 1.25f, 1.5f, 1.75f, 2.5f};
-        int wi = 0;  // (the closest step to the setting)
-        for (int i = 0; i < 5; i++)
-            if (fabsf(mult[i] - g_settings.walk_speed) < fabsf(mult[wi] - g_settings.walk_speed)) wi = i;
-        if (opt_choice("Walk speed", &wi, names, 5, 0, "How fast Link walks. Doesn't change the Pegasus Boots or swimming.")) {
-            g_settings.walk_speed = mult[wi];
-            settings_save();
-        }
-        if (wi == 0) opt_disable_next();
-        if (opt_toggle("Indoors", &g_settings.walk_speed_dungeons, false,
-                       "Use the walk speed in houses, caves and dungeons too."))
-            settings_save();
-    }
     if (opt_choice("Text speed", &g_settings.text_speed, g_text_speeds, N_TEXT_SPEEDS, TEXT_SPEED_NORMAL,
                    "How fast message text appears. Each message still waits for your button press."))
-        settings_save();
-    opt_section("Difficulty");
-    static const char *const names[] = {LN("Half"), LN("Default"), LN("2x"), LN("3x"), LN("4x"), LN("5x"),
-                                         LN("6x"), LN("7x"), LN("8x")};
-    static const float mult[] = {0.5f, 1, 2, 3, 4, 5, 6, 7, 8};
-    int di = 1;  // (the closest step to the setting: older files may hold any multiplier)
-    for (int i = 0; i < 9; i++)
-        if (fabsf(mult[i] - g_settings.diff_damage) < fabsf(mult[di] - g_settings.diff_damage)) di = i;
-    if (opt_choice("Damage taken", &di, names, 9, 1,
-                   "How much damage each hit does, from half up to eight times normal.")) {
-        g_settings.diff_damage = mult[di];
-        settings_save();
-    }
-    if (opt_toggle("One-hit KO", &g_settings.diff_ohko, false, "One hit and Link is down, no matter how many hearts he has."))
         settings_save();
     if (opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
                    "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file."))
@@ -160,5 +113,60 @@ extern "C" void difficulty_draw(float scale) {
             settings_save();
         }
     }
+    opt_end();
+}
+
+// Plain levers, each at the game's own value by default (Default, off), as option rows (option_rows.h).
+extern "C" void difficulty_draw(float scale) {
+    opt_begin("##gameplay", scale);
+    opt_section("Gameplay");
+    {
+        static const char *const names[] = {LN("Normal"), LN("Brisk"), LN("Running"), LN("Sprinting"), LN("Zoomies")};
+        static const float mult[] = {1, 1.25f, 1.5f, 1.75f, 2.5f};
+        int wi = 0;  // (the closest step to the setting)
+        for (int i = 0; i < 5; i++)
+            if (fabsf(mult[i] - g_settings.walk_speed) < fabsf(mult[wi] - g_settings.walk_speed)) wi = i;
+        if (opt_choice("Walk speed", &wi, names, 5, 0, "How fast Link walks. Doesn't change the Pegasus Boots or swimming.")) {
+            g_settings.walk_speed = mult[wi];
+            settings_save();
+        }
+        if (wi == 0) opt_disable_next();
+        if (opt_toggle("Indoors", &g_settings.walk_speed_dungeons, false,
+                       "Use the walk speed in houses, caves and dungeons too."))
+            settings_save();
+    }
+    if (opt_toggle("Mirror mode", &g_settings.mirror_mode, false,
+                   "Mirrors the game world."))
+        settings_save();
+    if (rt_hookshot_seed_forced()) {  // (the seed's logic counts on it: always on, the toggle greyed out)
+        bool on = true;
+        opt_disable_next();
+        opt_toggle("Hookshot anything", &on, false,
+                   "This seed was made with Hookshot Anything, so it stays on.");
+    } else if (opt_toggle("Hookshot anything", &g_settings.cheat_hookshot, false,
+                          "The Hookshot latches onto any wall or object, not just Hookshot targets."))
+        settings_save();
+    if (rt_no_buff_seed_forced()) {
+        bool on = true;
+        opt_disable_next();
+        opt_toggle("Disable Guardian Acorns / Pieces of Power", &on, false,
+                   "This seed was made with it, so it stays on.");
+    } else if (opt_toggle("Disable Guardian Acorns / Pieces of Power", &g_settings.no_buff_drops, false,
+                          "Disables Guardian Acorns and Pieces of Power from spawning."))
+        settings_save();
+    opt_section("Difficulty");
+    static const char *const names[] = {LN("Half"), LN("Default"), LN("2x"), LN("3x"), LN("4x"), LN("5x"),
+                                         LN("6x"), LN("7x"), LN("8x")};
+    static const float mult[] = {0.5f, 1, 2, 3, 4, 5, 6, 7, 8};
+    int di = 1;  // (the closest step to the setting: older files may hold any multiplier)
+    for (int i = 0; i < 9; i++)
+        if (fabsf(mult[i] - g_settings.diff_damage) < fabsf(mult[di] - g_settings.diff_damage)) di = i;
+    if (opt_choice("Damage taken", &di, names, 9, 1,
+                   "How much damage each hit does, from half up to eight times normal.")) {
+        g_settings.diff_damage = mult[di];
+        settings_save();
+    }
+    if (opt_toggle("One-hit KO", &g_settings.diff_ohko, false, "One hit and Link is down, no matter how many hearts he has."))
+        settings_save();
     opt_end();
 }

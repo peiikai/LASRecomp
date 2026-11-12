@@ -1,4 +1,4 @@
-// Text speed (Gameplay tab, issue #681): how fast message text appears, through the two hook sites of tools/patches.py
+// Text speed (General tab, issue #681): how fast message text appears, through the two hook sites of tools/patches.py
 // (TEXT_RATE_SITE, TEXT_SNAP_SITE). A message pane plays its text as a layout animation at a step it is given as each
 // window opens; Fast plays it at a larger step, Instant puts the page's end on screen at once (the pane's own branch
 // for text already at the end). Neither touches the window's states, so a page still waits for the button, and
