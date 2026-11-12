@@ -578,15 +578,7 @@ static uint32_t wanted(int ctx) {
         g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
         g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
     }
-    if (ctx == X_PLAY && g_settings.touch_all) return m;  // (every button, whatever Link has)
-    if (ctx == X_PLAY) {
-        if (!(g_items_word & 1)) m &= ~M(C_B);           // the sword
-        if (!(g_items_word & 2)) m &= ~M(C_R);           // the shield
-        if (!(g_items_word >> 11 & 1)) m &= ~M(C_L);     // the Pegasus Boots
-        if (g_slot_x <= 1 || g_slot_x > 15) m &= ~M(C_X);
-        if (g_slot_y <= 1 || g_slot_y > 15) m &= ~M(C_Y);
-    }
-    return m;
+    return m;  // (play: every button, whatever Link has - the icons show what he has)
 }
 
 static const char *icon_of(int ctx, int i) {

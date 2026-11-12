@@ -276,7 +276,6 @@ void settings_load(void) {
         else if (!strcmp(key, "dpad_move")) g_settings.dpad_mode = atoi(val) ? DPAD_MOVE : DPAD_NOTHING;  // (older settings: a toggle)
         else if (!strcmp(key, "touch_controls")) g_settings.touch_mode = !strcmp(val, "always") ? 1 : !strcmp(val, "off") ? 2 : 0;
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
-        else if (!strcmp(key, "touch_all")) g_settings.touch_all = atoi(val) != 0;
         else if (!strcmp(key, "touch_stick_fixed")) g_settings.touch_stick_fixed = atoi(val) != 0;
         else if (!strcmp(key, "touch_edit_button")) g_settings.touch_edit_button = atoi(val) != 0;
         else if (!strcmp(key, "touch_hide_xy_hud")) g_settings.touch_hide_xy_hud = atoi(val) != 0;
@@ -431,8 +430,8 @@ void settings_save(void) {
     fprintf(f, "dpad_mode = %s\n", g_settings.dpad_mode == DPAD_ITEMS ? "items" : g_settings.dpad_mode == DPAD_MOVE ? "move" : "nothing");
     fprintf(f, "touch_controls = %s\n", g_settings.touch_mode == 1 ? "always" : g_settings.touch_mode == 2 ? "off" : "auto");
     fprintf(f, "touch_opacity = %.2f\n", g_settings.touch_opacity);
-    fprintf(f, "touch_all = %d\ntouch_stick_fixed = %d\ntouch_hide_xy_hud = %d\ntouch_edit_button = %d\n", g_settings.touch_all,
-            g_settings.touch_stick_fixed, g_settings.touch_hide_xy_hud, g_settings.touch_edit_button);
+    fprintf(f, "touch_stick_fixed = %d\ntouch_hide_xy_hud = %d\ntouch_edit_button = %d\n", g_settings.touch_stick_fixed,
+            g_settings.touch_hide_xy_hud, g_settings.touch_edit_button);
     fprintf(f, "touch_size = %.2f\n", g_settings.touch_size);
     fprintf(f, "touch_dpad = %d\n", g_settings.touch_dpad);
     {
