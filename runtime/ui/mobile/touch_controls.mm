@@ -583,9 +583,11 @@ static uint32_t wanted(int ctx) {
 
 static const char *icon_of(int ctx, int i) {
     if (ctx == X_PLAY || ctx == X_ITEMS) {
-        if (i == C_B && ctx == X_PLAY) return slot_icon(0);
-        if (i == C_R && ctx == X_PLAY) return !(g_items_word & 2) ? NULL : g_upgrades & 2 ? "EqShield_01^q" : slot_icon(1);  // (the Mirror Shield)
-        if (i == C_L && ctx == X_PLAY) return slot_icon(11);
+        // (B, R, L: the sword, the shield - the Mirror Shield once he has it - and the Pegasus Boots; the letter until
+        // Link has the item, or after a Like Like eats the shield)
+        if (i == C_B && ctx == X_PLAY) return g_items_word & 1 ? slot_icon(0) : NULL;
+        if (i == C_R && ctx == X_PLAY) return !(g_items_word & 2) ? NULL : g_upgrades & 2 ? "EqShield_01^q" : slot_icon(1);
+        if (i == C_L && ctx == X_PLAY) return g_items_word >> 11 & 1 ? slot_icon(11) : NULL;
         if (i == C_X && g_slot_x > 1) return slot_icon(g_slot_x);
         if (i == C_Y && g_slot_y > 1) return slot_icon(g_slot_y);
     }
@@ -834,8 +836,6 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
         if (tex) {
             icon(dl, tex, p, r, fa);
             badge(dl, font, p, r, c.label, fa);
-        } else if (i == C_R && (ctx == X_PLAY || g_editing) && !(g_items_word & 2)) {
-            // no shield (not found yet, or a Like Like ate it): R blank, as the game's own shield slot
         } else {  // no icon: the letter in the middle
             bool pm = c.label[0] == '+' || c.label[0] == '-';
             label_text(dl, font, r * (pm ? 1.4f : i == C_A ? 1.15f : 0.95f), p, c.label, ink, !disc, true);
