@@ -132,15 +132,12 @@ with tempfile.TemporaryDirectory() as temporary:
     shutil.copytree(LLD.parent.parent, skeleton/'lld'/HOST)
     shutil.copy(ROOT/'runtime/platform/ios-sdk/libSystem.B.tbd', skeleton/'libSystem.B.tbd')
     assert (skeleton/'include/any-darwin-any/stdlib.h').exists()
-    # zipped as the kit (Unix modes kept: the linker must come out executable; symlinks as symlink entries)
+    # zipped as the kit (Unix modes kept: the linker must come out executable)
     kit = tmp/'fixture-ios.laskit'
     with zipfile.ZipFile(kit, 'w', zipfile.ZIP_DEFLATED) as z:
         for p in sorted(skeleton.rglob('*')):
             rel = p.relative_to(skeleton).as_posix()
-            if p.is_symlink():
-                info = zipfile.ZipInfo(rel); info.create_system = 3; info.external_attr = 0o120755 << 16
-                z.writestr(info, os.readlink(p))
-            elif p.is_dir():
+            if p.is_dir():
                 info = zipfile.ZipInfo(rel + '/'); info.create_system = 3; info.external_attr = (0o40755 << 16) | 0x10
                 z.writestr(info, b'')
             else:
@@ -185,7 +182,7 @@ with tempfile.TemporaryDirectory() as temporary:
     CANCEL = ct.CFUNCTYPE(ct.c_bool)
     class Options(ct.Structure):
         _fields_ = [('progress', PROGRESS), ('jobs', ct.c_int), ('cancelled', CANCEL),
-                    ('target', ct.c_int), ('ios_kit', ct.c_char_p)]
+                    ('target', ct.c_int), ('ios_kit', ct.c_void_p)]
     launched = []; next_id = 0
     @SPAWN
     def spawn(args, log, append):
@@ -215,21 +212,44 @@ with tempfile.TemporaryDirectory() as temporary:
     def cancelled(): return False
     library.test_init.argtypes = [ct.c_char_p, SPAWN, WAIT, KILL]
     library.test_init(str(resources).encode(), spawn, wait, kill)
-    library.gamebuild_ios_available.argtypes = [ct.c_char_p, ct.c_void_p, ct.c_size_t]
-    library.gamebuild_ios_available.restype = ct.c_bool
+    library.gamebuild_ios_kit_open.argtypes = [ct.c_char_p, ct.c_void_p, ct.c_size_t]
+    library.gamebuild_ios_kit_open.restype = ct.c_void_p
+    library.zip_open.argtypes = [ct.c_char_p, ct.c_void_p, ct.c_size_t]
+    library.zip_open.restype = ct.c_void_p
+    library.zip_close.argtypes = [ct.c_void_p]
+    library.zip_extract.argtypes = [ct.c_void_p, ct.c_char_p, ct.c_char_p, ct.c_void_p, ct.c_size_t, ct.c_void_p]
+    library.zip_extract.restype = ct.c_bool
     library.gamebuild_run.argtypes = [ct.c_char_p, ct.POINTER(Options), ct.c_void_p, ct.c_size_t]
     library.gamebuild_run.restype = ct.c_bool
     why = ct.create_string_buffer(1024)
-    options = Options(progress, 2, cancelled, 1, str(kit).encode())
+    def available(path):
+        z = library.gamebuild_ios_kit_open(str(path).encode(), why, len(why))
+        library.zip_close(z)
+        return bool(z)
+    opened = None
     try:
-        assert not library.gamebuild_ios_available(str(tmp/'nowhere').encode(), why, len(why)) and b'kit' in why.value, why.value
+        assert not available(tmp/'nowhere') and b'kit' in why.value, why.value
         # an unpacked folder is refused with a hint, a zip that isn't a kit too
-        assert not library.gamebuild_ios_available(str(skeleton).encode(), why, len(why)) and b'not an unpacked folder' in why.value, why.value
+        assert not available(skeleton) and b'not an unpacked folder' in why.value, why.value
         other = tmp/'other.zip'
         with zipfile.ZipFile(other, 'w') as z: z.writestr('hello.txt', 'hi')
-        assert not library.gamebuild_ios_available(str(other).encode(), why, len(why)) and b"isn't an iOS kit" in why.value, why.value
-        assert library.gamebuild_ios_available(str(kit).encode(), why, len(why)), why.value
+        assert not available(other) and b"isn't an iOS kit" in why.value, why.value
+        assert available(kit), why.value
         assert not list((resources/'data').iterdir()), 'the availability check unpacked something'
+        # a symlink entry is refused: "x -> <elsewhere>" then "x/file" would write outside the folder
+        crafted, outside = tmp/'crafted.zip', tmp/'outside'
+        outside.mkdir()
+        with zipfile.ZipFile(crafted, 'w') as z:
+            info = zipfile.ZipInfo('lld/x'); info.create_system = 3; info.external_attr = 0o120755 << 16
+            z.writestr(info, str(outside))
+            z.writestr('lld/x/file', 'escaped')
+        cz = library.zip_open(str(crafted).encode(), None, 0)
+        unpacked = tmp/'unpacked'; unpacked.mkdir()
+        ok = library.zip_extract(cz, b'lld', str(unpacked).encode(), why, len(why), None)
+        library.zip_close(cz)
+        assert not ok and b'a link' in why.value and not list(outside.iterdir()), why.value
+        opened = library.gamebuild_ios_kit_open(str(kit).encode(), why, len(why))
+        options = Options(progress, 2, cancelled, 1, opened)
         assert library.gamebuild_run(str(game).encode(), ct.byref(options), why, len(why)), (why.value, [p.read_text() for p in (game/'.gamebuild').glob('*.log')])
         kits = list((resources/'data/cache/ios-kit').iterdir())
         assert len(kits) == 1 and (kits[0]/'.complete').exists() and (kits[0]/'libSystem.B.tbd').exists(), kits
@@ -256,4 +276,5 @@ with tempfile.TemporaryDirectory() as temporary:
         print(f'iOS game-code build on {HOST}: compile for arm64 iOS with the kit\'s headers, link with its lld, '
               f'{out.stat().st_size} byte dylib passed')
     finally:
+        library.zip_close(opened)
         unload()

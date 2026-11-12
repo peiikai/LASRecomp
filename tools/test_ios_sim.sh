@@ -45,13 +45,16 @@ fi
 SIMCTL_CHILD_LARECOMP_IOS_PYTEST=1 xcrun simctl launch "$UDID" "$BUNDLE_ID" >/dev/null
 for i in $(seq 1 60); do
     sleep 2
-    [ -f "$LOG" ] && grep -q "^\[py\] \(generator skipped\|second run\|generator exit [1-9]\|selftest FAILED\|second-run compare FAILED\)" "$LOG" && break
+    [ -f "$LOG" ] && grep -q "^\[py\] \(generator skipped\|second run\|generator exit [1-9]\|working directory MOVED\|selftest FAILED\|second-run compare FAILED\)" "$LOG" && break
 done
 xcrun simctl io "$UDID" screenshot "$OUT/start-screen.png" >/dev/null 2>&1 || true
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 [ -f "$LOG" ] || { echo "no $LOG"; exit 1; }
 grep "^\[py\]\|FATAL\|Traceback" "$LOG" || true
 grep -q "^\[py\] selftest ok" "$LOG" || { echo "FAIL: self-test"; exit 1; }
+# (a script as a process, runtime/platform/ios_pyproc.py: its working directory, environment and children its own)
+grep -q "^\[py\] process: ok" "$LOG" || { echo "FAIL: a script as a process"; exit 1; }
+! grep -q "working directory MOVED" "$LOG" || { echo "FAIL: a script moved the app's working directory"; exit 1; }
 if [ -n "${SIM_ROMFS:-}" ]; then
     [ "$(grep -c "^\[py\] generator exit 0" "$LOG")" = 2 ] || { echo "FAIL: generator"; exit 1; }
     grep -q "^\[py\] second run: .* identical" "$LOG" || { echo "FAIL: the second run differs"; exit 1; }

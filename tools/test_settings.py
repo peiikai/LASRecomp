@@ -81,6 +81,15 @@ with tempfile.TemporaryDirectory() as directory:
                        check=True, capture_output=True)
         assert f'powerup_music = {value}\n' in ini.read_text()
         count += 1
+    # Text speed (#681): Normal in old files and for an unknown value; Fast and Instant survive a roundtrip.
+    for lines, value in [([], 'normal'), (['text_speed = fast'], 'fast'), (['text_speed = instant'], 'instant'),
+                         (['text_speed = normal'], 'normal'), (['text_speed = turbo'], 'normal')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'text_speed = {value}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
     # The cloud drive warning's Keep here: older files name it onedrive_kept; it is saved as cloud_kept.
     for lines, value in [([], 0), (['onedrive_kept = 1'], 1), (['onedrive_kept = 0'], 0), (['cloud_kept = 1'], 1)]:
         ini = directory / 'test.ini'
@@ -92,10 +101,13 @@ with tempfile.TemporaryDirectory() as directory:
         count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'
-    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\n')
+    # (grass and walls have no Black: an older Black there loads as Gray; other rows keep it)
+    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\ngrass = Black\n'
+                   'walls = Black\nsand = Black\n')
     subprocess.run([str(exe), 'colours'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
     saved = ini.read_text()
-    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random']:
+    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random', 'grass = Gray',
+                 'walls = Gray', 'sand = Black']:
         assert line + '\n' in saved, (line, saved)
     count += 1
     # the Randomizer tab's New seed options: an older file without the key stays without it (the defaults)

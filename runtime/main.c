@@ -268,6 +268,7 @@ static void log_startup_info(void) {
 }
 
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 // The Metal HUD setting (Video tab): Apple's HUD library loads only when MTL_HUD_ENABLED=1 is set as the process starts
 // (macOS 27: setting it later in the process, or the layer's developerHUDProperties alone, do nothing), so with the
 // setting on the app starts itself again with it, before the session log opens. From then on the setting shows and
@@ -291,6 +292,9 @@ static void metal_hud_relaunch(void) {
     if (!on) return;
     setenv("MTL_HUD_ENABLED", "1", 1);
     setenv("LARECOMP_METAL_HUD", "1", 1);  // (ui_metal_hud_apply: the HUD was loaded for the setting)
+#if TARGET_OS_IPHONE
+    return;  // (no restart to do: Metal reads it when SDL_main creates the device, later than this)
+#endif
     plat_exec(NULL);
     perror("metal hud re-exec");  // (failed: the game starts without the HUD)
 }

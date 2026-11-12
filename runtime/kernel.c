@@ -995,10 +995,12 @@ void kernel_hang_hooks(bool (*check)(uint64_t limit_ns, char *why, size_t n), vo
 void kernel_hang_paused_hook(bool (*paused)(void)) { __atomic_store_n(&hang_paused_fn, paused, __ATOMIC_RELEASE); }
 static void *hang_watch(void *arg) {
     uint64_t s = (uint64_t)(uintptr_t)arg, dumped_since = 0;
+    int resumed = 0;
     for (int dumps = 0; dumps < 6;) {
         sleep(1);
         bool (*paused)(void) = __atomic_load_n(&hang_paused_fn, __ATOMIC_ACQUIRE);
-        if (paused && paused()) continue;  // (every wait is long then: not a hang)
+        if (paused && paused()) { resumed = 2; continue; }  // (every wait is long then: not a hang)
+        if (resumed) { resumed--; continue; }  // (just back: the waits still carry start times from before the pause)
         char why[256];
         int n = 0;
         pthread_mutex_lock(&g_klock);

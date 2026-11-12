@@ -8,7 +8,11 @@ index has to be known in the flow:
   - flows with constant gives (NPCs, standing items, pots, ...: item_get.insertItemGetAnimation): the get event's
     messageEntry becomes Ks<Item><index>;
   - flows that give their arguments (TreasureBox: itemKey / itemIndex from the chest): a CompareString / CompareInt
-    chain in front of the get event picks the Ks entry (LAS patches CompareInt to test equality).
+    chain in front of the get event picks the Ks entry (LAS patches CompareInt to test equality);
+  - flows that give a dungeon item with no get event at all (LAS small_keys.writeKeyEvent, rupees.makeEventChanges:
+    the floor keys of SmallKey.bfevfl, golden leaves, Color Dungeon rupees add keys / maps / ... silently): a get
+    event with the Ks entry goes in front of the add, or a key for another dungeon picked up from a dungeon floor said
+    nothing (#686).
 Item.bfevfl gets the Ks entries (Dialog.Show System:Ks<Item><index>), every language's System.msbt the messages,
 built from that file's own get-item text and Place.msbt's dungeon name (nothing of the game's text lives here).
 English: the item sentence + " for <dungeon>!"; other languages keep their text and add a page with the dungeon name.
@@ -161,8 +165,24 @@ def patch_flow(flow, combos, event_tools):
     fc = flow.flowchart
     keys = {k for k, i in combos}
     n = 0
+    # silent constant gives (no get event in front): add one, so they show their message like any other
+    added = set()
+    after_get = {id(e.data.nxt.v) for e in fc.events if _is(e, 'Link', 'GenericItemGetSequenceByKey')}
     for ev in list(fc.events):
-        if not _is(ev, 'Link', 'GenericItemGetSequenceByKey'):
+        if not _is(ev, 'Inventory', 'AddItemByKey') or id(ev) in after_get:
+            continue
+        q = ev.data.params.data
+        key, idx = q.get('itemKey'), q.get('index')
+        if isinstance(key, evfl.common.Argument) or isinstance(idx, evfl.common.Argument) or (key, idx) not in combos:
+            continue
+        get = event_tools.findEvent(fc, event_tools.createActionEvent(
+            fc, 'Link', 'GenericItemGetSequenceByKey', {'itemKey': key, 'keepCarry': False,
+                                                        'messageEntry': entry(key, idx)}, ev.name))
+        _retarget(fc, ev, get, {get})
+        added.add(id(get))
+        n += 1
+    for ev in list(fc.events):
+        if not _is(ev, 'Link', 'GenericItemGetSequenceByKey') or id(ev) in added:
             continue
         nxt = ev.data.nxt.v
         if nxt is None or not _is(nxt, 'Inventory', 'AddItemByKey'):

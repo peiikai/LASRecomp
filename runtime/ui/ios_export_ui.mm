@@ -20,7 +20,7 @@ static IosExportHost g_host;
 // the picked kit and game files folder, the .ipa being written, where the last export went (under the host's lock)
 static std::string g_kit, g_src, g_save, g_out;
 static bool g_page_request;
-static std::string g_why, g_why_for;  // why the picked kit can't be used (checked once per pick)
+static std::string g_why, g_why_for = "\x01";  // why the picked kit can't be used (checked once per pick; "\x01": not yet)
 static bool g_can;
 
 void ios_export_ui_init(const IosExportHost &host) { g_host = host; }
@@ -29,7 +29,7 @@ static bool possible(void) {
     g_host.lock();
     std::string kit = g_kit;
     g_host.unlock();
-    if (g_why_for != kit || kit.empty()) {
+    if (g_why_for != kit) {
         char why[512] = "";
         g_can = iosexport_available(kit.c_str(), why, sizeof why);
         g_why = why;

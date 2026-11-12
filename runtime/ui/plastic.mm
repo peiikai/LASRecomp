@@ -486,7 +486,10 @@ void main() {
     vec2 corner = vec2(gl_VertexIndex & 1, gl_VertexIndex >> 1);
     float m = piece_margin(s);
     vec2 px = mix(s.rect.xy - m, s.rect.zw + m, corner);
-    gl_Position = vec4(px.x / pc.f0.x * 2.0 - 1.0, px.y / pc.f0.y * 2.0 - 1.0, 0.0, 1.0);
+    vec2 c = vec2(px.x / pc.f0.x * 2.0 - 1.0, px.y / pc.f0.y * 2.0 - 1.0);
+    // f1.w: the Vulkan swapchain's pre-rotation in quarter turns (vulkan/plastic_vk.c, device.c vk_sc_rect)
+    if (pc.f1.w > 0.5) c = pc.f1.w < 2.0 ? vec2(-c.y, c.x) : vec2(c.y, -c.x);
+    gl_Position = vec4(c, 0.0, 1.0);
     o_px = px;
     o_lum = scene_lum();
 }
@@ -617,6 +620,40 @@ void plastic_well(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale) {
     dl->PopClipRect();
 }
 
+void plastic_progress(ImDrawList *dl, ImVec2 a, ImVec2 b, float frac, float scale) {
+    const PlasticTheme &t = plastic_theme();
+    float h = b.y - a.y, in = fmaxf(3 * scale, h * 0.14f);
+    dl->PushClipRectFullScreen();
+    plastic_add(dl, a, b, h * 0.5f, t.inset, PK_INSET, fminf(8 * scale, h * 0.35f), 0);
+    dl->PopClipRect();
+    ImVec2 ia(a.x + in, a.y + in), ib(b.x - in, b.y - in);
+    float w = ib.x - ia.x, ph = ib.y - ia.y;
+    if (w <= ph || ph <= 0) return;
+    float x0 = 0, x1 = frac;
+    if (frac < 0) {  // (not known: a third of the track sliding across, in and out at the ends)
+        float p = fmodf(-frac, 1.0f) * 1.3f - 0.3f;
+        x0 = fmaxf(0.0f, p), x1 = fminf(1.0f, p + 0.3f);
+    }
+    x1 = fminf(fmaxf(x1, 0.0f), 1.0f);
+    if (x1 - x0 <= 0) return;
+    // (at least as long as it is high: a pill shorter than that has no straight part and looks like a dot)
+    float l = ia.x + w * x0, r = fmaxf(ia.x + w * x1, l + ph);
+    if (r > ib.x) l -= r - ib.x, r = ib.x;
+    plastic_pill(dl, ImVec2(l, ia.y), ImVec2(r, ib.y), ph * 0.5f, t.row_sel, 4 * scale, 1.0f, scale, true);
+}
+
+void plastic_progress_bar(float frac, ImVec2 size, const char *overlay, float scale) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float avail = ImGui::GetContentRegionAvail().x;
+    float w = size.x > 0 ? size.x : avail, h = size.y > 0 ? size.y : ImGui::GetFrameHeight();
+    float tw = overlay && overlay[0] ? ImGui::CalcTextSize(overlay).x + 16 * scale : 0;
+    ImGui::Dummy(ImVec2(w, h));
+    plastic_progress(ImGui::GetWindowDrawList(), p, ImVec2(p.x + w - tw, p.y + h), frac, scale);
+    if (tw > 0)
+        ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + w - tw + 16 * scale, p.y + (h - ImGui::GetTextLineHeight()) * 0.5f),
+                                            plastic_theme().text, overlay);
+}
+
 // the round button's piece and its icon: the X, or (reset) an arrow going round
 static bool round_button(const char *id, float bx, float scale, bool reset) {
     const PlasticTheme &t = plastic_theme();
@@ -647,6 +684,16 @@ static bool round_button(const char *id, float bx, float scale, bool reset) {
 
 bool plastic_close_button(float bx, float scale) { return round_button("##close", bx, scale, false); }
 
+float g_plastic_corner_r;
+float g_plastic_pane_close_cy;
+int g_plastic_pane_close_frame = -10;
+
+float plastic_corner_clear(float cy, float r) {
+    float R = g_plastic_corner_r, dy = R - cy, a = R - r * 1.15f;  // (a: the centre's room inside the curve, a margin kept)
+    if (R <= 0 || dy <= 0) return 0;  // (no rounded corner, or below it)
+    return a > dy ? R - sqrtf(a * a - dy * dy) : R;
+}
+
 // slot 0: the corner itself; each slot further one button (and a gap) to the left
 static bool corner_button(float bx, float scale, int slot, bool reset, bool in_pane = false) {
     // in the window's top right corner, clear of the frame (its moulding ends 20 px in), and out of the layout: the
@@ -659,7 +706,14 @@ static bool corner_button(float bx, float scale, int slot, bool reset, bool in_p
         y = ImGui::GetMainViewport()->Pos.y + 12 * scale;
         if (in_pane) m = 10 * scale, y = w->Pos.y + m;  // (inside a pane's box: the current window is the pane)
     }
-    ImGui::SetCursorScreenPos(ImVec2(w->Pos.x + w->Size.x - m - bx - slot * (bx + 12 * scale), y));
+    float x = w->Pos.x + w->Size.x - m - bx;
+    if (PLAT_TOUCH) {  // (iPhone: in from the rounded corner as far as it takes)
+        ImGuiViewport *vp = ImGui::GetMainViewport();
+        float r = bx * 0.5f, need = plastic_corner_clear(y + r - vp->Pos.y, r), have = vp->Pos.x + vp->Size.x - (x + r);
+        if (need > have) x -= need - have;
+    }
+    if (PLAT_TOUCH && in_pane) g_plastic_pane_close_cy = y + bx * 0.5f, g_plastic_pane_close_frame = ImGui::GetFrameCount();
+    ImGui::SetCursorScreenPos(ImVec2(x - slot * (bx + 12 * scale), y));
     bool r = round_button(reset ? "##reset" : "##close", bx, scale, reset);
     w->DC.CursorPos = keep.CursorPos, w->DC.CursorPosPrevLine = keep.CursorPosPrevLine;
     w->DC.CursorMaxPos = keep.CursorMaxPos, w->DC.IdealMaxPos = keep.IdealMaxPos;

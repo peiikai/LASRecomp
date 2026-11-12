@@ -58,7 +58,7 @@ void dpad_items_save_read(const char *p, uint64_t a, int64_t o, int64_t n) {}  /
 void dpad_items_save_written(const char *p, uint64_t a, int64_t o, int64_t n) {}
 void pace_hitch(const char *why) {}  // (runtime/nvn/pace.c: a save commit is a stall)
 static int notices;  // save-failed warnings shown (fs.c tells the player once per run)
-void plat_notice(const char *text) { notices++; }
+void menu_save_failed(const char *folder) { notices++; }
 #ifdef __linux__
 void plat_os_write(uint64_t addr, uint64_t size) { (void)addr; (void)size; }  // (fs.c's file reads: no soft write tracking here)
 #endif

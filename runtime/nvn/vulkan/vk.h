@@ -73,11 +73,16 @@ typedef struct {
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
     VkFormat sc_format;
-    VkExtent2D sc_extent;
+    VkExtent2D sc_extent;  // the window's size: what everything drawn into the window image is laid out in
+    VkExtent2D sc_phys;    // the swapchain images' own size (the panel's orientation when pre-rotated: sc_quarter)
+    int sc_quarter;        // Android pre-rotation: 0, or quarter turns (1: 90 degrees, 3: 270) applied when drawing into them
     uint32_t sc_count;
     VkImage sc_images[VK_SC_MAX];
     VkImageView sc_views[VK_SC_MAX];
 } VkG;
+// (device.c) a rect / viewport of the window (sc_extent) in the swapchain image (sc_phys): turned with sc_quarter
+VkRect2D vk_sc_rect(int32_t x, int32_t y, uint32_t w, uint32_t h);
+VkViewport vk_sc_viewport(float x, float y, float w, float h);
 void vk_log_memory(const char *why);  // (device.c: per-heap budget and use, at start and on allocation failures)
 extern VkG g_vk;
 
@@ -130,6 +135,7 @@ typedef struct TexBackend {
     uint32_t pending_uv_off;
     uint8_t astc_bw, astc_bh;  // ASTC without GPU support: decoded to RGBA8 on upload (runtime/nvn/astc.c)
     bool astc_srgb;
+    uint8_t cpu_bc;      // a BC format the driver doesn't list: decoded on upload (runtime/nvn/bc.h kind)
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)

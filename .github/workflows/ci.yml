@@ -4,7 +4,7 @@
 # SPIRV-Tools (tools/test_translate.sh, Windows), its instruction semantics and control flow on the CPU
 # (tools/test_translate_ops.sh, tools/test_translate_flow.sh, Linux / macOS), the same programs' Vulkan GLSL through
 # spirv-val (tools/test_spirv_val.sh, Linux), the iOS game-code build each desktop can do
-# (tools/test_gamebuild_ios.py: the player's zig and the iOS skeleton's lld on a fixture) and, its own job on a Mac, the
+# (tools/test_gamebuild_ios.py: the player's zig and the iOS kit's lld on a fixture) and, its own job on a Mac, the
 # iOS app and its skeleton (make ios-skeleton). Nothing is published.
 # Feature tests that need no game files go in as steps here, not as workflows of their own.
 name: CI
@@ -397,7 +397,7 @@ jobs:
         run: python3 tools/smoke_macos_app.py "build/LAS Recomp.app"
 
   # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
-  # the iOS skeleton zip ships (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
+  # the iOS kit holds (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
   # SDL3 / FFmpeg / CPython and the generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that
   # script's hash. Then the same app for the iOS Simulator (make ios-sim: the simulator SDK's deps, cached alike)
   # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
@@ -410,6 +410,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Packages
         run: brew install ninja python@3.13
+      - name: A script as a process in the embedded Python (runtime/platform/ios_pyproc.py, on this Mac's Python)
+        run: python3.13 tools/test_ios_pyproc.py
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4
@@ -429,11 +431,11 @@ jobs:
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: App and skeleton build
         run: make -j"$(sysctl -n hw.ncpu)" ios-skeleton
-      - name: Skeleton holds no game code; keystone's dylib is a link into Frameworks/
+      - name: Skeleton holds no game code and no symlinks; keystone's framework is there
         run: |
           A="build/ios-skeleton/LAS Recomp.app"
           [ ! -e "$A/Frameworks/LASGame.framework/LASGame" ] || { echo "::error::game library in the skeleton"; exit 1; }
-          if nm "$A/lasrecomp" | grep ' _f_8' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
+          if nm "$A/lasrecomp" | grep ' _f_70' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
           links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the app (an iOS install drops them): $links"; exit 1; }
           [ -f "$A/Frameworks/keystone.libkeystone.framework/keystone.libkeystone" ] || { echo "::error::keystone's framework missing"; exit 1; }
           codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
@@ -493,7 +495,7 @@ jobs:
         with:
           msystem: UCRT64
           update: true
-          install: make git python curl tar xz unzip patch
+          install: make git python curl tar xz unzip
           pacboy: clang:p lld:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds

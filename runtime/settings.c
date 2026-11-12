@@ -36,10 +36,12 @@ const char *const g_audio_outs[N_AUDIO_OUTS] = {LN("Stereo"), LN("5.1")};
 static const char *const k_audio_out_keys[N_AUDIO_OUTS] = {"stereo", "5.1"};  // (else: stereo)
 const char *const g_weathers[N_WEATHERS] = {LN("Off"), LN("Rain"), LN("Snow"), LN("Storm"), LN("Blizzard"), LN("Random")};
 static const char *const k_weather_keys[N_WEATHERS] = {"off", "rain", "snow", "storm", "blizzard", "random"};  // (else: off)
+const char *const g_text_speeds[N_TEXT_SPEEDS] = {LN("Normal"), LN("Fast"), LN("Instant")};
+static const char *const k_text_speed_keys[N_TEXT_SPEEDS] = {"normal", "fast", "instant"};  // (else: normal)
 
 // the on-screen controls' ini names (touch_ctl_<name>; runtime/ui/mobile/touch_controls.mm's order)
 const char *touch_control_name(int i) {
-    static const char *const names[TOUCH_NCTL] = {"stick", "a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "menu", "start"};
+    static const char *const names[TOUCH_NCTL] = {"stick", "a", "b", "x", "y", "l", "r", "zl", "zr", "plus", "minus", "menu", "start", "edit"};
     return i >= 0 && i < TOUCH_NCTL ? names[i] : "";
 }
 
@@ -58,6 +60,8 @@ Settings g_settings = {
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
     .show_fps = FPS_OFF,
     .touch_opacity = 0.6f,
+    .touch_edit_button = true,
+    .touch_hide_xy_hud = true,  // (the on-screen X / Y show the items)
     .touch_size = 1.0f,
     .inv_keys = true,
     .tracker = true,
@@ -273,8 +277,8 @@ void settings_load(void) {
         else if (!strcmp(key, "dpad_move")) g_settings.dpad_mode = atoi(val) ? DPAD_MOVE : DPAD_NOTHING;  // (older settings: a toggle)
         else if (!strcmp(key, "touch_controls")) g_settings.touch_mode = !strcmp(val, "always") ? 1 : !strcmp(val, "off") ? 2 : 0;
         else if (!strcmp(key, "touch_opacity")) g_settings.touch_opacity = (float)atof(val);
-        else if (!strcmp(key, "touch_all")) g_settings.touch_all = atoi(val) != 0;
         else if (!strcmp(key, "touch_stick_fixed")) g_settings.touch_stick_fixed = atoi(val) != 0;
+        else if (!strcmp(key, "touch_edit_button")) g_settings.touch_edit_button = atoi(val) != 0;
         else if (!strcmp(key, "touch_hide_xy_hud")) g_settings.touch_hide_xy_hud = atoi(val) != 0;
         else if (!strcmp(key, "touch_dpad")) g_settings.touch_dpad = atoi(val) != 0;
         else if (!strcmp(key, "touch_size")) g_settings.touch_size = (float)atof(val);
@@ -330,6 +334,10 @@ void settings_load(void) {
         else if (!strcmp(key, "diff_damage")) g_settings.diff_damage = (float)atof(val);
         else if (!strcmp(key, "walk_speed")) g_settings.walk_speed = (float)atof(val);
         else if (!strcmp(key, "walk_speed_dungeons")) g_settings.walk_speed_dungeons = atoi(val) != 0;
+        else if (!strcmp(key, "text_speed")) {
+            g_settings.text_speed = TEXT_SPEED_NORMAL;
+            for (int i = 0; i < N_TEXT_SPEEDS; i++) if (!strcmp(val, k_text_speed_keys[i])) g_settings.text_speed = i;
+        }
         else if (!strcmp(key, "diff_ohko")) g_settings.diff_ohko = atoi(val) != 0;
         else if (!strcmp(key, "diff_hero")) g_settings.diff_hero = atoi(val) != 0;
         else if (!strcmp(key, "timer")) g_settings.timer = atoi(val) != 0;
@@ -347,11 +355,11 @@ void settings_load(void) {
         else if (!strcmp(key, "shield")) col_parse(&g_settings.shield, val);
         else if (!strcmp(key, "skin")) col_parse(&g_settings.skin, val);
         else if (!strcmp(key, "leaves")) col_parse(&g_settings.leaves, val);
-        else if (!strcmp(key, "grass")) col_parse(&g_settings.grass, val);
+        else if (!strcmp(key, "grass")) col_parse(&g_settings.grass, val), col_fix(&g_settings.grass, COL_SLOT_GRASS);
         else if (!strcmp(key, "sand")) col_parse(&g_settings.sand, val);
         else if (!strcmp(key, "water")) col_parse(&g_settings.water, val);
         else if (!strcmp(key, "fences")) col_parse(&g_settings.fences, val);
-        else if (!strcmp(key, "walls")) col_parse(&g_settings.walls, val);
+        else if (!strcmp(key, "walls")) col_parse(&g_settings.walls, val), col_fix(&g_settings.walls, COL_SLOT_WALLS);
         else if (!strcmp(key, "houses")) col_parse(&g_settings.houses, val);
         else if (!strcmp(key, "screen_filter")) {
             for (int i = 0; i < N_SCREEN_FILTERS; i++) if (!strcmp(val, k_screen_filter_keys[i])) g_settings.screen_filter = i;
@@ -424,8 +432,8 @@ void settings_save(void) {
     fprintf(f, "dpad_mode = %s\n", g_settings.dpad_mode == DPAD_ITEMS ? "items" : g_settings.dpad_mode == DPAD_MOVE ? "move" : "nothing");
     fprintf(f, "touch_controls = %s\n", g_settings.touch_mode == 1 ? "always" : g_settings.touch_mode == 2 ? "off" : "auto");
     fprintf(f, "touch_opacity = %.2f\n", g_settings.touch_opacity);
-    fprintf(f, "touch_all = %d\ntouch_stick_fixed = %d\ntouch_hide_xy_hud = %d\n", g_settings.touch_all, g_settings.touch_stick_fixed,
-            g_settings.touch_hide_xy_hud);
+    fprintf(f, "touch_stick_fixed = %d\ntouch_hide_xy_hud = %d\ntouch_edit_button = %d\n", g_settings.touch_stick_fixed,
+            g_settings.touch_hide_xy_hud, g_settings.touch_edit_button);
     fprintf(f, "touch_size = %.2f\n", g_settings.touch_size);
     fprintf(f, "touch_dpad = %d\n", g_settings.touch_dpad);
     {
@@ -467,6 +475,7 @@ void settings_save(void) {
             g_settings.diff_hero);
     fprintf(f, "walk_speed = %.2f\n", g_settings.walk_speed);
     fprintf(f, "walk_speed_dungeons = %d\n", g_settings.walk_speed_dungeons);
+    fprintf(f, "text_speed = %s\n", k_text_speed_keys[g_settings.text_speed]);
     fprintf(f, "timer_position = %s\n", g_settings.timer_pos == TIMER_POS_RIGHT ? "right" : "left");
     fprintf(f, "timer = %d\nlivesplit = %d\nlivesplit_host = %s\n", g_settings.timer, g_settings.livesplit,
             g_settings.livesplit_host);

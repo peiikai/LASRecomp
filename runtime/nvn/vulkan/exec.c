@@ -6517,6 +6517,7 @@ static void prep_check(const PipeKey *k, uint64_t vh, uint64_t fh, const ShaderR
 // weather_vk.c). As renderer.m: the scene's draws give the camera and the depth they draw into (wx_*), and right after
 // the scene composite into the window image the weather goes on it
 static bool wx_composite, wx_mirror, wx_dm1;
+static bool pause_backdrop;  // (draw_: the pause screen's blurred scene, runtime/hle/pause_fill.c)
 static NvnTexture *wx_depth;
 static uint64_t wx_depth_frame;
 static float wx_zn, wx_zf;
@@ -6590,13 +6591,17 @@ static void weather_encode(void) {
 static NvnTexture *sc_color, *sc_depth;  // the scene pass's targets this frame (while its opaque things are drawn)
 static float sc_vp[16], sc_zn, sc_zf;
 static bool sc_dm1;
+static NvnTexture *sc_shmap;  // the game's shadow map this frame and its light (renderer.m: the cover's shadows)
+static float sc_lvp[16], sc_lzn, sc_lzf;
+static bool sc_ldm1;
+static uint64_t sc_lframe = ~0ull;
 static int sc_tree;  // this draw: a tree shaken bare, its slot 1..6 (stencil bits 1-3), 7 a face tree, 0: none
 static int sc_mark;  // this draw: 0 as the game has it, 1 the level's model, 2 anything else, 3 grass and bushes,
                      // 4 a character
 static uint64_t sc_frame = ~0ull, sc_done = ~0ull;
 static uint32_t wx_scene_w, wx_scene_h;  // (the scene image the composite read: the scene pass's target size)
 bool vk_snow_pass(VkImage color_img, VkImageView color, VkFormat fmt, uint32_t cw, uint32_t ch, VkImageView depth,
-                  VkImageView stencil, SnowFrame *sf);  // snow_vk.c
+                  VkImageView stencil, VkImageView shadow, SnowFrame *sf);  // snow_vk.c
 
 static int tex_class(NvnTexture *t) {  // (recolour.c's class of a texture the draw samples; 0: none)
     const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
@@ -6630,10 +6635,25 @@ static void snow_cover_encode(void) {
     sf.screen[3] = fminf((float)lroundf(sc_depth->height * dsy), (float)db->height);
     sf.flags[0] = nvn_window_origin() == 0, sf.flags[1] = sc_dm1;
     sf.zr[0] = sc_zn, sf.zr[1] = sc_zf - sc_zn;
+    // the game's shadow map, drawn earlier this frame (none with Shadows Off: the cover keeps the picture's light).
+    // LARECOMP_SNOW_SHADOWS=0 (A/B tests): not read, the cover as before
+    static int shadows = -1;
+    if (shadows < 0) shadows = !getenv("LARECOMP_SNOW_SHADOWS") || atoi(getenv("LARECOMP_SNOW_SHADOWS"));
+    TexBackend *lb = shadows && sc_lframe == renderer_exec_frame() && sc_shmap ? vk_tex(sc_shmap, true) : NULL;
+    VkImageView lv = lb && lb->samples == 1 && (lb->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? vk_view(sc_shmap, NULL, false, false, TEXTYPE_2D) : VK_NULL_HANDLE;
+    if (lv) {
+        float lsx, lsy;
+        renderer_texture_scale(sc_shmap, &lsx, &lsy);
+        memcpy(sf.lvp, sc_lvp, sizeof sf.lvp);
+        sf.shd[0] = 1, sf.shd[1] = sc_ldm1;
+        sf.shd[2] = fminf((float)lroundf(sc_shmap->width * lsx), (float)lb->width);
+        sf.shd[3] = fminf((float)lroundf(sc_shmap->height * lsy), (float)lb->height);
+        sf.shz[0] = sc_lzn, sf.shz[1] = sc_lzf - sc_lzn;
+    }
     vk_end_pass();
     st.rt_dirty = true;  // (the game's next draw opens its pass again: loads what this left)
     ss_forget();         // (the snow's passes set their own pipeline and dynamic state)
-    if (vk_snow_pass(cb_->image, cv, cb_->format, (uint32_t)cw, (uint32_t)ch, dv, sv, &sf)) {
+    if (vk_snow_pass(cb_->image, cv, cb_->format, (uint32_t)cw, (uint32_t)ch, dv, sv, lv, &sf)) {
         snap_reason = "snow cover";
         snapshots_invalidate(sc_color);
     }
@@ -6644,6 +6664,13 @@ static void snow_cover_check(CmdRec *r, bool indexed, Prog *pr) {
     sc_mark = sc_tree = 0;
     uint64_t frame = renderer_exec_frame();
     if (sc_done == frame || !st.rt.depth) return;
+    NvnTexture *sd = st.rt.depth;  // (the shadow pass: its light - renderer.m)
+    if (sc_lframe != frame && st.ubuf[0][1].addr && st.ubuf[0][1].size == 1024 &&
+        output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0)) {
+        memcpy(sc_lvp, (const float *)(uintptr_t)st.ubuf[0][1].addr, sizeof sc_lvp);
+        sc_lzn = st.depth_range[0][0], sc_lzf = st.depth_range[0][1], sc_ldm1 = nvn_depth_mode() == 0;
+        sc_shmap = sd, sc_lframe = frame;
+    }
     bool scene = st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->width == wx_scene_w &&
                  st.rt.color[0]->height == wx_scene_h && st.rt.depth->format == 0x35;
     bool blended = st.rt.ncolor && (st.color_state[0] & 1);
@@ -6778,9 +6805,9 @@ static void draw(CmdRec *r, bool indexed) {
     static bool hud_bars;  // (the scene composite was drawn, its bars not cleared yet)
     extern bool hud_corners_active(void);
     if (hud_bars && hud_bars_clear()) hud_bars = false;
-    wx_composite = wx_mirror = false;
+    wx_composite = wx_mirror = pause_backdrop = false;
     draw_(r, indexed);
-    hud_bars = (hud_bars || wx_composite) && hud_corners_active();
+    hud_bars = (hud_bars || wx_composite || pause_backdrop) && hud_corners_active();
     if (wx_composite) weather_encode();
     PROF_ADD(prof_draw);
 }
@@ -7183,6 +7210,9 @@ static void draw_(CmdRec *r, bool indexed) {
         bool fullscreen_fill = pr->fi->ntex == 0 && fullscreen_quad &&
                                !widescreen_ui_pane_partial((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1)) reads_scene = true;
+        extern bool pause_fill_backdrop(int w, int h);
+        if (reads_scene && fullscreen_quad && pr->fi->ntex == 1 && pause_fill_backdrop(tex_wh[1][0][0], tex_wh[1][0][1]))
+            pause_backdrop = true;
         static uint64_t wide_frame = ~0ull;
         extern uint64_t renderer_exec_frame(void);  // (the frame being translated)
         if (reads_scene) wide_frame = renderer_exec_frame();
@@ -7193,6 +7223,12 @@ static void draw_(CmdRec *r, bool indexed) {
             fade_fill = black || white;
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
+        if (!composite && fullscreen_quad) {  // (the pause screen's frosted layers over its blurred scene: the window too)
+            bool reshaped = false;
+            for (int i = 0; i < pr->fi->ntex && i < 64; i++) reshaped |= tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1;
+            extern bool pause_fill_scene_pane(bool reshaped, const float *u, uint64_t size);
+            composite = pause_fill_scene_pane(reshaped, (const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
+        }
         if (!composite) wide_frame = ~0ull;
         if (!composite) {
             int pw, ph;
@@ -7209,8 +7245,12 @@ static void draw_(CmdRec *r, bool indexed) {
             int pw_, ph_;
             pass_size(&pw_, &ph_);
             hud_k = (float)pw_ / (st.rt.color[0]->width * vp_sx), hud_ky = (float)ph_ / (st.rt.color[0]->height * vp_sy);
+            // (the pause screen's backdrop first: the HUD's stretch stays on for the pause screen's first frames, while
+            // the world still counts as on screen, and would keep the backdrop boxed until it went off)
+            extern const void *pause_fill_ubo(const float *u, uint64_t size, float k, float ky);
+            hud_u = pause_fill_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
             extern const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky);
-            hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
+            if (!hud_u) hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
         }
     }
     Range hud_ubuf = st.ubuf[0][0];
@@ -7483,9 +7523,9 @@ static void copy_buffer_to_texture(uint64_t src, const TexRefRec *dst) {
     TexBackend *b = vk_tex(t, false);  // prior CPU contents uploaded first
     renderer_mark_gpu_owned(t);
     if (b->aspect == (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) return;
-    if (b->astc_bw) {  // (blocks would need the CPU decode: not seen in the game yet)
+    if (b->astc_bw || b->cpu_bc) {  // (blocks would need the CPU decode: not seen in the game yet)
         static int nlog;
-        if (nlog++ < 5) LOG("[vk] buffer -> ASTC texture copy skipped (%ux%u)\n", t->width, t->height);
+        if (nlog++ < 5) LOG("[vk] buffer -> CPU-decoded (ASTC / BC) texture copy skipped (%ux%u)\n", t->width, t->height);
         return;
     }
     bool array = b->layers > 1 && b->depth == 1;
@@ -8355,15 +8395,16 @@ void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, floa
     rec_UpdateDescriptorSets(1, &w);
     rec_CmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, p);
     rec_CmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, present_layout, 0, 1, &ds, 0, NULL);
-    VkViewport vp = {vx, vy, vw, vh, 0, 1};
+    VkViewport vp = vk_sc_viewport(vx, vy, vw, vh);  // (turned with the swapchain's pre-rotation, as the triangle: pc[1])
     rec_CmdSetViewport(cb, 0, 1, &vp);
     float pc[12];
     memcpy(pc, pv, 32);
+    pc[1] = (float)g_vk.sc_quarter;
     screen_filter_params(pc + 8);
     rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48, pc);
     fullscreen_vertex_bind(cb);
     rec_CmdDraw(cb, 3, 1, 0, 0);
-    VkViewport full = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
+    VkViewport full = {0, 0, (float)g_vk.sc_phys.width, (float)g_vk.sc_phys.height, 0, 1};
     rec_CmdSetViewport(cb, 0, 1, &full);
 }
 

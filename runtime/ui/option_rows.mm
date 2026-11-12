@@ -421,10 +421,17 @@ bool opt_action(const char *label, const char *value, const char *desc, bool upp
 
 bool opt_colour(const char *label, CosColour *c, int slot, const char *desc) {
     int prev = c->pick;
+    col_fix(c, slot);
+    // (the palette less what this row doesn't offer: grass and walls have no Black)
     const char *names[N_COL];
-    for (int i = 0; i < N_COL; i++) names[i] = g_col_names[i];
-    (void)slot;
-    bool changed = opt_choice(label, &c->pick, names, N_COL, COL_DEFAULT, desc);
+    int idx[N_COL], n = 0, shown = 0;
+    for (int i = 0; i < N_COL; i++)
+        if (col_offered(i, slot)) {
+            if (i == c->pick) shown = n;
+            idx[n] = i, names[n++] = g_col_names[i];
+        }
+    bool changed = opt_choice(label, &shown, names, n, COL_DEFAULT, desc);
+    c->pick = idx[shown];
     if (g_collect) return false;
     if (changed && c->pick == COL_CUSTOM && prev != COL_CUSTOM)  // (Custom starts from the colour it was on)
         c->rgb = prev > COL_DEFAULT && prev < COL_RANDOM ? g_col_rgb[prev] : (c->rgb ? c->rgb : 0xF2F0EA);

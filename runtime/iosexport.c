@@ -30,22 +30,27 @@ const char *larecomp_version(void);  // runtime/ui/launcher.mm
 #define SEP "/"
 #endif
 
-bool iosexport_available(const char *kit, char *why, size_t why_size) {
-    if (!gamebuild_ios_available(kit, why, why_size)) return false;
+// The kit opened for the export (one reader for the check, the build and the .ipa), or NULL: why.
+static ZipReader *kit_open(const char *kit, char *why, size_t why_size) {
+    ZipReader *z = gamebuild_ios_kit_open(kit, why, why_size);
+    if (!z) return NULL;
     // A kit from another release would make an .ipa that only fails on the device: refused here, both versions named.
-    char zwhy[256];
-    ZipReader *z = zip_open(kit, zwhy, sizeof zwhy);
-    if (!z) { snprintf(why, why_size, "can't read the iOS kit: %s", zwhy); return false; }
     int i = zip_find(z, "version.txt");
     size_t size = 0;
     char *v = i >= 0 ? zip_read(z, i, &size) : NULL;
-    zip_close(z);
     if (v) v[strcspn(v, "\r\n")] = 0;
     bool same = v && !strcmp(v, larecomp_version());
     if (!same) snprintf(why, why_size, "this iOS kit is from %s, and this is LAS Recomp %s: choose the kit of the same release",
                         v && *v ? v : "another release", larecomp_version());
     free(v);
-    return same;
+    if (!same) { zip_close(z); return NULL; }
+    return z;
+}
+
+bool iosexport_available(const char *kit, char *why, size_t why_size) {
+    ZipReader *z = kit_open(kit, why, why_size);
+    zip_close(z);
+    return z != NULL;
 }
 
 // The iOS build's own folder, <data root>/cache/ios-build (its .gamebuild/ and library apart from this machine's;
@@ -123,23 +128,24 @@ void iosexport_default_path(char *out, size_t n) {
 
 bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size_t why_size) {
     uint64_t t0 = plat_now_ns();
-    if (!iosexport_available(o->kit, why, why_size)) return false;
+    ZipReader *kit = kit_open(o->kit, why, why_size);
+    if (!kit) return false;
 
     // 1. the game code library for iOS (<data root>/cache/ios-build/lasgame-ios.dylib; its own build cache)
     char dir[1100];
-    if (!ios_dir(game_dir, dir, sizeof dir, why, why_size)) return false;
-    GameBuildOpts b = {o->progress, o->jobs, o->cancelled, GAMEBUILD_IOS, o->kit};
-    if (!gamebuild_run(dir, &b, why, why_size)) return false;
+    GameBuildOpts b = {o->progress, o->jobs, o->cancelled, GAMEBUILD_IOS, kit};
+    if (!ios_dir(game_dir, dir, sizeof dir, why, why_size) || !gamebuild_run(dir, &b, why, why_size)) {
+        zip_close(kit);
+        return false;
+    }
 
-    // 2. the .ipa: the kit's Payload/ entries as they are (symlinks included, no recompression) +
+    // 2. the .ipa: the kit's Payload/ entries as they are (no recompression) +
     //    Payload/LAS Recomp.app/Frameworks/LASGame.framework/{LASGame,LASGame.id}
     if (o->progress) o->progress(0.97, "Writing the .ipa...");
     char tmp[1200], lib[1100], id[1100], zwhy[256];
     snprintf(tmp, sizeof tmp, "%s.tmp", o->out_ipa);
     snprintf(lib, sizeof lib, "%s" SEP "lasgame-ios.dylib", dir);
     snprintf(id, sizeof id, "%s.id", lib);
-    ZipReader *kit = zip_open(o->kit, zwhy, sizeof zwhy);
-    if (!kit) { snprintf(why, why_size, "can't read the iOS kit: %s", zwhy); return false; }
     ZipWriter *w = zip_create(tmp, zwhy, sizeof zwhy);
     if (!w) { zip_close(kit); snprintf(why, why_size, "can't write %s: %s", tmp, zwhy); return false; }
     bool ok = true;

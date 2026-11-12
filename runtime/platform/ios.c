@@ -4,11 +4,13 @@
 // The pieces shared with macOS (timers, the thread policies, symbols, the crash handler, plat_remove_tree, iCloud
 // Drive) are darwin_common.h's.
 #include <CoreFoundation/CoreFoundation.h>
+#include <SDL3/SDL.h>
 #include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/vm_map.h>
 #include <os/proc.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,6 +105,7 @@ void plat_init(void) {
         session_log_open(dir, g_log_path, sizeof g_log_path);
         if (g_vm_report_len) fputs(g_vm_report, stderr);
     }
+    raise_open_file_limit();
     int ent = plat_ios_memory_entitled();
     fprintf(stderr, "[memory] limit %llu MB (available + footprint), device %lld MB, increased-memory-limit %s\n",
             (unsigned long long)(memory_limit() >> 20), (long long)(sysctl_int("hw.memsize") >> 20),
@@ -209,14 +212,25 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
 
 void plat_exec(char *const argv[]) { (void)argv; }  // (no exec on iOS: the caller reports the failure)
 
-// A fatal error: explained into the log (an alert needs the main thread and a window, which may be what failed).
-void plat_fatal_notice(void) {
-    char text[1600];
-    rt_crash_explain(text, sizeof text, g_log_path);
-    fprintf(stderr, "%s\n", text);
-    fflush(stderr);
+// A fatal error: what happened in plain words (runtime/crash_explain.c), in SDL's box before the app goes. Only the
+// main thread can show it, and it may be waiting for the thread that failed: given 2 s to take the box up, else the
+// app ends without it.
+static atomic_int g_fatal_box;  // 1: on screen, 2: closed
+static void SDLCALL fatal_box(void *text) {
+    atomic_store(&g_fatal_box, 1);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", text, NULL);
+    atomic_store(&g_fatal_box, 2);
 }
-
-void plat_notice(const char *text) { fprintf(stderr, "[notice] %s\n", text); }
+void plat_fatal_notice(void) {
+    static char text[1600];
+    rt_crash_explain(text, sizeof text, g_log_path);
+    if (!g_log_path[0]) return;
+    fflush(stderr);
+    if (!SDL_RunOnMainThread(fatal_box, text, false)) return;
+    for (int ms = 0; atomic_load(&g_fatal_box) < 2; ms += 10) {
+        if (ms >= 2000 && !atomic_load(&g_fatal_box)) break;
+        usleep(10000);
+    }
+}
 
 // (child processes: runtime/platform/ios_python.m - Python scripts as threads of the embedded interpreter)

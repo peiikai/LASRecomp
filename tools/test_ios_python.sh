@@ -27,11 +27,14 @@ for i in $(seq 1 60); do
     sleep 2
     rm -rf "$W/log"; ios fsync --udid="$UDID" --app="$BUNDLE_ID" pull --srcPath=Documents/lasrecomp.log --dstPath="$W/log" >/dev/null 2>&1 || true
     LOG=$(find "$W/log" -name lasrecomp.log 2>/dev/null | head -1)
-    [ -n "$LOG" ] && grep -q "^\[py\] kill:\|^\[py\] generator exit [1-9]\|^\[py\] selftest FAILED" "$LOG" && break
+    [ -n "$LOG" ] && grep -q "^\[py\] kill:\|^\[py\] generator exit [1-9]\|working directory MOVED\|^\[py\] selftest FAILED" "$LOG" && break
 done
 [ -n "${LOG:-}" ] || { echo "no Documents/lasrecomp.log on the device"; exit 1; }
 grep "^\[py\]" "$LOG"
 grep -q "^\[py\] selftest ok" "$LOG" || { echo "FAIL: self-test"; exit 1; }
+# (a script as a process, runtime/platform/ios_pyproc.py: its working directory, environment and children its own)
+grep -q "^\[py\] process: ok" "$LOG" || { echo "FAIL: a script as a process"; exit 1; }
+! grep -q "working directory MOVED" "$LOG" || { echo "FAIL: a script moved the app's working directory"; exit 1; }
 [ "$(grep -c "^\[py\] generator exit 0" "$LOG")" = 2 ] || { echo "FAIL: generator"; exit 1; }
 grep -q "^\[py\] second run: .* identical" "$LOG" || { echo "FAIL: the second run differs"; exit 1; }
 grep -q "^\[py\] kill: ok" "$LOG" || { echo "FAIL: kill"; exit 1; }

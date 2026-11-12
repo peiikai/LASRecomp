@@ -23,6 +23,9 @@
 #include "../interp.h"
 #include <pthread.h>
 #include <dirent.h>
+#ifdef __ANDROID__
+#include <sys/sysinfo.h>  // (android_import_ram_ok)
+#endif
 
 VkG g_vk;
 static SDL_Window *window;
@@ -49,6 +52,14 @@ static int import_heap_room(const ImportHeap *h, uint32_t n, uint64_t *room) {
 // tried once at the start (exec.c whole_import_probe_oom), with buffer device addresses enabled so lazy chunks can take
 // over. Machines with more (an RTX with 16 GB or more of RAM) skip the probe and keep the device as before.
 #define IMPORT_PROBE_BELOW (2 * HEAP_MAX)
+// Android: whether the phone has the RAM to import the whole heap. The import pins every page of the heap (HEAP_MAX,
+// committed at once) for as long as the game runs, and the low-memory killer counts them against the app; the Vulkan
+// heap budget doesn't know that. Issue #693 (Galaxy S25 FE, 7 GB, Xclipse 940): heap 5316 MB, budget 5050, the probe
+// (whole_import_probe_oom) passed and the real import was the log's last line - the process was killed with no
+// signal. Below this the heap isn't imported and shader global memory goes through copies (exec.c gmir_), as an
+// Android fork did on that phone, which played. 8 GB phones report about 7-7.5 GB; 12 GB ones about 11.
+#define ANDROID_IMPORT_RAM_MIN (10ull << 30)
+static bool android_import_ram_ok(uint64_t ram) { return !ram || ram >= ANDROID_IMPORT_RAM_MIN; }  // (0: unknown)
 
 // Whether one import of the whole heap fits its system memory heap (import_heap_room), from the physical device;
 // *probe: it fits, but not by much (IMPORT_PROBE_BELOW), or LARECOMP_VK_SIM_HEAP_OOM=1 (the probe then fails).
@@ -618,6 +629,19 @@ static void create_device(void) {
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
     g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
     if (getenv("LARECOMP_VK_NO_HOST_IMPORT")) g_vk.host_import = false;  // (tests the copies, exec.c gmir_, on any GPU)
+#ifdef __ANDROID__
+    {   // (android_import_ram_ok; LARECOMP_VK_HOST_IMPORT=1: import anyway)
+        struct sysinfo si;
+        uint64_t ram = sysinfo(&si) == 0 ? (uint64_t)si.totalram * si.mem_unit : 0;
+        const char *e = getenv("LARECOMP_VK_HOST_IMPORT");
+        if (g_vk.host_import && !(e && atoi(e)) && !android_import_ram_ok(ram)) {
+            g_vk.host_import = false;
+            LOG("[vk] guest heap: %llu MB of RAM, under %llu MB: no heap import (it would pin %llu MB), shader global "
+                "memory through copies\n", (unsigned long long)(ram >> 20), (unsigned long long)(ANDROID_IMPORT_RAM_MIN >> 20),
+                (unsigned long long)(HEAP_MAX >> 20));
+        }
+    }
+#endif
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
@@ -1040,18 +1064,32 @@ static void create_swapchain(void) {
     int w, h;
     SDL_GetWindowSizeInPixels(window, &w, &h);
 #ifdef __ANDROID__
-    // The surface reports the panel's own (portrait) orientation; the activity is landscape: images of the window's
-    // size, turned by the compositor (rotating in the app instead, pre-rotation, would spare it that). From
-    // LASRecompAndroid by mamcjr (MIT).
+    // The surface reports the panel's own (portrait) orientation; the activity is landscape. Pre-rotation: the images
+    // in the panel's orientation with its transform, everything drawn into them turned (sc_quarter: vk_sc_rect /
+    // vk_sc_viewport, and the present, ImGui and menu piece vertex shaders). Otherwise the images are the window's
+    // size and SurfaceFlinger turns them with the GPU at every present: on the Retroid Pocket 5 (Adreno 650) the
+    // game's layer was CLIENT composited, ROT_90, while the system bars went to the display hardware. Ported from
+    // Nycolazs's LASRecomp-Android-Plus (MIT), which measured ~13% of an S20 FE's GPU time for that composition.
+    // LARECOMP_VK_PRETRANSFORM=0: the system turns them (the earlier way, from mamcjr's LASRecompAndroid, MIT).
     VkExtent2D ext = {(uint32_t)w, (uint32_t)h};
     VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    LOG("[vk] swapchain: surface %ux%u transform %#x, window %dx%d\n", caps.currentExtent.width, caps.currentExtent.height,
-        caps.currentTransform, w, h);
+    static int pre = -1;
+    if (pre < 0) { const char *e = getenv("LARECOMP_VK_PRETRANSFORM"); pre = !e || atoi(e) != 0; }
+    g_vk.sc_quarter = 0;
+    if (pre && (caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ||
+                caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) &&
+        (caps.supportedTransforms & caps.currentTransform)) {
+        transform = caps.currentTransform;
+        g_vk.sc_quarter = transform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ? 1 : 3;
+    }
+    LOG("[vk] swapchain: surface %ux%u transform %#x, window %dx%d%s\n", caps.currentExtent.width, caps.currentExtent.height,
+        caps.currentTransform, w, h, g_vk.sc_quarter ? ", pre-rotated" : pre ? "" : " (LARECOMP_VK_PRETRANSFORM=0)");
 #else
     VkExtent2D ext = caps.currentExtent.width != UINT32_MAX ? caps.currentExtent : (VkExtent2D){(uint32_t)w, (uint32_t)h};
     VkSurfaceTransformFlagBitsKHR transform = caps.currentTransform;
 #endif
     if (!ext.width || !ext.height) return;  // minimised
+    VkExtent2D phys = g_vk.sc_quarter ? (VkExtent2D){ext.height, ext.width} : ext;
     uint32_t nf = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(g_vk.phys, g_vk.surface, &nf, NULL);
     VkSurfaceFormatKHR fmts[64];
@@ -1071,7 +1109,7 @@ static void create_swapchain(void) {
     VkSwapchainKHR old = g_vk.swapchain;
     VkSwapchainCreateInfoKHR ci = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = g_vk.surface, .minImageCount = count,
-        .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = ext, .imageArrayLayers = 1,
+        .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = phys, .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE, .preTransform = transform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = present_mode(), .clipped = VK_TRUE,
@@ -1096,12 +1134,13 @@ static void create_swapchain(void) {
     VK_CHECK(vkCreateSwapchainKHR(g_vk.dev, &ci, NULL, &g_vk.swapchain));
 #endif
     static const char *const modes[] = {"immediate", "mailbox", "fifo", "fifo-relaxed"};
-    LOG("[vk] swapchain %ux%u, %u images, %s\n", ext.width, ext.height, count,
+    LOG("[vk] swapchain %ux%u, %u images, %s\n", phys.width, phys.height, count,
         ci.presentMode < 4 ? modes[ci.presentMode] : "other present mode");
     for (uint32_t i = 0; i < g_vk.sc_count; i++) vkDestroyImageView(g_vk.dev, g_vk.sc_views[i], NULL);
     if (old) vkDestroySwapchainKHR(g_vk.dev, old, NULL);
     g_vk.sc_format = sf.format;
     g_vk.sc_extent = ext;
+    g_vk.sc_phys = phys;
 #ifdef __ANDROID__
     VK_CHECK(vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, NULL));
     if (g_vk.sc_count > VK_SC_MAX)
@@ -1244,13 +1283,15 @@ bool vk_frame_begin(const float clear[4]) {
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
                                     .clearValue.color.float32 = {clear[0], clear[1], clear[2], clear[3]}};
-    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_extent}, .layerCount = 1,
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_phys}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
     rec_CmdBeginRendering(cb, &ri);
-    VkViewport vp = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
-    VkRect2D sc = {{0, 0}, g_vk.sc_extent};
+    VkViewport vp = {0, 0, (float)g_vk.sc_phys.width, (float)g_vk.sc_phys.height, 0, 1};
+    VkRect2D sc = {{0, 0}, g_vk.sc_phys};
     rec_CmdSetViewport(cb, 0, 1, &vp);
     rec_CmdSetScissor(cb, 0, 1, &sc);
+    extern void vk_imgui_prerotation(int quarter);  // (imgui_glue.cpp: the UI drawn into this image turned like it)
+    vk_imgui_prerotation(g_vk.sc_quarter);
     cur_frame.ok = true;
     return true;
 }
@@ -1267,16 +1308,30 @@ void vk_frame_resume(void) {
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = g_vk.sc_views[cur_frame.image],
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
-    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_extent}, .layerCount = 1,
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_phys}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
     rec_CmdBeginRendering(cb, &ri);
-    VkViewport vp = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
-    VkRect2D sc = {{0, 0}, g_vk.sc_extent};
+    VkViewport vp = {0, 0, (float)g_vk.sc_phys.width, (float)g_vk.sc_phys.height, 0, 1};
+    VkRect2D sc = {{0, 0}, g_vk.sc_phys};
     rec_CmdSetViewport(cb, 0, 1, &vp);
     rec_CmdSetScissor(cb, 0, 1, &sc);
 }
 
 VkExtent2D vk_frame_extent(void) { return g_vk.sc_extent; }
+// Pre-rotation (sc_quarter): window coordinates (sc_extent, y down) to the swapchain image's. A quarter turn of 1 is
+// clip space (x, y) -> (-y, x), 3 is (y, -x) (the vertex shaders); these turn the rects to match.
+VkRect2D vk_sc_rect(int32_t x, int32_t y, uint32_t w, uint32_t h) {
+    int32_t W = (int32_t)g_vk.sc_extent.width, H = (int32_t)g_vk.sc_extent.height;
+    if (g_vk.sc_quarter == 1) return (VkRect2D){{H - y - (int32_t)h, x}, {h, w}};
+    if (g_vk.sc_quarter == 3) return (VkRect2D){{y, W - x - (int32_t)w}, {h, w}};
+    return (VkRect2D){{x, y}, {w, h}};
+}
+VkViewport vk_sc_viewport(float x, float y, float w, float h) {
+    float W = (float)g_vk.sc_extent.width, H = (float)g_vk.sc_extent.height;
+    if (g_vk.sc_quarter == 1) return (VkViewport){H - y - h, x, h, w, 0, 1};
+    if (g_vk.sc_quarter == 3) return (VkViewport){y, W - x - w, h, w, 0, 1};
+    return (VkViewport){x, y, w, h, 0, 1};
+}
 // The window image's command buffer for direct recording (the start screen's ImGui): the recorder has recorded
 // everything queued before it, and records what is queued after it.
 void *vk_frame_cmd(void) {
@@ -1365,7 +1420,7 @@ void vk_overlay_end(void *window_cmd, void *cmd) {
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT,
-                          .renderArea = {{0, 0}, g_vk.sc_extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
+                          .renderArea = {{0, 0}, g_vk.sc_phys}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
     rec_CmdBeginRendering(cb, &ri);
     rec_CmdExecuteCommands(cb, 1, &sec);
     cur_frame.secondary = true;
@@ -1373,7 +1428,7 @@ void vk_overlay_end(void *window_cmd, void *cmd) {
 }
 
 static void save_window_image(VkCommandBuffer cb, VkSpan *out) {
-    uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
+    uint32_t w = g_vk.sc_phys.width, h = g_vk.sc_phys.height;
     *out = vk_readback((uint64_t)w * h * 4);
     image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkBufferImageCopy rg = {.bufferOffset = out->off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
@@ -1401,11 +1456,21 @@ void vk_frame_end(const char *shot_path) {
     if (shot_path) {
         vk_wait_seq(seq);
         uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
-        uint8_t *px = shot.ptr;
+        uint8_t *px = shot.ptr, *turned = NULL;
+        if (g_vk.sc_quarter) {  // (the pre-rotated image turned back into the window's shape: W x H from H x W)
+            turned = malloc((uint64_t)w * h * 4);
+            for (uint32_t y = 0; y < h && turned; y++)
+                for (uint32_t x = 0; x < w; x++) {
+                    uint32_t qx = g_vk.sc_quarter == 1 ? h - 1 - y : y, qy = g_vk.sc_quarter == 1 ? x : w - 1 - x;
+                    memcpy(turned + ((uint64_t)y * w + x) * 4, px + ((uint64_t)qy * h + qx) * 4, 4);
+                }
+            if (turned) px = turned;
+        }
         bool bgr = g_vk.sc_format == VK_FORMAT_B8G8R8A8_UNORM || g_vk.sc_format == VK_FORMAT_B8G8R8A8_SRGB;
         for (uint64_t i = 0; bgr && i < (uint64_t)w * h; i++) { uint8_t t = px[i * 4]; px[i * 4] = px[i * 4 + 2]; px[i * 4 + 2] = t; }
         for (uint64_t i = 0; i < (uint64_t)w * h; i++) px[i * 4 + 3] = 255;
         vk_save_png(shot_path, px, w, h);
+        free(turned);
     }
 }
 

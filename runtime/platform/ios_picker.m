@@ -110,9 +110,12 @@ bool ios_OpenURL(const char *url) {
         NSURL *u = [NSURL URLWithString:@(url)];
         BOOL dir = NO;
         if (u.isFileURL && [NSFileManager.defaultManager fileExistsAtPath:u.path isDirectory:&dir] && dir) {
-            NSString *s = [@"shareddocuments://" stringByAppendingString:u.path];
-            [UIApplication.sharedApplication openURL:[NSURL URLWithString:s] options:@{} completionHandler:^(BOOL ok) {
-                if (!ok) fprintf(stderr, "[picker] Files app: couldn't open %s\n", s.UTF8String);
+            // (the URL's own percent-encoding kept: a path with a space in it is no URL before iOS 17)
+            NSURLComponents *c = [NSURLComponents componentsWithURL:u resolvingAgainstBaseURL:NO];
+            c.scheme = @"shareddocuments";
+            NSURL *files = c.URL;
+            [UIApplication.sharedApplication openURL:files options:@{} completionHandler:^(BOOL ok) {
+                if (!ok) fprintf(stderr, "[picker] Files app: couldn't open %s\n", files.absoluteString.UTF8String);
             }];
             return true;
         }

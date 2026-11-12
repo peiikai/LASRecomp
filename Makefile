@@ -2,7 +2,7 @@
 # macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
-# iOS: `make PLATFORM=ios` on a Mac (see docs/ios.md): Metal renderer, the game code linked into the app.
+# iOS: `make PLATFORM=ios` on a Mac, after `make deps-ios`: Metal renderer, the game code a framework in the app.
 UNAME := $(shell uname -s)
 comma := ,
 ifneq ($(filter MINGW% MSYS% CYGWIN% Windows_NT,$(UNAME) $(OS)),)
@@ -224,7 +224,7 @@ GAMELIB_BASE_SRCS := runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/game
 GAMELIB_BASE_ID := $(shell (cat $(GAMELIB_BASE_SRCS); echo '$(GENFLAGS) $(GAMELIB_SHARED)') | \
                      (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 # The iOS library the start screen can build on any desktop (runtime/gamebuild.c GAMEBUILD_IOS): the id and flags of
-# `make PLATFORM=ios` - the base GENFLAGS at the iOS guest base, none of this host's additions (-march, -fPIC,
+# `make PLATFORM=ios` - the base GENFLAGS for the moving window (DYN_BASE), none of this host's additions (-march, -fPIC,
 # _FILE_OFFSET_BITS) - so the exported app's runtime accepts it whichever desktop built it
 GENFLAGS_IOS := $(GENFLAGS_BASE) -DLARECOMP_DYN_BASE
 GAMELIB_IOS_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS_IOS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)

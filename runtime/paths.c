@@ -317,6 +317,12 @@ static void finish_moves(const char *root, void (*progress)(int, double)) {
                 else remove(e);
                 if (progress) progress(2, (double)(i + 1) / N_ENTRIES);
             }
+            // Windows never removes a process's working folder: a move from the start screen still runs in the old
+            // one (rt_paths_init's chdir), which stayed behind empty (#736's test). The restart leaves it anyway.
+            char cwd[1024], rc[1100], ro[1100];
+            if (getcwd(cwd, sizeof cwd) && resolve(cwd, rc, sizeof rc) && resolve(other, ro, sizeof ro) &&
+                within(rc, ro) && chdir(root) != 0)
+                fprintf(stderr, "[paths] can't leave %s\n", other);
             if (!same_dir(other, g_home)) rmdir(other);  // (only if empty)
         }
         remove(note);
@@ -518,6 +524,26 @@ static bool has_entries(const char *dir) {
     return false;
 }
 
+// LAS Recomp's own data: its settings (written by every PLAY since Beta 3), a move's note, or saves with seeds or game
+// files beside them. One of DATA_ENTRIES alone is not (#736): another program's cache/, fonts/ or save/ was taken as
+// ours, used as the data folder with no Move offered, and taken along by a later move.
+static bool has_own_data(const char *dir) {
+    static const char *const own[] = {"larecomp.ini", NOTE_TO, NOTE_FROM};
+    char p[1100];
+    for (size_t i = 0; i < sizeof own / sizeof *own; i++) {
+        join(p, sizeof p, dir, own[i]);
+        if (exists(p)) return true;
+    }
+    static const char *const beside_save[] = {"rando", "extracted"};
+    join(p, sizeof p, dir, "save");
+    if (!is_dir(p)) return false;
+    for (size_t i = 0; i < sizeof beside_save / sizeof *beside_save; i++) {
+        join(p, sizeof p, dir, beside_save[i]);
+        if (is_dir(p)) return true;
+    }
+    return false;
+}
+
 // nothing in it but what file managers leave behind
 static bool empty_dir(const char *dir) {
     DIR *d = opendir(dir);
@@ -560,7 +586,7 @@ static unsigned long long entries_size(const char *dir) {
 static bool usable_dir(const char *dir) {
     char p[1100];
     join(p, sizeof p, dir, MARK_PARTIAL);
-    return !is_dir(dir) || has_entries(dir) || exists(p) || empty_dir(dir);
+    return !is_dir(dir) || has_own_data(dir) || exists(p) || empty_dir(dir);
 }
 
 void rt_data_target(const char *picked, RtDataTarget *t) {
@@ -576,7 +602,8 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
     if (same_dir(r, g_home) || usable_dir(r)) snprintf(t->path, sizeof t->path, "%s", r);
     else join(t->path, sizeof t->path, r, "LAS Recomp");
     join(p, sizeof p, t->path, MARK_PARTIAL);
-    t->has_data = has_entries(t->path) && !exists(p);
+    // (the platform's folder is LAS Recomp's own: anything of ours in it is data)
+    t->has_data = (same_dir(t->path, g_home) ? has_entries(t->path) : has_own_data(t->path)) && !exists(p);
     t->bytes = entries_size(g_root);
     t->free = free_space(r);
     struct stat a, b;
@@ -795,8 +822,9 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
         snprintf(err, n, LN("That folder is inside the data folder."));
         return false;
     }
-    if (has_entries(abs_to)) {
-        snprintf(err, n, LN("That folder already has LAS Recomp data."));
+    if (has_entries(abs_to)) {  // (never merged into what's there: another program's cache/ either)
+        bool ours = same_dir(abs_to, g_home) || has_own_data(abs_to);
+        snprintf(err, n, "%s", ours ? LN("That folder already has LAS Recomp data.") : LN("Choose an empty folder."));
         return false;
     }
     SDL_SetAtomicInt(&g_move_cancel, 0);

@@ -37,8 +37,8 @@ harness = r'''
 #define FRAMES 3
 #define LOG(...) fprintf(stderr, __VA_ARGS__)
 #define VK_CHECK(x) do { VkResult r_ = (x); assert(r_ == VK_SUCCESS); } while (0)
-static struct { VkDevice dev; uint32_t qfam; VkFormat sc_format; VkExtent2D sc_extent; VkImageView sc_views[8]; } g_vk = {
-    (VkDevice)0x10, 0, VK_FORMAT_B8G8R8A8_UNORM, {1280, 800}, {(VkImageView)0x100, (VkImageView)0x101}};
+static struct { VkDevice dev; uint32_t qfam; VkFormat sc_format; VkExtent2D sc_extent, sc_phys; VkImageView sc_views[8]; } g_vk = {
+    (VkDevice)0x10, 0, VK_FORMAT_B8G8R8A8_UNORM, {1280, 800}, {1280, 800}, {(VkImageView)0x100, (VkImageView)0x101}};  // (sc_phys: not pre-rotated)
 typedef struct { uint32_t image; VkSemaphore acquired; bool ok, secondary; uint64_t id; } Frame;
 static Frame cur_frame;
 static int slot;
