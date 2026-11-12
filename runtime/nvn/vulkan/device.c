@@ -23,6 +23,9 @@
 #include "../interp.h"
 #include <pthread.h>
 #include <dirent.h>
+#ifdef __ANDROID__
+#include <sys/sysinfo.h>  // (android_import_ram_ok)
+#endif
 
 VkG g_vk;
 static SDL_Window *window;
@@ -49,6 +52,14 @@ static int import_heap_room(const ImportHeap *h, uint32_t n, uint64_t *room) {
 // tried once at the start (exec.c whole_import_probe_oom), with buffer device addresses enabled so lazy chunks can take
 // over. Machines with more (an RTX with 16 GB or more of RAM) skip the probe and keep the device as before.
 #define IMPORT_PROBE_BELOW (2 * HEAP_MAX)
+// Android: whether the phone has the RAM to import the whole heap. The import pins every page of the heap (HEAP_MAX,
+// committed at once) for as long as the game runs, and the low-memory killer counts them against the app; the Vulkan
+// heap budget doesn't know that. Issue #693 (Galaxy S25 FE, 7 GB, Xclipse 940): heap 5316 MB, budget 5050, the probe
+// (whole_import_probe_oom) passed and the real import was the log's last line - the process was killed with no
+// signal. Below this the heap isn't imported and shader global memory goes through copies (exec.c gmir_), as an
+// Android fork did on that phone, which played. 8 GB phones report about 7-7.5 GB; 12 GB ones about 11.
+#define ANDROID_IMPORT_RAM_MIN (10ull << 30)
+static bool android_import_ram_ok(uint64_t ram) { return !ram || ram >= ANDROID_IMPORT_RAM_MIN; }  // (0: unknown)
 
 // Whether one import of the whole heap fits its system memory heap (import_heap_room), from the physical device;
 // *probe: it fits, but not by much (IMPORT_PROBE_BELOW), or LARECOMP_VK_SIM_HEAP_OOM=1 (the probe then fails).
@@ -618,6 +629,19 @@ static void create_device(void) {
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
     g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
     if (getenv("LARECOMP_VK_NO_HOST_IMPORT")) g_vk.host_import = false;  // (tests the copies, exec.c gmir_, on any GPU)
+#ifdef __ANDROID__
+    {   // (android_import_ram_ok; LARECOMP_VK_HOST_IMPORT=1: import anyway)
+        struct sysinfo si;
+        uint64_t ram = sysinfo(&si) == 0 ? (uint64_t)si.totalram * si.mem_unit : 0;
+        const char *e = getenv("LARECOMP_VK_HOST_IMPORT");
+        if (g_vk.host_import && !(e && atoi(e)) && !android_import_ram_ok(ram)) {
+            g_vk.host_import = false;
+            LOG("[vk] guest heap: %llu MB of RAM, under %llu MB: no heap import (it would pin %llu MB), shader global "
+                "memory through copies\n", (unsigned long long)(ram >> 20), (unsigned long long)(ANDROID_IMPORT_RAM_MIN >> 20),
+                (unsigned long long)(HEAP_MAX >> 20));
+        }
+    }
+#endif
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;

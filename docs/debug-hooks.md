@@ -238,6 +238,7 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_VK_NO_GMEM` | 1 | Don't bind the guest heap to shaders as storage buffers. |
 | `LARECOMP_VK_GMEM_LAZY` | 0 / 1 | Import the heap to the GPU in chunks on demand. Default on where one import can't hold it. |
 | `LARECOMP_VK_NO_HOST_IMPORT` | 1 | Act as if the driver can't import host memory (tests the copy path on any GPU). |
+| `LARECOMP_VK_HOST_IMPORT` | 1 | Android: import the guest heap even on a phone with under 10 GB of RAM (by default those use the copy path, issue #693). |
 | `LARECOMP_VK_CPU_BC` | 1 | Decode BC textures on the CPU even where the driver lists them (tests the path used on drivers without BC4, BC5 or BC7, issue #693). |
 | `LARECOMP_VK_PRETRANSFORM` | 0 | Android: hand the system landscape window images to turn, instead of drawing them in the panel's own orientation (pre-rotation, the default). |
 | `LARECOMP_VK_RECORDER` | 0 / 1 | Record Vulkan commands on a separate thread. Default on, except on Mali. |
