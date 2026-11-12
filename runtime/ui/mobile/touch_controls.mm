@@ -115,16 +115,20 @@ static void defaults(float w, float h) {
     g_ctl[C_B] = {fx - 0.01f * s, fy + gap, br, BIT(BTN_B), "B", false};
     g_ctl[C_X] = {fx, fy - gap, br, BIT(BTN_X), "X", false};
     g_ctl[C_Y] = {fx - gap, fy, br, BIT(BTN_Y), "Y", false};
-    float sr = 0.064f * s;  // shoulders: round, in the top corners (ZL / ZR beside them, off unless chosen)
-    g_ctl[C_L] = {0.12f * s, 0.30f * s, sr, BIT(BTN_L), "L", false};  // (below the hearts / the fps counter)
-    g_ctl[C_R] = {w - 0.12f * s, 0.30f * s, sr, BIT(BTN_R), "R", false};
+    // L and R on the diamond's diagonal, as far out as each other (0.27), each angled to clear its two neighbours
+    // evenly: R between X and A (up right), L between Y and B (down left). + straight above R, - out past L along
+    // the bottom. ZL / ZR: never shown (wanted)
+    float sr = 0.064f * s, d = 0.27f * s;
+    const float ra = -46 * 3.14159265f / 180, la = 137 * 3.14159265f / 180;
+    g_ctl[C_R] = {fx + cosf(ra) * d, fy + sinf(ra) * d, sr, BIT(BTN_R), "R", false};
+    g_ctl[C_L] = {fx + cosf(la) * d, fy + sinf(la) * d, sr, BIT(BTN_L), "L", false};
     g_ctl[C_ZL] = {0.26f * s, 0.10f * s, sr * 0.8f, BIT(BTN_ZL), "ZL", false};
     g_ctl[C_ZR] = {w - 0.26f * s, 0.10f * s, sr * 0.8f, BIT(BTN_ZR), "ZR", false};
     float mr = 0.040f * s;
-    g_ctl[C_MINUS] = {w * 0.5f - 0.13f * s, 0.06f * s, mr, BIT(BTN_MINUS), "-", false};
-    g_ctl[C_PLUS] = {w * 0.5f + 0.20f * s, 0.06f * s, mr, BIT(BTN_PLUS), "+", false};
-    g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};
-    g_ctl[C_EDIT] = {w * 0.5f + 0.10f * s, 0.06f * s, mr * 0.8f, 0, "", false};  // (the layout editor: between the menu's and +)
+    g_ctl[C_PLUS] = {g_ctl[C_R].x, fy - 0.42f * s, mr, BIT(BTN_PLUS), "+", false};
+    g_ctl[C_MINUS] = {fx - 0.43f * s, fy + 0.23f * s, mr, BIT(BTN_MINUS), "-", false};
+    g_ctl[C_MENU] = {w * 0.5f, 0.06f * s, mr, 0, "", false};  // (the top: the menu's button, the layout editor's beside it)
+    g_ctl[C_EDIT] = {w * 0.5f + 0.10f * s, 0.06f * s, mr * 0.8f, 0, "", false};
     g_ctl[C_START] = {w * 0.5f, h - 0.07f * s, 0.05f * s, BIT(BTN_L) | BIT(BTN_R) | BIT(BTN_A), "Start", true};
     g_ctl[C_STICK] = {0.25f * s, h - 0.27f * s, 0.14f * s, 0, "", false};
 }
