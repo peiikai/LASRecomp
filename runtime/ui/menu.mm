@@ -911,9 +911,11 @@ static void ask_popup(float scale) {
                                                    ImGuiWindowFlags_NoMove))
         return;
     if (g_ask == BAR_WARP || g_ask == BAR_EDITOR) {  // (no save loaded: page_open)
-        ImGui::TextUnformatted(L("Load a save first."));
+        const char *note = L("Load a save first.");
+        ImGui::TextUnformatted(note);
         ImGui::Spacing();
-        if (ImGui::Button(L("OK"), ImVec2(200 * scale, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        // (the whole width: the note's, the popup sizes itself to it)
+        if (ImGui::Button(L("OK"), ImVec2(fmaxf(ImGui::CalcTextSize(note).x, 200 * scale), 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
             ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
             menu_sfx_play(MENU_SFX_CANCEL);
             g_ask = -1, ImGui::CloseCurrentPopup();
