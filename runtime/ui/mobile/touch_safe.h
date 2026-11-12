@@ -23,3 +23,14 @@ static inline void touch_cushion(float *l, float *r, SDL_Window *win) {
     else *l = *r = 0;
 #endif
 }
+
+// The screen's rounded corners' radius, from the window's side insets (l, r): an iPhone in landscape reports its side
+// inset at about the corners' radius. 0 elsewhere (a tablet's sides report none; Android's include the gesture areas).
+static inline float touch_corner_radius(float l, float r) {
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    return l > r ? l : r;
+#else
+    (void)l, (void)r;
+    return 0;
+#endif
+}

@@ -1596,6 +1596,7 @@ static void panel_layout(ImVec2 ds, float *sc, float *w, float *h, ImVec2 *centr
     ImGui::GetIO().FontGlobalScale *= phone;
     // (each side's own inset: a camera cutout is on one side only in landscape. Top to bottom the whole screen, and
     // past it by the window's padding, so the page runs to the edges - menu.mm's page window)
+    g_plastic_corner_r = touch_corner_radius(sl, sr);  // (the corner buttons keep off the curve)
     touch_cushion(&sl, &sr, g_launcher_win);
     float pad = 24 * *sc, top = 14 * *sc - pad;
     *w = ds.x - sl, *h = ds.y + pad - 8 * *sc - top;  // (to the right edge, for the X: page_content_inset)

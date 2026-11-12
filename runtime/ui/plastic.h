@@ -42,6 +42,11 @@ bool plastic_close_corner(float size, float scale);
 bool plastic_close_pane(float size, float scale);
 // a round reset arrow just left of that X, the same size, with its tooltip; true when clicked
 bool plastic_reset_corner(float size, float scale);
+// iPhone: the screen's rounded corners' radius, in the current window's units (0 elsewhere); the menus set it each frame
+extern float g_plastic_corner_r;
+// how far from the screen's side the centre of a round button (centre cy below the top, radius r) has to be to clear
+// a rounded corner
+float plastic_corner_clear(float cy, float r);
 // While on (the menus' windows): ImGui's own frames (buttons, text fields, headers, check boxes) and window / popup
 // backgrounds are drawn as pieces too. The caller turns it off again before anything else is drawn.
 void plastic_widgets(bool on);
