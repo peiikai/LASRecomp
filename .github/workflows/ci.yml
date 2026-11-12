@@ -410,6 +410,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Packages
         run: brew install ninja python@3.13
+      - name: A script as a process in the embedded Python (runtime/platform/ios_pyproc.py, on this Mac's Python)
+        run: python3.13 tools/test_ios_pyproc.py
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4

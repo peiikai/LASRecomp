@@ -7,11 +7,12 @@
 // plat_spawn (runtime/platform.h) here runs a Python script as a thread that behaves like the process the other
 // platforms start: argv[0] ends in .py, the rest is its sys.argv, its stdout / stderr go to log_path, sys.exit(n) is
 // its exit code (an uncaught exception: 1, with the traceback in the log), plat_proc_wait / plat_proc_kill work on
-// it. One interpreter for the app's life: a fresh start for the generator's own code each time, as a process would
-// have, comes from dropping its modules from sys.modules before a run (the runner below). Not a sub-interpreter per
-// run: oead and quicktex are pybind11 modules without multiple_interpreters support - CPython's legacy kind let
-// them in, but their types and pybind11's internals are the process's, and each Py_EndInterpreter left them behind
-// for the next; the C extensions are imported once and reused, which they are made for.
+// it. One interpreter for the app's life: what a process has to itself - a fresh import of the generator's own code,
+// its working directory, its environment, child processes of its own - comes from runtime/platform/ios_pyproc.py
+// (in the app's site-packages), which runs the script. Not a sub-interpreter per run: oead and quicktex are
+// pybind11 modules without multiple_interpreters support - CPython's legacy kind let them in, but their types and
+// pybind11's internals are the process's, and each Py_EndInterpreter left them behind for the next; the C
+// extensions are imported once and reused, which they are made for.
 #import <Foundation/Foundation.h>
 #include <Python.h>
 #include <dlfcn.h>
@@ -89,6 +90,9 @@ static bool init_python(void) {
                        "    def flush(self): pass\n"
                        "    def isatty(self): return False\n"
                        "sys.stdout = sys.stderr = _FdOut(2)\n");
+    char install[1300];  // (the generator's folder: the modules each run imports afresh)
+    snprintf(install, sizeof install, "import ios_pyproc\nios_pyproc.install(r'''%s/rando-gen''')\n", bundle);
+    if (PyRun_SimpleString(install)) fprintf(stderr, "[py] ios_pyproc didn't install: scripts won't run\n");
     g_main_state = PyEval_SaveThread();  // (the GIL is free: the scripts run on their own threads)
     fprintf(stderr, "[py] python %s ready\n", Py_GetVersion());
     g_up = true;
@@ -137,78 +141,21 @@ typedef struct {
 } PyProc;
 static PyProc g_procs[MAX_PROCS];
 
-// The runner, in Python: the script's "process" environment, then runpy as __main__. Returns the exit code.
-static const char *RUNNER =
-    "import sys, os, runpy, traceback\n"
-    "class _FdOut:\n"
-    "    def __init__(self, fd): self.fd = fd\n"
-    "    def write(self, s):\n"
-    "        os.write(self.fd, s.encode('utf-8', 'replace')); return len(s)\n"
-    "    def flush(self): pass\n"
-    "    def isatty(self): return False\n"
-    "def _run(argv, log_path, append, gen_dir):\n"
-    "    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC), 0o644)\n"
-    "    out = _FdOut(fd)\n"
-    "    saved = (sys.argv, sys.stdout, sys.stderr, os.getcwd())\n"
-    "    # a fresh import of the generator's own modules, as a new process would have (by real path: the bundle is\n"
-    "    # /var/containers/... to NSBundle and /private/var/containers/... to the importer). Namespace packages\n"
-    "    # (RandomizerCore.Tools has no __init__.py) have no __file__, only __path__; left in place one would hand\n"
-    "    # out its old submodules as attributes - with event_tools' AutoEvent counter where the last run left it.\n"
-    "    # The PySide6 stubs the generator puts in go too. The C extensions (oead, quicktex, PIL...) stay loaded.\n"
-    "    gen_dir = os.path.realpath(gen_dir) + os.sep\n"
-    "    def under(m):\n"
-    "        paths = [getattr(m, '__file__', None)] + list(getattr(m, '__path__', None) or [])\n"
-    "        return any(p and os.path.realpath(p).startswith(gen_dir) for p in paths)\n"
-    "    # (chosen first, removed after: a namespace __path__ recomputes itself through its parent in sys.modules)\n"
-    "    drop = [name for name, m in list(sys.modules.items()) if under(m) or name == 'PySide6' or name.startswith('PySide6.')]\n"
-    "    for name in drop: del sys.modules[name]\n"
-    "    if drop: out.write('(%d of the generator\\'s modules re-imported)\\n' % len(drop))\n"
-    "    sys.argv, sys.stdout, sys.stderr = list(argv), out, out\n"
-    "    code = 0\n"
-    "    try:\n"
-    "        runpy.run_path(argv[0], run_name='__main__')\n"
-    "    except SystemExit as e:\n"
-    "        c = e.code\n"
-    "        if c is None: code = 0\n"
-    "        elif isinstance(c, int): code = c\n"
-    "        else: out.write(str(c) + '\\n'); code = 1\n"
-    "    except KeyboardInterrupt:\n"
-    "        out.write('killed\\n'); code = 137\n"
-    "    except BaseException:\n"
-    "        out.write(traceback.format_exc()); code = 1\n"
-    "    finally:\n"
-    "        sys.argv, sys.stdout, sys.stderr = saved[0], saved[1], saved[2]\n"
-    "        try: os.chdir(saved[3])\n"  // (the working directory is the process's: the data root)
-    "        except OSError: pass\n"
-    "        os.close(fd)\n"
-    "    return code\n";
-
 static void *proc_main(void *arg) {
     PyProc *p = arg;
     PyGILState_STATE gs = PyGILState_Ensure();
     atomic_store(&p->tid, PyThread_get_thread_ident());
     int code = 1;
-    PyObject *globals = PyModule_GetDict(PyImport_AddModule("__main__"));
-    PyObject *run = PyDict_GetItemString(globals, "_run");
-    if (!run) {
-        PyObject *r = PyRun_String(RUNNER, Py_file_input, globals, globals);
-        Py_XDECREF(r);
-        run = PyDict_GetItemString(globals, "_run");
-    }
-    if (run) {
-        int n = 0;
-        while (p->argv[n]) n++;
-        PyObject *argv = PyList_New(n);
-        for (int i = 0; i < n; i++) PyList_SET_ITEM(argv, i, PyUnicode_FromString(p->argv[i]));
-        char gen_dir[1100];
-        snprintf(gen_dir, sizeof gen_dir, "%s/rando-gen", plat_ios_bundle_dir());
-        PyObject *r = PyObject_CallFunction(run, "OsOs", argv, p->log, p->append ? Py_True : Py_False, gen_dir);
-        if (r) { code = (int)PyLong_AsLong(r); Py_DECREF(r); }
-        else PyErr_Print();
-        Py_DECREF(argv);
-    } else {
-        PyErr_Print();
-    }
+    int n = 0;
+    while (p->argv[n]) n++;
+    PyObject *argv = PyList_New(n);
+    for (int i = 0; i < n; i++) PyList_SET_ITEM(argv, i, PyUnicode_FromString(p->argv[i]));
+    PyObject *mod = PyImport_ImportModule("ios_pyproc");  // (the script as __main__, its exit code: see there)
+    PyObject *r = mod ? PyObject_CallMethod(mod, "run", "OsO", argv, p->log, p->append ? Py_True : Py_False) : NULL;
+    if (r) { code = (int)PyLong_AsLong(r); Py_DECREF(r); }
+    else PyErr_Print();
+    Py_XDECREF(mod);
+    Py_DECREF(argv);
     PyGILState_Release(gs);
     atomic_store(&p->exit_code, code);
     return NULL;
@@ -277,13 +224,26 @@ void plat_proc_kill(PlatProc h) {
     proc_free(p);
 }
 
+// A script's end, with a look at the app's own working directory until then: a script's chdir is to stay its own.
+static int wait_watching(PlatProc p, bool *moved) {
+    char at[1100], now[1100];
+    if (!getcwd(at, sizeof at)) at[0] = 0;
+    int rc;
+    while ((rc = plat_proc_wait(p, false)) < 0) {
+        if (getcwd(now, sizeof now) && strcmp(now, at)) *moved = true;
+        usleep(2000);
+    }
+    return rc;
+}
+
 // Smoke test (LARECOMP_IOS_PYTEST=1 at startup, ios.c plat_init): every native dependency of the seed
-// generator, imported and exercised once.
+// generator, imported and exercised once. LARECOMP_IOS_PYTEST={...}: that request for the generator's runs
+// instead of the default seed's.
 void plat_ios_python_selftest(void) {
     static const char *src =
         "import sys, time\n"
         "t0 = time.time()\n"
-        "print('[py] python', sys.version.split()[0], 'home', sys.prefix)\n"
+        "print('[py] python', sys.version.split()[0], 'home', sys.prefix, 'executable', repr(sys.executable))\n"
         "import oead, keystone, yaml, evfl, appdirs\n"
         "import quicktex, quicktex.s3tc.bc1, PIL.Image\n"
         "img = PIL.Image.new('RGBA', (4, 4), (200, 100, 50, 255))\n"
@@ -303,6 +263,51 @@ void plat_ios_python_selftest(void) {
         "print('[py] selftest ok in %.0f ms' % ((time.time() - t0) * 1000))\n";
     char err[512];
     if (python_run(src, err, sizeof err)) { fprintf(stderr, "[py] selftest FAILED: %s\n", err); return; }
+    {   // a script as a process (ios_pyproc.py): its directory, a thread's, its environment and its children are its own
+        static const char *proc =
+            "import os, subprocess, sys, threading, time\n"
+            "SELF = os.path.abspath(__file__)\n"
+            "here = os.path.dirname(os.path.realpath(__file__))\n"
+            "n = int(os.environ.get('PYPROC_RUN', 0))\n"
+            "from RandomizerCore.Paths import randomizer_paths as mod\n"
+            "print('run', n, sys.argv[1:], os.getcwd() if n else '-', hasattr(mod, 'pyproc'), __name__, flush=True)\n"
+            "mod.pyproc = n\n"
+            "mine = '/' if n else here\n"
+            "os.chdir(mine)\n"
+            "if not n: time.sleep(0.2)  # (the app looks at its own working directory meanwhile)\n"
+            "rc = 40\n"
+            "if n < 2:  # (as the generator for its next room layout: itself again, by its path, with one variable more)\n"
+            "    rc = subprocess.run([sys.executable, SELF] + sys.argv[1:], env=dict(os.environ, PYPROC_RUN=str(n + 1))).returncode + 1\n"
+            "    if (sys.modules.get(mod.__name__) is mod, os.environ.get('PYPROC_RUN', '0'), os.getcwd()) != (True, str(n), mine): rc = 99\n"
+            "if n: sys.exit(rc)\n"
+            "seen = []\n"
+            "t = threading.Thread(target=lambda: seen.append(os.getcwd()))\n"
+            "t.start(); t.join()\n"
+            "os.environ['PYPROC'] = '1'\n"
+            "child = 'import os, sys; print(os.getcwd(), os.environ.get(\"PYPROC\"), os.environ.get(\"CHILD\")); os.chdir(\"/\"); sys.exit(7)'\n"
+            "p = subprocess.run([sys.executable, '-c', child], capture_output=True, text=True, env=dict(os.environ, CHILD='2'))\n"
+            "runs = [l for l in open(os.path.join(here, 'proc.log')) if l.startswith('run ')]  # (the children's lines are in our log)\n"
+            "got = (os.getcwd(), seen, p.returncode, p.stdout, os.environ.get('CHILD'), rc, runs)\n"
+            "want = (here, [here], 7, here + ' 1 2\\n', None, 42, [\"run 0 ['a'] - False __main__\\n\",\n"
+            "        \"run 1 ['a'] \" + here + \" False __main__\\n\", \"run 2 ['a'] / False __main__\\n\"])\n"
+            "print('got ', got, p.stderr)\n"
+            "print('want', want)\n"
+            "sys.exit(3 if got == want else 1)\n";
+        char dir[1100], script[1200], log[1200];
+        snprintf(dir, sizeof dir, "%s/pytest-proc", plat_ios_documents());
+        snprintf(script, sizeof script, "%s/proc.py", dir);
+        snprintf(log, sizeof log, "%s/proc.log", dir);
+        mkdir(dir, 0755);
+        FILE *f = fopen(script, "w");
+        if (f) fputs(proc, f), fclose(f);
+        const char *argv[] = {script, "a", NULL};
+        bool moved = false;
+        PlatProc p = plat_spawn(argv, log, false);
+        int rc = p ? wait_watching(p, &moved) : 255;
+        bool env = getenv("PYPROC") != NULL;
+        fprintf(stderr, "[py] process: %s (exit %d, the app's working directory %s, its environment %s; log: %s)\n",
+                rc == 3 && !moved && !env ? "ok" : "FAILED", rc, moved ? "MOVED" : "not moved", env ? "CHANGED" : "untouched", log);
+    }
     // then the generator itself as a "process", on a default seed, like the Rando tab does (Documents/pytest-seed/),
     // and once more into pytest-seed2/: the second run in the same interpreter must give the same files (state
     // left in a module across runs would show here)
@@ -325,14 +330,17 @@ void plat_ios_python_selftest(void) {
         mkdir(dir, 0755);
         FILE *f = fopen(req, "w");
         if (!f) return;
-        fputs("{\"seed\": \"pytest\", \"create-spoiler\": true}\n", f);  // (the rest: the generator's defaults)
+        const char *e = getenv("LARECOMP_IOS_PYTEST");
+        fputs(e && e[0] == '{' ? e : "{\"seed\": \"pytest\", \"create-spoiler\": true}", f);  // (the rest: the generator's defaults)
         fclose(f);
         const char *argv[] = {script, romfs, dir, req, NULL};
         uint64_t t0 = plat_now_ns();
+        bool moved = false;
         PlatProc p = plat_spawn(argv, log, false);
-        int rc = p ? plat_proc_wait(p, true) : 255;
-        fprintf(stderr, "[py] generator exit %d in %llu ms (log: %s)\n", rc, (unsigned long long)((plat_now_ns() - t0) / 1000000), log);
-        if (rc) return;
+        int rc = p ? wait_watching(p, &moved) : 255;
+        fprintf(stderr, "[py] generator exit %d in %llu ms, the app's working directory %s (log: %s)\n", rc,
+                (unsigned long long)((plat_now_ns() - t0) / 1000000), moved ? "MOVED" : "not moved", log);
+        if (rc || moved) return;
     }
     static const char *cmp =
         "import hashlib, os\n"
