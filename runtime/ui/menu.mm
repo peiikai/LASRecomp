@@ -821,9 +821,11 @@ extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 // The X in the screen's corner was under the panel. True when the head was drawn: the caller skips that opt_section
 // and closes the list (opt_list_end) before opt_end.
 static bool g_page_x, g_page_x_pressed;
+static float g_page_x_scale;  // (the menu's scale: every page's X and heading the same size, whatever the page's own)
 extern "C" bool menu_page_head(const char *section, float scale) {
 #if PLAT_TOUCH
     if (!g_page_x) return false;
+    scale = g_page_x_scale;
     float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
     if (plastic_close_pane(44 * scale, scale)) g_page_x_pressed = true;
     ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
@@ -2017,7 +2019,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             }
 
             bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before
-            g_page_x = PLAT_TOUCH && (page == BAR_COSMETICS || page == BAR_CHEATS);
+            g_page_x = PLAT_TOUCH && (page == BAR_COSMETICS || page == BAR_CHEATS), g_page_x_scale = scale;
             tabs_body(scale, true, NULL, only[page]);                                             //  the pages run)
             g_page_x = false;
 #if PLAT_TOUCH
