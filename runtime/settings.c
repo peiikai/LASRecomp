@@ -61,6 +61,7 @@ Settings g_settings = {
     .show_fps = FPS_OFF,
     .touch_opacity = 0.6f,
     .touch_edit_button = true,
+    .touch_hide_xy_hud = true,  // (the on-screen X / Y show the items)
     .touch_size = 1.0f,
     .inv_keys = true,
     .tracker = true,

@@ -400,7 +400,7 @@ extern "C" void touch_tab_draw(float scale) {
             "On-screen buttons for the touch screen. The middle button at the top opens this menu.", true);
         static const char *const off_on[] = {"Off", "On"};
         int hide = g_settings.touch_hide_xy_hud ? 1 : 0;
-        if (row("Hide X/Y item HUD", &hide, off_on, 2, 0, "Hides the game's own X / Y items while the on-screen buttons are shown.", true))
+        if (row("Hide X/Y item HUD", &hide, off_on, 2, 1, "Hides the game's own X / Y items while the on-screen buttons are shown.", true))
             g_settings.touch_hide_xy_hud = hide != 0;
     }
     opt_section("Appearance");
