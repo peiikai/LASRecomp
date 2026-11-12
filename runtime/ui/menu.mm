@@ -1665,7 +1665,9 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     // (on-screen controls: mobile/touch_controls.mm; also under the live preview of their own settings)
     bool touch = (!open && !kbd && touch_visible()) || (PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
-    touch_preview_play(PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
+    // (the stick / D-pad takes the thumb on the Movement row's preview only: on the others the panel may sit over it)
+    touch_preview_play(PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2 &&
+                       !strcmp(preview_label(), "Movement"));
     if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
