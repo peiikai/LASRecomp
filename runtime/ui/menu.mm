@@ -1678,10 +1678,52 @@ bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bo
 // stick, arrows, L / R, Q / E) move the cursor, A / Enter opens the entry, B / Esc closes the menu. The mouse lights
 // the entry under it, a click opens it (the page is drawn from the next frame: the press that opened it isn't the
 // page's too).
+static const char *g_bar_names[BAR_N] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
+                                         LN("Cheats"), LN("Reset"), LN("Quit"), ""};
+// an entry's tab at x, y (w x ph), its name in the current font at size fs
+static void bar_entry(ImDrawList *dl, float x, float y, float w, float ph, float pad, float fs, bool sel, bool hot,
+                      const char *name, float scale) {
+    // (as the Settings window's tabs: tabs_body - the user wants the bar's look to match Settings, 2026-11-03)
+    const PlasticTheme &pt = plastic_theme();
+    ImVec4 col = sel ? pt.tab_sel : hot ? pt.row_mark : pt.tab;
+    if (sel && hot) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);
+    plastic_pill(dl, ImVec2(x, y + (sel ? 0 : 2 * scale)), ImVec2(x + w, y + ph - 2 * scale), 10 * scale, col,
+                 (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(x + pad, y + (ph - fs) * 0.5f - (sel ? 2 : 1) * scale),
+                sel ? pt.text_sel : pt.text, name);
+}
+
+// The bar as a picture at the cursor, as wide as width at most, Settings lit: the start screen's note on opening the
+// menu (launcher.mm menu_tip) shows what opens. In the current font, shrunk to fit.
+void menu_bar_picture(float width, float scale) {
+    float fs = ImGui::GetFontSize(), natural = 0;
+    for (int e = 0; e < BAR_CLOSE; e++) natural += ImGui::CalcTextSize(L(g_bar_names[e])).x + (2 * 22 + 10) * scale;
+    natural += 2 * 30 * scale + fs + 20 * scale;  // (the frame's insets and the X)
+    float k = fminf(1.0f, width / natural), s = scale * k, w = natural * k;
+    fs *= k;
+    float in = 30 * s, ph = fs + 20 * s, pad = 22 * s, gap = 10 * s, bh = ph + 2 * in;
+    ImVec2 a = ImGui::GetCursorScreenPos();
+    a.x += (width - w) * 0.5f;
+    ImGui::Dummy(ImVec2(width, bh));
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    plastic_panel(dl, a, ImVec2(a.x + w, a.y + bh), s);
+    float x = a.x + in, y = a.y + in;
+    for (int e = 0; e < BAR_CLOSE; e++) {
+        float ew = ImGui::CalcTextSize(L(g_bar_names[e])).x * k + 2 * pad;
+        bar_entry(dl, x, y, ew, ph, pad, fs, e == BAR_SETTINGS, false, L(g_bar_names[e]), s);
+        x += ew + gap;
+    }
+    // the close X (as plastic_close_button draws it)
+    const PlasticTheme &pt = plastic_theme();
+    float bx = ph, m = bx * 0.32f, th = 2.6f * s * 1.5f, dy = -1 * s;
+    ImVec2 p(a.x + w - in - bx, y);
+    plastic_pill(dl, p, ImVec2(p.x + bx, p.y + bx), bx * 0.5f, pt.row, 6 * s, 1.0f, s, false);
+    dl->AddLine(ImVec2(p.x + m, p.y + m + dy), ImVec2(p.x + bx - m, p.y + bx - m + dy), pt.text, th);
+    dl->AddLine(ImVec2(p.x + bx - m, p.y + m + dy), ImVec2(p.x + m, p.y + bx - m + dy), pt.text, th);
+}
+
 static double g_bar_t0 = -1;  // when the bar began to drop (-1: not shown - the menu is closed or a page is open)
 static void bar_draw(ImGuiIO &io, float scale) {
-    static const char *names[BAR_N] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
-                                       LN("Cheats"), LN("Reset"), LN("Quit"), ""};
     const PlasticTheme &pt = plastic_theme();
     double now = ImGui::GetTime();
     if (g_bar_t0 < 0) g_bar_t0 = now;
@@ -1723,7 +1765,7 @@ static void bar_draw(ImGuiIO &io, float scale) {
     // too wide for the bar (eight entries: long names - Russian, German - on a phone's larger menu): tighter entries,
     // then the names a little smaller, as the Settings tabs do (tabs_body)
     float text_w[BAR_CLOSE], names_w = 0, tfs = fs;
-    for (int k = 0; k < BAR_CLOSE; k++) names_w += text_w[k] = ImGui::CalcTextSize(L(names[k])).x;
+    for (int k = 0; k < BAR_CLOSE; k++) names_w += text_w[k] = ImGui::CalcTextSize(L(g_bar_names[k])).x;
     float room = ws.x - 2 * in - ph - gap * BAR_CLOSE;  // (the close X and the gaps)
     if (names_w + 2 * pad * BAR_CLOSE > room) pad = fmaxf((room - names_w) / (2 * BAR_CLOSE), 8 * scale);
     if (names_w + 2 * pad * BAR_CLOSE > room && names_w > 0) {
@@ -1740,14 +1782,7 @@ static void bar_draw(ImGuiIO &io, float scale) {
         bool hot = ImGui::IsItemHovered();
         if (hot && mouse_moved && g_bar_cur != k) g_bar_cur = k, menu_sfx_play(MENU_SFX_CURSOR);
         if (clicked) page_open(k), menu_sfx_play(MENU_SFX_DECIDE);
-        // (as the Settings window's tabs: tabs_body - the user wants the bar's look to match Settings, 2026-11-03)
-        bool sel = k == g_bar_cur;
-        ImVec4 col = sel ? pt.tab_sel : hot ? pt.row_mark : pt.tab;
-        if (sel && hot) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);
-        plastic_pill(dl, ImVec2(x, y + (sel ? 0 : 2 * scale)), ImVec2(x + w, y + ph - 2 * scale), 10 * scale, col,
-                     (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
-        dl->AddText(ImGui::GetFont(), tfs, ImVec2(x + pad, y + (ph - tfs) * 0.5f - (sel ? 2 : 1) * scale),
-                    sel ? pt.text_sel : pt.text, L(names[k]));
+        bar_entry(dl, x, y, w, ph, pad, tfs, k == g_bar_cur, hot, L(g_bar_names[k]), scale);
         x += w + gap;
     }
     // the close X at the right end (the cursor on it: a ring round it)
