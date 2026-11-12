@@ -214,6 +214,20 @@ static void stick_to(float x, float y) {
     g_lx = (int32_t)lrintf(clampf(nx, -1, 1) * 32767), g_ly = (int32_t)lrintf(clampf(ny, -1, 1) * 32767);
 }
 
+// the stick taken / let go: the base comes to the thumb (kept on screen) - or stays where it is (Fixed)
+static void stick_down(float x, float y) {
+    float r = g_ctl[C_STICK].r;
+    if (!g_settings.touch_stick_fixed)
+        // (a whole radius plus a thumb's width clear of the edges: a base at the rim left no room to push the knob out
+        // that way)
+        g_stick_cx = clampf(x, r * 1.45f, g_w * 0.42f), g_stick_cy = clampf(y, g_h * 0.30f + r * 0.5f, g_h - r * 1.45f);
+    stick_to(x, y);
+}
+static void stick_up(void) {
+    g_lx = 0, g_ly = 0;
+    g_knob_x = g_stick_cx = g_ctl[C_STICK].x, g_knob_y = g_stick_cy = g_ctl[C_STICK].y;
+}
+
 static void release_all(void) {
     for (int i = 0; i < MAX_FINGERS; i++) g_fingers[i].ctl = -1;
     g_buttons = 0, g_lx = 0, g_ly = 0;
@@ -347,6 +361,35 @@ extern "C" bool touch_handle_event(const SDL_Event *e) {
     return r;
 }
 
+// The Touch tab's live preview (menu.mm): the stick / D-pad drawn over the game takes the thumb, to try each one
+// before keeping it. Only the controls move: the game doesn't get the stick while the menu is open (input.c).
+static bool g_preview_play;
+extern "C" void touch_preview_play(bool on) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (g_preview_play && !on) release_all();  // (a thumb still on it as the preview closed)
+    g_preview_play = on;
+}
+extern "C" bool touch_preview_event(const SDL_Event *e) {
+    std::lock_guard<std::mutex> l(g_lock);
+    if (!g_preview_play || !g_w || g_editing) return false;
+    float x = e->tfinger.x * g_w, y = e->tfinger.y * g_h;
+    int slot = -1;
+    for (int i = 0; i < MAX_FINGERS; i++)
+        if (g_fingers[i].ctl == C_STICK && g_fingers[i].id == e->tfinger.fingerID) slot = i;
+    if (e->type == SDL_EVENT_FINGER_DOWN) {
+        if (slot >= 0 || hit(x, y) != C_STICK) return false;  // (anything else: the menu's)
+        for (int i = 0; i < MAX_FINGERS && slot < 0; i++) if (g_fingers[i].ctl < 0) slot = i;
+        if (slot < 0) return false;
+        g_fingers[slot].id = e->tfinger.fingerID, g_fingers[slot].ctl = C_STICK;
+        stick_down(x, y);
+        return true;
+    }
+    if (slot < 0) return false;
+    if (e->type == SDL_EVENT_FINGER_MOTION) stick_to(x, y);
+    else g_fingers[slot].ctl = -1, stick_up();
+    return true;
+}
+
 // ---- the editor
 extern "C" bool touch_edit_available(void) { return g_w > 0 && game_in_play(); }
 extern "C" void touch_edit_begin(void) {
@@ -456,14 +499,8 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
         g_fingers[slot].id = e->tfinger.fingerID, g_fingers[slot].ctl = c;
         if (c > C_STICK) g_held_until[c] = now_s() + 0.08;
         if (g_ctx.load() == X_TITLE && c == C_B) g_file_picked = false;  // (B backs out of "load this file?")
-        if (c == C_STICK) {  // the base comes to the thumb (kept on screen) - or stays where it is (Fixed)
-            float r = g_ctl[C_STICK].r;
-            if (!g_settings.touch_stick_fixed)
-                // (a whole radius plus a thumb's width clear of the edges: a base at the rim left no room to push
-                // the knob out that way)
-                g_stick_cx = clampf(x, r * 1.45f, g_w * 0.42f), g_stick_cy = clampf(y, g_h * 0.30f + r * 0.5f, g_h - r * 1.45f);
-            stick_to(x, y);
-        } else if (c == C_MENU) {
+        if (c == C_STICK) stick_down(x, y);
+        else if (c == C_MENU) {
             g_menu_down = true;
         }
         recompute();
@@ -482,10 +519,7 @@ static bool handle(const SDL_Event *e, bool *toggle_menu) {
     }
     // up / cancelled
     g_fingers[slot].ctl = -1;
-    if (c == C_STICK) {
-        g_lx = 0, g_ly = 0;
-        g_knob_x = g_stick_cx = g_ctl[C_STICK].x, g_knob_y = g_stick_cy = g_ctl[C_STICK].y;
-    }
+    if (c == C_STICK) stick_up();
     if (c == C_MENU && g_menu_down) {
         g_menu_down = false;
         if (e->type == SDL_EVENT_FINGER_UP) *toggle_menu = true;
