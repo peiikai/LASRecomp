@@ -537,6 +537,14 @@ extern "C" bool warp_tab_draw(float scale) {
     }
     opt_begin("##warp", scale, true);
     opt_compact();
+#if PLAT_TOUCH
+    {   // the left column's heading, level with the map box's X - as the Randomizer's (rando_tab.mm pane_heading)
+        float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+        ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
+        ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L("Places")).c_str());
+        ImGui::SetCursorPosY(top + bx + 4 * scale);
+    }
+#endif
     ui_text_inline(true);  // (filters as typed: typed into directly, not through a prompt)
     opt_text("Search", g_filter, sizeof g_filter, "Search places...", NULL);
     ui_text_inline(false);
