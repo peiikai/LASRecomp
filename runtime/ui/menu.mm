@@ -817,7 +817,8 @@ static void tab_cosmetics(void) {
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};
     if (opt_button("Randomize all", "Picks a random color for everything below."))
-        for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
+        for (int i = 0; i < COL_SLOTS; i++)  // (a named colour the row offers: shown as what it is)
+            rows[i]->pick = col_random_pick(i, (unsigned)rand());
     if (opt_button("Default all", "Puts everything on this page back to the game's normal look.")) {
         for (CosColour *c : rows) c->pick = COL_DEFAULT;
         g_settings.enemy_colours = 0;

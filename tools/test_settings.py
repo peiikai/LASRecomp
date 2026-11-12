@@ -92,10 +92,13 @@ with tempfile.TemporaryDirectory() as directory:
         count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'
-    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\n')
+    # (grass and walls have no Black: an older Black there loads as Gray; other rows keep it)
+    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\ngrass = Black\n'
+                   'walls = Black\nsand = Black\n')
     subprocess.run([str(exe), 'colours'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
     saved = ini.read_text()
-    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random']:
+    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random', 'grass = Gray',
+                 'walls = Gray', 'sand = Black']:
         assert line + '\n' in saved, (line, saved)
     count += 1
     # the Randomizer tab's New seed options: an older file without the key stays without it (the defaults)
