@@ -669,6 +669,46 @@ static void dpad(ImDrawList *dl, ImVec2 c, float r, int32_t lx, int32_t ly, floa
     dl->AddTriangleFilled(ImVec2(c.x + t, c.y), ImVec2(c.x + h, c.y + s), ImVec2(c.x + h, c.y - s), ar);
 }
 
+// The stick and the D-pad to go with the slot discs: the cork disc for a base. The stick: the compass points engraved
+// in brown, the knob a small slot disc, lit while it's held. The D-pad: a cross in the lit slot's tan, edged in brown,
+// the arms held down green. false: the textures aren't there (the blue ones instead).
+static bool compass_disc(ImDrawList *dl, ImVec2 c, float r, ImVec2 knob, float a, float th, bool sel) {
+    if (!slot_disc(dl, c, r, false, a, th, sel)) return false;
+    float ea = fminf(1, 0.55f + 0.5f * a);
+    for (int k = 0; k < 8; k++) {
+        float ang = k * 3.14159265f / 4, len = k % 2 ? 0.62f : 0.92f, wd = k % 2 ? 0.10f : 0.14f;
+        ImVec2 tip(c.x + cosf(ang) * r * len, c.y + sinf(ang) * r * len);
+        ImVec2 s1(c.x + cosf(ang + 1.5708f) * r * wd, c.y + sinf(ang + 1.5708f) * r * wd);
+        ImVec2 s2(c.x - cosf(ang + 1.5708f) * r * wd, c.y - sinf(ang + 1.5708f) * r * wd);
+        dl->AddTriangleFilled(tip, s1, s2, col(74, 52, 26, (k % 2 ? 0.45f : 0.70f) * ea));
+    }
+    bool held = hypotf(knob.x - c.x, knob.y - c.y) > r * 0.04f;
+    slot_disc(dl, knob, r * 0.42f, held, 1.0f, th, false);
+    return true;
+}
+
+static bool dpad_disc(ImDrawList *dl, ImVec2 c, float r, int32_t lx, int32_t ly, float a, float th, bool sel) {
+    if (!slot_disc(dl, c, r, false, a, th, sel)) return false;
+    float ea = fminf(1, 0.55f + 0.5f * a), len = r * 0.84f, w = r * 0.29f, rnd = r * 0.08f;
+    ImU32 tan = col(235, 192, 130, ea), lit = col(140, 220, 70, ea), ink = col(74, 52, 26, ea);
+    dl->AddRectFilled(ImVec2(c.x - w, c.y - len), ImVec2(c.x + w, c.y + len), tan, rnd);
+    dl->AddRectFilled(ImVec2(c.x - len, c.y - w), ImVec2(c.x + len, c.y + w), tan, rnd);
+    float in = 2.5f * th;  // (the held arm inside the edge)
+    if (ly > 8000) dl->AddRectFilled(ImVec2(c.x - w + in, c.y - len + in), ImVec2(c.x + w - in, c.y - w), lit, rnd);
+    if (ly < -8000) dl->AddRectFilled(ImVec2(c.x - w + in, c.y + w), ImVec2(c.x + w - in, c.y + len - in), lit, rnd);
+    if (lx < -8000) dl->AddRectFilled(ImVec2(c.x - len + in, c.y - w + in), ImVec2(c.x - w, c.y + w - in), lit, rnd);
+    if (lx > 8000) dl->AddRectFilled(ImVec2(c.x + w, c.y - w + in), ImVec2(c.x + len - in, c.y + w - in), lit, rnd);
+    ImVec2 o[12] = {{c.x - w, c.y - len}, {c.x + w, c.y - len}, {c.x + w, c.y - w}, {c.x + len, c.y - w}, {c.x + len, c.y + w}, {c.x + w, c.y + w},
+                    {c.x + w, c.y + len}, {c.x - w, c.y + len}, {c.x - w, c.y + w}, {c.x - len, c.y + w}, {c.x - len, c.y - w}, {c.x - w, c.y - w}};
+    dl->AddPolyline(o, 12, ink, ImDrawFlags_Closed, 3.5f * th);
+    float t = len * 0.90f, h = len * 0.62f, s = r * 0.14f;
+    dl->AddTriangleFilled(ImVec2(c.x, c.y - t), ImVec2(c.x + s, c.y - h), ImVec2(c.x - s, c.y - h), ink);
+    dl->AddTriangleFilled(ImVec2(c.x, c.y + t), ImVec2(c.x - s, c.y + h), ImVec2(c.x + s, c.y + h), ink);
+    dl->AddTriangleFilled(ImVec2(c.x - t, c.y), ImVec2(c.x - h, c.y - s), ImVec2(c.x - h, c.y + s), ink);
+    dl->AddTriangleFilled(ImVec2(c.x + t, c.y), ImVec2(c.x + h, c.y + s), ImVec2(c.x + h, c.y - s), ink);
+    return true;
+}
+
 static void label_text(ImDrawList *dl, ImFont *font, float fs, ImVec2 c, const char *t, ImU32 colr, bool shadow, bool bold = false) {
     ImVec2 ts = font->CalcTextSizeA(fs, 1e9f, 0, t);
     ImVec2 p(c.x - ts.x * 0.5f, c.y - ts.y * 0.5f);
@@ -782,12 +822,14 @@ extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFon
     }
     if ((want & 1) && (g_editing || !hidden(C_STICK))) {
         const Control &s = g_ctl[C_STICK];
-        if (g_settings.touch_dpad)
-            dpad(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, g_editing ? 0 : g_lx.load(), g_editing ? 0 : g_ly.load(),
-                 a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th, g_editing && g_sel == C_STICK);
-        else
-            compass(dl, ImVec2(g_stick_cx, g_stick_cy), s.r, ImVec2(knob_x, knob_y), a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f), th,
-                    g_editing && g_sel == C_STICK);
+        ImVec2 sc(g_stick_cx, g_stick_cy);
+        float sa = a * (g_editing && hidden(C_STICK) ? 0.35f : 1.0f);
+        bool ssel = g_editing && g_sel == C_STICK;
+        int32_t lx = g_editing ? 0 : g_lx.load(), ly = g_editing ? 0 : g_ly.load();
+        if (g_settings.touch_dpad) {
+            if (!dpad_disc(dl, sc, s.r, lx, ly, sa, th, ssel)) dpad(dl, sc, s.r, lx, ly, sa, th, ssel);
+        } else if (!compass_disc(dl, sc, s.r, ImVec2(knob_x, knob_y), sa, th, ssel))
+            compass(dl, sc, s.r, ImVec2(knob_x, knob_y), sa, th, ssel);
     }
     if (g_editing) {  // the editor's hint and bar
         label_text(dl, font, 30 * tt, ImVec2(w * 0.5f, h * 0.31f), "Drag the controls to move them. Tap one to resize or hide it.",
