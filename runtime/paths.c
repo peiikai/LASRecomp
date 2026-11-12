@@ -317,6 +317,12 @@ static void finish_moves(const char *root, void (*progress)(int, double)) {
                 else remove(e);
                 if (progress) progress(2, (double)(i + 1) / N_ENTRIES);
             }
+            // Windows never removes a process's working folder: a move from the start screen still runs in the old
+            // one (rt_paths_init's chdir), which stayed behind empty (#736's test). The restart leaves it anyway.
+            char cwd[1024], rc[1100], ro[1100];
+            if (getcwd(cwd, sizeof cwd) && resolve(cwd, rc, sizeof rc) && resolve(other, ro, sizeof ro) &&
+                within(rc, ro) && chdir(root) != 0)
+                fprintf(stderr, "[paths] can't leave %s\n", other);
             if (!same_dir(other, g_home)) rmdir(other);  // (only if empty)
         }
         remove(note);
