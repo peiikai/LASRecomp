@@ -6590,13 +6590,17 @@ static void weather_encode(void) {
 static NvnTexture *sc_color, *sc_depth;  // the scene pass's targets this frame (while its opaque things are drawn)
 static float sc_vp[16], sc_zn, sc_zf;
 static bool sc_dm1;
+static NvnTexture *sc_shmap;  // the game's shadow map this frame and its light (renderer.m: the cover's shadows)
+static float sc_lvp[16], sc_lzn, sc_lzf;
+static bool sc_ldm1;
+static uint64_t sc_lframe = ~0ull;
 static int sc_tree;  // this draw: a tree shaken bare, its slot 1..6 (stencil bits 1-3), 7 a face tree, 0: none
 static int sc_mark;  // this draw: 0 as the game has it, 1 the level's model, 2 anything else, 3 grass and bushes,
                      // 4 a character
 static uint64_t sc_frame = ~0ull, sc_done = ~0ull;
 static uint32_t wx_scene_w, wx_scene_h;  // (the scene image the composite read: the scene pass's target size)
 bool vk_snow_pass(VkImage color_img, VkImageView color, VkFormat fmt, uint32_t cw, uint32_t ch, VkImageView depth,
-                  VkImageView stencil, SnowFrame *sf);  // snow_vk.c
+                  VkImageView stencil, VkImageView shadow, SnowFrame *sf);  // snow_vk.c
 
 static int tex_class(NvnTexture *t) {  // (recolour.c's class of a texture the draw samples; 0: none)
     const TexBackend *b = t ? (const TexBackend *)t->backend : NULL;
@@ -6630,10 +6634,25 @@ static void snow_cover_encode(void) {
     sf.screen[3] = fminf((float)lroundf(sc_depth->height * dsy), (float)db->height);
     sf.flags[0] = nvn_window_origin() == 0, sf.flags[1] = sc_dm1;
     sf.zr[0] = sc_zn, sf.zr[1] = sc_zf - sc_zn;
+    // the game's shadow map, drawn earlier this frame (none with Shadows Off: the cover keeps the picture's light).
+    // LARECOMP_SNOW_SHADOWS=0 (A/B tests): not read, the cover as before
+    static int shadows = -1;
+    if (shadows < 0) shadows = !getenv("LARECOMP_SNOW_SHADOWS") || atoi(getenv("LARECOMP_SNOW_SHADOWS"));
+    TexBackend *lb = shadows && sc_lframe == renderer_exec_frame() && sc_shmap ? vk_tex(sc_shmap, true) : NULL;
+    VkImageView lv = lb && lb->samples == 1 && (lb->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? vk_view(sc_shmap, NULL, false, false, TEXTYPE_2D) : VK_NULL_HANDLE;
+    if (lv) {
+        float lsx, lsy;
+        renderer_texture_scale(sc_shmap, &lsx, &lsy);
+        memcpy(sf.lvp, sc_lvp, sizeof sf.lvp);
+        sf.shd[0] = 1, sf.shd[1] = sc_ldm1;
+        sf.shd[2] = fminf((float)lroundf(sc_shmap->width * lsx), (float)lb->width);
+        sf.shd[3] = fminf((float)lroundf(sc_shmap->height * lsy), (float)lb->height);
+        sf.shz[0] = sc_lzn, sf.shz[1] = sc_lzf - sc_lzn;
+    }
     vk_end_pass();
     st.rt_dirty = true;  // (the game's next draw opens its pass again: loads what this left)
     ss_forget();         // (the snow's passes set their own pipeline and dynamic state)
-    if (vk_snow_pass(cb_->image, cv, cb_->format, (uint32_t)cw, (uint32_t)ch, dv, sv, &sf)) {
+    if (vk_snow_pass(cb_->image, cv, cb_->format, (uint32_t)cw, (uint32_t)ch, dv, sv, lv, &sf)) {
         snap_reason = "snow cover";
         snapshots_invalidate(sc_color);
     }
@@ -6644,6 +6663,13 @@ static void snow_cover_check(CmdRec *r, bool indexed, Prog *pr) {
     sc_mark = sc_tree = 0;
     uint64_t frame = renderer_exec_frame();
     if (sc_done == frame || !st.rt.depth) return;
+    NvnTexture *sd = st.rt.depth;  // (the shadow pass: its light - renderer.m)
+    if (sc_lframe != frame && st.ubuf[0][1].addr && st.ubuf[0][1].size == 1024 &&
+        output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0)) {
+        memcpy(sc_lvp, (const float *)(uintptr_t)st.ubuf[0][1].addr, sizeof sc_lvp);
+        sc_lzn = st.depth_range[0][0], sc_lzf = st.depth_range[0][1], sc_ldm1 = nvn_depth_mode() == 0;
+        sc_shmap = sd, sc_lframe = frame;
+    }
     bool scene = st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->width == wx_scene_w &&
                  st.rt.color[0]->height == wx_scene_h && st.rt.depth->format == 0x35;
     bool blended = st.rt.ncolor && (st.color_state[0] & 1);

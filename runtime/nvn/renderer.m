@@ -3412,7 +3412,7 @@ static bool wx_dm1;  // (its depth mode: -1..1)
 static const char *sc_src =
     "#include <metal_stdlib>\n"
     "using namespace metal;\n"
-    "struct SF { float4 vp[4]; float4 ivp[4]; float4 screen, flags, zr, trail, tone; float shake[8]; };\n"
+    "struct SF { float4 vp[4]; float4 ivp[4]; float4 screen, flags, zr, trail, tone; float shake[8]; float4 lvp[4]; float4 shd, shz, shade; };\n"
     "struct SP { float4 a; float4 b; };\n"  // (SnowPrint: x y z t, ang side len wid)
     "static float3 world_at(constant SF &w, float2 uv, float d) {\n"  // the world point of the scene depth d at uv
     "  float2 m = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
@@ -3632,17 +3632,39 @@ static const char *sc_src =
     "  if (k <= 0.0) return none;\n"
     "  return float4(k, n.y, rough, sc_eye(w, (float2(q) + 0.5) * e, d));\n"
     "}\n"
+    // the game's cast shadow at world point p (1 lit .. 0 in shadow): its shadow map, read with the light's matrix
+    // from its shadow pass, as its lit shaders do (four compare taps one texel apart, each bilinear - soft edges)
+    "static float sc_shadow(constant SF &w, depth2d<float> sm, float3 p) {\n"
+    "  if (w.shd.x < 0.5) return 1.0;\n"
+    "  float4 q = float4(p, 1.0);\n"
+    "  float4 l = float4(dot(w.lvp[0], q), dot(w.lvp[1], q), dot(w.lvp[2], q), dot(w.lvp[3], q));\n"
+    "  l.xyz /= l.w;\n"
+    "  float2 uv = float2(l.x * 0.5 + 0.5, 0.5 - l.y * 0.5);\n"  // (the map's rows: the scene's convention, sc_fs' world_at)
+    "  if (w.flags.x > 0.5) uv.y = 1.0 - uv.y;\n"
+    "  float z = w.shd.y > 0.5 ? l.z * 0.5 + 0.5 : l.z;\n"
+    "  z = w.shz.x + w.shz.y * z - w.shz.z;\n"
+    "  if (any(uv <= 0.0) || any(uv >= 1.0) || z >= 1.0) return 1.0;\n"
+    "  float2 a = uv * w.shd.zw - 1.0, f = a - floor(a);\n"  // (the four taps' 2x2 texels overlap: 3x3 of them, weighed)
+    "  int2 i0 = int2(floor(a)), mx = int2(w.shd.zw) - 1;\n"
+    "  float3 wx = float3(1.0 - f.x, 1.0, f.x) * 0.5, wy = float3(1.0 - f.y, 1.0, f.y) * 0.5;\n"
+    "  float s = 0.0;\n"
+    "  for (int j = 0; j < 3; j++)\n"
+    "    for (int i = 0; i < 3; i++)\n"
+    "      s += (z <= sm.read(uint2(clamp(i0 + int2(i, j), int2(0), mx))) ? wx[i] * wy[j] : 0.0);\n"
+    "  return s;\n"
+    "}\n"
     // the cover at full resolution: the half-resolution pass' amount from its texels at this pixel's depth (bilinear,
     // weighed by how alike their depths are: no blur across an edge), then the exact per-pixel parts - characters
     // left alone, near-black pixels left alone, the footprints, the snow's light
     "fragment half4 sc_fs(VO in [[stage_in]], constant SF &w [[buffer(0)]], depth2d<float> dt [[texture(0)]],\n"
     "                     texture2d<float> tr [[texture(1)]], texture2d<uint> sv [[texture(2)]],\n"
-    "                     texture2d<float> hf [[texture(4)]], half4 dst [[color(0)]]) {\n"
+    "                     texture2d<float> hf [[texture(4)]], depth2d<float> smap [[texture(6)]], half4 dst [[color(0)]]) {\n"
     "  float2 uv = in.pos.xy / w.screen.xy;\n"
     "  int2 mx = int2(w.screen.zw) - 1;\n"
     "  int2 q = clamp(int2(uv * w.screen.zw), int2(0), mx);\n"
     "  uint4 sm = sv.read(uint2(q));\n"
     "  if (abs(w.trail.y - 2.0) < 0.5) return half4((sm.r & 0x80u) ? 1.0h : 0.0h, (sm.r & 1u) ? 1.0h : 0.0h, (sm.r & 0x40u) ? 1.0h : 0.0h, 1.0h);\n"  // (test)
+    "  if (abs(w.trail.y - 3.0) < 0.5 && dt.read(uint2(q)) < 0.99999) return half4(half3(sc_shadow(w, smap, world_at(w, (float2(q) + 0.5) / w.screen.zw, dt.read(uint2(q))))), 1.0h);\n"  // (test: the shadow term)
     "  if ((sm.r & 0xC0u) == 0x80u) return dst;\n"  // (the water, or anything else that isn't the level's: no snow on it)
     "  float d = dt.read(uint2(q));\n"
     "  if (d >= 0.99999) return dst;\n"
@@ -3734,6 +3756,14 @@ static const char *sc_src =
     // between leaf and gap), the slope, a soft unevenness
     "  float lit = mix(saturate(mc / w.tone.w), 0.8, rough * 0.7);\n"
     "  float3 col = w.tone.rgb * (0.45 + 0.55 * lit) * (0.85 + 0.15 * hv.y) * (0.96 + 0.06 * vnoise(pr * 3.0));\n"
+    // and the game's cast shadows on it (they all but vanished under the snow: the trees north of Mabe Village).
+    // The picture's brightness above can't carry them: it is the ground's colour times its light, and a lit dark
+    // grass reads as dim as a shadow on sand - so with the shadow map there it only adds a little shading, and the
+    // shadow itself is the map's, darker and cooler (the sky's light, never black)
+    "  if (w.shd.x > 0.5) {\n"
+    "    float sh = sc_shadow(w, smap, p);\n"
+    "    col = w.tone.rgb * (0.8 + 0.2 * lit) * (0.85 + 0.15 * hv.y) * (0.96 + 0.06 * vnoise(pr * 3.0)) * mix(w.shade.rgb, float3(1.0), sh);\n"
+    "  }\n"
     // near black: as drawn, or on open ground (a cast shadow, the shade under trees) snow as dark as the shadow - its
     // shape kept, the dark stones' colours under it gone. Never the lit snow's colour there: where the half pass' open
     // ground estimate is partial (the edge of a tree's shade) that left single grey pixels
@@ -3745,6 +3775,10 @@ static const char *sc_src =
 static NvnTexture *sc_color, *sc_depth;  // the scene pass's targets this frame (while its opaque things are drawn)
 static float sc_vp[16], sc_zn, sc_zf;
 static bool sc_dm1;
+static NvnTexture *sc_shmap;  // the game's shadow map this frame and the light's view-projection it was drawn with
+static float sc_lvp[16], sc_lzn, sc_lzf;  // (its shadow pass: vertex constant slot 1, 1024 bytes, as the scene's camera)
+static bool sc_ldm1;
+static uint64_t sc_lframe = ~0ull;
 static int sc_tree;  // this draw: a tree shaken bare, its slot 1..6 (stencil bits 1-3), 7 a face tree (Crazy
                      // Tracy's, the Tabahl Wasteland: no wall for the alcoves' test), 0: none
 static int sc_mark;  // this draw: 0 as the game has it, 1 the level's model (stencil bit 7 clear), 2 anything else (set),
@@ -3781,6 +3815,20 @@ static void snow_cover_encode(void) {
     sf.screen[3] = fminf((float)lroundf(sc_depth->height * dsy), (float)dt.height);
     sf.flags[0] = nvn_window_origin() == 0, sf.flags[1] = sc_dm1;
     sf.zr[0] = sc_zn, sf.zr[1] = sc_zf - sc_zn;
+    // the game's shadow map, drawn earlier this frame (none with Shadows Off: the cover keeps the picture's light).
+    // LARECOMP_SNOW_SHADOWS=0 (A/B tests): not read, the cover as before
+    static int shadows = -1;
+    if (shadows < 0) shadows = !getenv("LARECOMP_SNOW_SHADOWS") || atoi(getenv("LARECOMP_SNOW_SHADOWS"));
+    id<MTLTexture> smt = shadows && sc_lframe == renderer_exec_frame() && sc_shmap ? renderer_texture(sc_shmap, nil, true) : nil;
+    if (smt && (smt.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || smt.pixelFormat == MTLPixelFormatDepth32Float)) {
+        float lsx, lsy;
+        renderer_texture_scale(sc_shmap, &lsx, &lsy);
+        memcpy(sf.lvp, sc_lvp, sizeof sf.lvp);
+        sf.shd[0] = 1, sf.shd[1] = sc_ldm1;
+        sf.shd[2] = fminf((float)lroundf(sc_shmap->width * lsx), (float)smt.width);
+        sf.shd[3] = fminf((float)lroundf(sc_shmap->height * lsy), (float)smt.height);
+        sf.shz[0] = sc_lzn, sf.shz[1] = sc_lzf - sc_lzn;
+    } else smt = nil;
 
     static id<MTLLibrary> lib;
     static id<MTLRenderPipelineState> cover, stamp;
@@ -3963,6 +4011,7 @@ static void snow_cover_encode(void) {
     [e setFragmentTexture:trail atIndex:1];
     [e setFragmentTexture:sv atIndex:2];
     [e setFragmentTexture:half atIndex:4];
+    [e setFragmentTexture:smt ? smt : dt atIndex:6];  // (none: the scene depth stands in, unread)
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [e endEncoding];
     stat_passes++;
@@ -3997,6 +4046,13 @@ static void snow_cover_check(CmdRec *r, bool indexed, Prog *pr) {
     sc_mark = sc_tree = 0;
     uint64_t frame = renderer_exec_frame();
     if (sc_done == frame || !st.rt.depth) return;
+    NvnTexture *sd = st.rt.depth;  // (the shadow pass: its light, for the cover's shadows - first draw of the frame)
+    if (sc_lframe != frame && st.ubuf[0][1].addr && st.ubuf[0][1].size == 1024 &&
+        output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0)) {
+        memcpy(sc_lvp, (const float *)(uintptr_t)st.ubuf[0][1].addr, sizeof sc_lvp);
+        sc_lzn = st.depth_range[0][0], sc_lzf = st.depth_range[0][1], sc_ldm1 = nvn_depth_mode() == 0;
+        sc_shmap = sd, sc_lframe = frame;
+    }
     bool scene = st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->width == wx_scene_w &&
                  st.rt.color[0]->height == wx_scene_h && st.rt.depth->format == 0x35;
     bool blended = st.rt.ncolor && (st.color_state[0] & 1);
