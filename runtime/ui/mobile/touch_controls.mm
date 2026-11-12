@@ -64,8 +64,9 @@ static const uint32_t kShown[X_COUNT] = {
     M(C_STICK) | M(C_A) | M(C_B) | M(C_X) | M(C_Y) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
     M(C_STICK) | M(C_A) | M(C_B) | M(C_L) | M(C_R) | M(C_PLUS) | M(C_MINUS) | M(C_MENU),
 };
-// (the editor: play's controls; ZL / ZR to show them by choice; the editor's own button while the setting shows it)
-#define EDITABLE ((kShown[X_PLAY] | M(C_ZL) | M(C_ZR)) & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT)))
+// (the editor: play's controls; the editor's own button while the setting shows it. ZL / ZR do nothing in the game:
+// never shown, their slots kept for the settings file)
+#define EDITABLE (kShown[X_PLAY] & (g_settings.touch_edit_button ? ~0u : ~M(C_EDIT)))
 
 typedef struct {
     float x, y, r;       // centre and radius (round) / half height (pills: width 2.2 * r)
@@ -573,19 +574,13 @@ static uint32_t wanted(int ctx) {
         g_items_word = LD32(GA(LIVE_SAVE) + 0x5568);
         g_slot_y = LD8(GA(LIVE_SAVE) + 0x5562), g_slot_x = LD8(GA(LIVE_SAVE) + 0x5563);
     }
-    if (ctx == X_PLAY && g_settings.touch_all) {  // (every button, whatever Link has)
-        for (int i = 0; i < C_COUNT; i++)
-            if ((i == C_ZL || i == C_ZR) && g_settings.touch_moved[i] && !g_settings.touch_hidden[i]) m |= M(i);
-        return m;
-    }
+    if (ctx == X_PLAY && g_settings.touch_all) return m;  // (every button, whatever Link has)
     if (ctx == X_PLAY) {
         if (!(g_items_word & 1)) m &= ~M(C_B);           // the sword
         if (!(g_items_word & 2)) m &= ~M(C_R);           // the shield
         if (!(g_items_word >> 11 & 1)) m &= ~M(C_L);     // the Pegasus Boots
         if (g_slot_x <= 1 || g_slot_x > 15) m &= ~M(C_X);
         if (g_slot_y <= 1 || g_slot_y > 15) m &= ~M(C_Y);
-        for (int i = 0; i < C_COUNT; i++)  // (ZL / ZR and the like: only where the player put them)
-            if ((i == C_ZL || i == C_ZR) && g_settings.touch_moved[i] && !g_settings.touch_hidden[i]) m |= M(i);
     }
     return m;
 }
