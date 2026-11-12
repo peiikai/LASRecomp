@@ -86,6 +86,7 @@ int rt_game_dynres(void) {
                             // missed 30, the hold went to 20 and the factor climbed while 20 fit - a sharper image at
                             // 20 fps. The floor as close to 30 as it gets is the better trade (Retroid Pocket 5 in
                             // standard performance mode)
+#define DYN_MENU_SETTLE 1.0 // s after the menu closes before Dynamic decides again (its last frames, W settling)
 static double g_dyn = 1.0;
 static double g_dyn_floor = 0.5;  // (set from the setting and the window: dyn_set_floor)
 static unsigned g_down_hist;  // the last decisions over budget (bit 0: the latest)
@@ -225,6 +226,31 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     if (start < 0) {
         start = 0;
         if (getenv("LARECOMP_DYN_START")) g_dyn = dyn_grid(fmin(1.0, atof(getenv("LARECOMP_DYN_START"))));
+    }
+    // The menu open: no measures, no decisions, and none for DYN_MENU_SETTLE s after it closes - the factor stays where it
+    // was. The menu is drawn in the window step (W), and the game keeps running behind it: on an iPad Pro M4 at 2420x1668
+    // W went 0.9 -> 5 ms with it open, G + W 17.5 ms, frames a millisecond late, and Dynamic stepped 1.00 -> 0.55 behind
+    // the menu. The menu is a moment, not the scene's load.
+    extern bool menu_is_open(void);
+    static bool menu_was_open;
+    bool menu_open = menu_is_open();
+    if (menu_open || menu_was_open) {
+        g_last_t = now;
+        g_dyn_n = g_dyn_gpu_n = 0, g_dyn_gpu_sum = g_dyn_win_sum = 0, g_sum_ms = 0, g_sum_n = 0;
+        memset(&g_split, 0, sizeof g_split), g_split_n = 0;
+        if (menu_open) {
+            if (!menu_was_open) LOG("[dynres] menu open: held at %.2f\n", g_dyn);
+            menu_was_open = true;
+            return;
+        }
+        LOG("[dynres] menu closed: %.2f, deciding again in %.0f s\n", g_dyn, DYN_MENU_SETTLE);
+        menu_was_open = false;  // (closed: the votes and checks from before it opened are old too)
+        g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0, g_prev_G = -1;
+        memset(g_down_gw, 0, sizeof g_down_gw);
+        g_chk_from = g_chain_from = -1, g_futile = 0;
+        g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0, g_t30_late = 0;
+        g_dyn_cool_until = fmax(g_dyn_cool_until, now + DYN_MENU_SETTLE);
+        return;
     }
     double dt = g_last_t > 0 ? (now - g_last_t) * 1000.0 : 16.7;
     g_last_t = now;

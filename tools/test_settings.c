@@ -51,6 +51,13 @@ int main(int argc, char **argv) {
         assert(g_settings.hair.pick == COL_CUSTOM && g_settings.hair.rgb == 0x12AB34);
         assert(g_settings.shield.pick == COL_DEFAULT);                               // unknown -> Default
         assert(g_settings.skin.pick == COL_RANDOM);
+        assert(g_settings.grass.pick == COL_GRAY && g_settings.walls.pick == COL_GRAY);  // (no Black there)
+        assert(g_settings.sand.pick == COL_BLACK);
+        for (unsigned r = 0; r < 64; r++) {  // Random: never a colour the row leaves out
+            assert(col_random_pick(COL_SLOT_GRASS, r) != COL_BLACK && col_random_pick(COL_SLOT_WALLS, r) != COL_BLACK);
+            int p = col_random_pick(COL_SLOT_GRASS, r);
+            assert(p > COL_DEFAULT && p < COL_RANDOM);
+        }
         settings_save();
         return 0;
     }

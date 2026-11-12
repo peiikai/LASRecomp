@@ -398,7 +398,7 @@ float weather_snow_now(void) { return (float)t; }
 bool weather_snow_on(void) { return g_outdoors && g_cover > 0.002f; }
 
 bool weather_snow_cover(SnowFrame *s, const float vp[16]) {
-    static int dbg = -1;  // LARECOMP_SNOW_DEBUG=1 (test): the cover's mask in flat red
+    static int dbg = -1;  // LARECOMP_SNOW_DEBUG=1 (test): the cover's mask in flat red (2: its stencil marks, 3: the game's cast shadows it reads)
     if (dbg < 0) dbg = (int)env_f("LARECOMP_SNOW_DEBUG", 0);
     if (!g_outdoors || g_cover <= 0.002f) return false;
     memcpy(s->vp, vp, sizeof s->vp);
@@ -414,6 +414,17 @@ bool weather_snow_cover(SnowFrame *s, const float vp[16]) {
         if (e) sscanf(e, "%f,%f,%f,%f", &tone[0], &tone[1], &tone[2], &tone[3]);
     }
     memcpy(s->tone, tone, sizeof tone);
+    // in a cast shadow: lit by the sky only - darker and bluer, never black. About the contrast the game's shadows
+    // have on grass once tone mapped (lit snow ~223 sRGB, its shadow ~135 grey-blue: the trees and the signpost north
+    // of Mabe Village). The renderer fills the rest of the shadow fields
+    static float shade[4] = {-1};
+    if (shade[0] < 0) {
+        shade[0] = 0.21f, shade[1] = 0.25f, shade[2] = 0.36f, shade[3] = 0;
+        const char *e = getenv("LARECOMP_SNOW_SHADE");  // r,g,b (test)
+        if (e) sscanf(e, "%f,%f,%f", &shade[0], &shade[1], &shade[2]);
+    }
+    memcpy(s->shade, shade, sizeof shade);
+    s->shz[2] = env_f("LARECOMP_SNOW_SHADOW_BIAS", 0.002f);
     s->shake[7] = 1;  // (slot 7: the face trees, never shaken - renderer.m's sc_tree)
     for (int i = 1; i < 7; i++) {  // (a shaken tree grows its snow back at the rate it fell, from none)
         if (g_shaken[i].at <= 0) continue;

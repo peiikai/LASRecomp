@@ -52,6 +52,7 @@ bool save_editor_close_pressed(void);  // save_editor.mm (the same, in its right
 bool rando_tab_close_pressed(void);  // rando_tab.mm (the same: its right pane, or the corner over its seed sheet)
 extern "C" void cheats_draw(float scale);  // cheats.mm
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
+extern "C" void general_draw(float scale);     // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
 void touch_tab_draw(float scale);     // controls_ui.mm (touch screens)
 bool controls_ui_took_back(void);
@@ -113,25 +114,31 @@ static void set_open(bool open);
 // The menu in game: a bar drops down from the top over the game, its entries in a row (the one the cursor is on lit),
 // a close X at its right end; each entry opens its page in a window under it. The start screen's Settings is
 // launcher.mm's.
-enum { BAR_SETTINGS, BAR_RANDO, BAR_WARP, BAR_EDITOR, BAR_RESET, BAR_QUIT, BAR_CLOSE, BAR_N };
+// (Cosmetics and Cheats left the Settings tabs for entries of their own: Cosmetics by Settings, Cheats by the Save
+// Editor - user 2026-11-11)
+enum { BAR_SETTINGS, BAR_COSMETICS, BAR_RANDO, BAR_WARP, BAR_EDITOR, BAR_CHEATS, BAR_RESET, BAR_QUIT, BAR_CLOSE, BAR_N };
 static std::atomic<int> g_page{-1};  // the entry whose page is open (-1: the bar alone)
 static int g_bar_cur;  // the bar's cursor (render thread)
 static void page_open(int page);
 extern "C" void menu_toggle(void) { set_open(!g_open.load()); }  // (the touch controls' menu button)
 static int g_tab = -1000, g_tab_request = -2;  // (-2: no request; -1 is the Prelaunch tab; -1000: the first tab)
 static int g_ask = -1;  // the bar's Reset or Quit asked (render thread): ask_popup
+static int g_shown_tab = -1000;  // the page drawn last (its id)
 extern "C" void menu_test_open(void) {
     set_open(true);
     // (test) LARECOMP_MENU_BAR=<entry>: the bar alone, its cursor on that entry. Otherwise a page, as before the bar:
-    // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 9 Quit, 10 Reset, any other a Settings tab
+    // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 5 Cheats, 7 Cosmetics, 9 Quit, 10 Reset, any other a
+    // Settings tab
+    if (getenv("LARECOMP_MENU_NOTICE")) menu_save_failed(getenv("LARECOMP_SAVE_DIR"));  // (test: the failed-save notice)
     if (getenv("LARECOMP_MENU_BAR")) { g_bar_cur = atoi(getenv("LARECOMP_MENU_BAR")) % BAR_N; return; }
     int t = getenv("LARECOMP_MENU_TAB") ? atoi(getenv("LARECOMP_MENU_TAB")) : -1;
-    page_open(t == 4 ? BAR_WARP : t == 2 ? BAR_EDITOR : t == 3 ? BAR_RANDO : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET
-                                                                                     : BAR_SETTINGS);
-    if (t >= 0 && t != 2 && t != 3 && t != 4 && t != 9 && t != 10) { extern int g_tab_request_ext; g_tab_request_ext = t; }
+    int page = t == 4 ? BAR_WARP : t == 2 ? BAR_EDITOR : t == 3 ? BAR_RANDO : t == 5 ? BAR_CHEATS : t == 7 ? BAR_COSMETICS
+             : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET : BAR_SETTINGS;
+    page_open(page);
+    if (t >= 0 && page == BAR_SETTINGS) { extern int g_tab_request_ext; g_tab_request_ext = t; }
     // (test) LARECOMP_PREVIEW=<row label>: that row's live preview opens straight away (its page: LARECOMP_MENU_TAB)
     if (const char *row = getenv("LARECOMP_PREVIEW")) {
-        if (t >= 0) g_tab = t;
+        if (t >= 0) g_tab = g_shown_tab = t;  // (a page alone - the bar's Cosmetics - previews the page drawn last)
         preview_open(row, -1);
     }
 }
@@ -142,7 +149,10 @@ extern "C" void touch_reset(void);  // mobile/touch_controls.mm (on-screen contr
 extern "C" bool touch_visible(void);
 extern "C" bool touch_title_box(void);
 extern "C" void touch_draw(ImDrawList *dl, float w, float h, ImFont *font, ImFont *menu_font);
+extern "C" void touch_preview_play(bool on);
+extern "C" bool touch_preview_event(const SDL_Event *e);
 #else
+static void touch_preview_play(bool) {}
 static void touch_reset(void) {}
 static bool touch_visible(void) { return false; }
 static bool touch_title_box(void) { return false; }
@@ -169,6 +179,9 @@ static void page_open(int page) {
         menu_tabs_focus(!opened);  // selected one
         opened = true;
     } else menu_tabs_focus(false);  // (a page alone: the first Down goes to its first row)
+    // (Warp, the Save Editor and Cheats need a save: before one is loaded, a note over the bar instead of an empty
+    // page - on a touch screen the empty Save Editor had no X to leave by)
+    if ((page == BAR_WARP || page == BAR_EDITOR || page == BAR_CHEATS) && !game_in_play()) { g_ask = page; return; }
     if (page == BAR_EDITOR) save_editor_on_open();
     if (page == BAR_RESET || page == BAR_QUIT) { g_ask = page; return; }  // (a question over the bar: ask_popup)
     g_page = page;
@@ -353,6 +366,7 @@ bool menu_handle_event(const SDL_Event *e) {
 #if PLAT_TOUCH
     case SDL_EVENT_FINGER_DOWN: case SDL_EVENT_FINGER_UP: case SDL_EVENT_FINGER_MOTION: case SDL_EVENT_FINGER_CANCELED:
         if (!capturing()) return false;
+        if (touch_preview_event(e)) return true;  // (the Touch tab's preview: its stick / D-pad takes the thumb)
         {   // touch screens (touch_ui.h, on the render thread: drain_events)
             QEvent q = {};
             q.kind = QEvent::FINGER, q.finger = *e;
@@ -458,7 +472,6 @@ static int g_focus_frames;
 static bool g_page_fresh_seen;  // (focus_check: the menu opened)
 static bool g_page_fresh;  // the page shown hasn't been entered yet: the first Down goes to its first enabled row
 static bool g_page_focus_next;  // (that page has no option rows: its first control takes the cursor next frame)
-static int g_shown_tab = -1000;  // the page drawn last (its id)
 void menu_tabs_focus(bool first_tab) {
     g_focus_tab = first_tab ? -1 : -100, g_focus_frames = 0, g_page_fresh = g_page_fresh_seen = true;
 }
@@ -802,13 +815,41 @@ extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 // Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c), and recolours by draw (runtime/nvn/recolour*.c);
 // a seed made with "Random cosmetics" puts its own set into the rows the first time it's played (cosmetics_seed.c),
 // and they stay the player's to change: "Seed's look" puts the seed's back, "Default all" the game's own
+// Touch screens, the bar's Cosmetics and Cheats: called right after opt_begin, as the Randomizer's right pane
+// (rando_tab.mm pane_heading): the page's own X at the top right of the rows' panel with the page's name on its line
+// (a title for the whole page, as the Randomizer's column headings: the sections scroll under it), then the rows in a
+// list that scrolls on its own (the panel itself doesn't, so the X stays). The X in the screen's corner was under the
+// panel. True when the head was drawn: the caller closes the list (opt_list_end) before opt_end.
+static bool g_page_x, g_page_x_pressed;
+static float g_page_x_scale;  // (the menu's scale: every page's X and heading the same size, whatever the page's own)
+extern "C" bool menu_page_head(const char *title, float scale) {
+#if PLAT_TOUCH
+    if (!g_page_x) return false;
+    scale = g_page_x_scale;
+    float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+    if (plastic_close_pane(44 * scale, scale)) g_page_x_pressed = true;
+    ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
+    ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(title)).c_str());
+    ImGui::SetCursorPosY(top + bx + 4 * scale);
+    opt_list_begin();
+    return true;
+#else
+    (void)title, (void)scale;
+    return false;
+#endif
+}
+
 static void tab_cosmetics(void) {
-    opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
+    float cs = ImGui::GetFontSize() / 34;
+    opt_begin("##cosmetics", cs);
+    bool head = menu_page_head("Cosmetics", cs);
+    opt_section("General");
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};
     if (opt_button("Randomize all", "Picks a random color for everything below."))
-        for (CosColour *c : rows) c->pick = 1 + rand() % (COL_RANDOM - 1);  // (a named colour: shown as what it is)
+        for (int i = 0; i < COL_SLOTS; i++)  // (a named colour the row offers: shown as what it is)
+            rows[i]->pick = col_random_pick(i, (unsigned)rand());
     if (opt_button("Default all", "Puts everything on this page back to the game's normal look.")) {
         for (CosColour *c : rows) c->pick = COL_DEFAULT;
         g_settings.enemy_colours = 0;
@@ -866,6 +907,7 @@ static void tab_cosmetics(void) {
         opt_choice("Weather", cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
                    cycle ? "This seed picked the weather. Commit to it!" : "Rain, snow, a storm or a blizzard on the overworld.");
     }
+    if (head) opt_list_end();
     opt_end();
 }
 
@@ -902,6 +944,20 @@ static void ask_popup(float scale) {
     if (!ImGui::BeginPopupModal("##ask", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
                                                    ImGuiWindowFlags_NoMove))
         return;
+    if (g_ask == BAR_WARP || g_ask == BAR_EDITOR || g_ask == BAR_CHEATS) {  // (no save loaded: page_open)
+        const char *note = L("Load a save first.");
+        ImGui::TextUnformatted(note);
+        ImGui::Spacing();
+        // (the whole width: the note's, the popup sizes itself to it)
+        if (ImGui::Button(L("OK"), ImVec2(fmaxf(ImGui::CalcTextSize(note).x, 200 * scale), 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+            ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            menu_sfx_play(MENU_SFX_CANCEL);
+            g_ask = -1, ImGui::CloseCurrentPopup();
+        }
+        ImGui::SetItemDefaultFocus();
+        ImGui::EndPopup();
+        return;
+    }
     bool quit = g_ask == BAR_QUIT;
     // LARECOMP_MENU_ASK=cancel / launcher / reset (test): presses that button a few frames after the question opens
     static const char *test = getenv("LARECOMP_MENU_ASK");
@@ -961,10 +1017,61 @@ static void ask_popup(float scale) {
     ImGui::EndPopup();
 }
 
-// Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the Gameplay tab (but
-// its language and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio otherwise and the controls
-// stay. A seed being played ends: the game boots again without it (as the Randomizer tab's Switch to vanilla).
-static void reset_to_vanilla(void) {
+// A save that failed (runtime/services/fs.c, any thread): the menu opens with it over the bar, in the menus' look, and
+// OK closes it again if it opened for it. It was a system alert, on Mac and Windows only (user 2026-11-11).
+static pthread_mutex_t g_notice_lock = PTHREAD_MUTEX_INITIALIZER;
+static std::string g_notice_pending;  // the save folder (g_notice_lock)
+static std::string g_notice;          // shown (render thread)
+static bool g_notice_closes;          // the menu was closed: OK closes it again
+extern "C" void menu_save_failed(const char *folder) {
+    pthread_mutex_lock(&g_notice_lock);
+    g_notice_pending = folder && folder[0] ? folder : "?";
+    pthread_mutex_unlock(&g_notice_lock);
+}
+static void notice_take(void) {
+    pthread_mutex_lock(&g_notice_lock);
+    std::string n;
+    n.swap(g_notice_pending);
+    pthread_mutex_unlock(&g_notice_lock);
+    if (n.empty() || !g_notice.empty()) return;
+    g_notice = n;
+    if (!g_open.load()) set_open(true), g_notice_closes = true;
+    g_page = -1;  // (over the bar)
+}
+static void notice_popup(float scale) {
+    if (g_notice.empty()) return;
+    if (!ImGui::IsPopupOpen("##notice")) ImGui::OpenPopup("##notice");
+    if (!ImGui::BeginPopupModal("##notice", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        return;
+    ImGui::PushFont(g_menu_font_big);
+    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Couldn't save"));
+    ImGui::PopFont();
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 820 * scale);
+    ImGui::TextUnformatted(L("The game may say it saved, but it didn't. Your previous save is unchanged."));
+    ImGui::Spacing();
+    ImGui::TextUnformatted(L("Make sure this folder can be written to and the disk has free space:"));
+    ImGui::TextColored(plastic_col(plastic_theme().text_dim), "%s", g_notice.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::SetItemDefaultFocus();
+    if (ImGui::Button(L("OK"), ImVec2(260 * scale, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        ImGui::CloseCurrentPopup();
+        g_notice.clear();
+        if (g_notice_closes) set_open(false);
+        g_notice_closes = false;
+    }
+    ImGui::EndPopup();
+}
+
+// Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the General and Gameplay
+// tabs (but the language, Hero Mode icon and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio
+// otherwise and the controls stay. A seed being played ends: the game boots again without it (as the Randomizer tab's
+// Switch to vanilla). On the start screen (in_game false) nothing runs yet: its caller drops the seed PLAY would start
+// (menu_reset_corner).
+static void reset_to_vanilla(bool in_game) {
     Settings &s = g_settings;
     s.aspect = ASPECT_ORIGINAL;
     s.cheat_hookshot = s.no_buff_drops = s.mirror_mode = false;
@@ -978,16 +1085,18 @@ static void reset_to_vanilla(void) {
                          &s.fences, &s.walls, &s.houses})
         c->pick = COL_DEFAULT;
     s.enemy_colours = 0, s.screen_filter = 0;
-    LOG("[menu] reset to vanilla%s\n", rando_seed_dir() ? " (leaving the seed)" : "");
+    LOG("[menu] reset to vanilla%s\n", !in_game ? " (start screen)" : rando_seed_dir() ? " (leaving the seed)" : "");
     settings_save();
-    if (rando_seed_dir()) {
+    if (in_game && rando_seed_dir()) {
         rando_select("");
         rt_request_reboot(RT_REBOOT_GAME);
         set_open(false);
     }
 }
 
-static void vanilla_popup(float scale) {
+// seed: a seed would be left (the one being played, or on the start screen the one PLAY would start). True when Reset
+// was pressed.
+static bool vanilla_popup(float scale, bool seed, bool in_game) {
     // LARECOMP_MENU_VANILLA=ask / reset / cancel (test): the question opens with the menu; reset / cancel press that
     // button a few frames later
     static const char *test = getenv("LARECOMP_MENU_VANILLA");
@@ -996,13 +1105,13 @@ static void vanilla_popup(float scale) {
     bool test_reset = test && test_frames == 30 && !strcmp(test, "reset");
     bool test_cancel = test && test_frames == 30 && !strcmp(test, "cancel");
     if (!ImGui::BeginPopupModal("##vanilla", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
-        return;
+        return false;
     ImGui::PushFont(g_font_big);
     ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Reset to vanilla?"));
     ImGui::PopFont();
     ImGui::Spacing();
     ImGui::TextUnformatted(L("This resets your settings to the vanilla game experience.\nYour controls stay as they are."));
-    if (rando_seed_dir()) {
+    if (seed) {
         ImGui::Spacing();
         ImGui::TextUnformatted(L("This also ends the current randomizer seed.\nIts save files are kept."));
     }
@@ -1011,9 +1120,11 @@ static void vanilla_popup(float scale) {
     ImVec2 bs(220 * scale, 0);
     for (const char *s : {L("Reset"), L("Cancel")})
         bs.x = fmaxf(bs.x, ImGui::CalcTextSize(s).x + 2 * ImGui::GetStyle().FramePadding.x + 16 * scale);
+    bool reset = false;
     if (ImGui::Button(L("Reset"), bs) || test_reset) {
         ImGui::CloseCurrentPopup();
-        reset_to_vanilla();
+        reset_to_vanilla(in_game);
+        reset = true;
     }
     ImGui::SameLine();
     ImGui::SetItemDefaultFocus();
@@ -1023,6 +1134,7 @@ static void vanilla_popup(float scale) {
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndPopup();
+    return reset;
 }
 
 extern "C" bool inventory_overlay_wanted(void);
@@ -1195,8 +1307,9 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 // opt_preview rows: Video, Cosmetics.
 static float g_preview_scale = 1;
 static void preview_page(void) {
-    if (g_tab == 0) tab_display();
-    else if (g_tab == 7) tab_cosmetics();
+    // (the page drawn last: the bar's Cosmetics is a page alone, which leaves g_tab as Settings had it)
+    if (g_shown_tab == 0) tab_display();
+    else if (g_shown_tab == 7) tab_cosmetics();
 #if PLAT_TOUCH
     else if (g_tab == 10) touch_tab_draw(g_preview_scale);
 #endif
@@ -1210,10 +1323,18 @@ bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big) {
 
 #if PLAT_TOUCH
 // A menu page's title on a touch screen: an icon in the screen's corner (a notch or a camera hole sits mid-height, clear
-// of it). tab: -1000 Settings (a gear), 3 Randomizer (a die), 4 Warp (a map pin), 2 Save Editor (a floppy disk)
+// of it). tab: -1000 Settings (a gear), 3 Randomizer (a die), 4 Warp (a map pin), 2 Save Editor (a floppy disk),
+// 7 Cosmetics (a paint palette), 5 Cheats (a star)
+// (its left edge: 14 px in, or further on an iPhone, clear of the screen's rounded corner)
+static float page_corner_x(float scale) {
+    float bs = 44 * 1.35f * scale;
+    return fmaxf(14 * scale, plastic_corner_clear(12 * scale + bs * 0.5f, bs * 0.5f) - bs * 0.5f);
+}
 static void page_corner_icon(int tab, float scale) {
-    float bs = 44 * 1.35f * scale, ox = 14 * scale, oy = 12 * scale;
+    float bs = 44 * 1.35f * scale, ox = page_corner_x(scale), oy = 12 * scale;
     ImVec2 vp = ImGui::GetMainViewport()->Pos, c(vp.x + ox + bs * 0.5f, vp.y + oy + bs * 0.5f);
+    // (a page whose X is in a pane (the Randomizer, Warp, Save Editor): level with that X, last frame's)
+    if (ImGui::GetFrameCount() - g_plastic_pane_close_frame <= 1) c.y = g_plastic_pane_close_cy;
     float r = bs * 0.42f;
     ImU32 gc = ImGui::ColorConvertFloat4ToU32(plastic_col(plastic_theme().title));
     ImVec4 p = plastic_theme().panel;
@@ -1240,6 +1361,20 @@ static void page_corner_icon(int tab, float scale) {
         gd->AddCircleFilled(head, hr, gc, 32);
         gd->AddTriangleFilled(ImVec2(c.x - hr * 0.86f, head.y + hr * 0.5f), ImVec2(c.x + hr * 0.86f, head.y + hr * 0.5f), ImVec2(c.x, c.y + r), gc);
         gd->AddCircleFilled(head, hr * 0.42f, cut, 24);
+    } else if (tab == 7) {
+        gd->AddCircleFilled(c, r * 0.95f, gc, 32);
+        gd->AddCircleFilled(ImVec2(c.x + r * 0.42f, c.y + r * 0.38f), r * 0.2f, cut, 16);  // (the thumb hole)
+        const float well[4][2] = {{-0.48f, -0.1f}, {-0.2f, -0.52f}, {0.3f, -0.48f}, {-0.3f, 0.42f}};  // (the paints)
+        for (const auto &w : well) gd->AddCircleFilled(ImVec2(c.x + w[0] * r, c.y + w[1] * r), r * 0.15f, cut, 16);
+    } else if (tab == 5) {
+        ImVec2 pt[10];  // (a five-pointed star: points and the notches between them)
+        for (int k = 0; k < 10; k++) {
+            float a = -3.14159265f / 2 + k * 3.14159265f / 5, rr = k & 1 ? r * 0.42f : r;
+            pt[k] = ImVec2(c.x + cosf(a) * rr, c.y + sinf(a) * rr);
+        }
+        for (int k = 0; k < 10; k += 2) gd->AddTriangleFilled(pt[(k + 9) % 10], pt[k], pt[k + 1], gc);
+        ImVec2 mid[5] = {pt[1], pt[3], pt[5], pt[7], pt[9]};
+        gd->AddConvexPolyFilled(mid, 5, gc);
     } else {
         float e = r * 0.92f;
         ImVec2 a(c.x - e, c.y - e), b(c.x + e, c.y + e);
@@ -1252,14 +1387,14 @@ static void page_corner_icon(int tab, float scale) {
 }
 #endif
 
-// A page alone on a touch screen (the bar's Randomizer, Warp and Save Editor; the start screen's Randomizer): its icon
+// A page alone on a touch screen (the bar's pages but Settings; the start screen's Randomizer): its icon
 // in the corner for a title, the page from the top of the screen, clear of the icon. Returns the indent to undo.
 extern "C" float menu_page_corner(int tab, float scale) {
 #if PLAT_TOUCH
     page_corner_icon(tab, scale);
     float bs = 44 * 1.35f * scale;
     ImVec2 vp = ImGui::GetMainViewport()->Pos, p = ImGui::GetCursorScreenPos();
-    float indent = fmaxf(0, vp.x + (14 + 8) * scale + bs - p.x);
+    float indent = fmaxf(0, vp.x + page_corner_x(scale) + 8 * scale + bs - p.x);
     ImGui::SetCursorScreenPos(ImVec2(p.x, vp.y + 14 * scale));
     if (indent > 0) ImGui::Indent(indent);
     return indent;
@@ -1271,23 +1406,25 @@ extern "C" float menu_page_corner(int tab, float scale) {
 
 // false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm). only: one page alone, without the tab bar (the in-game menu
-// bar's Randomizer, Warp, Save Editor and Quit).
+// bar's pages but Settings).
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int only = -1000) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
-    Tab tabs[11];
+    Tab tabs[12];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {LN("System"), -1, true};
     static const char *names[] = {LN("Video"), LN("Audio"), LN("Save Editor"), LN("Randomizer"), LN("Warp"),
                                   LN("Cheats"), LN("Gameplay"), LN("Cosmetics"), PLAT_TOUCH ? LN("Controller") : LN("Controls"), LN("Quit"),
-                                  LN("Touch")};
-    // Controls, Video, Audio, Gameplay, Cosmetics, Cheats (ids stay: test hooks). Warp, Save Editor and Quit are the
-    // in-game menu bar's own entries (only usable in a save - user 2026-11-03); the Randomizer is the bar's entry in
-    // game and its own row on the start screen (user 2026-11-09). Touch screens: Touch first
+                                  LN("Touch"), LN("General")};
+    // General, Controls, Video, Audio, Gameplay (ids stay: test hooks; General leads, after the start screen's System -
+    // user 2026-11-11). Warp, Save Editor and Quit are the in-game menu bar's own entries (only usable in a save - user
+    // 2026-11-03); the Randomizer is the bar's entry in game and its own row on the start screen (user 2026-11-09);
+    // Cosmetics and Cheats are the bar's entries too, and not on the start screen (user 2026-11-11). Touch screens:
+    // Touch after General
 #if PLAT_TOUCH
-    static const int order[] = {10, 8, 0, 1, 6, 7, 5};
+    static const int order[] = {11, 10, 8, 0, 1, 6};
 #else
-    static const int order[] = {8, 0, 1, 6, 7, 5};
+    static const int order[] = {11, 8, 0, 1, 6};
 #endif
     int keep_tab = g_tab;  // (one page alone: the Settings window's tab stays as it was)
     if (only != -1000) tabs[ntabs++] = {names[only], only, true}, g_tab = only;
@@ -1368,12 +1505,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         {   // the Settings window on a touch screen: a gear in the screen's corner for its title (a notch or a camera
             // hole sits mid-height, clear of it), the tabs beside it on the top row, short of the corner buttons
             // (plastic.mm corner_button)
-            float bs = 44 * 1.35f * scale, ox = 14 * scale, oy = 12 * scale;
+            float bs = 44 * 1.35f * scale, ox = page_corner_x(scale), oy = 12 * scale;
             ImVec2 vp = ImGui::GetMainViewport()->Pos;
             page_corner_icon(-1000, scale);
             ImVec2 p = ImGui::GetCursorScreenPos();
             ImGui::SetCursorScreenPos(ImVec2(fmaxf(p.x, vp.x + ox + bs + gap), vp.y + oy + (bs - th) * 0.5f));
             tabs_cut = 2 * bs + 8 * scale;  // (the corner buttons, side by side on the tabs' row)
+            tabs_cut += fmaxf(0, plastic_corner_clear(oy + bs * 0.5f, bs * 0.5f) - (16 * scale + bs * 0.5f));  // (iPhone: moved in)
         }
 #endif
         float tw[16], text_w[16], total = 0, avail = ImGui::GetContentRegionAvail().x - 4 * scale - tabs_cut;
@@ -1403,10 +1541,10 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         }
         ImDrawList *dl = ImGui::GetWindowDrawList();
         static int shown_sel = -99;  // (the selected tab brought into view once, when it changes)
-        if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 8;  // (no Prelaunch in game: Controls, the first tab)
+        if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 11;  // (no Prelaunch in game: General, the first tab)
         for (int k = 0; k < ntabs; k++) {
             const Tab &t = tabs[k];
-            ImGui::BeginDisabled(!t.on);  // (out of the game: Save Editor, Warp, Cheats)
+            ImGui::BeginDisabled(!t.on);
             if (k) ImGui::SameLine(0, gap);
             ImVec2 p = ImGui::GetCursorScreenPos();
             p.x += 2 * scale;
@@ -1470,6 +1608,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         case 4: if (warp_tab_draw(scale)) set_open(false); break;
         case 5: cheats_draw(scale); break;
         case 6: difficulty_draw(scale); break;
+        case 11: general_draw(scale); break;
         case 7: tab_cosmetics(); break;
         case 8: controls_tab_draw(scale); break;
 #if PLAT_TOUCH
@@ -1519,14 +1658,72 @@ void menu_tabs_draw(float scale, ImFont *font, ImFont *font_big, bool in_game, v
     g_font = f0, g_font_big = f1;
 }
 
+// The start screen's Settings: Reset to vanilla beside its close X, as in game (user 2026-11-11). seed: PLAY would
+// start a seed. True when Reset was pressed (the caller drops that seed: nothing is running to reboot).
+bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bool seed) {
+    ImFont *f0 = g_font, *f1 = g_font_big;
+    g_font = font, g_font_big = font_big;
+    ImGuiStyle saved = ImGui::GetStyle();  // (the question in the menu's look, as menu_tabs_draw's pages)
+    style_init();
+    style_parchment(ImGui::GetStyle());
+    ImGui::GetStyle().ScaleAllSizes(scale);
+    if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
+    bool r = vanilla_popup(scale, seed, false);
+    ImGui::GetStyle() = saved;
+    g_font = f0, g_font_big = f1;
+    return r;
+}
+
 // The menu bar (in game; its window is drawn in the menu's font), only while no page is open: left / right (d-pad,
 // stick, arrows, L / R, Q / E) move the cursor, A / Enter opens the entry, B / Esc closes the menu. The mouse lights
 // the entry under it, a click opens it (the page is drawn from the next frame: the press that opened it isn't the
 // page's too).
+static const char *g_bar_names[BAR_N] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
+                                         LN("Cheats"), LN("Reset"), LN("Quit"), ""};
+// an entry's tab at x, y (w x ph), its name in the current font at size fs
+static void bar_entry(ImDrawList *dl, float x, float y, float w, float ph, float pad, float fs, bool sel, bool hot,
+                      const char *name, float scale) {
+    // (as the Settings window's tabs: tabs_body - the user wants the bar's look to match Settings, 2026-11-03)
+    const PlasticTheme &pt = plastic_theme();
+    ImVec4 col = sel ? pt.tab_sel : hot ? pt.row_mark : pt.tab;
+    if (sel && hot) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);
+    plastic_pill(dl, ImVec2(x, y + (sel ? 0 : 2 * scale)), ImVec2(x + w, y + ph - 2 * scale), 10 * scale, col,
+                 (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
+    dl->AddText(ImGui::GetFont(), fs, ImVec2(x + pad, y + (ph - fs) * 0.5f - (sel ? 2 : 1) * scale),
+                sel ? pt.text_sel : pt.text, name);
+}
+
+// The bar as a picture at the cursor, as wide as width at most, Settings lit: the start screen's note on opening the
+// menu (launcher.mm menu_tip) shows what opens. In the current font, shrunk to fit.
+void menu_bar_picture(float width, float scale) {
+    float fs = ImGui::GetFontSize(), natural = 0;
+    for (int e = 0; e < BAR_CLOSE; e++) natural += ImGui::CalcTextSize(L(g_bar_names[e])).x + (2 * 22 + 10) * scale;
+    natural += 2 * 30 * scale + fs + 20 * scale;  // (the frame's insets and the X)
+    float k = fminf(1.0f, width / natural), s = scale * k, w = natural * k;
+    fs *= k;
+    float in = 30 * s, ph = fs + 20 * s, pad = 22 * s, gap = 10 * s, bh = ph + 2 * in;
+    ImVec2 a = ImGui::GetCursorScreenPos();
+    a.x += (width - w) * 0.5f;
+    ImGui::Dummy(ImVec2(width, bh));
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    plastic_panel(dl, a, ImVec2(a.x + w, a.y + bh), s);
+    float x = a.x + in, y = a.y + in;
+    for (int e = 0; e < BAR_CLOSE; e++) {
+        float ew = ImGui::CalcTextSize(L(g_bar_names[e])).x * k + 2 * pad;
+        bar_entry(dl, x, y, ew, ph, pad, fs, e == BAR_SETTINGS, false, L(g_bar_names[e]), s);
+        x += ew + gap;
+    }
+    // the close X (as plastic_close_button draws it)
+    const PlasticTheme &pt = plastic_theme();
+    float bx = ph, m = bx * 0.32f, th = 2.6f * s * 1.5f, dy = -1 * s;
+    ImVec2 p(a.x + w - in - bx, y);
+    plastic_pill(dl, p, ImVec2(p.x + bx, p.y + bx), bx * 0.5f, pt.row, 6 * s, 1.0f, s, false);
+    dl->AddLine(ImVec2(p.x + m, p.y + m + dy), ImVec2(p.x + bx - m, p.y + bx - m + dy), pt.text, th);
+    dl->AddLine(ImVec2(p.x + bx - m, p.y + m + dy), ImVec2(p.x + m, p.y + bx - m + dy), pt.text, th);
+}
+
 static double g_bar_t0 = -1;  // when the bar began to drop (-1: not shown - the menu is closed or a page is open)
 static void bar_draw(ImGuiIO &io, float scale) {
-    static const char *names[BAR_N] = {LN("Settings"), LN("Randomizer"), LN("Warp"), LN("Save Editor"), LN("Reset"),
-                                       LN("Quit"), ""};
     const PlasticTheme &pt = plastic_theme();
     double now = ImGui::GetTime();
     if (g_bar_t0 < 0) g_bar_t0 = now;
@@ -1544,7 +1741,7 @@ static void bar_draw(ImGuiIO &io, float scale) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
     // the keys
-    if (!ui_text_busy() && g_ask < 0) {
+    if (!ui_text_busy() && g_ask < 0 && g_notice.empty()) {
         auto pressed = [](ImGuiKey a, ImGuiKey b, ImGuiKey c) {
             return ImGui::IsKeyPressed(a) || ImGui::IsKeyPressed(b) || ImGui::IsKeyPressed(c);
         };
@@ -1565,8 +1762,19 @@ static void bar_draw(ImGuiIO &io, float scale) {
     bool mouse_moved = io.MousePos.x != last_mouse.x || io.MousePos.y != last_mouse.y;
     last_mouse = io.MousePos;
     float x = wp.x + in, y = wp.y + in, pad = 22 * scale, gap = 10 * scale;
+    // too wide for the bar (eight entries: long names - Russian, German - on a phone's larger menu): tighter entries,
+    // then the names a little smaller, as the Settings tabs do (tabs_body)
+    float text_w[BAR_CLOSE], names_w = 0, tfs = fs;
+    for (int k = 0; k < BAR_CLOSE; k++) names_w += text_w[k] = ImGui::CalcTextSize(L(g_bar_names[k])).x;
+    float room = ws.x - 2 * in - ph - gap * BAR_CLOSE;  // (the close X and the gaps)
+    if (names_w + 2 * pad * BAR_CLOSE > room) pad = fmaxf((room - names_w) / (2 * BAR_CLOSE), 8 * scale);
+    if (names_w + 2 * pad * BAR_CLOSE > room && names_w > 0) {
+        float k = fmaxf((room - 2 * pad * BAR_CLOSE) / names_w, 0.6f);
+        tfs *= k;
+        for (float &t : text_w) t *= k;
+    }
     for (int k = 0; k < BAR_CLOSE; k++) {
-        float tw = ImGui::CalcTextSize(L(names[k])).x, w = tw + 2 * pad;
+        float tw = text_w[k], w = tw + 2 * pad;
         ImGui::SetCursorScreenPos(ImVec2(x, y));
         ImGui::PushID(k);
         bool clicked = ImGui::InvisibleButton("##entry", ImVec2(w, ph), ImGuiButtonFlags_PressedOnClick);
@@ -1574,14 +1782,7 @@ static void bar_draw(ImGuiIO &io, float scale) {
         bool hot = ImGui::IsItemHovered();
         if (hot && mouse_moved && g_bar_cur != k) g_bar_cur = k, menu_sfx_play(MENU_SFX_CURSOR);
         if (clicked) page_open(k), menu_sfx_play(MENU_SFX_DECIDE);
-        // (as the Settings window's tabs: tabs_body - the user wants the bar's look to match Settings, 2026-11-03)
-        bool sel = k == g_bar_cur;
-        ImVec4 col = sel ? pt.tab_sel : hot ? pt.row_mark : pt.tab;
-        if (sel && hot) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);
-        plastic_pill(dl, ImVec2(x, y + (sel ? 0 : 2 * scale)), ImVec2(x + w, y + ph - 2 * scale), 10 * scale, col,
-                     (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
-        dl->AddText(ImGui::GetFont(), fs, ImVec2(x + pad, y + (ph - fs) * 0.5f - (sel ? 2 : 1) * scale),
-                    sel ? pt.text_sel : pt.text, L(names[k]));
+        bar_entry(dl, x, y, w, ph, pad, tfs, k == g_bar_cur, hot, L(g_bar_names[k]), scale);
         x += w + gap;
     }
     // the close X at the right end (the cursor on it: a ring round it)
@@ -1612,6 +1813,7 @@ void menu_render(id<MTLDevice> dev, id<MTLCommandBuffer> cb, id<MTLTexture> targ
 void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
 #endif
+    notice_take();  // (a save failed: the menu opens with it)
     bool open = g_open.load();
     bool inv = !open && inventory_overlay_wanted();
     bool trk = !open && tracker_overlay_wanted();
@@ -1628,6 +1830,9 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #endif
     // (on-screen controls: mobile/touch_controls.mm; also under the live preview of their own settings)
     bool touch = (!open && !kbd && touch_visible()) || (PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2);
+    // (the stick / D-pad takes the thumb on the Movement row's preview only: on the others the panel may sit over it)
+    touch_preview_play(PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2 &&
+                       !strcmp(preview_label(), "Movement"));
     if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
@@ -1785,7 +1990,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     } else if (open) {
         // A page open: the bar goes up and the page has the whole screen (user 2026-11-03); B brings the bar down again
         int page = g_page.load();
-        if (page < 0) bar_draw(io, scale), ask_popup(scale);
+        if (page < 0) bar_draw(io, scale), ask_popup(scale), notice_popup(scale);
         else g_bar_t0 = -1;
         static int shown = -1;  // (a page just opened takes ImGui's focus)
         if (page < 0) shown = -1;
@@ -1803,6 +2008,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                 // there (Android's bars are hidden but still reported), and past the edges by the window's padding, so
                 // the page runs to them.
                 float sl = g_cushion_l, pad = ImGui::GetStyle().WindowPadding.y, top = 14 * scale - pad;
+                g_plastic_corner_r = touch_corner_radius(g_safe_l, g_safe_r);  // (the corner buttons keep off the curve)
                 // (to the screen's right edge, for the corner buttons: what's on the page keeps the inset, below)
                 w = io.DisplaySize.x - sl, h = io.DisplaySize.y + pad - 8 * scale - top;
                 centre = ImVec2(sl + w * 0.5f, top + h * 0.5f);
@@ -1824,8 +2030,11 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             // header as on the start screen's Settings: the page's title, and a close X in the corner (B / Esc too:
             // back to the bar). ("Title screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user
             // 2026-10-11.)
-            static const char *titles[] = {LN("Settings"), LN("Randomizer"), LN("Warp"), LN("Save Editor")};
-            static const int only[] = {-1000, 3, 4, 2};  // (the pages' tab ids)
+            static const char *titles[] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
+                                           LN("Cheats")};
+            static const int only[] = {-1000, 7, 3, 4, 2, 5};  // (the pages' tab ids)
+            bool pane_x = page == BAR_RANDO || page == BAR_WARP || page == BAR_EDITOR || page == BAR_COSMETICS ||
+                          page == BAR_CHEATS;  // (touch: their X is in a pane, or on the page's first line: menu_page_head)
 #if PLAT_TOUCH
             // (an icon for the title; Settings': tabs_body)
             float page_indent = page != BAR_SETTINGS ? menu_page_corner(only[page], scale) : 0;
@@ -1837,20 +2046,23 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             bool back = false;
             {
                 float bx = 44 * scale;
-                if (!(PLAT_TOUCH && page != BAR_SETTINGS) && plastic_close_corner(bx, scale)) back = true;
+                if (!(PLAT_TOUCH && pane_x) && plastic_close_corner(bx, scale)) back = true;
                 if (page == BAR_SETTINGS) {
                     if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
-                    vanilla_popup(scale);
+                    vanilla_popup(scale, rando_seed_dir() != NULL, true);
                 }
             }
 
             bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before
+            g_page_x = PLAT_TOUCH && (page == BAR_COSMETICS || page == BAR_CHEATS), g_page_x_scale = scale;
             tabs_body(scale, true, NULL, only[page]);                                             //  the pages run)
+            g_page_x = false;
 #if PLAT_TOUCH
             if (page_indent > 0) ImGui::Unindent(page_indent);
             if (page == BAR_RANDO && rando_tab_close_pressed()) back = true;
             if (page == BAR_WARP && warp_tab_close_pressed()) back = true;
             if (page == BAR_EDITOR && save_editor_close_pressed()) back = true;
+            if (g_page_x_pressed) g_page_x_pressed = false, back = true;
 #endif
             // B with nothing focused-deeper goes back to the bar (not the Esc / B that ends typing: typing is from the
             // frame before, so it's still true the frame a field lets go)

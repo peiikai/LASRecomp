@@ -34,6 +34,12 @@ void plastic_panel(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale);
 void plastic_panel_full(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale);
 // a well (recessed) - the panes, text fields
 void plastic_well(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale);
+// a progress bar: a recessed track, the done part a pill (frac 0..1; below 0, ImGui::ProgressBar's -time * speed: a
+// piece sliding along, the amount not known)
+void plastic_progress(ImDrawList *dl, ImVec2 a, ImVec2 b, float frac, float scale);
+// the same as an item at the cursor (size.x <= 0: the width left; size.y <= 0: a frame's height), the overlay text
+// (or none) beside it on the right
+void plastic_progress_bar(float frac, ImVec2 size, const char *overlay, float scale);
 // the round close X at the cursor (size: its diameter); true when clicked
 bool plastic_close_button(float size, float scale);
 // that X in the current window's top right corner, inside the frame; the layout is left as it was
@@ -42,6 +48,15 @@ bool plastic_close_corner(float size, float scale);
 bool plastic_close_pane(float size, float scale);
 // a round reset arrow just left of that X, the same size, with its tooltip; true when clicked
 bool plastic_reset_corner(float size, float scale);
+// iPhone: the screen's rounded corners' radius, in the current window's units (0 elsewhere); the menus set it each frame
+extern float g_plastic_corner_r;
+// touch screens: the centre height of the last pane's close X (plastic_close_pane) and the ImGui frame it was drawn in -
+// a page's corner icon lines up with it
+extern float g_plastic_pane_close_cy;
+extern int g_plastic_pane_close_frame;
+// how far from the screen's side the centre of a round button (centre cy below the top, radius r) has to be to clear
+// a rounded corner
+float plastic_corner_clear(float cy, float r);
 // While on (the menus' windows): ImGui's own frames (buttons, text fields, headers, check boxes) and window / popup
 // backgrounds are drawn as pieces too. The caller turns it off again before anything else is drawn.
 void plastic_widgets(bool on);

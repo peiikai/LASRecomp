@@ -85,6 +85,15 @@ extern "C" void rt_items_page_tick(void) {
     if (c) g_items_obj = c->x[0];
 }
 
+// tools/patches.py PAUSE_MENU_SITE: the pause menu's update ran (any page, and between pages)
+static std::atomic<uint64_t> g_pause_frame{0};
+extern "C" void rt_pause_menu_tick(void) { g_pause_frame = renderer_present_count(); }
+// mobile/touch_controls.mm: the pause menu is up (L / R there turn its pages, not the boots / shield)
+extern "C" bool pause_menu_shown(void) {
+    uint64_t f = g_pause_frame;
+    return f && renderer_present_count() - f <= 2;
+}
+
 static bool items_page_shown(void) {
     uint64_t f = g_items_frame;
     return f && renderer_present_count() - f <= 2;

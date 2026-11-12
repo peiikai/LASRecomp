@@ -94,7 +94,7 @@ typedef struct {
     float diff_damage;   // damage taken multiplier (1 = normal)
     float walk_speed;    // Link's walking speed multiplier (1 = normal; Gameplay tab, runtime/hle/qol.c)
     bool walk_speed_dungeons;  // walk speed also indoors: houses, caves, dungeons (Gameplay tab, under Walk speed)
-    int text_speed;      // TEXT_SPEED_*: how fast message text appears (Gameplay tab; runtime/hle/text_speed.c)
+    int text_speed;      // TEXT_SPEED_*: how fast message text appears (General tab; runtime/hle/text_speed.c)
     bool diff_ohko;      // any hit kills
     bool diff_hero;      // Hero Mode flag forced on in the loaded save (2x damage, no recovery hearts)
     // cosmetics (Cosmetics tab, runtime/ui/menu.mm), live, never part of a seed: colour rows of the shared palette
@@ -110,7 +110,7 @@ typedef struct {
     int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale (runtime/nvn/screen_filter.h)
     int weather;              // WEATHER_* (runtime/nvn/weather.h): rain / snow / storm / blizzard on the overworld, looks only
     char cosmetics_seed[300];  // the seed folder whose own cosmetics were last copied into the rows (cosmetics_seed.c)
-    // speedrun (Gameplay tab; runtime/hle/run_timer.c, runtime/livesplit.c)
+    // speedrun (General tab; runtime/hle/run_timer.c, runtime/livesplit.c)
     bool timer;            // the in-game run timer in the corner (game time: level loads don't count)
     int timer_pos;         // TIMER_POS_*: which bottom corner it sits in
     bool livesplit;        // drive LiveSplit (its Server component) over TCP: start, splits, game time
@@ -119,13 +119,13 @@ typedef struct {
     int touch_mode;      // 0 Auto (while no controller is connected), 1 Always, 2 Off
     bool touch_stick_fixed;  // the touch stick stays in its place (else its base comes to the thumb)
     bool touch_dpad;  // the on-screen stick drawn and read as an 8-way D-pad (mobile/touch_controls.mm)
-    bool touch_all;      // every play button on screen, not only those the game uses now
+    bool touch_edit_button;  // the on-screen button (top, beside the menu's) that opens the layout editor
     bool touch_hide_xy_hud;  // the game's own X / Y item HUD hidden while the on-screen controls are shown
     float touch_opacity; // 0.15 .. 1
     float touch_size;    // 0.6 .. 1.6 (1 = the default layout)
     // the layout editor (touch_controls.mm): per control, moved (its place: share of the screen), size (x), hidden;
     // saved as touch_ctl_<name> = x, y, size, hidden
-#define TOUCH_NCTL 13
+#define TOUCH_NCTL 14
     bool touch_moved[TOUCH_NCTL];
     float touch_pos[TOUCH_NCTL][2];
     float touch_scale[TOUCH_NCTL];

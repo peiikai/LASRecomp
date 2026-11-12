@@ -293,6 +293,22 @@ def _items_page(gen, a):
 PATCHES[ITEMS_PAGE_SITE] = _items_page
 
 
+# Touch controls (runtime/ui/mobile/touch_controls.mm): main+0xee6f80 is the pause menu's update, once per frame on
+# every page and between them (the Items / Map / System pages' own updates are called from it; found by profiling
+# the System and Map pages against play). Its prologue reports that the pause menu is up.
+PAUSE_MENU_SITE = A.PAUSE_MENU_SITE
+
+
+def _pause_menu(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xd10383ff, hex(w)  # sub sp, sp, #0xe0
+    return ('{ extern void rt_pause_menu_tick(void); rt_pause_menu_tick(); c->sp -= 0xe0; }'
+            f'  /* {a:#x}: sub sp, sp, #0xe0 (pause menu shown) */')
+
+
+PATCHES[PAUSE_MENU_SITE] = _pause_menu
+
+
 # The Items page's cursor move: main+0xeb7fdc loads the cell the pressed direction leads to (the page's neighbour
 # table; 0x27 none). A tap on a cell (touch screens) asks for that cell there, so one press moves the cursor straight to
 # it through the game's own move (the old cell let go, the new one picked, its sound): rt_items_nav_pick.

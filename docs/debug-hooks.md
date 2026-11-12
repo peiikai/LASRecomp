@@ -147,7 +147,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
 | `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link, as the randomizer option will. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |
-| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on (`3`: the menu bar's Randomizer). |
+| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on (`3`: the menu bar's Randomizer, `5` its Cheats, `7` its Cosmetics). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
@@ -200,6 +200,7 @@ These work on both Metal and Vulkan unless noted.
 | `LARECOMP_NO_FRAME_CLEAR` | 1 (Vulkan: 0 / 1) | Don't clear scene render targets at their first use each frame. On Vulkan the default is no clears on integrated GPUs. |
 | `LARECOMP_TEX_FULLHASH` | 1 | Hash every texture in full each time instead of the faster partial checks. |
 | `LARECOMP_NO_WIDESCREEN` | 1 | Turn the widescreen view off (16:9 framing everywhere). |
+| `LARECOMP_NO_PAUSE_FILL` | 1 | Keep the pause screen's backdrop in the 16:9 box on other window shapes (the game shows around it). |
 | `LARECOMP_WIDE_TEST` | ratio | Pretend the window has this shape, relative to 16:9 (e.g. `1.3125` for 21:9). |
 
 ## Metal
@@ -238,6 +239,7 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_VK_GMEM_LAZY` | 0 / 1 | Import the heap to the GPU in chunks on demand. Default on where one import can't hold it. |
 | `LARECOMP_VK_NO_HOST_IMPORT` | 1 | Act as if the driver can't import host memory (tests the copy path on any GPU). |
 | `LARECOMP_VK_HOST_IMPORT` | 1 | Android: import the guest heap even on a phone with under 10 GB of RAM (by default those use the copy path, issue #693). |
+| `LARECOMP_VK_PRETRANSFORM` | 0 | Android: hand the system landscape window images to turn, instead of drawing them in the panel's own orientation (pre-rotation, the default). |
 | `LARECOMP_VK_RECORDER` | 0 / 1 | Record Vulkan commands on a separate thread. Default on, except on Mali. |
 | `LARECOMP_VK_PIPELINE_BINARY` | 0 / 1 | Our own pipeline binaries cache. Default on for AMD drivers only. |
 | `LARECOMP_VK_DYN_VERTEX` | 0 | Keep the vertex layout in each pipeline instead of dynamic vertex input. |
