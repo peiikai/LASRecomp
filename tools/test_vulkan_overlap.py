@@ -15,6 +15,7 @@ defer = source[source.index('static uint64_t overlap_defer('):source.index('\nui
 snap = source[source.index('#define SNAP_HALF'):source.index('// (debug) LARECOMP_LOG_BINDS=1:')]
 gmap = source[source.index('// ---- gmap_build (tools/test_vulkan_overlap.py'):source.index('// ---- end gmap_build')]
 decide = source[source.index('#define VK_OVERLAP_DEFAULT'):source.index('static _Atomic uint64_t g_last_gpu_frame_ticks;')]
+merge = source[source.index('// ---- gmir_merge_words (tools/test_vulkan_overlap.py'):source.index('// ---- end gmir_merge_words')]
 assert 'VK_OVERLAP_DEFAULT 1' in decide, 'the default is on where the write watch is available (Beta 5)'
 assert 'static void snap_ring_import_tail(void);' in snap
 
@@ -68,21 +69,65 @@ decide_harness = r'''
 #include <stdlib.h>
 #include <string.h>
 #define HEAP_BASE 0x7240000000ull
+#define HEAP_MAX (0x100000000ull)
 #define LOG(...) fprintf(stderr, __VA_ARGS__)
-static int tracking = 1;
+static int tracking = 1, copies;
 static int pages_cpu_written(uint64_t addr, uint64_t size, uint32_t since, uint32_t *now) {
-    assert(addr == HEAP_BASE && size == 4096 && !since); *now = 1; return tracking ? 0 : -1;
+    assert(addr == HEAP_BASE + HEAP_MAX - 4096 && size == 4096 && !since); *now = 1; return tracking ? 0 : -1;
 }
 static const char *heap_tracking_reason(void) { return "the guest heap is driver memory (dma-buf), which the OS can't track"; }
 ''' + decide + r'''
+static bool gmir_on(void) { return copies; }
 int main(int argc, char **argv) {
     assert(argc == 3);
     tracking = !strcmp(argv[1], "tracked");
+    copies = !strcmp(argv[1], "copies");  // (shader global memory as copies: no page write tracking either)
+    if (copies) tracking = 0;
     bool want = !strcmp(argv[2], "on");
     assert(overlap_on() == want && overlap_on() == want);  // (decided once)
-    printf("PASS: overlap %s, tracking %s, LARECOMP_GPU_OVERLAP=%s, LARECOMP_OVERLAP_WATCH=%s\n", want ? "on" : "off", tracking ? "yes" : "no",
+    printf("PASS: overlap %s, %s, LARECOMP_GPU_OVERLAP=%s, LARECOMP_OVERLAP_WATCH=%s\n", want ? "on" : "off",
+           copies ? "shader global memory as copies" : tracking ? "tracking yes" : "tracking no",
            getenv("LARECOMP_GPU_OVERLAP") ? getenv("LARECOMP_GPU_OVERLAP") : "(unset)",
            getenv("LARECOMP_OVERLAP_WATCH") ? getenv("LARECOMP_OVERLAP_WATCH") : "(unset)");
+}
+'''
+
+# gmir_merge_words: a readback of the GPU's stores into guest memory, with the CPU's writes made meanwhile (the overlap)
+merge_harness = r'''
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+''' + merge + r'''
+enum { N = 8 };
+int main(void) {
+    uint32_t guest[N], base[N], was[N], gpu[N], newer_base[N];
+    uint8_t cpu[1];
+    uint32_t *newer[1] = {newer_base};
+    // the slot as given (base == guest == was); the GPU stores words 1 and 2; nothing else changed: both go in
+    for (int i = 0; i < N; i++) guest[i] = base[i] = was[i] = gpu[i] = newer_base[i] = 100 + i;
+    gpu[1] = 7, gpu[2] = 8, cpu[0] = 0;
+    gmir_merge_words(N, gpu, was, cpu, guest, base, newer, 0);
+    assert(guest[1] == 7 && base[1] == 7 && guest[2] == 8 && base[2] == 8 && guest[0] == 100 && guest[3] == 103);
+    // the CPU wrote word 1 for the next frame (a list count reset) while the GPU's frame stored there, not given to the
+    // slot yet: guest keeps the CPU's word, base takes the slot's (the next gmir_cpu_changes puts the CPU's word in)
+    for (int i = 0; i < N; i++) guest[i] = base[i] = was[i] = gpu[i] = 100 + i;
+    gpu[1] = 7, gpu[2] = 8, guest[1] = 0, cpu[0] = 0;
+    gmir_merge_words(N, gpu, was, cpu, guest, base, newer, 0);
+    assert(guest[1] == 0 && base[1] == 7 && guest[2] == 8 && base[2] == 8);
+    // ... given to the slot already (marked; guest == base == the CPU's word): skipped, guest and base keep it
+    for (int i = 0; i < N; i++) guest[i] = base[i] = was[i] = gpu[i] = 100 + i;
+    gpu[1] = 7, gpu[2] = 8, guest[1] = base[1] = 0, cpu[0] = 1u << 1;
+    gmir_merge_words(N, gpu, was, cpu, guest, base, newer, 0);
+    assert(guest[1] == 0 && base[1] == 0 && guest[2] == 8);
+    // a newer readback started from the older base: it takes this one's GPU words (not to undo them later), but not
+    // where the CPU's word went in after this one (that newer readback has the CPU's word itself)
+    for (int i = 0; i < N; i++) guest[i] = base[i] = was[i] = gpu[i] = newer_base[i] = 100 + i;
+    gpu[1] = 7, gpu[2] = 8, guest[1] = base[1] = newer_base[1] = 0, cpu[0] = 1u << 1;
+    gmir_merge_words(N, gpu, was, cpu, guest, base, newer, 1);
+    assert(newer_base[1] == 0 && newer_base[2] == 8 && guest[2] == 8);
+    printf("PASS: gmir_merge_words - GPU words in, the CPU's writes made meanwhile kept (given to the slot or not), newer readbacks follow\n");
 }
 '''
 
@@ -133,6 +178,7 @@ static int pages_cpu_written(uint64_t addr, uint64_t size, uint32_t since, uint3
 }
 static bool userptr;
 static bool overlap_on(void) { return true; }
+static bool gmir_on(void) { return false; }
 static uint64_t completed, pending = 1, issued, waited;
 static uint64_t vk_completed_seq(void) { return completed; }
 static uint64_t vk_pending_seq(void) { return pending; }
@@ -773,7 +819,7 @@ with tempfile.TemporaryDirectory(prefix='vulkan-overlap-') as temporary:
             'if (g >= gmap[i].x && o < gmap[i].y) { if (o >= (gmap[i].w & 0xFFu) && (o >> 2) < (gmap[i].w >> 8)) ' + flag) in out, \
         'gfindw reports table entry i (only inside its bound bytes) with the stamp: the mapping gmap_build / gfast_flags_poll read'
     print('PASS: GLSL store report - gfindw at the store, gfind at the load, entry i flagged with the stamp inside its bound bytes')
-    for name, harness in (('defer', defer_harness), ('decide', decide_harness), ('snap', snap_harness), ('gmap', gmap_harness)):
+    for name, harness in (('defer', defer_harness), ('decide', decide_harness), ('merge', merge_harness), ('snap', snap_harness), ('gmap', gmap_harness)):
         cfile = temporary / f'{name}.c'
         cfile.write_text(harness)
         exe = temporary / (f'{name}.exe' if os.name == 'nt' else name)
@@ -788,6 +834,8 @@ with tempfile.TemporaryDirectory(prefix='vulkan-overlap-') as temporary:
             subprocess.run([str(exe), 'untracked', 'on'], check=True, timeout=10, env=dict(env, LARECOMP_GPU_OVERLAP='1'))
             subprocess.run([str(exe), 'tracked', 'off'], check=True, timeout=10, env=dict(env, LARECOMP_GPU_OVERLAP='0'))
             subprocess.run([str(exe), 'tracked', 'off'], check=True, timeout=10, env=dict(env, LARECOMP_OVERLAP_WATCH='0'))
+            subprocess.run([str(exe), 'copies', 'on'], check=True, timeout=10, env=env)  # (no tracking needed: issue #693)
+            subprocess.run([str(exe), 'copies', 'off'], check=True, timeout=10, env=dict(env, LARECOMP_GPU_OVERLAP='0'))
             continue
         if name == 'snap':  # the hash probe (watch off), the write watch, no tracking
             subprocess.run([str(exe)], check=True, timeout=10, env=dict(env, LARECOMP_OVERLAP_WATCH='0'))
