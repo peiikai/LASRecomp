@@ -52,6 +52,7 @@ bool save_editor_close_pressed(void);  // save_editor.mm (the same, in its right
 bool rando_tab_close_pressed(void);  // rando_tab.mm (the same: its right pane, or the corner over its seed sheet)
 extern "C" void cheats_draw(float scale);  // cheats.mm
 extern "C" void difficulty_draw(float scale);  // difficulty.mm
+extern "C" void general_draw(float scale);     // difficulty.mm
 void controls_tab_draw(float scale);  // controls_ui.mm
 void touch_tab_draw(float scale);     // controls_ui.mm (touch screens)
 bool controls_ui_took_back(void);
@@ -961,9 +962,9 @@ static void ask_popup(float scale) {
     ImGui::EndPopup();
 }
 
-// Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the Gameplay tab (but
-// its language and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio otherwise and the controls
-// stay. A seed being played ends: the game boots again without it (as the Randomizer tab's Switch to vanilla).
+// Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the General and Gameplay
+// tabs (but the language, Hero Mode icon and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio
+// otherwise and the controls stay. A seed being played ends: the game boots again without it (as the Randomizer tab's Switch to vanilla).
 static void reset_to_vanilla(void) {
     Settings &s = g_settings;
     s.aspect = ASPECT_ORIGINAL;
@@ -1275,19 +1276,19 @@ extern "C" float menu_page_corner(int tab, float scale) {
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int only = -1000) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
-    Tab tabs[11];
+    Tab tabs[12];
     int ntabs = 0;
     if (prelaunch) tabs[ntabs++] = {LN("System"), -1, true};
     static const char *names[] = {LN("Video"), LN("Audio"), LN("Save Editor"), LN("Randomizer"), LN("Warp"),
                                   LN("Cheats"), LN("Gameplay"), LN("Cosmetics"), PLAT_TOUCH ? LN("Controller") : LN("Controls"), LN("Quit"),
-                                  LN("Touch")};
-    // Controls, Video, Audio, Gameplay, Cosmetics, Cheats (ids stay: test hooks). Warp, Save Editor and Quit are the
-    // in-game menu bar's own entries (only usable in a save - user 2026-11-03); the Randomizer is the bar's entry in
-    // game and its own row on the start screen (user 2026-11-09). Touch screens: Touch first
+                                  LN("Touch"), LN("General")};
+    // General, Controls, Video, Audio, Gameplay, Cosmetics, Cheats (ids stay: test hooks; General leads, after the
+    // start screen's System - user 2026-11-11). Warp, Save Editor and Quit are the in-game menu bar's own entries (only usable in a save - user 2026-11-03); the Randomizer is the bar's entry in
+    // game and its own row on the start screen (user 2026-11-09). Touch screens: Touch after General
 #if PLAT_TOUCH
-    static const int order[] = {10, 8, 0, 1, 6, 7, 5};
+    static const int order[] = {11, 10, 8, 0, 1, 6, 7, 5};
 #else
-    static const int order[] = {8, 0, 1, 6, 7, 5};
+    static const int order[] = {11, 8, 0, 1, 6, 7, 5};
 #endif
     int keep_tab = g_tab;  // (one page alone: the Settings window's tab stays as it was)
     if (only != -1000) tabs[ntabs++] = {names[only], only, true}, g_tab = only;
@@ -1403,7 +1404,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         }
         ImDrawList *dl = ImGui::GetWindowDrawList();
         static int shown_sel = -99;  // (the selected tab brought into view once, when it changes)
-        if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 8;  // (no Prelaunch in game: Controls, the first tab)
+        if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 11;  // (no Prelaunch in game: General, the first tab)
         for (int k = 0; k < ntabs; k++) {
             const Tab &t = tabs[k];
             ImGui::BeginDisabled(!t.on);  // (out of the game: Save Editor, Warp, Cheats)
@@ -1470,6 +1471,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         case 4: if (warp_tab_draw(scale)) set_open(false); break;
         case 5: cheats_draw(scale); break;
         case 6: difficulty_draw(scale); break;
+        case 11: general_draw(scale); break;
         case 7: tab_cosmetics(); break;
         case 8: controls_tab_draw(scale); break;
 #if PLAT_TOUCH

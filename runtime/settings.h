@@ -94,7 +94,7 @@ typedef struct {
     float diff_damage;   // damage taken multiplier (1 = normal)
     float walk_speed;    // Link's walking speed multiplier (1 = normal; Gameplay tab, runtime/hle/qol.c)
     bool walk_speed_dungeons;  // walk speed also indoors: houses, caves, dungeons (Gameplay tab, under Walk speed)
-    int text_speed;      // TEXT_SPEED_*: how fast message text appears (Gameplay tab; runtime/hle/text_speed.c)
+    int text_speed;      // TEXT_SPEED_*: how fast message text appears (General tab; runtime/hle/text_speed.c)
     bool diff_ohko;      // any hit kills
     bool diff_hero;      // Hero Mode flag forced on in the loaded save (2x damage, no recovery hearts)
     // cosmetics (Cosmetics tab, runtime/ui/menu.mm), live, never part of a seed: colour rows of the shared palette
@@ -110,7 +110,7 @@ typedef struct {
     int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale (runtime/nvn/screen_filter.h)
     int weather;              // WEATHER_* (runtime/nvn/weather.h): rain / snow / storm / blizzard on the overworld, looks only
     char cosmetics_seed[300];  // the seed folder whose own cosmetics were last copied into the rows (cosmetics_seed.c)
-    // speedrun (Gameplay tab; runtime/hle/run_timer.c, runtime/livesplit.c)
+    // speedrun (General tab; runtime/hle/run_timer.c, runtime/livesplit.c)
     bool timer;            // the in-game run timer in the corner (game time: level loads don't count)
     int timer_pos;         // TIMER_POS_*: which bottom corner it sits in
     bool livesplit;        // drive LiveSplit (its Server component) over TCP: start, splits, game time
