@@ -65,12 +65,14 @@ extern "C" void cheats_frame(void) {
     if (g_settings.cheat_rupees && F<uint32_t>(RUPEES) != 9999) F<uint32_t>(RUPEES) = 9999;
 }
 
+extern "C" bool menu_page_head(const char *section, float scale);  // menu.mm
 extern "C" void cheats_draw(float scale) {
     if (!game_in_play()) {
         ImGui::TextDisabled("%s", L("Load a save to use cheats."));
         return;
     }
     opt_begin("##cheats", scale);
+    bool head = menu_page_head("Cheats", scale);  // (touch: the page's name on the X's line, menu.mm)
     opt_section("Always on");
     if (opt_toggle("Infinite hearts", &g_settings.cheat_hearts, false, "Health refills to full whenever Link is hurt."))
         settings_save();
@@ -106,5 +108,6 @@ extern "C" void cheats_draw(float scale) {
                        "certain companion."))
             F<uint8_t>(0x555D) = (uint8_t)cur;
     }
+    if (head) opt_list_end();
     opt_end();
 }

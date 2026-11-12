@@ -1557,6 +1557,8 @@ extern "C" void rando_tab_draw(float scale) {
     opt_compact();
 #if PLAT_TOUCH
     pane_heading("Settings", scale);  // (level with the right column's heading: the full-screen page lines both up)
+    // (pinned, as the right column's: the rows under it scroll on their own)
+    ImGui::BeginChild("##left_list", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
 #endif
     std::string cur_preset = L(current_preset().c_str());  // (Seeds and Presets share a line: half rows, a long name cut short)
     {  // (12 characters at most, cut between UTF-8 characters)
@@ -1621,6 +1623,9 @@ extern "C" void rando_tab_draw(float scale) {
         opt_action(g_gen_status.c_str(), "", g_gen_status.c_str(), false);
     }
 
+#if PLAT_TOUCH
+    ImGui::EndChild();  // (##left_list)
+#endif
     // ---- the right column: the chosen category's rows, the description under them
     opt_split();
     bool cat_title = !summary && !(g_cat == CAT_SEEDS && !g_act_seed.empty()) && !(g_cat == CAT_PRESETS && !g_act_preset.empty());

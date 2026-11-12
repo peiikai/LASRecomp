@@ -1179,6 +1179,7 @@
 {"Load a save to warp.", "載入存檔後才能傳送。"},
 {"Search", "搜尋"},
 {"Search places...", "搜尋地點..."},
+{"Places", "地點"},
 {"Link is here", "林克在這裡"},
 // warp_data.h
 {"Dungeons", "迷宮"},

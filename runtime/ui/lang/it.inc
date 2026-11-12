@@ -1179,6 +1179,7 @@
 {"Load a save to warp.", "Carica un salvataggio per teletrasportarti."},
 {"Search", "Cerca"},
 {"Search places...", "Cerca luoghi..."},
+{"Places", "Luoghi"},
 {"Link is here", "Link è qui"},
 // warp_data.h
 {"Dungeons", "Labirinti"},

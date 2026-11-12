@@ -1179,6 +1179,7 @@
 {"Load a save to warp.", "Laad een opslagbestand om te teleporteren."},
 {"Search", "Zoeken"},
 {"Search places...", "Zoek plaatsen..."},
+{"Places", "Plaatsen"},
 {"Link is here", "Link is hier"},
 // warp_data.h
 {"Dungeons", "Kerkers"},

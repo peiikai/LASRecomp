@@ -815,8 +815,35 @@ extern "C" bool weather_cycle_on(void);       // runtime/nvn/weather_cycle.c
 // Cosmetics: tunic / heart colours, live (runtime/nvn/texpatch.c), and recolours by draw (runtime/nvn/recolour*.c);
 // a seed made with "Random cosmetics" puts its own set into the rows the first time it's played (cosmetics_seed.c),
 // and they stay the player's to change: "Seed's look" puts the seed's back, "Default all" the game's own
+// Touch screens, the bar's Cosmetics and Cheats: called right after opt_begin, as the Randomizer's right pane
+// (rando_tab.mm pane_heading): the page's own X at the top right of the rows' panel with the page's name on its line
+// (a title for the whole page, as the Randomizer's column headings: the sections scroll under it), then the rows in a
+// list that scrolls on its own (the panel itself doesn't, so the X stays). The X in the screen's corner was under the
+// panel. True when the head was drawn: the caller closes the list (opt_list_end) before opt_end.
+static bool g_page_x, g_page_x_pressed;
+static float g_page_x_scale;  // (the menu's scale: every page's X and heading the same size, whatever the page's own)
+extern "C" bool menu_page_head(const char *title, float scale) {
+#if PLAT_TOUCH
+    if (!g_page_x) return false;
+    scale = g_page_x_scale;
+    float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+    if (plastic_close_pane(44 * scale, scale)) g_page_x_pressed = true;
+    ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
+    ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L(title)).c_str());
+    ImGui::SetCursorPosY(top + bx + 4 * scale);
+    opt_list_begin();
+    return true;
+#else
+    (void)title, (void)scale;
+    return false;
+#endif
+}
+
 static void tab_cosmetics(void) {
-    opt_begin("##cosmetics", ImGui::GetFontSize() / 34);
+    float cs = ImGui::GetFontSize() / 34;
+    opt_begin("##cosmetics", cs);
+    bool head = menu_page_head("Cosmetics", cs);
+    opt_section("General");
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};
@@ -880,6 +907,7 @@ static void tab_cosmetics(void) {
         opt_choice("Weather", cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
                    cycle ? "This seed picked the weather. Commit to it!" : "Rain, snow, a storm or a blizzard on the overworld.");
     }
+    if (head) opt_list_end();
     opt_end();
 }
 
@@ -1970,7 +1998,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             static const char *titles[] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
                                            LN("Cheats")};
             static const int only[] = {-1000, 7, 3, 4, 2, 5};  // (the pages' tab ids)
-            bool pane_x = page == BAR_RANDO || page == BAR_WARP || page == BAR_EDITOR;  // (touch: their X is in a pane)
+            bool pane_x = page == BAR_RANDO || page == BAR_WARP || page == BAR_EDITOR || page == BAR_COSMETICS ||
+                          page == BAR_CHEATS;  // (touch: their X is in a pane, or on the page's first line: menu_page_head)
 #if PLAT_TOUCH
             // (an icon for the title; Settings': tabs_body)
             float page_indent = page != BAR_SETTINGS ? menu_page_corner(only[page], scale) : 0;
@@ -1990,12 +2019,15 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             }
 
             bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before
+            g_page_x = PLAT_TOUCH && (page == BAR_COSMETICS || page == BAR_CHEATS), g_page_x_scale = scale;
             tabs_body(scale, true, NULL, only[page]);                                             //  the pages run)
+            g_page_x = false;
 #if PLAT_TOUCH
             if (page_indent > 0) ImGui::Unindent(page_indent);
             if (page == BAR_RANDO && rando_tab_close_pressed()) back = true;
             if (page == BAR_WARP && warp_tab_close_pressed()) back = true;
             if (page == BAR_EDITOR && save_editor_close_pressed()) back = true;
+            if (g_page_x_pressed) g_page_x_pressed = false, back = true;
 #endif
             // B with nothing focused-deeper goes back to the bar (not the Esc / B that ends typing: typing is from the
             // frame before, so it's still true the frame a field lets go)

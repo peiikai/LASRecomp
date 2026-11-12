@@ -1179,6 +1179,7 @@
 {"Load a save to warp.", "ワープするにはセーブデータをロードしてください。"},
 {"Search", "検索"},
 {"Search places...", "場所を検索..."},
+{"Places", "場所"},
 {"Link is here", "リンクはここ"},
 // warp_data.h
 {"Dungeons", "ダンジョン"},

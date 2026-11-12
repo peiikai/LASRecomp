@@ -1179,6 +1179,7 @@
 {"Load a save to warp.", "Lade einen Spielstand, um zu teleportieren."},
 {"Search", "Suchen"},
 {"Search places...", "Orte suchen ..."},
+{"Places", "Orte"},
 {"Link is here", "Link ist hier"},
 // warp_data.h
 {"Dungeons", "Labyrinthe"},
