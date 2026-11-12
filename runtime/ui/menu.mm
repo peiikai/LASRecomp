@@ -114,26 +114,31 @@ static void set_open(bool open);
 // The menu in game: a bar drops down from the top over the game, its entries in a row (the one the cursor is on lit),
 // a close X at its right end; each entry opens its page in a window under it. The start screen's Settings is
 // launcher.mm's.
-enum { BAR_SETTINGS, BAR_RANDO, BAR_WARP, BAR_EDITOR, BAR_RESET, BAR_QUIT, BAR_CLOSE, BAR_N };
+// (Cosmetics and Cheats left the Settings tabs for entries of their own: Cosmetics by Settings, Cheats by the Save
+// Editor - user 2026-11-11)
+enum { BAR_SETTINGS, BAR_COSMETICS, BAR_RANDO, BAR_WARP, BAR_EDITOR, BAR_CHEATS, BAR_RESET, BAR_QUIT, BAR_CLOSE, BAR_N };
 static std::atomic<int> g_page{-1};  // the entry whose page is open (-1: the bar alone)
 static int g_bar_cur;  // the bar's cursor (render thread)
 static void page_open(int page);
 extern "C" void menu_toggle(void) { set_open(!g_open.load()); }  // (the touch controls' menu button)
 static int g_tab = -1000, g_tab_request = -2;  // (-2: no request; -1 is the Prelaunch tab; -1000: the first tab)
 static int g_ask = -1;  // the bar's Reset or Quit asked (render thread): ask_popup
+static int g_shown_tab = -1000;  // the page drawn last (its id)
 extern "C" void menu_test_open(void) {
     set_open(true);
     // (test) LARECOMP_MENU_BAR=<entry>: the bar alone, its cursor on that entry. Otherwise a page, as before the bar:
-    // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 9 Quit, 10 Reset, any other a Settings tab
+    // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 5 Cheats, 7 Cosmetics, 9 Quit, 10 Reset, any other a
+    // Settings tab
     if (getenv("LARECOMP_MENU_NOTICE")) menu_save_failed(getenv("LARECOMP_SAVE_DIR"));  // (test: the failed-save notice)
     if (getenv("LARECOMP_MENU_BAR")) { g_bar_cur = atoi(getenv("LARECOMP_MENU_BAR")) % BAR_N; return; }
     int t = getenv("LARECOMP_MENU_TAB") ? atoi(getenv("LARECOMP_MENU_TAB")) : -1;
-    page_open(t == 4 ? BAR_WARP : t == 2 ? BAR_EDITOR : t == 3 ? BAR_RANDO : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET
-                                                                                     : BAR_SETTINGS);
-    if (t >= 0 && t != 2 && t != 3 && t != 4 && t != 9 && t != 10) { extern int g_tab_request_ext; g_tab_request_ext = t; }
+    int page = t == 4 ? BAR_WARP : t == 2 ? BAR_EDITOR : t == 3 ? BAR_RANDO : t == 5 ? BAR_CHEATS : t == 7 ? BAR_COSMETICS
+             : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET : BAR_SETTINGS;
+    page_open(page);
+    if (t >= 0 && page == BAR_SETTINGS) { extern int g_tab_request_ext; g_tab_request_ext = t; }
     // (test) LARECOMP_PREVIEW=<row label>: that row's live preview opens straight away (its page: LARECOMP_MENU_TAB)
     if (const char *row = getenv("LARECOMP_PREVIEW")) {
-        if (t >= 0) g_tab = t;
+        if (t >= 0) g_tab = g_shown_tab = t;  // (a page alone - the bar's Cosmetics - previews the page drawn last)
         preview_open(row, -1);
     }
 }
@@ -174,9 +179,9 @@ static void page_open(int page) {
         menu_tabs_focus(!opened);  // selected one
         opened = true;
     } else menu_tabs_focus(false);  // (a page alone: the first Down goes to its first row)
-    // (Warp and the Save Editor need a save: before one is loaded, a note over the bar instead of an empty page -
-    // on a touch screen the empty Save Editor had no X to leave by)
-    if ((page == BAR_WARP || page == BAR_EDITOR) && !game_in_play()) { g_ask = page; return; }
+    // (Warp, the Save Editor and Cheats need a save: before one is loaded, a note over the bar instead of an empty
+    // page - on a touch screen the empty Save Editor had no X to leave by)
+    if ((page == BAR_WARP || page == BAR_EDITOR || page == BAR_CHEATS) && !game_in_play()) { g_ask = page; return; }
     if (page == BAR_EDITOR) save_editor_on_open();
     if (page == BAR_RESET || page == BAR_QUIT) { g_ask = page; return; }  // (a question over the bar: ask_popup)
     g_page = page;
@@ -467,7 +472,6 @@ static int g_focus_frames;
 static bool g_page_fresh_seen;  // (focus_check: the menu opened)
 static bool g_page_fresh;  // the page shown hasn't been entered yet: the first Down goes to its first enabled row
 static bool g_page_focus_next;  // (that page has no option rows: its first control takes the cursor next frame)
-static int g_shown_tab = -1000;  // the page drawn last (its id)
 void menu_tabs_focus(bool first_tab) {
     g_focus_tab = first_tab ? -1 : -100, g_focus_frames = 0, g_page_fresh = g_page_fresh_seen = true;
 }
@@ -912,7 +916,7 @@ static void ask_popup(float scale) {
     if (!ImGui::BeginPopupModal("##ask", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar |
                                                    ImGuiWindowFlags_NoMove))
         return;
-    if (g_ask == BAR_WARP || g_ask == BAR_EDITOR) {  // (no save loaded: page_open)
+    if (g_ask == BAR_WARP || g_ask == BAR_EDITOR || g_ask == BAR_CHEATS) {  // (no save loaded: page_open)
         const char *note = L("Load a save first.");
         ImGui::TextUnformatted(note);
         ImGui::Spacing();
@@ -1275,8 +1279,9 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 // opt_preview rows: Video, Cosmetics.
 static float g_preview_scale = 1;
 static void preview_page(void) {
-    if (g_tab == 0) tab_display();
-    else if (g_tab == 7) tab_cosmetics();
+    // (the page drawn last: the bar's Cosmetics is a page alone, which leaves g_tab as Settings had it)
+    if (g_shown_tab == 0) tab_display();
+    else if (g_shown_tab == 7) tab_cosmetics();
 #if PLAT_TOUCH
     else if (g_tab == 10) touch_tab_draw(g_preview_scale);
 #endif
@@ -1290,7 +1295,8 @@ bool menu_preview_frame(float scale, ImFont *font, ImFont *font_big) {
 
 #if PLAT_TOUCH
 // A menu page's title on a touch screen: an icon in the screen's corner (a notch or a camera hole sits mid-height, clear
-// of it). tab: -1000 Settings (a gear), 3 Randomizer (a die), 4 Warp (a map pin), 2 Save Editor (a floppy disk)
+// of it). tab: -1000 Settings (a gear), 3 Randomizer (a die), 4 Warp (a map pin), 2 Save Editor (a floppy disk),
+// 7 Cosmetics (a paint palette), 5 Cheats (a star)
 // (its left edge: 14 px in, or further on an iPhone, clear of the screen's rounded corner)
 static float page_corner_x(float scale) {
     float bs = 44 * 1.35f * scale;
@@ -1327,6 +1333,20 @@ static void page_corner_icon(int tab, float scale) {
         gd->AddCircleFilled(head, hr, gc, 32);
         gd->AddTriangleFilled(ImVec2(c.x - hr * 0.86f, head.y + hr * 0.5f), ImVec2(c.x + hr * 0.86f, head.y + hr * 0.5f), ImVec2(c.x, c.y + r), gc);
         gd->AddCircleFilled(head, hr * 0.42f, cut, 24);
+    } else if (tab == 7) {
+        gd->AddCircleFilled(c, r * 0.95f, gc, 32);
+        gd->AddCircleFilled(ImVec2(c.x + r * 0.42f, c.y + r * 0.38f), r * 0.2f, cut, 16);  // (the thumb hole)
+        const float well[4][2] = {{-0.48f, -0.1f}, {-0.2f, -0.52f}, {0.3f, -0.48f}, {-0.3f, 0.42f}};  // (the paints)
+        for (const auto &w : well) gd->AddCircleFilled(ImVec2(c.x + w[0] * r, c.y + w[1] * r), r * 0.15f, cut, 16);
+    } else if (tab == 5) {
+        ImVec2 pt[10];  // (a five-pointed star: points and the notches between them)
+        for (int k = 0; k < 10; k++) {
+            float a = -3.14159265f / 2 + k * 3.14159265f / 5, rr = k & 1 ? r * 0.42f : r;
+            pt[k] = ImVec2(c.x + cosf(a) * rr, c.y + sinf(a) * rr);
+        }
+        for (int k = 0; k < 10; k += 2) gd->AddTriangleFilled(pt[(k + 9) % 10], pt[k], pt[k + 1], gc);
+        ImVec2 mid[5] = {pt[1], pt[3], pt[5], pt[7], pt[9]};
+        gd->AddConvexPolyFilled(mid, 5, gc);
     } else {
         float e = r * 0.92f;
         ImVec2 a(c.x - e, c.y - e), b(c.x + e, c.y + e);
@@ -1339,7 +1359,7 @@ static void page_corner_icon(int tab, float scale) {
 }
 #endif
 
-// A page alone on a touch screen (the bar's Randomizer, Warp and Save Editor; the start screen's Randomizer): its icon
+// A page alone on a touch screen (the bar's pages but Settings; the start screen's Randomizer): its icon
 // in the corner for a title, the page from the top of the screen, clear of the icon. Returns the indent to undo.
 extern "C" float menu_page_corner(int tab, float scale) {
 #if PLAT_TOUCH
@@ -1358,7 +1378,7 @@ extern "C" float menu_page_corner(int tab, float scale) {
 
 // false: nothing of the game is loaded yet - the tabs that need it are greyed out; prelaunch: the start screen's own
 // first tab, game files and fonts, drawn by launcher.mm). only: one page alone, without the tab bar (the in-game menu
-// bar's Randomizer, Warp, Save Editor and Quit).
+// bar's pages but Settings).
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int only = -1000) {
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
@@ -1368,13 +1388,15 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
     static const char *names[] = {LN("Video"), LN("Audio"), LN("Save Editor"), LN("Randomizer"), LN("Warp"),
                                   LN("Cheats"), LN("Gameplay"), LN("Cosmetics"), PLAT_TOUCH ? LN("Controller") : LN("Controls"), LN("Quit"),
                                   LN("Touch"), LN("General")};
-    // General, Controls, Video, Audio, Gameplay, Cosmetics, Cheats (ids stay: test hooks; General leads, after the
-    // start screen's System - user 2026-11-11). Warp, Save Editor and Quit are the in-game menu bar's own entries (only usable in a save - user 2026-11-03); the Randomizer is the bar's entry in
-    // game and its own row on the start screen (user 2026-11-09). Touch screens: Touch after General
+    // General, Controls, Video, Audio, Gameplay (ids stay: test hooks; General leads, after the start screen's System -
+    // user 2026-11-11). Warp, Save Editor and Quit are the in-game menu bar's own entries (only usable in a save - user
+    // 2026-11-03); the Randomizer is the bar's entry in game and its own row on the start screen (user 2026-11-09);
+    // Cosmetics and Cheats are the bar's entries too, and not on the start screen (user 2026-11-11). Touch screens:
+    // Touch after General
 #if PLAT_TOUCH
-    static const int order[] = {11, 10, 8, 0, 1, 6, 7, 5};
+    static const int order[] = {11, 10, 8, 0, 1, 6};
 #else
-    static const int order[] = {11, 8, 0, 1, 6, 7, 5};
+    static const int order[] = {11, 8, 0, 1, 6};
 #endif
     int keep_tab = g_tab;  // (one page alone: the Settings window's tab stays as it was)
     if (only != -1000) tabs[ntabs++] = {names[only], only, true}, g_tab = only;
@@ -1494,7 +1516,7 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
         if (g_focus_tab == -1 && !prelaunch) g_focus_tab = 11;  // (no Prelaunch in game: General, the first tab)
         for (int k = 0; k < ntabs; k++) {
             const Tab &t = tabs[k];
-            ImGui::BeginDisabled(!t.on);  // (out of the game: Save Editor, Warp, Cheats)
+            ImGui::BeginDisabled(!t.on);
             if (k) ImGui::SameLine(0, gap);
             ImVec2 p = ImGui::GetCursorScreenPos();
             p.x += 2 * scale;
@@ -1630,8 +1652,8 @@ bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bo
 // page's too).
 static double g_bar_t0 = -1;  // when the bar began to drop (-1: not shown - the menu is closed or a page is open)
 static void bar_draw(ImGuiIO &io, float scale) {
-    static const char *names[BAR_N] = {LN("Settings"), LN("Randomizer"), LN("Warp"), LN("Save Editor"), LN("Reset"),
-                                       LN("Quit"), ""};
+    static const char *names[BAR_N] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
+                                       LN("Cheats"), LN("Reset"), LN("Quit"), ""};
     const PlasticTheme &pt = plastic_theme();
     double now = ImGui::GetTime();
     if (g_bar_t0 < 0) g_bar_t0 = now;
@@ -1670,8 +1692,19 @@ static void bar_draw(ImGuiIO &io, float scale) {
     bool mouse_moved = io.MousePos.x != last_mouse.x || io.MousePos.y != last_mouse.y;
     last_mouse = io.MousePos;
     float x = wp.x + in, y = wp.y + in, pad = 22 * scale, gap = 10 * scale;
+    // too wide for the bar (eight entries: long names - Russian, German - on a phone's larger menu): tighter entries,
+    // then the names a little smaller, as the Settings tabs do (tabs_body)
+    float text_w[BAR_CLOSE], names_w = 0, tfs = fs;
+    for (int k = 0; k < BAR_CLOSE; k++) names_w += text_w[k] = ImGui::CalcTextSize(L(names[k])).x;
+    float room = ws.x - 2 * in - ph - gap * BAR_CLOSE;  // (the close X and the gaps)
+    if (names_w + 2 * pad * BAR_CLOSE > room) pad = fmaxf((room - names_w) / (2 * BAR_CLOSE), 8 * scale);
+    if (names_w + 2 * pad * BAR_CLOSE > room && names_w > 0) {
+        float k = fmaxf((room - 2 * pad * BAR_CLOSE) / names_w, 0.6f);
+        tfs *= k;
+        for (float &t : text_w) t *= k;
+    }
     for (int k = 0; k < BAR_CLOSE; k++) {
-        float tw = ImGui::CalcTextSize(L(names[k])).x, w = tw + 2 * pad;
+        float tw = text_w[k], w = tw + 2 * pad;
         ImGui::SetCursorScreenPos(ImVec2(x, y));
         ImGui::PushID(k);
         bool clicked = ImGui::InvisibleButton("##entry", ImVec2(w, ph), ImGuiButtonFlags_PressedOnClick);
@@ -1685,7 +1718,7 @@ static void bar_draw(ImGuiIO &io, float scale) {
         if (sel && hot) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);
         plastic_pill(dl, ImVec2(x, y + (sel ? 0 : 2 * scale)), ImVec2(x + w, y + ph - 2 * scale), 10 * scale, col,
                      (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
-        dl->AddText(ImGui::GetFont(), fs, ImVec2(x + pad, y + (ph - fs) * 0.5f - (sel ? 2 : 1) * scale),
+        dl->AddText(ImGui::GetFont(), tfs, ImVec2(x + pad, y + (ph - tfs) * 0.5f - (sel ? 2 : 1) * scale),
                     sel ? pt.text_sel : pt.text, L(names[k]));
         x += w + gap;
     }
@@ -1934,8 +1967,10 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             // header as on the start screen's Settings: the page's title, and a close X in the corner (B / Esc too:
             // back to the bar). ("Title screen" - rt_request_reboot(RT_REBOOT_TITLE) - is to find a new home; user
             // 2026-10-11.)
-            static const char *titles[] = {LN("Settings"), LN("Randomizer"), LN("Warp"), LN("Save Editor")};
-            static const int only[] = {-1000, 3, 4, 2};  // (the pages' tab ids)
+            static const char *titles[] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
+                                           LN("Cheats")};
+            static const int only[] = {-1000, 7, 3, 4, 2, 5};  // (the pages' tab ids)
+            bool pane_x = page == BAR_RANDO || page == BAR_WARP || page == BAR_EDITOR;  // (touch: their X is in a pane)
 #if PLAT_TOUCH
             // (an icon for the title; Settings': tabs_body)
             float page_indent = page != BAR_SETTINGS ? menu_page_corner(only[page], scale) : 0;
@@ -1947,7 +1982,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             bool back = false;
             {
                 float bx = 44 * scale;
-                if (!(PLAT_TOUCH && page != BAR_SETTINGS) && plastic_close_corner(bx, scale)) back = true;
+                if (!(PLAT_TOUCH && pane_x) && plastic_close_corner(bx, scale)) back = true;
                 if (page == BAR_SETTINGS) {
                     if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
                     vanilla_popup(scale, rando_seed_dir() != NULL, true);
