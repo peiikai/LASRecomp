@@ -125,6 +125,7 @@ extern "C" void menu_test_open(void) {
     set_open(true);
     // (test) LARECOMP_MENU_BAR=<entry>: the bar alone, its cursor on that entry. Otherwise a page, as before the bar:
     // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 9 Quit, 10 Reset, any other a Settings tab
+    if (getenv("LARECOMP_MENU_NOTICE")) menu_save_failed(getenv("LARECOMP_SAVE_DIR"));  // (test: the failed-save notice)
     if (getenv("LARECOMP_MENU_BAR")) { g_bar_cur = atoi(getenv("LARECOMP_MENU_BAR")) % BAR_N; return; }
     int t = getenv("LARECOMP_MENU_TAB") ? atoi(getenv("LARECOMP_MENU_TAB")) : -1;
     page_open(t == 4 ? BAR_WARP : t == 2 ? BAR_EDITOR : t == 3 ? BAR_RANDO : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET
@@ -962,6 +963,55 @@ static void ask_popup(float scale) {
     ImGui::EndPopup();
 }
 
+// A save that failed (runtime/services/fs.c, any thread): the menu opens with it over the bar, in the menus' look, and
+// OK closes it again if it opened for it. It was a system alert, on Mac and Windows only (user 2026-11-11).
+static pthread_mutex_t g_notice_lock = PTHREAD_MUTEX_INITIALIZER;
+static std::string g_notice_pending;  // the save folder (g_notice_lock)
+static std::string g_notice;          // shown (render thread)
+static bool g_notice_closes;          // the menu was closed: OK closes it again
+extern "C" void menu_save_failed(const char *folder) {
+    pthread_mutex_lock(&g_notice_lock);
+    g_notice_pending = folder && folder[0] ? folder : "?";
+    pthread_mutex_unlock(&g_notice_lock);
+}
+static void notice_take(void) {
+    pthread_mutex_lock(&g_notice_lock);
+    std::string n;
+    n.swap(g_notice_pending);
+    pthread_mutex_unlock(&g_notice_lock);
+    if (n.empty() || !g_notice.empty()) return;
+    g_notice = n;
+    if (!g_open.load()) set_open(true), g_notice_closes = true;
+    g_page = -1;  // (over the bar)
+}
+static void notice_popup(float scale) {
+    if (g_notice.empty()) return;
+    if (!ImGui::IsPopupOpen("##notice")) ImGui::OpenPopup("##notice");
+    if (!ImGui::BeginPopupModal("##notice", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        return;
+    ImGui::PushFont(g_menu_font_big);
+    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Couldn't save"));
+    ImGui::PopFont();
+    ImGui::Spacing();
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + 820 * scale);
+    ImGui::TextUnformatted(L("The game may say it saved, but it didn't. Your previous save is unchanged."));
+    ImGui::Spacing();
+    ImGui::TextUnformatted(L("Make sure this folder can be written to and the disk has free space:"));
+    ImGui::TextColored(plastic_col(plastic_theme().text_dim), "%s", g_notice.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImGui::SetItemDefaultFocus();
+    if (ImGui::Button(L("OK"), ImVec2(260 * scale, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        ImGui::CloseCurrentPopup();
+        g_notice.clear();
+        if (g_notice_closes) set_open(false);
+        g_notice_closes = false;
+    }
+    ImGui::EndPopup();
+}
+
 // Reset to vanilla (the round arrow beside the close X): the game as Nintendo made it - 16:9, the General and Gameplay
 // tabs (but the language, Hero Mode icon and LiveSplit address), Cheats and Cosmetics at their defaults; Video / Audio
 // otherwise and the controls stay. A seed being played ends: the game boots again without it (as the Randomizer tab's
@@ -1575,7 +1625,7 @@ static void bar_draw(ImGuiIO &io, float scale) {
     ImDrawList *dl = ImGui::GetWindowDrawList();
     ImVec2 wp = ImGui::GetWindowPos(), ws = ImGui::GetWindowSize();
     // the keys
-    if (!ui_text_busy() && g_ask < 0) {
+    if (!ui_text_busy() && g_ask < 0 && g_notice.empty()) {
         auto pressed = [](ImGuiKey a, ImGuiKey b, ImGuiKey c) {
             return ImGui::IsKeyPressed(a) || ImGui::IsKeyPressed(b) || ImGui::IsKeyPressed(c);
         };
@@ -1643,6 +1693,7 @@ void menu_render(id<MTLDevice> dev, id<MTLCommandBuffer> cb, id<MTLTexture> targ
 void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     const double tw = target_w, th = target_h;
 #endif
+    notice_take();  // (a save failed: the menu opens with it)
     bool open = g_open.load();
     bool inv = !open && inventory_overlay_wanted();
     bool trk = !open && tracker_overlay_wanted();
@@ -1816,7 +1867,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     } else if (open) {
         // A page open: the bar goes up and the page has the whole screen (user 2026-11-03); B brings the bar down again
         int page = g_page.load();
-        if (page < 0) bar_draw(io, scale), ask_popup(scale);
+        if (page < 0) bar_draw(io, scale), ask_popup(scale), notice_popup(scale);
         else g_bar_t0 = -1;
         static int shown = -1;  // (a page just opened takes ImGui's focus)
         if (page < 0) shown = -1;

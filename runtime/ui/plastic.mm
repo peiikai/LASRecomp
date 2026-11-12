@@ -617,6 +617,40 @@ void plastic_well(ImDrawList *dl, ImVec2 a, ImVec2 b, float scale) {
     dl->PopClipRect();
 }
 
+void plastic_progress(ImDrawList *dl, ImVec2 a, ImVec2 b, float frac, float scale) {
+    const PlasticTheme &t = plastic_theme();
+    float h = b.y - a.y, in = fmaxf(3 * scale, h * 0.14f);
+    dl->PushClipRectFullScreen();
+    plastic_add(dl, a, b, h * 0.5f, t.inset, PK_INSET, fminf(8 * scale, h * 0.35f), 0);
+    dl->PopClipRect();
+    ImVec2 ia(a.x + in, a.y + in), ib(b.x - in, b.y - in);
+    float w = ib.x - ia.x, ph = ib.y - ia.y;
+    if (w <= ph || ph <= 0) return;
+    float x0 = 0, x1 = frac;
+    if (frac < 0) {  // (not known: a third of the track sliding across, in and out at the ends)
+        float p = fmodf(-frac, 1.0f) * 1.3f - 0.3f;
+        x0 = fmaxf(0.0f, p), x1 = fminf(1.0f, p + 0.3f);
+    }
+    x1 = fminf(fmaxf(x1, 0.0f), 1.0f);
+    if (x1 - x0 <= 0) return;
+    // (at least as long as it is high: a pill shorter than that has no straight part and looks like a dot)
+    float l = ia.x + w * x0, r = fmaxf(ia.x + w * x1, l + ph);
+    if (r > ib.x) l -= r - ib.x, r = ib.x;
+    plastic_pill(dl, ImVec2(l, ia.y), ImVec2(r, ib.y), ph * 0.5f, t.row_sel, 4 * scale, 1.0f, scale, true);
+}
+
+void plastic_progress_bar(float frac, ImVec2 size, const char *overlay, float scale) {
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float avail = ImGui::GetContentRegionAvail().x;
+    float w = size.x > 0 ? size.x : avail, h = size.y > 0 ? size.y : ImGui::GetFrameHeight();
+    float tw = overlay && overlay[0] ? ImGui::CalcTextSize(overlay).x + 16 * scale : 0;
+    ImGui::Dummy(ImVec2(w, h));
+    plastic_progress(ImGui::GetWindowDrawList(), p, ImVec2(p.x + w - tw, p.y + h), frac, scale);
+    if (tw > 0)
+        ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + w - tw + 16 * scale, p.y + (h - ImGui::GetTextLineHeight()) * 0.5f),
+                                            plastic_theme().text, overlay);
+}
+
 // the round button's piece and its icon: the X, or (reset) an arrow going round
 static bool round_button(const char *id, float bx, float scale, bool reset) {
     const PlasticTheme &t = plastic_theme();

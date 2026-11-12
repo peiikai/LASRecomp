@@ -1039,6 +1039,28 @@ static float g_menu_gap = 0.35f;  // space under each item, in line heights
 // The first PLAY ever (settings.menu_tip_seen): a note on opening the LAS Recomp menu in game (it isn't obvious),
 // OK starts the game. Returns true once OK is pressed.
 static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip)
+// Something the player should know before playing (iPhone: the data folder offloaded to iCloud), in the menus' look
+// with an OK - it was a system alert (user 2026-11-11). Main thread.
+static std::string g_notice;
+static void notice_popup(float s) {
+    float sc = s * 720.0f / 1080.0f;
+    if (!g_notice.empty() && !ImGui::IsPopupOpen("##notice")) ImGui::OpenPopup("##notice");
+    ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    if (!ImGui::BeginPopupModal("##notice", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        return;
+    ImGui::PushFont(g_font_small);
+    ImGui::PushTextWrapPos(900 * sc);
+    ImGui::TextUnformatted(g_notice.c_str());
+    ImGui::PopTextWrapPos();
+    ImGui::Spacing();
+    ImGui::SetItemDefaultFocus();
+    if (ImGui::Button(L("OK"), ImVec2(240 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        g_notice.clear(), ImGui::CloseCurrentPopup();
+    ImGui::PopFont();
+    ImGui::EndPopup();
+}
 // First PLAY ever, before the menu note: authentic 16:9 or the unlocked (fill the window) aspect ratio.
 static bool aspect_prompt(float s) {
     bool done = false;
@@ -1046,18 +1068,17 @@ static bool aspect_prompt(float s) {
     ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(fminf(ds.x * 0.8f, 760 * s), 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(36 * s, 28 * s));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * s);
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.03f, 0.04f, 0.05f, 0.94f));
     bool open = ImGui::BeginPopupModal("##aspect", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
-    if (open) {
-        ImGui::SetWindowFontScale(1.25f);
+    ImGui::PopStyleVar();
+    if (open) {  // (in the menus' look, as the data folder's question: the caller turns the pieces on)
+        ImGui::PushFont(g_font_small);
+        ImGui::PushFont(g_font_menu);
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted(L("How would you like to play?"));
+        ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("How would you like to play?"));
+        ImGui::PopFont();
         ImGui::Spacing();
-        ImGui::TextDisabled("%s", L("You can change this any time in Settings."));
+        ImGui::TextColored(plastic_col(plastic_theme().text_dim), "%s", L("You can change this any time in Settings."));
         ImGui::PopTextWrapPos();
         ImGui::Dummy(ImVec2(0, 14 * s));
         float bw = 300 * s, gap = 20 * s;
@@ -1074,6 +1095,7 @@ static bool aspect_prompt(float s) {
             ImGui::CloseCurrentPopup();
             done = true;
         }
+        ImGui::PopFont();
         ImGui::EndPopup();
     }
     return done;
@@ -1085,14 +1107,11 @@ static bool menu_tip(float s) {
     ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(fminf(ds.x * 0.8f, 760 * s), 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(36 * s, 28 * s));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 16 * s);
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.03f, 0.04f, 0.05f, 0.94f));
     bool open = ImGui::BeginPopupModal("##menutip", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
                                        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(2);
-    if (open) {
-        ImGui::SetWindowFontScale(1.25f);
+    ImGui::PopStyleVar();
+    if (open) {  // (in the menus' look: the caller turns the pieces on)
+        ImGui::PushFont(g_font_small);
         // the controller's home button first (what players reach for: the PS button on a DualSense), the combo second
         static const char *const home[] = {LN("Home button"), LN("Xbox button"), LN("PlayStation button")};  // (bind_label_family)
         static const char *const pad[] = {LN("Minus + Plus"), LN("View + Menu"), LN("Create + Options")};
@@ -1113,6 +1132,7 @@ static bool menu_tip(float s) {
             ImGui::CloseCurrentPopup();
             go = true;
         }
+        ImGui::PopFont();
         ImGui::EndPopup();
     }
     return go;
@@ -1633,6 +1653,16 @@ static void ios_export_wire(void) {
 }
 #endif
 
+// A button of the progress overlay, drawn as the menus' buttons are (hot: lit, dark text) - the overlay is drawn on
+// the foreground over everything, not as ImGui items
+static void busy_button(ImDrawList *dl, ImVec2 a, ImVec2 b, const char *label, float fs, bool hot, float sc) {
+    const PlasticTheme &t = plastic_theme();
+    plastic_pill(dl, a, b, (b.y - a.y) * 0.5f, hot ? t.row_hot : t.row, (hot ? 6 : 4.5f) * sc, hot ? 1.0f : 0.7f, sc, hot);
+    ImVec2 ls = g_font_small->CalcTextSizeA(fs, FLT_MAX, 0, label);
+    dl->AddText(g_font_small, fs, ImVec2((a.x + b.x - ls.x) * 0.5f, (a.y + b.y - ls.y) * 0.5f),
+                hot ? t.text_sel : t.text_button, label);
+}
+
 // The progress overlay in front of the start screen (input waits): the setup, an update's build, or the shader
 // preparation (with Skip) - the setup's, or the background one when PLAY was pressed before it finished
 static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy, bool prep_wait = false) {
@@ -1676,14 +1706,14 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
         if (cut) snprintf(line, sizeof line, "%s...%s", head.c_str(), pct.c_str());
     }
     float ph = bar_y + 24 * sc + 26 * sc + line_h + (nnotes ? 14 * sc + nnotes * line_h : 0) + 40 * sc +
-               (preparing ? line_h + 28 * sc : recompiling ? 54 * sc : 0);  // (Skip / Cancel)
+               (preparing || recompiling ? line_h + 28 * sc : 0);  // (Skip / Cancel)
     ImVec2 a(o.x + (ds.x - pw) * 0.5f, o.y + (ds.y - ph) * 0.5f), b(a.x + pw, a.y + ph);
-    fg->AddRectFilled(a, b, IM_COL32(15, 23, 20, 250), 14 * sc);
-    fg->AddRect(a, b, IM_COL32(236, 194, 84, 140), 14 * sc, 0, 1.5f * sc);
-    fg->AddText(g_font_menu, tfs, ImVec2((a.x + b.x - ts.x) * 0.5f, a.y + 36 * sc), IM_COL32(236, 194, 84, 255), title);
+    // (in the menus' look: the panel, a pill bar, pill buttons - user 2026-11-11)
+    const PlasticTheme &pt = plastic_theme();
+    plastic_panel(fg, a, b, sc);
+    fg->AddText(g_font_menu, tfs, ImVec2((a.x + b.x - ts.x) * 0.5f, a.y + 36 * sc), pt.title, title);
     ImVec2 ba(a.x + 48 * sc, a.y + bar_y), bb(b.x - 48 * sc, a.y + bar_y + 24 * sc);
-    fg->AddRectFilled(ba, bb, IM_COL32(255, 255, 255, 25), 12 * sc);
-    if (f > 0) fg->AddRectFilled(ba, ImVec2(ba.x + (bb.x - ba.x) * f, bb.y), IM_COL32(236, 194, 84, 255), 12 * sc);
+    plastic_progress(fg, ba, bb, fmaxf(f, 0.0f), sc);
     ImVec2 ls = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, line);
     float ty = bb.y + 26 * sc;
     if (count) {  // "42%  ·  666/1585", the count muted. Fixed places (no jitter as the digits change): the
@@ -1696,26 +1726,23 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
         const char *sep = "  \xc2\xb7  ";
         float wp = 3 * dig + w("%"), wd = (float)strlen(tot + 1) * dig;
         float x = (a.x + b.x - (wp + w(sep) + wd + w(tot))) * 0.5f;
-        ImU32 muted = IM_COL32(150, 148, 140, 255);
-        fg->AddText(g_font_small, sfs, ImVec2(x + wp - ls.x, ty), IM_COL32(220, 216, 205, 255), line);
+        ImU32 muted = pt.text_dim;
+        fg->AddText(g_font_small, sfs, ImVec2(x + wp - ls.x, ty), pt.text, line);
         fg->AddText(g_font_small, sfs, ImVec2(x + wp, ty), muted, sep);
         float xs = x + wp + w(sep) + wd;  // (the "/")
         fg->AddText(g_font_small, sfs, ImVec2(xs - w(dn), ty), muted, dn);
         fg->AddText(g_font_small, sfs, ImVec2(xs, ty), muted, tot);
-    } else fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, ty), IM_COL32(220, 216, 205, 255), line);
+    } else fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ls.x) * 0.5f, ty), pt.text, line);
     for (int i = 0; i < nnotes; i++) {
         ImVec2 ns = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, notes[i]);
         fg->AddText(g_font_small, sfs, ImVec2((a.x + b.x - ns.x) * 0.5f, bb.y + 26 * sc + (i + 1) * line_h + 14 * sc),
-                    IM_COL32(150, 148, 140, 255), notes[i]);
+                    pt.text_dim, notes[i]);
     }
     if (recompiling) {  // Shader preparation has its own Skip action; cancellation only stops the game-code build.
-        ImVec2 ca((a.x + b.x) * 0.5f - 150 * sc, b.y - 66 * sc), cb(ca.x + 300 * sc, ca.y + 44 * sc);
+        ImVec2 ca((a.x + b.x) * 0.5f - 150 * sc, b.y - 40 * sc - line_h - 10 * sc), cb(ca.x + 300 * sc, ca.y + line_h + 16 * sc);
         bool hover = !g_cancel_build && ImGui::IsMouseHoveringRect(ca, cb, false);
-        fg->AddRectFilled(ca, cb, hover ? IM_COL32(80, 80, 55, 255) : IM_COL32(45, 55, 45, 255), 8 * sc);
         const char *cancel = g_cancel_build ? L("Cancelling...") : L("Cancel");  // (B / Circle and Esc too)
-        ImVec2 cs = g_font_small->CalcTextSizeA(sfs, FLT_MAX, 0, cancel);
-        fg->AddText(g_font_small, sfs, ImVec2((ca.x + cb.x - cs.x) * 0.5f, (ca.y + cb.y - cs.y) * 0.5f),
-                    IM_COL32(236, 194, 84, 255), cancel);
+        busy_button(fg, ca, cb, cancel, sfs, hover, sc);
         if ((hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
             ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             g_cancel_build = true;
@@ -1726,9 +1753,7 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
         ImVec2 ka((a.x + b.x - ks.x) * 0.5f - 22 * sc, b.y - 40 * sc - line_h - 10 * sc);
         ImVec2 kb(ka.x + ks.x + 44 * sc, ka.y + line_h + 16 * sc);
         bool hover = !g_prep_skip && !g_prep_skip_ask && ImGui::IsMouseHoveringRect(ka, kb, false);
-        fg->AddRect(ka, kb, IM_COL32(236, 194, 84, hover ? 255 : 140), 8 * sc, 0, 1.5f * sc);
-        fg->AddText(g_font_small, sfs, ImVec2(ka.x + 22 * sc, ka.y + 8 * sc),
-                    hover ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255), sk);
+        busy_button(fg, ka, kb, sk, sfs, hover, sc);
         if (!g_prep_skip && !g_prep_skip_ask &&
             ((hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) ||
              ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
@@ -1743,17 +1768,13 @@ static void draw_busy_overlay(ImVec2 ds, const std::string &job, bool test_busy,
         float qw = fminf(fmaxf(qs.x, 2 * bw + gap) + 96 * sc, ds.x - 32 * sc), qh = 40 * sc + line_h + 32 * sc + bh + 36 * sc;
         fg->AddRectFilled(a, b, IM_COL32(0, 0, 0, 120), 14 * sc);  // (the bar behind it dimmed)
         ImVec2 qa(o.x + (ds.x - qw) * 0.5f, o.y + (ds.y - qh) * 0.5f), qb(qa.x + qw, qa.y + qh);
-        fg->AddRectFilled(qa, qb, IM_COL32(15, 23, 20, 255), 14 * sc);
-        fg->AddRect(qa, qb, IM_COL32(236, 194, 84, 200), 14 * sc, 0, 1.5f * sc);
-        fg->AddText(g_font_small, sfs, ImVec2((qa.x + qb.x - qs.x) * 0.5f, qa.y + 40 * sc), IM_COL32(236, 232, 220, 255), q);
+        plastic_panel(fg, qa, qb, sc);
+        fg->AddText(g_font_small, sfs, ImVec2((qa.x + qb.x - qs.x) * 0.5f, qa.y + 40 * sc), pt.text, q);
         float by = qb.y - 36 * sc - bh, bx = (qa.x + qb.x) * 0.5f;
         ImVec2 ya(bx - gap * 0.5f - bw, by), yb(bx - gap * 0.5f, by + bh), na(bx + gap * 0.5f, by), nb(bx + gap * 0.5f + bw, by + bh);
         bool hy = ImGui::IsMouseHoveringRect(ya, yb, false), hn = ImGui::IsMouseHoveringRect(na, nb, false);
-        fg->AddRect(ya, yb, IM_COL32(236, 194, 84, hy ? 255 : 140), 8 * sc, 0, 1.5f * sc);
-        fg->AddRectFilled(na, nb, IM_COL32(236, 194, 84, hn ? 255 : 210), 8 * sc);  // (waiting: the default)
-        fg->AddText(g_font_small, sfs, ImVec2((ya.x + yb.x - ys.x) * 0.5f, ya.y + 10 * sc),
-                    hy ? IM_COL32(236, 194, 84, 255) : IM_COL32(220, 216, 205, 255), yes);
-        fg->AddText(g_font_small, sfs, ImVec2((na.x + nb.x - ns.x) * 0.5f, na.y + 10 * sc), IM_COL32(15, 23, 20, 255), no);
+        busy_button(fg, ya, yb, yes, sfs, hy, sc);
+        busy_button(fg, na, nb, no, sfs, !hy, sc);  // (waiting: the default, lit unless Yes is under the mouse)
         bool click = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
         // A / Enter: the highlighted default (wait); B / Esc: also wait; Yes only by clicking it or Y / Space
         if ((hy && click) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceUp, false) || ImGui::IsKeyPressed(ImGuiKey_Space, false))
@@ -1922,7 +1943,7 @@ static void data_folder_popup(float s) {
         static const char *const steps[] = {LN("Copying..."), LN("Checking the copy..."), LN("Removing the old copy...")};
         int r = g_df_result, k = g_df_step;
         ImGui::Text("%s", r == 1 ? L("Restarting...") : g_df_cancelling ? L("Cancelling...") : L(steps[k < 0 ? 0 : k > 2 ? 2 : k]));
-        ImGui::ProgressBar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0));
+        plastic_progress_bar(r == 1 ? 1.0f : g_df_frac.load(), ImVec2(900 * sc, 0), NULL, sc);
 #ifdef __ANDROID__
         ImGui::TextDisabled("%s", dir.c_str());  // (under the bar: which way it goes)
 #endif
@@ -2230,7 +2251,8 @@ extern "C" void launcher_run(const char *root) {
     std::string start_seed = g_settings.rando_seed;
     Page page = status.empty() ? MAIN : SETUP;
     bool play = false;
-    // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page: settings[:<tab>] / rando / askdelete / setup / extracting / preparing
+    // LARECOMP_LAUNCHER_SHOT=<frame>[:<page>] (test): save build/launcher.png at that frame and exit; page:
+    // settings[:<tab>] / rando / askdelete / setup / extracting / preparing / skipask / recompiling / tip / aspect / notice
     long shot_at = getenv("LARECOMP_LAUNCHER_SHOT") ? atol(getenv("LARECOMP_LAUNCHER_SHOT")) : 0, frame = 0;
     if (shot_at) {
 #ifdef __APPLE__
@@ -2247,6 +2269,10 @@ extern "C" void launcher_run(const char *root) {
         if (pg && !strncmp(pg + 1, "settings", 8) && pg[9] == ':') g_tab_request_ext = atoi(pg + 10);  // settings:<tab>
         if (pg && !strcmp(pg + 1, "delete")) page = SETUP, g_confirm_delete = true;
         if (pg && !strcmp(pg + 1, "tip")) g_settings.menu_tip_seen = false, g_tip_test = true;
+        if (pg && !strcmp(pg + 1, "recompiling")) page = SETUP, g_build_frac = 0.42f, set_job(LN("Recompiling the game"));
+        if (pg && !strcmp(pg + 1, "notice"))  // (the iPhone's iCloud notice, anywhere)
+            g_notice = std::string(L("Some of LAS Recomp's files aren't on this iPhone. They download as the game reads "
+                                     "them, so it may be very slow or close.")) + "\n\n" + L(KEEP_DOWNLOADED);
         if (pg && !strcmp(pg + 1, "aspect")) g_settings.aspect_asked = g_settings.menu_tip_seen = false, g_tip_test = true;
     }
 
@@ -2324,12 +2350,16 @@ extern "C" void launcher_run(const char *root) {
             char msg[700];
             snprintf(msg, sizeof msg, "%s\n\n%s", L("Some of LAS Recomp's files aren't on this iPhone. They download as the "
                                                   "game reads them, so it may be very slow or close."), L(KEEP_DOWNLOADED));
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", msg, win);
+            g_notice = msg;  // (notice_popup: in the menus' look)
         }
 #endif
     }
     // the shader preparation of every later start: in the background (first setups and updates do theirs above)
-    if (status.empty() && !g_busy && !getenv("LARECOMP_LAUNCHER_PREPARE")) start_background_prep();
+    // (test :preparing / :skipask: no background preparation - finishing, it took the test's bar away)
+    const char *shot_pg = getenv("LARECOMP_LAUNCHER_SHOT");
+    bool prep_shot = shot_pg && (strstr(shot_pg, ":preparing") || strstr(shot_pg, ":skipask") ||
+                                 strstr(shot_pg, ":recompiling"));
+    if (status.empty() && !g_busy && !getenv("LARECOMP_LAUNCHER_PREPARE") && !prep_shot) start_background_prep();
     // (test) LARECOMP_LAUNCHER_PLAY_AT=<s>: PLAY that many seconds in; LARECOMP_LAUNCHER_SKIP_AT=<s>: Skip then
     const char *play_at_env = getenv("LARECOMP_LAUNCHER_PLAY_AT"), *skip_at_env = getenv("LARECOMP_LAUNCHER_SKIP_AT");
     uint64_t loop_t0 = SDL_GetTicks(), last_frame = loop_t0, bg_gap = 0, bg_frames = 0;
@@ -2684,11 +2714,13 @@ extern "C" void launcher_run(const char *root) {
                     else play = true;
                 }
                 if (g_tip_test) ImGui::OpenPopup(g_settings.aspect_asked ? "##menutip" : "##aspect"), g_tip_test = false;
+                menu_style_begin(ImGui::GetIO().DisplaySize.y / 1080.0f), plastic_widgets(true);
                 if (aspect_prompt(s)) {
                     if (g_settings.menu_tip_seen) play = true;
                     else ImGui::OpenPopup("##menutip");
                 }
                 if (menu_tip(s)) play = true;
+                plastic_widgets(false), menu_style_end();
                 ImGui::SetCursorPosX(x0);
                 if (g_refocus == SETTINGS) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;  // (back from Settings: it
                 if (PLAT_TOUCH) ImGui::SetWindowFontScale(kPhoneMenu);
@@ -3000,7 +3032,8 @@ extern "C" void launcher_run(const char *root) {
                 }
                 static bool test_busy = getenv("LARECOMP_LAUNCHER_SHOT") && (strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":extracting") ||
                                                                          strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":preparing") ||
-                                                                         strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":skipask"));
+                                                                         strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":skipask") ||
+                                                                         strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":recompiling"));
                 if (busy || test_busy) draw_busy_overlay(ds, job, test_busy);  // (everything dimmed, a bar in front)
 
             }
@@ -3105,6 +3138,7 @@ extern "C" void launcher_run(const char *root) {
                 // Settings, the System window at the first setup)
                 menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
                 data_folder_popup(s);
+                notice_popup(s);
                 plastic_widgets(false), menu_style_end();
             }
             ImGui::End();
