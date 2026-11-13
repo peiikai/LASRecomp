@@ -129,6 +129,13 @@ static inline void plat_thread_default_core(void) {}
 
 // ---- process
 void plat_init(void);                                // first thing in main()
+// Command-line runs (`--build-ios`, runtime/main.c), before plat_init: the terminal or pipe the command was started
+// from is kept for plat_cli_write (Windows: the parent's console, attached), and the session log opens even from a
+// terminal, so the command's lines can go to both.
+void plat_cli_begin(void);
+// Text for that terminal or pipe. false: there is none apart from stderr (stderr is it, or there's nowhere).
+bool plat_cli_write(const char *s, size_t n);
+bool plat_cli_tty(void);  // plat_cli_write reaches a terminal (one progress line can be rewritten in place)
 // The machine, for the log's first "[info]" line (runtime/main.c): nothing that identifies the player (no user name,
 // no paths). Fields left empty / 0 when unknown.
 typedef struct {
