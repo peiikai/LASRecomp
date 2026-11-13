@@ -1378,7 +1378,7 @@ static void compose(id<MTLCommandBuffer> cb, NvnTexture *t, id<MTLTexture> dst, 
         widescreen_frame_end(frame);
         extern void widescreen_set_factor(float f);
         extern bool widescreen_allowed(void);
-        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution")
+        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Resolution")
         // GPU busy time since the last frame (renderer.m renderer_gpu_busy: the union of the command buffers' spans): the
         // game's command buffers and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before).
         // With frame interpolation the frame's in-betweens are in it too - their replays in the game's part (they scale

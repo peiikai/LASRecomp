@@ -716,16 +716,18 @@ static void tab_display(void) {
                    "The window opens at the size it was when you quit.");
 
     opt_section("Rendering");
+    // (user 2026-11-12) Resolution first, then Dynamic resolution - its own toggle, Resolution set aside while it's
+    // on - with the FPS target it holds and its floor; the Upscaler further down, above Anti-aliasing
+    bool dyn = g_settings.dyn_res;
     // display order -> RES_* (the ini / enum order predates the menu order)
     // (up to 4x: 7680 x 4320, 8K - more only ran out of GPU memory, and sat next to 75% in the list)
-    // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then 1x-4x; user 2026-10-11)
-    static const char *res[] = {LN("25%"), LN("50%"), LN("75%"), LN("Match display"), LN("Dynamic"),
-                                LN("1x"), LN("2x"), LN("3x"), LN("4x")};
-    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2, 3, 4};
+    // (Match display in the middle: left from it 75% / 50% / 25%, right 1x-4x; user 2026-10-11)
+    static const char *res[] = {LN("25%"), LN("50%"), LN("75%"), LN("Match display"), LN("1x"), LN("2x"), LN("3x"), LN("4x")};
+    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, 1, 2, 3, 4};
     enum { RES_MATCH_AT = 3 };
     enum { NRES = sizeof res_mode / sizeof res_mode[0] };
     {
-        int ri = RES_MATCH_AT, rdef = RES_MATCH_AT;  // (rdef: the GPU's default - Dynamic on an integrated GPU)
+        int ri = RES_MATCH_AT, rdef = RES_MATCH_AT;  // (rdef: the GPU's default)
         for (int i = 0; i < NRES; i++) {
             if (res_mode[i] == g_settings.res_mode) ri = i;
             if (res_mode[i] == g_default_res_mode) rdef = i;
@@ -733,31 +735,64 @@ static void tab_display(void) {
         float sx, sy;
         renderer_get_scale(&sx, &sy);
         char d[1024];  // (in the menus' language already: the row leaves it as it is)
-        int n = snprintf(d, sizeof d,
-                         g_gpu_integrated
-                             ? L("How sharp the 3D image is. Match display uses your screen's resolution, and Dynamic "
-                                 "goes as sharp as your GPU can at full speed. 1x to 4x multiply the Switch's 1080p, and "
-                                 "1x is 720p on this GPU. 75%%, 50%% and 25%% are for slower machines.\n\nRendering at "
-                                 "%.0f x %.0f.")
-                             : L("How sharp the 3D image is. Match display uses your screen's resolution, and Dynamic "
-                                 "goes as sharp as your GPU can at full speed. 1x to 4x multiply the Switch's 1080p. 75%%, "
-                                 "50%% and 25%% are for slower machines.\n\nRendering at %.0f x %.0f."),
-                         1920.0 * sx, 1080.0 * sy);
-        if (g_settings.res_mode == RES_DYNAMIC && n > 0 && n < (int)sizeof d) {
-            char dyn[256];
-            snprintf(dyn, sizeof dyn, L("Dynamic is at %.0f%% of the display right now."), output_scale_dynamic_factor() * 100);
-            snprintf(d + n, sizeof d - n, " %s", dyn);
-        }
+        snprintf(d, sizeof d,
+                 g_gpu_integrated
+                     ? L("How sharp the 3D image is. Match display uses your screen's resolution. 1x to 4x multiply the "
+                         "Switch's 1080p, and 1x is 720p on this GPU. 75%%, 50%% and 25%% are for slower machines.\n\n"
+                         "Rendering at %.0f x %.0f.")
+                     : L("How sharp the 3D image is. Match display uses your screen's resolution. 1x to 4x multiply the "
+                         "Switch's 1080p. 75%%, 50%% and 25%% are for slower machines.\n\nRendering at %.0f x %.0f."),
+                 1920.0 * sx, 1080.0 * sy);
         char note[32];  // (the preview's value: "50% (800×450)", its text the user's - 2026-11-03)
         snprintf(note, sizeof note, "%.0f×%.0f", 1920.0 * sx, 1080.0 * sy);
         preview_text(LN("Configure the resolution used for rendering the game. Higher values are more demanding on "
                         "your graphics hardware."), note);
-        if (opt_preview("Internal resolution", &ri, res, NRES, rdef, d, false))
+        if (dyn) opt_disable_next(), opt_needs_next("Dynamic resolution", "Off");
+        if (opt_preview("Resolution", &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
-    // Internal resolution's options under it: the upscaler (any resolution but Match display) and Dynamic's floor; the
-    // line beside them lit while either applies (user 2026-11-12)
-    opt_child_begin(g_settings.res_mode != RES_MATCH);
+    {
+        char now[160] = "", d[640];  // (in the menus' language already: the row leaves it as it is)
+        if (dyn)
+            snprintf(now, sizeof now, L("Dynamic is at %.0f%% of the display right now."), output_scale_dynamic_factor() * 100);
+        snprintf(d, sizeof d, "%s%s%s",
+                 L("Raises and lowers the resolution as needed to hold your FPS target, up to your screen's resolution. "
+                   "The Resolution setting is set aside while it's on."),
+                 now[0] ? "\n\n" : "", now);
+        if (opt_toggle("Dynamic resolution", &g_settings.dyn_res, false, d)) dyn = g_settings.dyn_res;
+    }
+    // FPS target and Minimum resolution on Dynamic's line (user 2026-11-12): what it holds and how low it goes, both
+    // Dynamic's own - greyed out while it's off (with a resolution of the player's, the frame pacer decides)
+    opt_child_begin(dyn);
+    {   // the game's own two frame rates (pace.c pace_target_30), under Dynamic resolution: what it holds (user 2026-11-12;
+        // was "Internal FPS target"); display order -> FPS_TARGET_*
+        static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
+        static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
+        int fi = 2;
+        for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
+        if (!dyn) opt_disable_next(), opt_needs_next("Dynamic resolution");
+        if (opt_choice("FPS target", &fi, fps, 3, 2,
+                       "The frame rate Dynamic resolution aims for. 60FPS will prioritize smoothness, 30FPS will "
+                       "prioritize visual quality."))
+            g_settings.fps_target = fps_target[fi];
+    }
+    {  // Dynamic's floor (output_scale.c dyn_set_floor)
+        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
+        static const int min_lines[] = {360, 540, 720};
+        int mi = 1;
+        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
+        if (!dyn) opt_disable_next(), opt_needs_next("Dynamic resolution");
+        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
+                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
+            g_settings.dyn_min = min_lines[mi];
+    }
+    opt_child_end();
+    // the upscaler, above Anti-aliasing (user 2026-11-12): does something only while the game renders below the window - a share of it (25-75%), 1x-4x short
+    // of the window's height (1x is 720 lines on an integrated GPU), or Dynamic
+    int rm = g_settings.res_mode, lines = rm >= 1 && rm <= 8 ? (rm == 1 && g_gpu_integrated ? 720 : 1080 * rm) : 0;
+    int win_h = g_win_px_h > 1 ? g_win_px_h : (int)ImGui::GetIO().DisplaySize.y;
+    bool below = rm == RES_Q25 || rm == RES_Q50 || rm == RES_Q75 || (lines > 0 && lines < win_h);
+    bool scaled = dyn || below;  // (no line to Resolution: Dynamic turns it on too - user 2026-11-12)
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__
         static const char *ups[] = {LN("Bilinear"), LN("MetalFX")};
@@ -770,37 +805,16 @@ static void tab_display(void) {
 #endif
         int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
         char udm[1024];
-        if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
+        if (!scaled) {  // (renders at the window's size or above: nothing to scale up)
             snprintf(udm, sizeof udm, "%s\n\n%s", L(ud),
-                     L("Does nothing at Match display, since the game already renders at your screen's resolution."));
+                     L("Does nothing unless the game renders below your screen's resolution: a lower Resolution, or "
+                       "Dynamic resolution."));
             ud = udm;
             opt_disable_next();  // (its note says why, in place of a "Needs" line: no one value turns it on)
         }
         preview_text(LN("Configure how the game is scaled up to fit your window."), NULL);
         if (opt_preview("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
             g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR, g_settings.upscaler_auto = false;
-    }
-    {  // Dynamic's floor (output_scale.c dyn_set_floor)
-        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
-        static const int min_lines[] = {360, 540, 720};
-        int mi = 1;
-        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
-        bool dyn = g_settings.res_mode == RES_DYNAMIC;
-        if (!dyn) opt_disable_next(), opt_needs_next("Internal resolution", "Dynamic");
-        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
-                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
-            g_settings.dyn_min = min_lines[mi];
-    }
-    opt_child_end();
-    {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
-        static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
-        static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
-        int fi = 2;
-        for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
-        if (opt_choice("Internal FPS target", &fi, fps, 3, 2,
-                       "The frame rate the game aims for. At 30, Dynamic resolution only lowers the resolution when 30 "
-                       "doesn't fit. 30 outdoors, 60 indoors runs the overworld at 30 and houses, caves and dungeons at 60."))
-            g_settings.fps_target = fps_target[fi];
     }
     static const char *aa[] = {LN("Off"), LN("SMAA")};
     preview_text(LN("Configure the smoothing of jagged edges. SMAA keeps textures sharp."), NULL);
@@ -1886,7 +1900,7 @@ static void perf_overlay(float scale) {
     // the frame's work against the target's time (user 2026-11-12, as Metal HUD: "8 / 16.7 ms" has room to spare; the
     // frame's own time sits at the target while it keeps up): 60's, or 30's while the game runs at 30 (Internal FPS
     // target 30, or frame pacing holding it there); under Frame Generation the game's own frame rate before it
-    float target = ph.hold30 || g_settings.fps_target == FPS_TARGET_30 ? 33.3f : 16.7f;
+    float target = ph.hold30 || settings_fps_target() == FPS_TARGET_30 ? 33.3f : 16.7f;
     if (g_settings.frame_interp && ph.fps > 0 && shown > ph.fps * 1.3)
         snprintf(head, sizeof head, L("%.0f game, %.1f / %.1f ms"), ph.fps, ph.work_ms, target);
     else snprintf(head, sizeof head, "%.1f / %.1f ms", ph.work_ms, target);
@@ -1901,7 +1915,7 @@ static void perf_overlay(float scale) {
     int rw = 0, rh2 = 0;  // (the size the game draws at, whatever Internal resolution is; Dynamic's share of it too)
     output_scale_render_size(&rw, &rh2);
     if (rw > 0) {
-        if (g_settings.res_mode == RES_DYNAMIC)
+        if (g_settings.dyn_res)
             snprintf(add(L("Resolution"), c_text), 80, "%dx%d  %.0f%%", rw, rh2, output_scale_dynamic_factor() * 100);
         else snprintf(add(L("Resolution"), c_text), 80, "%dx%d", rw, rh2);
     }
@@ -2078,7 +2092,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
             pthread_mutex_unlock(&q_lock);
             if (dpad) dpad_overlay_key(dk, sizeof dk);
             int rw = 0, rh = 0;  // (Dynamic: the render size shown with the frame rate)
-            if (g_settings.show_fps && g_settings.res_mode == RES_DYNAMIC) output_scale_render_size(&rw, &rh);
+            if (g_settings.show_fps && g_settings.dyn_res) output_scale_render_size(&rw, &rh);
             if (!events) snprintf(key, sizeof key, "%.0fx%.0f fps %d %.0f %dx%d | %s | %s", tw, th, (int)g_settings.show_fps,
                                   g_settings.show_fps ? g_fps_shown : 0.0, rw, rh, rk, dk);
         }
