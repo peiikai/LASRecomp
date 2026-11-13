@@ -51,6 +51,7 @@ typedef struct {
     double paced;       // > 0: the GPU's clock follows the load (Apple GPUs: iPad Pro M4): it clocks down until G + W is
                         // about 90% of the frame, down to 1 / paced of its full clock - its times x up to `paced`
     double w1;          // > 0: the window step at 1.00 (MetalFX only runs below 1.00: W is w there)
+    int start_paced;    // the controller counts the GPU as paced from the start (Android / iOS: LARECOMP_DYN_PACED)
     int pacer;          // the frame pacer (nvn/pace.c) as well: 12 of the last 60 frames late hold the game at 30 (whole
                         // 33.3 ms frames); it goes back to 60 when the GPU's time (G + W, as measured: a lowered clock
                         // counts) is under 13 ms for 60 frames in a row, or at once when Dynamic asks (pace_try_60) -
@@ -411,6 +412,15 @@ int main(int argc, char **argv) {
         {.name = "RP5 paced, G + W right at the budget: futile steps far apart", .a = 3, .b = 9, .w = 3.9, .fifo = 1,
          .secs = 300, .lines = 1080, .min_lines = 360, .paced = 2.0, .fill = 0.858, .ease = 0.3, .noise = 0.04, .wander = 0.03, .jitter = 5,
          .miss_every = 150},
+        // Android / iOS: paced from the start. The RP5 (2026-11-12 23:19 log) holds 60 at 720p (0.67) and more, but on
+        // desktop rules it sank 1.00 -> 0.45 in its first seconds (each step "saving" because the level was still loading)
+        // and sat at 486p. The same two shapes, paced from the start
+        {.name = "Android RP5 shape, paced from the start", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06,
+         .wander = 0.03, .jitter = 5, .miss_every = 150, .start_paced = 1},
+        {.name = "Android RP5, G + W at the budget, paced from the start", .a = 3, .b = 9, .w = 3.9, .fifo = 1,
+         .secs = 300, .lines = 1080, .min_lines = 360, .paced = 2.0, .fill = 0.858, .ease = 0.3, .noise = 0.04,
+         .wander = 0.03, .jitter = 5, .miss_every = 150, .start_paced = 1},
         // the iPad (case 32) with a 35 ms hitch every 2.5 s: stays at 1.00
         {.name = "iPad paced + hitches every 2.5 s", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
          .secs = 120, .lines = 1668, .paced = 2.5, .jitter = 3, .miss_every = 150},
@@ -418,6 +428,7 @@ int main(int argc, char **argv) {
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
     int i = atoi(argv[1]);
+    if (cases[i].start_paced) setenv("LARECOMP_DYN_PACED", "1", 1);
     Result r = run(&cases[i]);
     // (Minimum resolution 540p unless a case says: 0.50 in a 1080p window, 0.25 at 4K)
     switch (i) {
@@ -474,7 +485,9 @@ int main(int argc, char **argv) {
     case 52: case 53: case 54: check(r.low_win * 10 <= r.n_win, "RP5 shape: at most 1 in 10 windows under 57 fps"); break;
     case 55: check(r.low_win <= 4 && r.changes_settled <= 20 && r.f_end >= 0.7, "RP5, steady scene: settles under the late step, no sawtooth"); break;
     case 56: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "RP5 paced at the budget: found paced, not stuck low"); break;
-    case 57: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
+    case 57: check(r.low_win * 10 <= r.n_win && r.f_min_last60 >= 0.6, "Android RP5 shape, paced from the start: never near 486p, few slow windows"); break;
+    case 58: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "Android RP5 at the budget, paced from the start: high"); break;
+    case 59: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }

@@ -14,6 +14,9 @@
 // LARECOMP_DYN_TEST=<f> (Dynamic pinned at factor f of the allocation: shots at a fixed part), LARECOMP_DYN_START=<f>
 // (Dynamic starts at factor f).
 #include <math.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -130,6 +133,10 @@ static double g_hold_up_at = -100;        // when the hold last stepped up (20 -
 // to where it began, 1.00 on the iPad) and the GPU counts as paced
 // from then on: down only when frames come late (the clock is at its top then, G honest), up when they've been on time
 // (a raise that makes them late is undone, the raise wait doubling as usual).
+// Phones, handhelds and tablets (Android, iOS / iPadOS) count as paced from the start: their GPUs all clock to the load,
+// and finding it out took two futile steps down - a Retroid Pocket 5 (Turnip, G + W read 14.4-14.9 ms at every factor)
+// sank 1.00 -> 0.45 at 60 fps in its first seconds and sat there until it happened to step down again, sometimes for
+// minutes. LARECOMP_DYN_PACED=1 / 0: paced from the start / found by futile steps (as on desktops).
 static bool g_paced;
 static double g_chk_from = -1, g_chk_gw, g_chk_pred;  // the last step down: the factor before, G + W then, predicted after
 static int g_futile;                                  // steps down in a row that saved too little
@@ -231,6 +238,17 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     if (prev_lines > 0 && fabs(lines - prev_lines) > 0.5) dyn_window_changed(now, prev_lines, lines);
     prev_lines = lines;
     dyn_set_floor(lines);
+    static int paced_init;
+    if (!paced_init) {
+        paced_init = 1;
+        const char *e = getenv("LARECOMP_DYN_PACED");
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+        g_paced = !e || atoi(e) != 0;
+#else
+        g_paced = e && atoi(e) != 0;
+#endif
+        if (g_paced) LOG("[dynres] paced from the start: down when frames come late, up when they're on time\n");
+    }
     static int start = -1;  // LARECOMP_DYN_START=<f>: Dynamic starts at factor f (tests: climbing back from the floor)
     if (start < 0) {
         start = 0;
