@@ -74,7 +74,8 @@
 // look now ends this hold too (pace_try_60), with a hitch's grace; frames that don't fit hold again as on a first try.
 // A paced GPU (a phone, a tablet: its clock drops the longer it idles at 30, so the GPU time above only grows while
 // held - an iPhone 15 Pro read 12 ms just held and 23 ms 15 s later) gets the same look from Dynamic at the factor it
-// has, once this hold has lasted Dynamic's probe wait (output_scale.c g_pace_hold_at); Dynamic sits still until then.
+// has (a step under it when the device is hot: the factor held at is the one whose clock was cut), once this hold has
+// lasted Dynamic's probe wait (output_scale.c g_pace_hold_at); Dynamic sits still until then.
 // A user setting that changes the GPU's load (the resolution, the upscaler, anti-aliasing: pace_settings_changed) starts
 // the hold and the backoff over: they were learned under the old load (after 4x, where 60 was out of reach, a lower
 // resolution stayed at 30 outdoors, backing off: up to 16x the wait). The hold ends and 60 gets a
