@@ -3,6 +3,7 @@
 // entries copied as they are (runtime/zipfile.h) plus the library.
 #include "iosexport.h"
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,14 +97,43 @@ static bool ios_dir(const char *game_dir, char *out, size_t n, char *why, size_t
     return true;
 }
 
+// The command's lines: to stderr (the session log) and to the terminal or pipe it was started from (plat_cli_write).
+// On a terminal the progress rewrites one line; elsewhere it's one line per percent.
+static int g_cli_inplace;  // the progress line's length on the terminal (0: none open)
+
+static void cli_say(bool progress, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void cli_say(bool progress, const char *fmt, ...) {
+    char line[1400], out[1600];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n >= (int)sizeof line) n = (int)sizeof line - 1;
+    fprintf(stderr, "%s\n", line);
+    if (progress && plat_cli_tty()) {
+        int pad = g_cli_inplace > n ? g_cli_inplace - n : 0;  // (spaces over a longer earlier line)
+        int m = snprintf(out, sizeof out, "\r%s%*s", line, pad, "");
+        plat_cli_write(out, (size_t)(m < (int)sizeof out ? m : (int)sizeof out - 1));
+        g_cli_inplace = n;
+        return;
+    }
+    int m = snprintf(out, sizeof out, "%s%s\n", g_cli_inplace ? "\n" : "", line);
+    if (plat_cli_write(out, (size_t)(m < (int)sizeof out ? m : (int)sizeof out - 1))) g_cli_inplace = 0;
+}
+
 static void cli_progress(double f, const char *step) {
     static int last = -1;
     int pct = (int)(f * 100);
-    if (pct != last) { last = pct; fprintf(stderr, "[gamebuild] %3d%% %s\n", pct, step); }
+    if (pct != last) { last = pct; cli_say(true, "[gamebuild] %3d%% %s", pct, step); }
 }
 // `lasrecomp --build-ios <kit.laskit> [game files]` (runtime/main.c): the export as the start screen does it, to
-// ~/Downloads or LARECOMP_IOS_OUT=<path>.
+// ~/Downloads or LARECOMP_IOS_OUT=<path>. Exit status 0 when the .ipa was written.
 bool iosexport_run_cli(const char *kit, const char *game_dir) {
+    if (!*kit) {
+        cli_say(false, "usage: lasrecomp --build-ios <kit.laskit> [game files folder]");
+        return false;
+    }
     char why[512], out[1100];
     const char *e = getenv("LARECOMP_IOS_OUT");
     if (e && *e) snprintf(out, sizeof out, "%s", e);
@@ -111,7 +141,8 @@ bool iosexport_run_cli(const char *kit, const char *game_dir) {
     int cores = plat_cpu_count();  // (0 where there's no affinity mask: the machine's count)
     if (cores < 1) cores = SDL_GetNumLogicalCPUCores();
     IosExportOpts o = {cli_progress, NULL, cores > 1 ? cores : 1, kit, out};
-    if (!iosexport_run(game_dir, &o, why, sizeof why)) { fprintf(stderr, "[iosexport] %s\n", why); return false; }
+    if (!iosexport_run(game_dir, &o, why, sizeof why)) { cli_say(false, "[iosexport] failed: %s", why); return false; }
+    cli_say(false, "[iosexport] wrote %s", out);
     return true;
 }
 
