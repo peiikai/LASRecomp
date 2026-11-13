@@ -57,7 +57,7 @@ These are the minimums during the beta and may change as development continues.
 | | Minimum |
 |---|---|
 | OS | iOS or iPadOS 16 or newer |
-| Device | 8 GB of RAM: iPhone 15 Pro or newer, or an iPad with an M1 chip or newer |
+| Device | 8 GB of RAM: iPhone 15 Pro or newer, iPad Pro (2021) or newer, iPad Air (2022) or newer, or iPad mini (2024) or newer |
 
 > [!TIP]
 > On lower-end devices, or to run cooler and save battery, we recommend setting Internal resolution to Dynamic and
