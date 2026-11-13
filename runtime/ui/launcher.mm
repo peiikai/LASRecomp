@@ -745,26 +745,43 @@ static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *
 #endif
 }
 
-// ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on iOS)
+// ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on macOS / iOS)
 // A data root inside a synced folder uploads every game file to the player's cloud drive: a warning on the start
 // screen with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep
-// here (settings.onedrive_kept). Checked once per launch on the current data root (plat_cloud_synced); the size in
+// here (settings.cloud_kept). Checked once per launch on the current data root (plat_cloud_synced); the size in
 // the background: the data root's own once set up, before that the picked game files (or a typical copy) plus what
 // the setup adds. LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
 #define GAME_FILES_GB 6.3   // exefs + romfs, as players bring them
 #define SETUP_ADDS_GB 0.4   // the built game code and its kept pieces (0.23, a beta_5 setup), shader caches
-static const char *g_onedrive_name;        // the service's name (the English text names it); NULL: not synced
-// (iOS: the system offloads a cloud folder's files it thinks unused; the game then waits for each one it reads)
+static const char *g_cloud_name;           // the service's name (the English text names it); NULL: not synced
+// (the drive offloads a synced folder's files it thinks unused; the game then waits for each one it reads)
+#if PLAT_IOS
 static const char *const KEEP_DOWNLOADED = LN("In the Files app, touch and hold the data folder and choose Keep "
                                               "Downloaded, so its files stay on this iPhone.");
-static int g_onedrive = -1;                // -1: not checked yet
-static std::atomic<double> g_od_gb{-1};    // the estimate (-1: not known yet)
-static std::atomic<int> g_od_job;
-static std::string g_od_for = "\x02";      // what the estimate is for: "" set up, "\x01" nothing picked, else the folder
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %s, not on this iPhone. They "
+                                       "download as the game reads them, so it may be very slow or close.");
+static const char *const CLOUD_OWN = "iCloud Drive";  // (the platform's own drive: the test notice names it)
+#elif defined(__APPLE__)
+static const char *const KEEP_DOWNLOADED = LN("In Finder, Control-click the data folder and choose Keep Downloaded, "
+                                              "so its files stay on this Mac.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %s, not on this Mac. They "
+                                       "download as the game reads them, so it may be very slow or close.");
+static const char *const CLOUD_OWN = "iCloud Drive";
+#else  // (OneDrive)
+static const char *const KEEP_DOWNLOADED = LN("In File Explorer, right-click the data folder and choose Always keep on "
+                                              "this device, so its files stay on this PC.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %s, not on this PC. They "
+                                       "download as the game reads them, so it may be very slow or close.");
+static const char *const CLOUD_OWN = "OneDrive";
+#endif
+static int g_cloud = -1;                   // -1: not checked yet
+static std::atomic<double> g_cloud_gb{-1}; // the estimate (-1: not known yet)
+static std::atomic<int> g_cloud_job;
+static std::string g_cloud_for = "\x02";   // what the estimate is for: "" set up, "\x01" nothing picked, else the folder
 
-static void *onedrive_size_thread(void *arg) {
+static void *cloud_size_thread(void *arg) {
     std::string *src = (std::string *)arg;
-    int job = g_od_job;
+    int job = g_cloud_job;
     double gb;
     if (src->empty()) gb = rt_tree_size(rt_data_root()) / 1e9;
     else {
@@ -774,37 +791,39 @@ static void *onedrive_size_thread(void *arg) {
         gb = (exefs.empty() || romfs.empty() ? GAME_FILES_GB : (rt_tree_size(exefs.c_str()) + rt_tree_size(romfs.c_str())) / 1e9)
              + SETUP_ADDS_GB;
     }
-    if (job == g_od_job) g_od_gb = gb;
+    if (job == g_cloud_job) g_cloud_gb = gb;
     delete src;
     return NULL;
 }
 
 // The warning, w wide at the cursor (the start screen's upper right; before the setup, under the System rows).
 // 1: Keep here pressed, 2: Choose another folder (offered when the data folder can be changed and nothing is running)
-static int onedrive_notice(float s, float w, bool ready) {
+static int cloud_notice(float s, float w, bool ready) {
     std::string src;
     pthread_mutex_lock(&g_lock);
     src = ready ? "" : g_src.empty() ? "\x01" : g_src;
     pthread_mutex_unlock(&g_lock);
-    if (src != g_od_for) {  // (set up, or another folder picked: estimate again)
-        g_od_for = src, g_od_job++;
+    if (src != g_cloud_for) {  // (set up, or another folder picked: estimate again)
+        g_cloud_for = src, g_cloud_job++;
         pthread_t th;
-        if (pthread_create(&th, NULL, onedrive_size_thread, new std::string(src)) == 0) pthread_detach(th);
+        if (pthread_create(&th, NULL, cloud_size_thread, new std::string(src)) == 0) pthread_detach(th);
     }
-    double gb = g_od_gb;
+    double gb = g_cloud_gb;
     if (gb < 0) return 0;
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
-    ImGui::BeginChild("##onedrive", ImVec2(w, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
+    ImGui::BeginChild("##cloud", ImVec2(w, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
                       ImGuiWindowFlags_NavFlattened);
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
     ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_onedrive_name);
+    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_cloud_name);
     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your %s."),
-                       fmax(1.0, gb), g_onedrive_name);
-    if (PLAT_IOS) ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
+                       fmax(1.0, gb), g_cloud_name);
+#ifdef __APPLE__
+    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
+#endif
     ImGui::PopTextWrapPos();
     ImGui::Dummy(ImVec2(0, 4 * s));
     int r = 0;
@@ -821,10 +840,10 @@ static int onedrive_notice(float s, float w, bool ready) {
     ImGui::EndChild();
     return r;
 }
-static void onedrive_keep(void) {
-    g_settings.onedrive_kept = true;
+static void cloud_keep(void) {
+    g_settings.cloud_kept = true;
     settings_save();
-    fprintf(stderr, "[launcher] %s warning: kept here\n", g_onedrive_name);
+    fprintf(stderr, "[launcher] %s warning: kept here\n", g_cloud_name);
 }
 
 #if PLAT_IOS
@@ -2275,9 +2294,12 @@ extern "C" void launcher_run(const char *root) {
         if (pg && !strcmp(pg + 1, "delete")) page = SETUP, g_confirm_delete = true;
         if (pg && !strcmp(pg + 1, "tip")) g_settings.menu_tip_seen = false, g_tip_test = true;
         if (pg && !strcmp(pg + 1, "recompiling")) page = SETUP, g_build_frac = 0.42f, set_job(LN("Recompiling the game"));
-        if (pg && !strcmp(pg + 1, "notice"))  // (the iPhone's iCloud notice, anywhere)
-            g_notice = std::string(L("Some of LAS Recomp's files aren't on this iPhone. They download as the game reads "
-                                     "them, so it may be very slow or close.")) + "\n\n" + L(KEEP_DOWNLOADED);
+        if (pg && !strcmp(pg + 1, "notice"))  // (the cloud notice, anywhere)
+        {
+            char here[400];
+            snprintf(here, sizeof here, L(NOT_HERE), CLOUD_OWN);
+            g_notice = std::string(here) + "\n\n" + L(KEEP_DOWNLOADED);
+        }
         if (pg && !strcmp(pg + 1, "aspect")) g_settings.aspect_asked = g_settings.menu_tip_seen = false, g_tip_test = true;
     }
 
@@ -2343,21 +2365,20 @@ extern "C" void launcher_run(const char *root) {
         fprintf(stderr, "[launcher] delete %.1f GB: %s -> %s\n", gb, ok ? "ok" : "refused", status.c_str());
         if (!status.empty()) { g_bg = 0; page = SETUP; }
     }
-    if (g_onedrive < 0) {  // (once per launch: a "Title screen" reboot keeps it)
+    if (g_cloud < 0) {  // (once per launch: a "Title screen" reboot keeps it)
         if (PLAT_IOS) fprintf(stderr, "[launcher] data folder shown as: %s\n", data_root_shown().c_str());
         const char *t = getenv("LARECOMP_TEST_ONEDRIVE");
-        g_onedrive_name = t ? (atoi(t) != 0 ? "OneDrive" : NULL) : plat_cloud_synced(rt_data_root());
-        g_onedrive = g_onedrive_name != NULL;
-        if (g_onedrive) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_onedrive_name,
-                                g_settings.onedrive_kept ? " (kept there)" : "", rt_data_root());
-#if PLAT_IOS
-        if (g_onedrive && plat_ios_cloud_offloaded(rt_data_root())) {
+        g_cloud_name = t ? (atoi(t) != 0 ? "OneDrive" : NULL) : plat_cloud_synced(rt_data_root());
+        g_cloud = g_cloud_name != NULL;
+        if (g_cloud) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_cloud_name,
+                             g_settings.cloud_kept ? " (kept there)" : "", rt_data_root());
+        if (g_cloud && plat_cloud_offloaded(rt_data_root())) {
             char msg[700];
-            snprintf(msg, sizeof msg, "%s\n\n%s", L("Some of LAS Recomp's files aren't on this iPhone. They download as the "
-                                                  "game reads them, so it may be very slow or close."), L(KEEP_DOWNLOADED));
+            char here[400];  // (the service by name, as the "synced by" warning says it)
+            snprintf(here, sizeof here, L(NOT_HERE), g_cloud_name);
+            snprintf(msg, sizeof msg, "%s\n\n%s", here, L(KEEP_DOWNLOADED));
             g_notice = msg;  // (notice_popup: in the menus' look)
         }
-#endif
     }
     // the shader preparation of every later start: in the background (first setups and updates do theirs above)
     // (test :preparing / :skipask: no background preparation - finishing, it took the test's bar away)
@@ -3000,10 +3021,10 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(CHANGED_HINT));
                     ImGui::PopTextWrapPos();
                 }
-                if (!ready && g_onedrive > 0 && !g_settings.onedrive_kept) {  // (before the copy is the time to move)
+                if (!ready && g_cloud > 0 && !g_settings.cloud_kept) {  // (before the copy is the time to move)
                     ImGui::Dummy(ImVec2(0, 14 * sc));
-                    int r = onedrive_notice(1.5f * sc, ImGui::GetContentRegionAvail().x, false);
-                    if (r == 1) onedrive_keep();
+                    int r = cloud_notice(1.5f * sc, ImGui::GetContentRegionAvail().x, false);
+                    if (r == 1) cloud_keep();
                     else if (r == 2) choose_data_folder();
                 }
                 if (ready) opt_end();
@@ -3076,11 +3097,11 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::SetCursorPosX(x0);
                 ImGui::TextDisabled("%s", busy ? L("Set up the game files to play.") : status_hint(status));
             }
-            if (g_onedrive > 0 && !g_settings.onedrive_kept) {
+            if (g_cloud > 0 && !g_settings.cloud_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
-                int r = onedrive_notice(s, w, status.empty());
-                if (r == 1) onedrive_keep();
+                int r = cloud_notice(s, w, status.empty());
+                if (r == 1) cloud_keep();
                 else if (r == 2) choose_data_folder();
             }
 #if PLAT_IOS

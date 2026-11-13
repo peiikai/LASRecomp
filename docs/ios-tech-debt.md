@@ -153,7 +153,9 @@ attribute, so the `removexattr` on the linker is gone too.
   "isn't available" box - Try again / Use the default folder / Quit. The bookmark is bound to the team + bundle id,
   so a resign by the same team keeps it. Left: an iCloud Drive folder gets the OneDrive warning only
   (`plat_cloud_synced`, named by `NSURLUbiquitousItemContainerDisplayNameKey`) with a Keep Downloaded hint, and
-  a system box at launch when any of its files is offloaded (`plat_ios_cloud_offloaded`): a read of an offloaded file
+  a system box at launch when any of its files is offloaded (`plat_cloud_offloaded`, shared with macOS in
+  `runtime/platform/darwin_common.h`: a walk reading the file system's `SF_DATALESS` mark, 20 ms for 4800 entries;
+  a folder's own download status says nothing about its files): a read of an offloaded file
   waits for its download (measured: the menu sounds 7.4 s instead of 10 ms; no read failed). No `NSFileCoordinator`
   around the game's reads, no download ahead of the game; other
   providers (Google Drive, Dropbox) aren't told apart from On My iPhone - all of them are `File Provider Storage`
@@ -294,7 +296,7 @@ Taken:
   for the overlay text. The Files picker is not a branch: `runtime/platform/ios_sdl.h` renames `SDL_ShowOpenFolderDialog`
   / `SDL_ShowOpenFileDialog` / `SDL_OpenURL` to UIKit ones (`ios_picker.m`, SDL's signatures and callback form), so
   the start screen's calls are the desktop's; `platform.h` declares the rest of the iOS-only calls (`plat_ios_*`) and
-  `plat_cloud_synced` names the service (OneDrive on Windows, iCloud Drive on iOS) for the one warning.
+  `plat_cloud_synced` names the service (OneDrive on Windows, iCloud Drive on macOS and iOS) for the one warning.
 - The phone menu scale (`d9e0d71`: the menu and the start screen's panels a third larger, in the safe area), the
   on-screen keyboard's touch form for the name entry (`bc8cfd8`, `osk.mm`), and the tap hints on the title and the
   file select ("Tap to start", "Tap a file to play", in `touch_controls.mm`).
