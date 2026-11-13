@@ -55,6 +55,11 @@
 // only ever lengthens the wait: a hold must end some time on a machine that fits 60 (an iPad Pro at a fixed
 // resolution, GPU 11.3 ms a frame after a steady 60, stayed at 30 for minutes until a setting change: nothing lowers
 // the GPU time at a fixed resolution, and a limit it never reaches is a hold for good).
+// The GPU time at 30 is not always the GPU time at 60 (the same iPad: 11.8 ms a frame held, 13-16 at 60 after a few
+// seconds there, the game thread waiting for its frames - busy - until held again): a clear way back the backoff
+// never lengthened past 4x flickered 60 / 30 every 18 s for 8 minutes. So the clear way back after a failed return
+// wants the GPU PACE_GPU_BACKOFF_UNDER_MS under what it was at that return (gpu_back): a lighter scene still gets
+// back in 2 s times the backoff, the same scene takes the enough way (5 s times the backoff, up to 80 s).
 // Hitches aren't frames that don't fit 60 (an M3 Max at 5120x1440, GPU 10-13 ms a frame, held at 30 after door jumps,
 // save commits, bushes' items spawning, texture hash stalls): one stall makes the next frames come a vsync late in a
 // burst (12 of 60, none by busy time), then the release waited for a GPU time it never reached. So:
@@ -82,6 +87,9 @@
 // an edge that gains its headroom by cooling down doesn't flip every few seconds, and 10-13 ms still gets back.
 #define PACE_GPU_LATE_MS 13.0
 #define PACE_GPU_LATE_BACKOFF_MS 10.0
+// A hold that busy frames started, after a failed return (backing off): the clear way back wants the GPU this much
+// under its time at that return (see above; the iPad's returns read 11.4-13.0 ms, half a ms apart).
+#define PACE_GPU_BACKOFF_UNDER_MS 2.0
 #define PACE_GRACE_NS 1000000000ull
 extern __thread uint64_t g_blocked_ns;  // kernel.c: this thread's time blocked in waits / sleeps
 static bool pace_slow;
@@ -271,6 +279,7 @@ void pace_frame(void) {
     static bool late_hold;  // (the hold was started by frames shown late more than by busy ones)
     static uint64_t back_at;  // when frame pacing last went back to 60 (0: not yet)
     static bool try_back;     // (that was Dynamic's look for 60: a hold right after it keeps the backoff)
+    static double gpu_back = -1;  // the GPU time per frame (gpu_avg) at that return (-1: not timed)
     static double avg;  // cost (ms at 60 fps), moving average (~20 frames)
     static uint64_t last_tcpu, last_rcpu;
     extern uint64_t rq_render_cpu_ns(void);  // rqueue.c: the render thread's CPU time so far (0: no render thread)
@@ -300,7 +309,7 @@ void pace_frame(void) {
     }
     if (__atomic_exchange_n(&try_60, 0, __ATOMIC_ACQ_REL) && on && pace_slow) {  // (see above)
         LOG("[pace] dynamic resolution looks for 60 at its floor: trying 60\n");
-        pace_slow = late_hold = false, back_at = now, try_back = true;
+        pace_slow = late_hold = false, back_at = now, try_back = true, gpu_back = gpu_avg;
         clear = calm = cpu_clear = 0, gpu_said = 0;
         nover = nbusy = 0;
         memset(over, 0, sizeof over);
@@ -419,15 +428,21 @@ void pace_frame(void) {
         // (no GPU timer: -1, CPU only. Held for frames shown late, the GPU must fit with more room: those frames' busy
         // time was short, so what made them late was the GPU's frame and the window's image - and their CPU headroom
         // here says nothing: PACE_GPU_LATE_MS. Once a return to 60 failed, the clear way back wants
-        // PACE_GPU_LATE_BACKOFF_MS; the enough way keeps the first try's limit, so the backoff only lengthens the wait.)
+        // PACE_GPU_LATE_BACKOFF_MS, or - held for busy frames - PACE_GPU_BACKOFF_UNDER_MS under the GPU time of that
+        // return (its time at 30 said nothing about 60; untimed, nothing was learned); the enough way keeps the first
+        // try's limit, so the backoff only lengthens the wait.)
         bool gpu_fits = gpu_avg < (late_hold ? PACE_GPU_LATE_MS : PACE_GPU_MS);
-        bool gpu_clear = gpu_fits && (!late_hold || backoff == 1 || gpu_avg < PACE_GPU_LATE_BACKOFF_MS);
+        bool gpu_clear = gpu_fits && (backoff == 1 || (late_hold ? gpu_avg < PACE_GPU_LATE_BACKOFF_MS
+                                                                 : gpu_back >= 0 && gpu_avg < gpu_back - PACE_GPU_BACKOFF_UNDER_MS));
         int clear_n = 60 * (backoff < 4 ? backoff : 4);
         cpu_clear = sc && avg < 11.0 && peak < 14.5f ? cpu_clear + 1 : 0;
-        if (cpu_clear == clear_n && !gpu_clear && !gpu_said++)
+        if (cpu_clear == clear_n && !gpu_clear && !gpu_said++) {
+            char b[48] = "";
+            if (gpu_fits && !late_hold && gpu_back >= 0) snprintf(b, sizeof b, " (%.1f before the failed return)", gpu_back);
             LOG("[pace] %d gameplay frames with clear CPU headroom (%.1f ms a frame at 60 on average), but the GPU takes %.1f ms "
-                "a frame: %s\n", cpu_clear, avg, gpu_avg,
+                "a frame%s: %s\n", cpu_clear, avg, gpu_avg, b,
                 gpu_fits ? "backing off, waiting for enough headroom" : "staying at 30");
+        }
         clear = gpu_clear && cpu_clear ? clear + 1 : 0;
         calm = sc && gpu_fits && med < 13.5f && nover <= 4 ? calm + 1 : 0;
         if (clear >= clear_n || calm >= 150 * backoff) {
@@ -437,7 +452,7 @@ void pace_frame(void) {
             LOG("[pace] %d frames with %s headroom on gameplay frames (%.1f ms a frame at 60 on average, median %.1f, at most "
                 "%.1f%s): back to the game's own choice\n", clear >= clear_n ? clear : calm, clear >= clear_n ? "clear" : "enough",
                 avg, med, peak, g);
-            pace_slow = false, nover = nbusy = 0, back_at = now, try_back = false;
+            pace_slow = false, nover = nbusy = 0, back_at = now, try_back = false, gpu_back = gpu_avg;
             memset(over, 0, sizeof over);
             memset(recent, 0, sizeof recent);
         }
