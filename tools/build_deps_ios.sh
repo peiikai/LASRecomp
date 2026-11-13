@@ -183,8 +183,10 @@ PILLOW_WHL=pillow-10.4.0-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
 if [ -n "${SIM:-}" ]; then PILLOW_SHA=35be44fe3efe66d129d3e9800cdaa3773d752fececbbc3a6fa073767a15dfb64
 else PILLOW_SHA=8e2cd37b032d9246fac4acf5202bdcdfa95269c5f26cc3fcb4d1e1ece5d54c47; fi
 if [ ! -f "$P/wheels/$PILLOW_WHL" ]; then
-    "$HOSTPY" -m pip download -q --no-deps --only-binary :all: --platform "$WHEELTAG" --python-version "$PYV" \
-        --index-url https://pypi.anaconda.org/beeware/simple --extra-index-url https://pypi.org/simple -d "$P/wheels" "Pillow==10.4.0"
+    # (the file's own address: the index page behind pip's lookup times out often, and pip then falls back to
+    # pypi.org, which has no iOS wheels)
+    mkdir -p "$P/wheels"
+    curl -fsSL --retry 3 -o "$P/wheels/$PILLOW_WHL" "https://pypi.anaconda.org/beeware/simple/pillow/10.4.0/$PILLOW_WHL"
     echo "$PILLOW_SHA  $P/wheels/$PILLOW_WHL" | shasum -a 256 -c --quiet || { rm -f "$P/wheels/$PILLOW_WHL"; exit 1; }
 fi
 
