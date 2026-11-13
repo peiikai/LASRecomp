@@ -3,8 +3,10 @@
 # from tools/fetch_zig.sh's build/zig/. The full zig compiles the MinGW C runtime and its own runtime library from
 # ~4000 source files on the player's machine at the first link; here they are built once, ahead of time, and only
 # what building the game code reads is kept:
-#   zig.exe, lib/std/std.zig (how zig finds its lib folder), the headers the game code includes (from the compiler's
-#   dependency lists of a probe), rt/ = the runtime libraries a `zig cc -shared` link uses and rt/link.rsp = that
+#   zig.exe, lib/std/std.zig (how zig finds its lib folder), the compiler's own headers (all of lib/include, ~13 MB:
+#   the iOS export compiles the same game code for aarch64-ios with the kit's Darwin headers, which pull in
+#   __stddef_rsize_t.h and others a Windows-only probe never reads), the libc headers the game code includes (from the
+#   compiler's dependency lists of a probe), rt/ = the runtime libraries a `zig cc -shared` link uses and rt/link.rsp = that
 #   link's flags and libraries (runtime/gamebuild.c links with `zig lld-link @rt/link.rsp -LIBPATH:rt`).
 # Checked at the end: a probe compiled and linked with the slim copy and an empty cache builds nothing from source.
 set -euo pipefail
@@ -25,8 +27,10 @@ done
 printf '#include "cpu.h"\n#include "simd.h"\n' > $W/probe.c
 $Z/zig.exe cc "${flags[@]}" -Iruntime -c $W/probe.c -o $W/probe.o -MD -MF $W/probe.d
 $Z/zig.exe cc "${flags[@]}" -Iruntime '-DGAMELIB_ID="0"' -c tools/gamelib_entry.c -o $W/entry.o -MD -MF $W/entry.d
-n=0
+cp -R $Z/lib/include $O/lib/  # (the compiler's own headers, every target: see the top)
+n=$(find $O/lib/include -type f | wc -l)
 for h in $(cat $W/probe.d $W/entry.d | tr ' ' '\n' | tr -d '\r' | sed -n 's|^build/zig/lib/|lib/|p' | sort -u); do
+    [ -f "$O/$h" ] && continue
     mkdir -p "$O/$(dirname "$h")"
     cp "$Z/$h" "$O/$h"
     n=$((n + 1))
