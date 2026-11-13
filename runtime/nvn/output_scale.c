@@ -159,7 +159,11 @@ static double g_pc_ceil = 2.0, g_pc_until = -1e9, g_pc_wait = 10.0, g_pc_hit_at 
 // ceiling being set, at or under the factor the frames were last on time at (within 4 s: a lower factor is no heavier)
 // with G over that measure by 8% or more (the iPhone's fallout a step or two under: 1.12-1.22x; a factor that is late
 // on its own reads about the same G late as on time: the RP5's 0.70, 7% late, G 13.6 on time and 14.1-14.3 late, the
-// clock at its top then), take their step down but leave the ceiling where the raise failed.
+// clock at its top then), hold the factor and leave the ceiling where the raise failed. They took their step down at
+// first, one each decision of the spike (the iPhone's: G 2-2.5x for over a second at any factor): 0.75 failed, 0.70 ->
+// 0.65 -> 0.60, and at 0.60 the spike's tail read under 1.08x of 0.75's measure, so it was a ceiling of its own, lifted
+// 12 s later on a real drop - 17 steps a minute. A step under the fit saves nothing here (the clock is the spike), so
+// the factor stays where it was on time; frames still late once the fallout window has passed step down as ever.
 #define DYN_PC_SETTLE 2.0   // s after the last late step before G one step under the ceiling is its reference
 #define DYN_PC_FALLOUT 3.0  // s after the ceiling is set: late frames at or under a factor just on time are the fallout
 #define DYN_PC_FALLOUT_G 1.08  // ... with G over its on-time measure there by this
@@ -589,14 +593,19 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             // (paced: always one step - the G it would fit is over-read, and the ceiling keeps raises under it)
             if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || paced) down = g_dyn - DYN_STEP;
         }
-        if (paced && now - g_pc_set_at < DYN_PC_FALLOUT && g_dyn < g_pc_ceil - 1e-6 && g_dyn <= g_pc_ok_f + 1e-6 &&
-            now - g_pc_ok_at < 4.0 && G > DYN_PC_FALLOUT_G * g_pc_ok_g) {
+        // (paced, late under the ceiling just set: the fallout once it has read as that - its tail reads nearer the on-time
+        // measure while the frames are still late, and a step then made a lower ceiling of it)
+        bool held = g_pc_hit_at > g_pc_set_at;
+        if (paced && now - g_pc_set_at < DYN_PC_FALLOUT && g_dyn < g_pc_ceil - 1e-6 &&
+            (held || (g_dyn <= g_pc_ok_f + 1e-6 && now - g_pc_ok_at < 4.0 && G > DYN_PC_FALLOUT_G * g_pc_ok_g))) {
             // late under the ceiling just set, at or under the factor the frames were on time at a moment ago, with G well
-            // over its measure there: the raise's fallout, not this factor's load (see DYN_PC_FALLOUT) - the step breaks
-            // it, the ceiling stays
+            // over its measure there: the raise's fallout, not this factor's load (see DYN_PC_FALLOUT) - the factor holds
+            // (a step down wouldn't shorten the spike), the ceiling stays
+            if (!held)
+                LOG("[dynres] paced: frames late at %.2f too (game %.1f ms against %.1f on time at %.2f %.1f s ago): the fallout, "
+                    "holding %.2f under the ceiling %.2f\n", g_dyn, G, g_pc_ok_g, g_pc_ok_f, now - g_pc_ok_at, g_dyn, g_pc_ceil);
             g_pc_hit_at = now;
-            LOG("[dynres] paced: frames late at %.2f too (game %.1f ms against %.1f on time at %.2f %.1f s ago): the fallout, the "
-                "ceiling %.2f stays\n", g_dyn, G, g_pc_ok_g, g_pc_ok_f, now - g_pc_ok_at, g_pc_ceil);
+            down = g_dyn;
         } else if (paced) {  // the factor that went late: the ceiling (see g_pc_ceil)
             // (hit again soon after a lift: wait longer. Not a step down while one holds - a heavy scene stepping down a
             // step at a time doubled it at each: through the swamp to a minute, then 360p for a minute after it)

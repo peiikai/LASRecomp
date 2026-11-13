@@ -158,11 +158,13 @@ static Result run(const Case *c) {
             clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
         }
         if (c->sag > 0) {  // the first late frame after on-time ones puts the clock down: times x sag, most of it back within
-                           // half a second, the rest over ~2 s (the iPad's 0.85: 1.55x late, 1.75x a step under, then on time
-                           // at 1.35x, 1.15x, 1.0x a half second apart)
+                           // half a second, the rest over ~2 s of wall time, whatever the factor (the iPad's 0.85: 1.55x late,
+                           // 1.75x a step under, then on time at 1.35x, 1.15x, 1.0x a half second apart; the iPhone's frames
+                           // were late ~2-2.5 s after a failed raise at 0.75 and 0.85 alike)
             if (p_last > 17.5 && ok_run >= 30) sag_fast = 0.6 * (c->sag - 1), sag_slow = 0.4 * (c->sag - 1);
             g *= 1 + sag_fast + sag_slow, w *= 1 + sag_fast + sag_slow;
-            sag_fast *= 0.9, sag_slow *= 0.985;
+            double dec = p_last / 16.667;  // (a late 33 ms frame is two frames' worth of settling)
+            sag_fast *= pow(0.9, dec), sag_slow *= pow(0.985, dec);
         }
         if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
@@ -461,6 +463,13 @@ int main(int argc, char **argv) {
         // the same, the scene x0.6 lighter from 120 s (leaving a heavy area): the ceiling lifts early, 1.00 within 15 s
         {.name = "iPhone 15 Pro, the sag, lighter scene from 120 s", .a = 2.5, .b = 14, .w = 4, .w1 = 2,
          .fifo = 1, .secs = 180, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0, .light_at = 120},
+        // the iPhone once the ceiling held (long play 2, 2026-11-13: 157 steps, 49 ceilings in 9 min): its sag is heavier
+        // (G 2-2.6x for over a second at any factor) and the fallout rule took a step at each decision of it, so a failed
+        // 0.75 went 0.70 -> 0.65 -> 0.60, where the tail read under 1.08x of 0.75's measure and made a ceiling of its own,
+        // lifted 12 s later on a real drop, and it climbed to 0.75 to fail again. 0.80 fits with 8% to spare, 0.85 is
+        // late: it must sit at 0.80 between probes - a probe is two steps, not six
+        {.name = "iPhone 15 Pro, a heavier sag: the fit holds through the fallout", .a = 1, .b = 17, .w = 3.5, .w1 = 2,
+         .fifo = 1, .secs = 240, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 3.0},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -526,11 +535,14 @@ int main(int argc, char **argv) {
     case 58: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "Android RP5 at the budget, paced from the start: high"); break;
     case 59: check(r.f_heavy_min < 0.5 && r.f_after_heavy >= 0.6, "Android RP5 through the swamp: back up within 15 s"); break;
     case 60: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
-    // (a probe of the ceiling a minute at most once the wait has doubled to 60 s: 6 probes of ~6 steps and 2 slow 2-s
+    // (a probe of the ceiling a minute at most once the wait has doubled to 60 s: 6 probes of ~2 steps and 2 slow 2-s
     // windows each in 240 s - it was 146 steps, 42 slow windows and 48 fps over the last 10 s)
     case 61: check(r.changes_settled <= 40 && r.low_win <= 15 && r.f_end >= 0.75 && r.fps_end > 58,
                    "iPhone sag: settles under the ceiling, no hunting"); break;
     case 62: check(r.f_light >= 0.95 && r.f_end == 1.0, "iPhone sag, lighter scene: the ceiling lifts, 1.00 within 15 s"); break;
+    // (the fit between probes, a probe two steps: it was 24 steps after 20 s, sitting at 0.70, two under the fit)
+    case 63: check(r.changes_settled <= 12 && r.f_min_last60 >= 0.8 && r.low_win <= 15 && r.fps_end > 58,
+                   "iPhone heavier sag: the fit holds through the fallout, a probe is two steps"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
