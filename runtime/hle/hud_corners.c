@@ -40,9 +40,12 @@ bool touch_visible(void);
 void menu_safe_insets(float *l, float *r);  // share of the window's width
 
 // (direct children of N_HUD_00 only: sub-layouts reuse these names)
+// N_Key_00 (keys, boss key, golden leaves) has its y set by the game's animations every frame (Cm_HUD_KeyUpDown:
+// 314 under one row of hearts, 288 under two; DirectMapIn / Out: 268), so a write to it is lost: its x is moved here,
+// its y through its children (not animated, in its scaled units).
 enum { LEFT = -1, KEEP = 0, RIGHT = 1 };
-static const struct { const char *name; int side; bool xy; } kPanes[] = {
-    {"N_Life_00", LEFT, false},  {"N_Key_00", LEFT, false},         {"N_Item_00", RIGHT, true},
+static const struct { const char *name; int side; bool xy, kids_y; } kPanes[] = {
+    {"N_Life_00", LEFT, false},  {"N_Key_00", LEFT, false, true},   {"N_Item_00", RIGHT, true},
     {"N_Item_01", RIGHT, true},  {"N_SetItem_00", RIGHT, true},    {"N_Rupee_00", RIGHT, false},
     {"N_ShellRadar_00", RIGHT, false},
 };
@@ -51,6 +54,10 @@ static uint64_t g_hud, g_pane[NPANES], g_retry;
 static int g_tries;
 static float g_authored[NPANES], g_authored_y[NPANES];
 static bool g_moved, g_hid[NPANES];
+enum { MAX_KIDS = 32 };
+static uint64_t g_kid[MAX_KIDS], g_kid_of;
+static float g_kid_y[MAX_KIDS], g_kid_set[MAX_KIDS];  // (the game's y; the y last written here)
+static unsigned g_nkids;
 
 static bool name_is(uint64_t p, const char *n) { return !strcmp((const char *)(uintptr_t)(p + 0xB0), n); }
 static uint64_t g_ra[256], g_rs[256];
@@ -92,6 +99,32 @@ static void find_panes(uint64_t hud) {
     LOG("[hud] corners: %u of %u panes found from %llx (%u objects)\n", found, (unsigned)NPANES, (unsigned long long)hud, n);
 }
 
+// the children of pane p (nn::ui2d::Pane: link node at +0x8, parent +0x18, child list root at +0x20, next at +0x28)
+static void find_kids(uint64_t p) {
+    g_nkids = 0, g_kid_of = p;
+    uint64_t root = p + 0x20;
+    for (uint64_t n = LD64(root + 8); n != root && g_nkids < MAX_KIDS; n = LD64(n + 8)) {
+        uint64_t k = n - 8;
+        if (!mapped(k) || LD64(k + 0x18) != p) { g_nkids = 0; break; }
+        g_kid[g_nkids] = k, g_kid_y[g_nkids] = g_kid_set[g_nkids] = *(const float *)(uintptr_t)(k + 0x34), g_nkids++;
+    }
+    LOG("[hud] corners: %u children of %s\n", g_nkids, (const char *)(uintptr_t)(p + 0xB0));
+}
+
+// each child's y = the game's y + up (the game may place them itself: a y not ours is its new one)
+static void move_kids(float up) {
+    for (unsigned j = 0; j < g_nkids; j++) {
+        uint64_t k = g_kid[j];
+        if (LD64(k + 0x18) != g_kid_of) continue;  // (gone with a stale parent, found again with it)
+        float *y = (float *)(uintptr_t)(k + 0x34);
+        if (*y != g_kid_set[j]) g_kid_y[j] = *y;
+        float want = g_kid_y[j] + up;
+        if (*y == want) continue;
+        *y = g_kid_set[j] = want;
+        *(uint8_t *)(uintptr_t)(k + 0x58) |= 0x10;
+    }
+}
+
 static void set_xy(unsigned i, float x, float y) {
     uint64_t p = g_pane[i];
     if (*(const float *)(uintptr_t)(p + 0x30) == x && *(const float *)(uintptr_t)(p + 0x34) == y) return;
@@ -118,7 +151,7 @@ void rt_hud_corners_tick(uint64_t hud) {
         missing |= !g_pane[i];
         stale |= g_pane[i] && !(name_is(g_pane[i], kPanes[i].name) && child_of_hud(g_pane[i]));
     }
-    if (hud != g_hud) g_tries = 0;
+    if (hud != g_hud) g_tries = 0, g_kid_of = 0;  // (a pane found again on the same HUD keeps its children's state)
     if (hud != g_hud || stale || (missing && g_tries < 5)) {  // (a new HUD, each screen load; not all there yet: once a second)
         if (renderer_present_count() < g_retry) return;
         g_hud = hud, g_retry = renderer_present_count() + 60, g_moved = false, g_tries++;
@@ -136,7 +169,14 @@ void rt_hud_corners_tick(uint64_t hud) {
     }
     for (unsigned i = 0; i < NPANES; i++) {
         if (!g_pane[i]) continue;
-        set_xy(i, g_authored[i] + (kPanes[i].side == LEFT ? -l : kPanes[i].side == RIGHT ? r : 0), g_authored_y[i] + up);
+        float y = g_authored_y[i] + up;
+        if (kPanes[i].kids_y) {
+            if (g_kid_of != g_pane[i]) find_kids(g_pane[i]);
+            float sy = *(const float *)(uintptr_t)(g_pane[i] + 0x4C);  // (its scale, 0.75: the children's units)
+            move_kids(sy > 0.01f ? up / sy : up);
+            y = *(const float *)(uintptr_t)(g_pane[i] + 0x34);
+        }
+        set_xy(i, g_authored[i] + (kPanes[i].side == LEFT ? -l : kPanes[i].side == RIGHT ? r : 0), y);
         if (!kPanes[i].xy) continue;
         uint8_t *fl = (uint8_t *)(uintptr_t)(g_pane[i] + 0x58);
         if (hide && (*fl & 1)) *fl &= ~1, g_hid[i] = true;  // (bit 0: visible; the game may set it again)
