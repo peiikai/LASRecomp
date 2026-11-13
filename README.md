@@ -137,6 +137,7 @@ The iOS app is made on your computer from your own game files, then sideloaded.
 **Randomizer**
 - In-game seed generator, with seed IDs for sharing and separate saves for each seed.
 - Shuffles all items, the trade quest, bombs and Magic Powder.
+- Place as many bombs at once as you like.
 - Hint Sheet: every seed starts with one that points you to your next important item.
 - Escape Bottle: every seed starts with it. Use it to warp to the dungeon entrance, or to Marin and Tarin's house outside dungeons.
 - Pickup text says which dungeon a key or dungeon item belongs to.
