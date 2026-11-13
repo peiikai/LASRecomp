@@ -146,8 +146,25 @@ static double g_futile_at;                            // when the last was seen
 // here (it reads ~90% of the frame at any factor, more than the frame on a Retroid: 18.3 ms with frames every 18.2), so
 // without it a raise came whenever the frames had been on time: 0.55 -> 0.80 a step a second, late, straight back to
 // 0.55, every ~10 s - a third of the time at 50-55 fps. One step under it the clock is near its top, so G there is honest:
-// G 10% under its first measure there (the scene got lighter) lifts it early (g_pc_ref_f / g_pc_ref_g).
+// G 10% under its first settled measure there (the scene got lighter) lifts it early (g_pc_ref_f / g_pc_ref_g).
 static double g_pc_ceil = 2.0, g_pc_until = -1e9, g_pc_wait = 10.0, g_pc_hit_at = -1e9, g_pc_ref_f = -1, g_pc_ref_g = -1;
+// A raise's late frames have a fallout (iPad Pro M4, iPhone 15 Pro): once a frame misses a vsync the GPU's time about
+// doubles at any factor - the game's and the window's parts alike, ~90% of the 33 ms frame it is given now, so a clock
+// effect, not the resize's - and settles back over the ~2 s after the frames are on time again. Two things made the
+// ceiling never hold: the step under it came late too (the fallout, not that factor's load) and moved the ceiling down a
+// step, and the reference was the first on-time measure one step under - still inflated - so the settle itself read as
+// "10% lighter" and lifted the ceiling 2 s after it was set: 0.75 -> 0.85, late, 0.70, lifted, 0.85 again - 30 steps a
+// minute at a steady load, a quarter of the time with frames late (iPad and iPhone alike, 0.70-0.85). Now the
+// reference waits for the settle (DYN_PC_SETTLE after the last late step), and late frames within DYN_PC_FALLOUT of the
+// ceiling being set, at or under the factor the frames were last on time at (within 4 s: a lower factor is no heavier)
+// with G over that measure by 8% or more (the iPhone's fallout a step or two under: 1.12-1.22x; a factor that is late
+// on its own reads about the same G late as on time: the RP5's 0.70, 7% late, G 13.6 on time and 14.1-14.3 late, the
+// clock at its top then), take their step down but leave the ceiling where the raise failed.
+#define DYN_PC_SETTLE 2.0   // s after the last late step before G one step under the ceiling is its reference
+#define DYN_PC_FALLOUT 3.0  // s after the ceiling is set: late frames at or under a factor just on time are the fallout
+#define DYN_PC_FALLOUT_G 1.08  // ... with G over its on-time measure there by this
+static double g_pc_set_at = -1e9;                                // when the ceiling was last set
+static double g_pc_ok_f = -1, g_pc_ok_g = -1, g_pc_ok_at = -1e9;  // the factor the frames were last on time at (paced), G then, when
 static double g_chain_from = -1, g_chain_at;  // the factor before this run of steps down taken with frames on time; the last
 #define DYN_CHECK_SHARE 0.33  // a step down's measured saving at least this share of the predicted one
 
@@ -572,14 +589,22 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             // (paced: always one step - the G it would fit is over-read, and the ceiling keeps raises under it)
             if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || paced) down = g_dyn - DYN_STEP;
         }
-        if (paced) {  // the factor that went late: the ceiling (see g_pc_ceil)
+        if (paced && now - g_pc_set_at < DYN_PC_FALLOUT && g_dyn < g_pc_ceil - 1e-6 && g_dyn <= g_pc_ok_f + 1e-6 &&
+            now - g_pc_ok_at < 4.0 && G > DYN_PC_FALLOUT_G * g_pc_ok_g) {
+            // late under the ceiling just set, at or under the factor the frames were on time at a moment ago, with G well
+            // over its measure there: the raise's fallout, not this factor's load (see DYN_PC_FALLOUT) - the step breaks
+            // it, the ceiling stays
+            g_pc_hit_at = now;
+            LOG("[dynres] paced: frames late at %.2f too (game %.1f ms against %.1f on time at %.2f %.1f s ago): the fallout, the "
+                "ceiling %.2f stays\n", g_dyn, G, g_pc_ok_g, g_pc_ok_f, now - g_pc_ok_at, g_pc_ceil);
+        } else if (paced) {  // the factor that went late: the ceiling (see g_pc_ceil)
             // (hit again soon after a lift: wait longer. Not a step down while one holds - a heavy scene stepping down a
             // step at a time doubled it at each: through the swamp to a minute, then 360p for a minute after it)
             if (now >= g_pc_until && now < g_pc_until + 30.0) g_pc_wait = fmin(g_pc_wait * 2, 60.0);
             else if (now - g_pc_hit_at > 120.0) g_pc_wait = 10.0;
-            g_pc_ceil = g_dyn, g_pc_until = now + g_pc_wait, g_pc_hit_at = now;
+            g_pc_ceil = g_dyn, g_pc_until = now + g_pc_wait, g_pc_hit_at = g_pc_set_at = now;
             // (G one step under, on the grid - the floor's below its first step: 0.40 -> 0.33 at 360p, which never matched
-            // 0.35 and so never lifted early. The first on-time measure there)
+            // 0.35 and so never lifted early. The first on-time measure there once the fallout has settled)
             g_pc_ref_f = dyn_grid(g_dyn - DYN_STEP), g_pc_ref_g = -1;
             LOG("[dynres] paced: frames late at %.2f, raises stay under it for %.0f s\n", g_dyn, g_pc_wait);
         }
@@ -602,8 +627,9 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         // it starts the count over, so a raise doesn't come from a light loading screen)
         g_dyn_good = fits && !spikes ? g_dyn_good + 1 : 0;
         bool room = fits && g_dyn_good >= DYN_UP_VOTES && now >= g_dyn_raise_at;
+        if (paced && nlate == 0 && !spikes) g_pc_ok_f = g_dyn, g_pc_ok_g = G, g_pc_ok_at = now;
         if (paced && fabs(g_dyn - g_pc_ref_f) < 1e-6 && nlate == 0 && !spikes) {  // (the scene got lighter: lift it now)
-            if (g_pc_ref_g < 0) g_pc_ref_g = G;
+            if (g_pc_ref_g < 0) { if (now - g_pc_hit_at >= DYN_PC_SETTLE) g_pc_ref_g = G; }  // (settled: DYN_PC_SETTLE)
             else if (G < 0.9 * g_pc_ref_g && now < g_pc_until) { g_pc_until = now; LOG("[dynres] paced: game %.1f -> %.1f ms at %.2f, the ceiling %.2f is lifted\n", g_pc_ref_g, G, g_dyn, g_pc_ceil); }
         }
         if (paced && up >= g_pc_ceil - 1e-6 && now < g_pc_until) room = false;

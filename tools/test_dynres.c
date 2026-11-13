@@ -67,6 +67,9 @@ typedef struct {
     double fill;        // > 0: paced: the clock eases to where G + W is this share of a frame (default 0.9)
     double gpu_read;    // > 0: the reported GPU times are this many times the frame's real GPU wall time (Turnip over-reads)
     double pace_fit_ms; // > 0: the pacer releases when G + W < this for 60 frames (default 13; 10 = backing off; -1 never)
+    double sag;         // > 0: paced: a frame missing a vsync after on-time frames puts the clock down - its times x this at
+                        // once, easing back as the clock does (the iPad / iPhone fallout of a raise's late frames: GPU
+                        // time ~2x at any factor for a second, game and window parts alike, settling over ~2 s)
 } Case;
 
 typedef struct {
@@ -82,6 +85,7 @@ typedef struct {
     int changes_after, slow_after, downs_after;
     int low_win, n_win;
     double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 15 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
+    double f_light;       // (light_at) the factor 15 s after the scene got lighter
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -101,7 +105,10 @@ static Result run(const Case *c) {
     int pace_held = 0, pace_ring[60] = {0}, pace_i = 0, pace_over = 0, pace_fit = 0, pace_holds = 0;
     double pace_grace = 0;
     g_pace_try = 0;
-    double f_heavy_min = 2, f_after_heavy = -1;
+    double p_last = 16.667;  // (sag) the last frame's period
+    int ok_run = 0;          // (sag) frames on time in a row before it
+    double sag_fast = 0, sag_slow = 0;  // (sag) the clock's sag now: its fast and slow parts
+    double f_heavy_min = 2, f_after_heavy = -1, f_light = -1;
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
@@ -125,6 +132,7 @@ static Result run(const Case *c) {
         }
         if (c->heavy_until > 0 && now > c->heavy_at && now < c->heavy_until) f_heavy_min = fmin(f_heavy_min, f);
         if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 15) f_after_heavy = f;
+        if (c->light_at > 0 && f_light < 0 && now > c->light_at + 15) f_light = f;
         double hold = output_scale_dynamic_hold_fps();
         if (hold != last_hold) {
             printf(" | %.0fs hold %.0f", now, hold);
@@ -149,8 +157,16 @@ static Result run(const Case *c) {
             double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * 16.667 / full));
             clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
         }
+        if (c->sag > 0) {  // the first late frame after on-time ones puts the clock down: times x sag, most of it back within
+                           // half a second, the rest over ~2 s (the iPad's 0.85: 1.55x late, 1.75x a step under, then on time
+                           // at 1.35x, 1.15x, 1.0x a half second apart)
+            if (p_last > 17.5 && ok_run >= 30) sag_fast = 0.6 * (c->sag - 1), sag_slow = 0.4 * (c->sag - 1);
+            g *= 1 + sag_fast + sag_slow, w *= 1 + sag_fast + sag_slow;
+            sag_fast *= 0.9, sag_slow *= 0.985;
+        }
         if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
+        ok_run = p_last > 17.5 ? 0 : ok_run + 1;
         if (c->clock_slow > 0) {  // under 60% busy: the clock drifts down (times up), over 80%: back up, over ~1 s
             double busy = gw / fmax(p, 16.667), target = busy < 0.6 ? c->clock_slow : busy > 0.8 ? 1.0 : clk;
             clk += (target - clk) * fmin(1.0, p / 1000.0);
@@ -197,6 +213,7 @@ static Result run(const Case *c) {
         double rd = c->gpu_read > 0 ? c->gpu_read : 1.0;
         g_prev = g * rd, w_prev = w * rd;
         g_pace_slow = c->pacer && pace_held;
+        p_last = p;
         now += p / 1000;
         win_n++; if (now - win_t0 >= 2.0) { n_win++; if (win_n / (now - win_t0) < 57) low_win++; win_t0 = now, win_n = 0; }
         if (now > c->secs - 10) frames_end++, t_end += p / 1000;
@@ -206,7 +223,7 @@ static Result run(const Case *c) {
                 .hold_changes = hold_changes, .changes_settled = settled, .back30_t = back30, .f_min_last60 = f_min,
                 .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
                 .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after,
-                .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy};
+                .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy, .f_light = f_light};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
     if (c->resize_at > 0)
@@ -434,6 +451,16 @@ int main(int argc, char **argv) {
         // the iPad (case 32) with a 35 ms hitch every 2.5 s: stays at 1.00
         {.name = "iPad paced + hitches every 2.5 s", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
          .secs = 120, .lines = 1668, .paced = 2.5, .jitter = 3, .miss_every = 150},
+        // iPhone 15 Pro (2556x1179, MetalFX, paced from the start; long play 2026-11-13): 0.80 holds 60 (G 11.5 + W 4 at
+        // full clock), 0.85 is late. A raise's late frames put the clock down (times x2 for a moment) at any factor, so
+        // the step under the late one came late too and moved the ceiling, and the first measure one step under was
+        // still inflated: the settle lifted the ceiling 2 s after it was set - 0.70 -> 0.85 -> 0.70 every 5 s, 30 steps a
+        // minute, all through the play. It must settle under the ceiling (a probe a minute at most)
+        {.name = "iPhone 15 Pro, paced from the start, a raise's late frames sag the clock", .a = 2.5, .b = 14, .w = 4, .w1 = 2,
+         .fifo = 1, .secs = 240, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0},
+        // the same, the scene x0.6 lighter from 120 s (leaving a heavy area): the ceiling lifts early, 1.00 within 15 s
+        {.name = "iPhone 15 Pro, the sag, lighter scene from 120 s", .a = 2.5, .b = 14, .w = 4, .w1 = 2,
+         .fifo = 1, .secs = 180, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0, .light_at = 120},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -499,6 +526,11 @@ int main(int argc, char **argv) {
     case 58: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "Android RP5 at the budget, paced from the start: high"); break;
     case 59: check(r.f_heavy_min < 0.5 && r.f_after_heavy >= 0.6, "Android RP5 through the swamp: back up within 15 s"); break;
     case 60: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
+    // (a probe of the ceiling a minute at most once the wait has doubled to 60 s: 6 probes of ~6 steps and 2 slow 2-s
+    // windows each in 240 s - it was 146 steps, 42 slow windows and 48 fps over the last 10 s)
+    case 61: check(r.changes_settled <= 40 && r.low_win <= 15 && r.f_end >= 0.75 && r.fps_end > 58,
+                   "iPhone sag: settles under the ceiling, no hunting"); break;
+    case 62: check(r.f_light >= 0.95 && r.f_end == 1.0, "iPhone sag, lighter scene: the ceiling lifts, 1.00 within 15 s"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
