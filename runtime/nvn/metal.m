@@ -2525,24 +2525,24 @@ static void quick_action_in_game(void) {
 }
 #endif
 
-// The device's thermal state (NSProcessInfo): logged at start and at every change, and shown on Dynamic resolution's
-// step lines (output_scale.c). A phone that warms up throttles its GPU - the same scene costs more minutes in (an
-// iPhone 15 Pro held 1.00 at 60 fps for 78 s, then never again) - and the log couldn't say so.
+// The device's thermal state (NSProcessInfo): logged at start and at every change, and handed to Dynamic resolution
+// (output_scale_thermal: its step lines, and its heat rules at serious / critical). A phone that warms up throttles its
+// GPU - the same scene costs more minutes in (an iPhone 15 Pro held 1.00 at 60 fps for 78 s, then never again) - and the
+// log couldn't say so.
 static volatile int g_thermal = -1;
 static const char *thermal_name(int s) {
     return s == NSProcessInfoThermalStateNominal ? "nominal" : s == NSProcessInfoThermalStateFair ? "fair" :
            s == NSProcessInfoThermalStateSerious ? "serious" : s == NSProcessInfoThermalStateCritical ? "critical" : "unknown";
 }
-const char *renderer_thermal_state(void) { return thermal_name(g_thermal); }
-static void thermal_watch(void) {
+static void thermal_note(void) {
     g_thermal = (int)NSProcessInfo.processInfo.thermalState;
     LOG("[thermal] %s\n", thermal_name(g_thermal));
+    output_scale_thermal(g_thermal);  // (Dynamic's heat rules: NSProcessInfoThermalStateNominal .. Critical are 0 .. 3)
+}
+static void thermal_watch(void) {
+    thermal_note();
     [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:nil
-                                                usingBlock:^(NSNotification *n) {
-        (void)n;
-        g_thermal = (int)NSProcessInfo.processInfo.thermalState;
-        LOG("[thermal] %s\n", thermal_name(g_thermal));
-    }];
+                                                usingBlock:^(NSNotification *n) { (void)n; thermal_note(); }];
 }
 
 int ui_run(void) {

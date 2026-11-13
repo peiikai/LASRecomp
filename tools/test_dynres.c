@@ -24,9 +24,6 @@ static int g_pace_slow;  // (pacer cases: the pacer holds the game at 30 - nvn/p
 bool pace_is_slow(void) { return g_pace_slow; }
 static int g_pace_try;  // (pacer cases: Dynamic asked the frame pacer to try 60 - nvn/pace.c pace_try_60)
 void pace_try_60(void) { g_pace_try = 1; }
-#ifdef __APPLE__
-const char *renderer_thermal_state(void) { return "nominal"; }  // (output_scale.c's step line: nvn/metal.m)
-#endif
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
@@ -81,6 +78,15 @@ typedef struct {
     double hold_clock;  // > 0: (pacer) the GPU's clock drops while the pacer holds 30 - half of each frame idle (an iPhone 15
                         // Pro: G + W 12 ms at 0.80 just held, 23 ms at 0.65 15 s later): its times ease to x this over ~10 s
                         // held, and back to x1 within the first frames of the game's 60 fps mode (back-to-back there)
+    int thermal;        // the device's thermal state from the start (0 nominal, 1 fair, 2 serious, 3 critical)
+    double cool_at;     // > 0: the state becomes fair then (s)
+    double power;       // > 0: at serious / critical the chip's power budget: the GPU's work at its full clock as a share of
+                        // the frame that 60 fps can sustain (an iPhone 15 Pro at serious: 0.65-0.70 held 60 for 40 s at a
+                        // time, 0.75-0.85 ran ~2 s). Over it the budget runs out (the excess summed over ~2 s at 0.80) and
+                        // the clock is cut: times x power_cut (default 2) for 3 s at least and until the work is under
+                        // it long enough - at 30 fps it is, so a hold at 30 gets the clock back a few seconds in (the
+                        // log: GPU time 12.9 ms a frame 2 s into a hold, 8.4 at 4 s)
+    double power_cut;
 } Case;
 
 typedef struct {
@@ -95,11 +101,14 @@ typedef struct {
     double f_after, f_before;  // (resize_at) the factor 1.5 s after the change / just before it
     int changes_after, slow_after, downs_after;
     int low_win, n_win;
-    double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 15 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
+    double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 20 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
     double f_light;       // (light_at) the factor 15 s after the scene got lighter
     double f_min_first;   // the lowest factor within 10 s of the first change (2: none): a slide from 1.00
     double pace_s, pace_longest;  // (pacer) seconds the frame pacer held 30 in all, and its longest hold
     double f_min;         // the lowest factor of the whole run
+    int pace_holds;       // (pacer) holds of 30 the frame pacer took
+    double f_max_early;   // the highest factor between 5 s in and 40 s in (a climb's overshoot)
+    double f_cool;        // (cool_at) the factor 60 s after the state became fair
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -125,12 +134,19 @@ static Result run(const Case *c) {
     double sag_fast = 0, sag_slow = 0;  // (sag) the clock's sag now: its fast and slow parts
     double f_heavy_min = 2, f_after_heavy = -1, f_light = -1;
     double first_t = -1, f_min_first = 2;
-    double pace_s = 0, pace_cur = 0, pace_longest = 0, f_min_run = 2;
+    double pace_s = 0, pace_cur = 0, pace_longest = 0, f_min_run = 2, f_max_early = 0, f_cool = -1;
+    double power_acc = 0, cut_at = 0; int power_cut = 0, thermal = c->thermal;  // (power: the budget's excess summed, s; the clock cut now, since)
+    output_scale_thermal(thermal);
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
         OutScale o;
         g_menu = c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until;
+        if (c->cool_at > 0 && now > c->cool_at && thermal != 1) {
+            thermal = 1, output_scale_thermal(thermal);
+            printf(" | %.0fs thermal fair", now);
+            if (++col % 8 == 0) printf("\n ");
+        }
         double lines0 = c->lines > 0 ? c->lines : 2160;
         bool resized = c->resize_at > 0 && now > c->resize_at;
         double lines = resized ? c->lines2 : lines0, area = (lines / lines0) * (lines / lines0);
@@ -149,7 +165,7 @@ static Result run(const Case *c) {
             last_f = f;
         }
         if (c->heavy_until > 0 && now > c->heavy_at && now < c->heavy_until) f_heavy_min = fmin(f_heavy_min, f);
-        if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 15) f_after_heavy = f;
+        if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 20) f_after_heavy = f;
         if (c->light_at > 0 && f_light < 0 && now > c->light_at + 15) f_light = f;
         if (first_t >= 0 && now < first_t + 10) f_min_first = fmin(f_min_first, f);
         double hold = output_scale_dynamic_hold_fps();
@@ -162,6 +178,8 @@ static Result run(const Case *c) {
         }
         if (now > c->secs - 60) { f_min = fmin(f_min, f); f_max = fmax(f_max, f); }
         f_min_run = fmin(f_min_run, f);
+        if (now > 5 && now < 40) f_max_early = fmax(f_max_early, f);
+        if (c->cool_at > 0 && f_cool < 0 && now > c->cool_at + 60) f_cool = f;
         double scene = (1 + (c->wobble > 0 ? c->wobble : 0.03) * sin(now * 2 * M_PI / 20)) * (c->light_at > 0 && now > c->light_at ? (c->light > 0 ? c->light : 0.6) : 1.0);
         if (c->heat > 0) scene *= 1 + (c->heat - 1) * now / c->secs;
         if (c->heavy_at > 0 && now > c->heavy_at && (c->heavy_until <= 0 || now < c->heavy_until)) scene *= c->heavy;
@@ -192,6 +210,9 @@ static Result run(const Case *c) {
             sag_fast *= pow(0.9, dec), sag_slow *= pow(0.985, dec);
         }
         if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
+        double work = (c->a + c->b * f * f * area) * scene + w_base * area;  // (power: the frame's work at the full clock)
+        double cutx = c->power_cut > 0 ? c->power_cut : 2.0;
+        if (power_cut) g *= cutx, w *= cutx;
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
         ok_run = p_last > 17.5 ? 0 : ok_run + 1;
         if (c->clock_slow > 0) {  // under 60% busy: the clock drifts down (times up), over 80%: back up, over ~1 s
@@ -241,6 +262,16 @@ static Result run(const Case *c) {
             else if (++jn % 60 == 0) p += c->jitter, owe = c->jitter;
             if (c->miss_every > 0 && jn % c->miss_every == 7) p += 16.667;
         }
+        if (c->power > 0 && thermal >= 2) {  // (see Case: the excess over the budget summed, the clock cut at 0.15 s of it
+                                             // - 2 s at 7% over -, back once it has drained to 0.05)
+            double load = work / fmax(p, 16.667);
+            power_acc = fmin(0.3, fmax(0, power_acc + (load - c->power) * p / 1000));
+            if (!power_cut && power_acc >= 0.15) {
+                power_cut = 1, cut_at = now;
+                printf(" | %.0fs clock cut", now);
+                if (++col % 8 == 0) printf("\n ");
+            } else if (power_cut && power_acc <= 0.05 && now - cut_at >= 3) power_cut = 0;
+        } else power_acc = 0, power_cut = 0;
         if (c->resize_at > 0 && now > c->resize_at - 3 && now <= c->resize_at) p_before = fmax(p_before, p);
         if (resized && now < c->resize_at + 5 && p > p_before + 1) slow_after++;
         double rd = c->gpu_read > 0 ? c->gpu_read : 1.0;
@@ -259,11 +290,14 @@ static Result run(const Case *c) {
                 .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
                 .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after,
                 .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy, .f_light = f_light,
-                .f_min_first = f_min_first, .pace_s = pace_s, .pace_longest = pace_longest, .f_min = f_min_run};
+                .f_min_first = f_min_first, .pace_s = pace_s, .pace_longest = pace_longest, .f_min = f_min_run,
+                .pace_holds = pace_holds, .f_max_early = f_max_early, .f_cool = f_cool};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
     if (c->pacer)
-        printf("  the frame pacer held 30 fps for %.0f s in all, %.0f s at most; the lowest factor %.2f\n", pace_s, pace_longest, f_min_run);
+        printf("  the frame pacer held 30 fps for %.0f s in all (%d hold%s), %.0f s at most; the lowest factor %.2f, the highest 5-40 s in %.2f\n",
+               pace_s, pace_holds, pace_holds == 1 ? "" : "s", pace_longest, f_min_run, f_max_early);
+    if (c->cool_at > 0) printf("  thermal fair from %.0f s: factor %.2f 60 s later\n", c->cool_at, f_cool);
     if (c->resize_at > 0)
         printf("  window %.0f -> %.0f lines at %.0f s: factor %.2f 1.5 s later, %d change%s in 8 s, %d slower frame%s in 5 s, "
                "%d step%s down / hold%s ended in 15 s\n", c->lines > 0 ? c->lines : 2160, c->lines2, c->resize_at, f_after,
@@ -482,7 +516,7 @@ int main(int argc, char **argv) {
          .wander = 0.03, .jitter = 5, .miss_every = 150, .start_paced = 1},
         // the RP5 through the swamp (2026-11-12 23:24 log): a heavy stretch steps it down to the 360p floor, a ceiling at
         // each step with the wait doubling at each (to a minute), and the floor's step never matched the early lift - 360p
-        // for a minute after the swamp. Back up within 15 s of it now
+        // for a minute after the swamp. Back up within 20 s of it now (a paced climb is a step every 2 s: DYN_PC_RAISE_WAIT)
         {.name = "Android RP5, a heavy stretch 60-100 s (the swamp), paced from the start", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
          .fifo = 1, .secs = 200, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06,
          .jitter = 5, .miss_every = 150, .start_paced = 1, .heavy_at = 60, .heavy = 1.6, .heavy_until = 100},
@@ -537,6 +571,24 @@ int main(int argc, char **argv) {
         {.name = "iPhone 15 Pro, the pacer holds 30 after a failed raise, the clock drops held", .a = 2.5, .b = 14, .w = 4, .w1 = 2,
          .fifo = 1, .secs = 240, .lines = 1179, .start_paced = 1, .sag = 2.0, .pacer = 1, .pace_fit_ms = 10, .hold_clock = 1.9,
          .start = 0.80},
+        // the iPhone at thermal state serious (2026-11-13 log 3, 226 s: serious from t=19): G 8.2 + W 3.1 at 0.65 when fine,
+        // and the chip's power budget sustains 60 fps at 0.65-0.70 (40 s at a time) but not at 0.75-0.85: there it ran
+        // ~2 s, the clock was cut (GPU time 15-27 ms a frame), and the pacer held 30 - six holds, 24 of 110 windows near
+        // 30. Each return to 60 climbed a step a second back into the cut (0.65 -> 0.90 in 4 s at t=178), and the probes
+        // from the hold tried the factor just cut. It must settle near 0.70 with few holds
+        {.name = "iPhone 15 Pro at thermal serious: the power budget sustains 0.70, not 0.80", .a = 2, .b = 12, .w = 3.2, .w1 = 1.6,
+         .fifo = 1, .secs = 240, .lines = 1179, .start_paced = 1, .sag = 2.0, .pacer = 1, .pace_fit_ms = 10, .hold_clock = 1.9,
+         .thermal = 2, .power = 0.70},
+        // the same phone cooling to fair at 120 s (the budget is back): the heat ceiling lifts and it climbs back up (0.85
+        // fits cold: G 10.7 + W 3.2)
+        {.name = "iPhone at serious, cooling to fair at 120 s: climbs back up", .a = 2, .b = 12, .w = 3.2, .w1 = 1.6,
+         .fifo = 1, .secs = 300, .lines = 1179, .start_paced = 1, .sag = 2.0, .pacer = 1, .pace_fit_ms = 10, .hold_clock = 1.9,
+         .thermal = 2, .power = 0.70, .cool_at = 120},
+        // the climb at serious from 0.65 (a ceiling's wait just out, as at t=178 of the log): a step a second overshot to 0.90
+        // before the first cut showed; it must be caught a step over the sustainable factor
+        {.name = "iPhone at serious, the climb from 0.65: caught a step over", .a = 2, .b = 12, .w = 3.2, .w1 = 1.6,
+         .fifo = 1, .secs = 160, .lines = 1179, .start_paced = 1, .sag = 2.0, .pacer = 1, .pace_fit_ms = 10, .hold_clock = 1.9,
+         .thermal = 2, .power = 0.70, .start = 0.65},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -598,11 +650,13 @@ int main(int argc, char **argv) {
     case 43: check(r.f_end >= 0.95, "CPU-bound pacer hold, GPU fits 60: no step down for nothing"); break;
     case 44: check(r.changes_settled <= 2, "a hold 60 can't reach: no probes every 2 minutes"); break;
     case 52: case 53: case 54: check(r.low_win * 10 <= r.n_win, "RP5 shape: at most 1 in 10 windows under 57 fps"); break;
-    case 55: check(r.low_win <= 4 && r.changes_settled <= 20 && r.f_end >= 0.7, "RP5, steady scene: settles under the late step, no sawtooth"); break;
+    // (a probe of the late step a minute at most, each a step or two: 6 slow windows of 149 - 4 before the paced climb's
+    // 2 s steps moved the probes onto the scene's lighter moments)
+    case 55: check(r.low_win <= 8 && r.changes_settled <= 24 && r.f_end >= 0.7, "RP5, steady scene: settles under the late step, no sawtooth"); break;
     case 56: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "RP5 paced at the budget: found paced, not stuck low"); break;
     case 57: check(r.low_win * 10 <= r.n_win && r.f_min_last60 >= 0.6, "Android RP5 shape, paced from the start: never near 486p, few slow windows"); break;
     case 58: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "Android RP5 at the budget, paced from the start: high"); break;
-    case 59: check(r.f_heavy_min < 0.5 && r.f_after_heavy >= 0.6, "Android RP5 through the swamp: back up within 15 s"); break;
+    case 59: check(r.f_heavy_min < 0.5 && r.f_after_heavy >= 0.6, "Android RP5 through the swamp: back up within 20 s"); break;
     case 60: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
     // (a probe of the ceiling a minute at most once the wait has doubled to 60 s: 6 probes of ~2 steps and 2 slow 2-s
     // windows each in 240 s - it was 146 steps, 42 slow windows and 48 fps over the last 10 s)
@@ -626,6 +680,14 @@ int main(int argc, char **argv) {
     case 68: check(r.f_min >= 0.7 && r.hold_changes == 0 && r.pace_longest <= 12 && r.pace_s <= 80 && r.low_win <= 50 &&
                    r.changes_settled <= 20 && r.f_end >= 0.75,
                    "iPhone, the pacer holds 30: the factor sits still, 60 again at it within the probe wait"); break;
+    // (it was: 11 holds and 124 s at 30 of 240, 23 changes after 20 s, 82 of 119 slow windows, 0.46 at the worst; now 3
+    // holds in the first minute - 0.85, 0.80, the marginal 0.75 - and 0.70 steady from there)
+    case 69: check(r.f_end >= 0.65 && r.f_end <= 0.75 && r.pace_holds <= 3 && r.pace_s <= 35 && r.changes_settled <= 8 && r.low_win <= 25,
+                   "iPhone at serious: settles near the sustainable factor, few holds"); break;
+    case 70: check(r.f_cool >= 0.8 && r.f_end >= 0.8 && r.fps_end > 58, "iPhone cooling to fair: climbs back up"); break;
+    // (it was: 0.85 within 5 s and 12 holds in 160 s, 125 s at 30; now 0.80 at most, 2 holds, 0.70 steady from a minute in)
+    case 71: check(r.f_max_early <= 0.8 && r.pace_holds <= 2 && r.pace_s <= 25 && r.f_end >= 0.65 && r.f_end <= 0.75 && r.fps_end > 58,
+                   "iPhone at serious, the climb: caught a step over, settles"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }

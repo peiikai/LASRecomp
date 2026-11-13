@@ -18,9 +18,6 @@ bool pace_target_30(void) { return false; }
 bool pace_is_slow(void) { return false; }
 void pace_try_60(void) {}
 bool menu_is_open(void) { return false; }
-#ifdef __APPLE__
-const char *renderer_thermal_state(void) { return "nominal"; }  // (output_scale.c's step line: nvn/metal.m)
-#endif
 
 // A fragment shader in the game's shape: the x taps' offsets from c4[0x240] and, when `compare`, a compare lookup on a
 // 2D array. Without the lookup a read of c4[0x240] is some other constant.
