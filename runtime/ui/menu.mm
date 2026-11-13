@@ -748,14 +748,18 @@ static void tab_display(void) {
         if (opt_preview("Internal resolution", &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
-    if (g_settings.res_mode == RES_DYNAMIC) {  // Dynamic's floor (output_scale.c dyn_set_floor)
+    {  // Dynamic's floor (output_scale.c dyn_set_floor)
         static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
         static const int min_lines[] = {360, 540, 720};
         int mi = 1;
         for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
+        bool dyn = g_settings.res_mode == RES_DYNAMIC;
+        opt_child_begin(dyn);
+        if (!dyn) opt_disable_next(), opt_needs_next("Internal resolution", "Dynamic");
         if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
                        "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
             g_settings.dyn_min = min_lines[mi];
+        opt_child_end();
     }
     {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
         static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};

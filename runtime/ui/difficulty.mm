@@ -92,9 +92,11 @@ extern "C" void general_draw(float scale) {
         settings_save();
     {  // (any time, also mid-session)
         static const char *const pos[] = {LN("Bottom left"), LN("Bottom right")};
-        if (!g_settings.timer) opt_disable_next();
+        opt_child_begin(g_settings.timer);
+        if (!g_settings.timer) opt_disable_next(), opt_needs_next("Timer");
         if (opt_choice("Timer position", &g_settings.timer_pos, pos, 2, TIMER_POS_LEFT, "Which corner the timer sits in."))
             settings_save();
+        opt_child_end();
     }
     if (opt_toggle("LiveSplit", &g_settings.livesplit, false,
                    "Connects to LiveSplit's Server component. It starts the timer, splits on each instrument and stops "
@@ -107,11 +109,13 @@ extern "C" void general_draw(float scale) {
         snprintf(d, sizeof d, "%s%s%s", L("The address LiveSplit's Server listens on, written as host:port."),
                  g_settings.livesplit ? "\n\n" : "",
                  !g_settings.livesplit ? "" : livesplit_connected() ? L("Connected.") : L("Not connected."));
-        if (!g_settings.livesplit) opt_disable_next();
+        opt_child_begin(g_settings.livesplit);
+        if (!g_settings.livesplit) opt_disable_next(), opt_needs_next("LiveSplit");
         if (opt_text("Server", g_settings.livesplit_host, sizeof g_settings.livesplit_host, "localhost:16834", d)) {
             if (!g_settings.livesplit_host[0]) snprintf(g_settings.livesplit_host, sizeof g_settings.livesplit_host, "localhost:16834");
             settings_save();
         }
+        opt_child_end();
     }
     opt_end();
 }
@@ -130,10 +134,12 @@ extern "C" void difficulty_draw(float scale) {
             g_settings.walk_speed = mult[wi];
             settings_save();
         }
-        if (wi == 0) opt_disable_next();
+        opt_child_begin(wi != 0);
+        if (wi == 0) opt_disable_next(), opt_needs_next("Walk speed", LN("Brisk or faster"));
         if (opt_toggle("Indoors", &g_settings.walk_speed_dungeons, false,
                        "Use the walk speed in houses, caves and dungeons too."))
             settings_save();
+        opt_child_end();
     }
     if (opt_toggle("Mirror mode", &g_settings.mirror_mode, false,
                    "Mirrors the game world."))

@@ -53,6 +53,17 @@ void opt_button_next(void) { g_row_button = true; }
 static bool g_next_own;
 void opt_own_next(void) { g_next_own = true; }
 static int g_indent;
+// opt_child_begin: the run's depth (0: none), its line's top and x, the middle of its last row so far, its parent on
+static int g_child_depth;
+static float g_rail_top, g_rail_x, g_rail_end;
+static bool g_rail_on;
+static std::string g_next_needs;  // (opt_needs_next: the next row's first sentence, in the menus' language)
+void opt_needs_next(const char *parent, const char *value) {
+    char b[256];
+    if (value) snprintf(b, sizeof b, L("Needs %s set to %s."), L(parent), L(value));
+    else snprintf(b, sizeof b, L("Needs %s."), L(parent));
+    g_next_needs = b;
+}
 static bool g_focus_req, g_take_first;  // (opt_focus_first: requested / this page's first row takes it)
 void opt_focus_first(bool on) { g_focus_req = on; }
 static int g_focus_row = -1;  // (opt_focus_row: this page's row with that index takes the cursor)
@@ -97,6 +108,8 @@ void opt_begin(const char *id, float scale, bool split) {
     g_focus_req = false;
     if (g_take_first) ImGui::NavMoveRequestCancel();  // (this frame's Down goes to the first row instead)
     g_indent = 0;
+    g_child_depth = 0;
+    g_next_needs.clear();
     g_desc_hover.clear(), g_desc_focus.clear();
     g_hov_set = g_foc_set = g_left_hov_set = g_left_foc_set = false;
     g_row_h = 1.9f, g_listed = false;
@@ -138,6 +151,13 @@ static int row(const char *label, const std::string &value_en, bool changed, con
                bool arrows = false, bool chevron = false) {
     const std::string &value = g_value_shown ? value_en : L_line(value_en);
     const char *desc = L(desc_en);
+    std::string needs;  // (greyed out by a row above: "Needs <parent>." first)
+    if (!g_next_needs.empty() && g_next_disabled) {
+        needs = g_next_needs;
+        if (desc && *desc) needs += " ", needs += desc;
+        desc = needs.c_str();
+    }
+    g_next_needs.clear();
     const char *label_shown = g_label_shown ? label : L(label);
     // (phones: a row with a description is a card wherever it is - a two-pane page's left rows too)
     bool lr = arrows || g_lr_row, cards = g_cards || g_list_cards || (PLAT_TOUCH && desc && *desc);
@@ -177,6 +197,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         if (desc && *desc) desc_h = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize() * dscale, FLT_MAX, desc_w, desc).y;
         h = ImGui::GetFontSize() * 1.3f + desc_h + 26 * g_scale + (value_below ? cfs * 1.4f : 0);
     }
+    if (g_child_depth) g_rail_end = p.y + h * 0.5f;  // (opt_child_begin's line: down to this row's middle)
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));  // (the row's own border shows the selection)
     bool clicked = ImGui::InvisibleButton("##row", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleColor();
@@ -321,6 +342,30 @@ static int row(const char *label, const std::string &value_en, bool changed, con
     if (dup) ImGui::PopID();
     ImGui::PopID();
     return step;
+}
+
+void opt_child_begin(bool parent_on) {
+    if (g_collect || g_child_depth++) return;  // (a run inside a run: the outer one's line covers it)
+    // from the parent row's foot (its pill ends 3 px above the item), in the margin left of the rows (a pill starts
+    // 3 px into its item: the line sits as far out again)
+    g_rail_top = ImGui::GetItemRectMax().y - 3 * g_scale;
+    g_rail_x = ImGui::GetItemRectMin().x - 3 * g_scale;
+    g_rail_end = g_rail_top, g_rail_on = parent_on;
+}
+
+void opt_child_end(void) {
+    if (g_collect || g_child_depth <= 0 || --g_child_depth) return;
+    if (g_rail_end <= g_rail_top) return;
+    // drawn only: no item, nothing moves. The rows' pane clips at its left edge, so the clip reaches out over the margin
+    // (the well's rim, 6 px) - kept to the pane's top and bottom, so a scrolled-off run stays hidden.
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 c0 = dl->GetClipRectMin(), c1 = dl->GetClipRectMax();
+    dl->PushClipRect(ImVec2(c0.x - 6 * g_scale, c0.y), c1, false);
+    const PlasticTheme &pt = plastic_theme();
+    ImVec4 col = g_rail_on ? pt.ring_sel : ImVec4(pt.ring.x, pt.ring.y, pt.ring.z, pt.ring.w * 0.5f);
+    float w = fmaxf(2 * g_scale, 1.0f), x = floorf(g_rail_x) + (fmodf(roundf(w), 2) ? 0.5f : 0);  // (on whole pixels)
+    dl->AddLine(ImVec2(x, g_rail_top), ImVec2(x, g_rail_end), ImGui::ColorConvertFloat4ToU32(col), w);
+    dl->PopClipRect();
 }
 
 // a value stepped with left / right: the cursor sound (A / click: menu_sfx_frame's decide)

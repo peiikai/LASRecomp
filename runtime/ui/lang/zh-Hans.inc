@@ -1946,3 +1946,6 @@
 {"This seed picked your look. Commit to it!", "你的外观由这个种子决定。就这样吧！"},
 {"shared", "共用"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "玛林是道具池中的道具，没有她就进不了沙漠。"},
+{"Needs %s.", "需要开启“%s”。"},
+{"Needs %s set to %s.", "需要将“%s”设为“%s”。"},
+{"Brisk or faster", "轻快或更快"},

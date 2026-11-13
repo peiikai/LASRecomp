@@ -1946,3 +1946,6 @@
 {"This seed picked your look. Commit to it!", "이 시드가 외형을 정했습니다. 받아들이세요!"},
 {"shared", "공용"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "마린이 풀의 아이템이 되며, 마린이 없으면 사막에 갈 수 없습니다."},
+{"Needs %s.", "'%s' 설정이 필요합니다."},
+{"Needs %s set to %s.", "'%s'을(를) '%s'(으)로 설정해야 합니다."},
+{"Brisk or faster", "빠른 걸음 이상"},

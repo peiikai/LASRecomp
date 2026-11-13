@@ -1946,3 +1946,6 @@
 {"This seed picked your look. Commit to it!", "見た目はこのシードが決めました。これで行きましょう！"},
 {"shared", "共有"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "マリンがアイテムプールのアイテムになり、マリンがいないと砂漠に入れません。"},
+{"Needs %s.", "「%s」が必要です。"},
+{"Needs %s set to %s.", "「%s」を「%s」にする必要があります。"},
+{"Brisk or faster", "速め以上"},

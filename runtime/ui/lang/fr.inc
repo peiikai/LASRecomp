@@ -1946,3 +1946,6 @@
 {"This seed picked your look. Commit to it!", "Cette seed a choisi ton look. Assume-le !"},
 {"shared", "partagée"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "Marine est un objet de la réserve, et le désert est bloqué sans elle."},
+{"Needs %s.", "Nécessite « %s »."},
+{"Needs %s set to %s.", "Nécessite « %s » sur « %s »."},
+{"Brisk or faster", "Rapide ou plus"},
