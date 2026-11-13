@@ -97,7 +97,8 @@ static void edge(double t, int n, Frame *f) {
 // backing off, the 10 ms GPU limit). user_res_change: at 25 s the user lowers the resolution (the setting, and the
 // render scale change it makes), GPU 11.5 ms after: back at 60 within a few seconds (it stayed at 30 outdoors: 11.5 ms
 // is over the backoff's 10 ms). dynres_steps: Dynamic's own steps instead (a render scale change every 2 s, GPU 18 /
-// 16 ms), then 11.5 ms from 25 s: the backoff stays, and so does the hold.
+// 16 ms), then 11.5 ms from 25 s: the backoff stays - no return within a few seconds as after the user's change, only
+// the enough way back's 10 s at 30 (2x) later.
 static void backoff_phases(double t, Frame *f) {
     f->cpu = 4.5 + noise(1), f->stall = 0, f->wait = 8;
     f->gpu = (t < 4 ? 20 : t < 10 ? 9 : 20) + noise(1);
@@ -120,6 +121,19 @@ static void dynres_steps(double t, int n, Frame *f) {
     if (t >= 25) f->gpu = 11.5 + noise(1);
 }
 
+// An iPad Pro M4 at a fixed full resolution (its log): CPU ~7.5 ms, GPU 11.3 ms, a steady 60 - then two bursts of
+// frames shown late a few seconds apart (a heavy field area loading, frame generation's present latency on top): a
+// late-frame hold, back on headroom, held again within 20 s (backing off), and GPU 11.3 ms from then on. It stayed at
+// 30 for minutes (the backoff's 10 ms GPU limit, which a fixed resolution never reaches): it must get back and stay.
+static void ipad_fixed(double t, int n, Frame *f) {
+    f->cpu = 5 + noise(1), f->gpu = 11.3 + noise(1), f->stall = 0, f->wait = 8.5;
+    bool burst = (t > 3 && t < 4.5) || (t > 14 && t < 15.5);
+    if (burst) f->gpu = 20 + noise(2);
+}
+static int ipad_back(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 2 && backs == 2 && !end && lc < 35;  // (back within the backed-off wait, then 60 for the rest)
+}
+
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
 
@@ -138,7 +152,7 @@ static int res_released(int holds, int backs, double held_s, double lc, bool end
     return holds == 2 && backs == 2 && !end && lc >= 25 && lc < 28;  // (back at 60 within a few seconds of the change)
 }
 static int backoff_kept(int holds, int backs, double held_s, double lc, bool end, double secs) {
-    return holds == 2 && backs == 1 && end && lc < 25;  // (held again, and still held after the steps and the light part)
+    return holds == 2 && backs == 2 && !end && lc >= 33 && lc < 40;  // (held again; back only after the backed-off wait)
 }
 
 static const Case cases[] = {
@@ -154,6 +168,8 @@ static const Case cases[] = {
      res_released},
     {"Dynamic's own steps: held backing off, scale steps at GPU 16-18 ms, then GPU 11.5 ms (backoff kept)", 45,
      dynres_steps, backoff_kept},
+    {"iPad at a fixed resolution: late-frame hold, a failed return (backing off), then GPU 11.3 ms for good", 60,
+     ipad_fixed, ipad_back},
 };
 
 static int run(const Case *c) {
