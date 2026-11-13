@@ -653,6 +653,9 @@ static void drain_events(ImGuiIO &io) {
 extern "C" void renderer_get_scale(float *sx, float *sy);
 extern "C" int input_pad_family(void);  // runtime/hle/input.c
 extern "C" double output_scale_dynamic_factor(void);
+#ifdef __APPLE__
+extern "C" double ui_interp_fps(void);  // runtime/nvn/metal.m (-1: frame interpolation off)
+#endif
 
 #ifdef __APPLE__
 // Metal HUD turned on while its library isn't loaded (the game started with the setting off): it shows only after a
@@ -1216,6 +1219,10 @@ static void fps_note(double now, float dt) {
     if (now - g_fps_at >= 0.5 || now < g_fps_at) {
         g_fps_at = now;
         g_fps_shown = g_fps_sum > 0 ? g_fps_n / g_fps_sum : 0;
+#ifdef __APPLE__
+        double f = ui_interp_fps();  // (frame interpolation on: different images, not the overlay's vsync rate)
+        if (f >= 0) g_fps_shown = f;
+#endif
     }
 }
 
