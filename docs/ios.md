@@ -123,8 +123,9 @@ What is still open or worth knowing. Fixed items are in git history.
   the window a 5.5 GB gap instead of 52 GB (the 5.25 GB layout fits with ~128 MB to spare) and plays the overworld at
   60 fps with a 1.8-1.9 GB footprint. `extended-virtual-addressing` doesn't change this on iOS 26 (the comment in
   [runtime/platform/ios.entitlements](../runtime/platform/ios.entitlements)); on iOS 27 it opens 507 GB but needs a
-  paid team. **iOS 27 without `increased-memory-limit` is not measured.** With it, the only gap that holds the window
-  is above the shared cache.
+  paid team. On iOS 27.0.1 without `increased-memory-limit`, an iPad Pro M4 (8 GB) still placed the window above
+  the shared cache (`0x70_0000_0000`), gave a 5120 MB limit instead of 8192, and played the overworld at 60 fps for
+  4 minutes with a 2.7 GB peak footprint. An iPhone on iOS 27 without it is not measured.
 - The start screen's notice (`plat_ios_memory_entitled`, `LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1` to see it on any
   desktop) covers the message, not a placement failure. `plat_reserve_guest` without the entitlement has no test.
 
