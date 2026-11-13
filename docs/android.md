@@ -3,8 +3,8 @@
 The Android port is coming in pieces, from [mamcjr's LASRecompAndroid](https://github.com/mamcjr/LASRecompAndroid)
 (MIT), with parts from [Nycolazs's LASRecomp-Android-Plus](https://github.com/Nycolazs/LASRecomp-Android-Plus)
 (MIT). The player picks their game files folder with Android's own folder picker, the setup copies them in and builds
-the game code on the device, and the game plays with touch controls or a controller. The latest APK is on the
-[Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page.
+the game code on the device, and the game plays with touch controls or a controller. The APK ships with every release from Beta 6 on
+([Releases](https://github.com/peiikai/LASRecomp/releases)), next to the desktop builds.
 
 The floor is a Snapdragon 865 (Adreno 650) or as fast, 8 GB of RAM, at 720p. Older Adreno phones ship a Vulkan 1.1
 driver and need a Turnip driver package (Settings > System); the README names the one we tested last.
@@ -23,8 +23,8 @@ cd android && ./gradlew assembleDebug  # android/app/build/outputs/apk/debug/app
 ```
 
 `./gradlew assembleRelease` makes the release build. Android installs an update only over an app signed with the same
-key, so the published APKs are all signed with one fixed key (`LARECOMP_KEYSTORE`, `LARECOMP_KEYSTORE_PASSWORD`,
-alias `lasrecomp`; `.github/workflows/experimental.yml` takes it from the repository's secrets). Never make a new one:
+key, so every published APK (releases and the experimental builds) is signed with one fixed key (`LARECOMP_KEYSTORE`,
+`LARECOMP_KEYSTORE_PASSWORD`, alias `lasrecomp`; the workflows take it from the repository's secrets). Never make a new one:
 every player would have to uninstall, and lose the app's data folder, to update. `LARECOMP_VERSION_NAME` and
 `LARECOMP_VERSION_CODE` set the version; the code has to grow from build to build (the workflow uses minutes since
 2026-01-01).
