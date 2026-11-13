@@ -48,9 +48,8 @@ These are the minimums during the beta and may change as development continues.
 | Storage | About 15 GB free |
 
 > [!TIP]
-> On lower-end devices, or to run cooler and save battery, we recommend setting Internal resolution to Dynamic and
-> Internal FPS target to 30. If a low-end device still can't hold 30 FPS, setting Minimum resolution to 360p can help
-> further, at the cost of a lot of visual quality.
+> We recommend turning on Dynamic resolution and choosing an FPS target. The resolution then adjusts to what your device
+> can handle, and drops when the chip heats up and slows down, which most phones and tablets do over longer play.
 
 **iPhone and iPad:**
 
@@ -61,9 +60,8 @@ These are the minimums during the beta and may change as development continues.
 | Storage | About 15 GB free |
 
 > [!TIP]
-> On lower-end devices, or to run cooler and save battery, we recommend setting Internal resolution to Dynamic and
-> Internal FPS target to 30. If a low-end device still can't hold 30 FPS, setting Minimum resolution to 360p can help
-> further, at the cost of a lot of visual quality.
+> We recommend turning on Dynamic resolution and choosing an FPS target. The resolution then adjusts to what your device
+> can handle, and drops when the chip heats up and slows down, which most phones and tablets do over longer play.
 
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
 
