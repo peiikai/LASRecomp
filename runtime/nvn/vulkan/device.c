@@ -1162,8 +1162,10 @@ static void create_swapchain(void) {
 // Android destroys the window's surface whenever another activity covers the app (the folder picker, the home screen)
 // and SDL makes a new one on return: the old VkSurfaceKHR is lost for good (VK_ERROR_SURFACE_LOST_KHR on every acquire,
 // a black screen). So each swapchain rebuild there makes the surface again from SDL's current window first; the old
-// swapchain belongs to the old window and can't be passed on. False: no window right now (in the background).
+// swapchain belongs to the old window and can't be passed on. False: no window right now (in the background). That
+// is tried again every frame while the app is away, so it is logged once: the first try, and the count on return.
 static bool recreate_surface(void) {
+    static unsigned misses;
     for (uint32_t i = 0; i < g_vk.sc_count; i++) vkDestroyImageView(g_vk.dev, g_vk.sc_views[i], NULL);
     g_vk.sc_count = 0;
     if (g_vk.swapchain) vkDestroySwapchainKHR(g_vk.dev, g_vk.swapchain, NULL);
@@ -1171,11 +1173,13 @@ static bool recreate_surface(void) {
     if (g_vk.surface) vkDestroySurfaceKHR(g_vk.inst, g_vk.surface, NULL);
     g_vk.surface = VK_NULL_HANDLE;
     if (!SDL_Vulkan_CreateSurface(window, g_vk.inst, NULL, &g_vk.surface)) {
-        LOG("[vk] no window surface yet: %s\n", SDL_GetError());
+        if (!misses++) LOG("[vk] no window surface yet: %s (tried again each frame, not logged)\n", SDL_GetError());
         g_vk.surface = VK_NULL_HANDLE;
         return false;
     }
-    LOG("[vk] window surface made again (the app was in the background)\n");
+    if (misses) LOG("[vk] window surface made again (the app was in the background; %u tries without a window)\n", misses);
+    else LOG("[vk] window surface made again (the app was in the background)\n");
+    misses = 0;
     return true;
 }
 #endif
