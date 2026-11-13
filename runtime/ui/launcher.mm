@@ -1531,12 +1531,14 @@ static bool launcher_pad_event(const SDL_Event &e) {
                 if (now != held[i]) { held[i] = now; io.AddKeyEvent(keys[i], now); }
             }
         }
+        // (pressed or not, no analog value: ImGui scrolls the window under the cursor by it - the column moved with the
+        // selection, user 2026-11-13; the right stick scrolls: option_rows.mm stick_scroll)
         if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, v < -0.3f ? -v : 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, v > 0.3f ? v : 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, v < -0.3f ? -v : 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, v > 0.3f ? v : 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTY) {  // (scrolls a right column of plain text: option_rows.mm)
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickUp, v < -0.1f, v < 0 ? -v : 0);
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, v > 0.1f, v > 0 ? v : 0);
