@@ -828,7 +828,7 @@ static void rows_world(float scale) {
         opt_indent(1);  // (mix-dungeon-entrances: needs both kinds on)
         if (!(dungeons && houses)) opt_disable_next();
         opt_toggle("Mix with houses & caves", &g_opts.mix_dungeons, false,
-                   "With Houses & caves: dungeon doors are shuffled in with house and cave doors.");
+                   "Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.");
         opt_indent(-1);
         if (!on) opt_disable_next();
         if (opt_toggle("Houses & caves", &houses, false,
@@ -1064,6 +1064,7 @@ static const OptName kOptNames[] = {  // (names the built-in presets use; inv: t
     {"fishing", &GenOpts::inc_fishing}, {"rapids", &GenOpts::inc_rapids}, {"dampe", &GenOpts::inc_dampe},
     {"trade", &GenOpts::inc_trade}, {"blupees", &GenOpts::inc_blue},
     {"entrance_dungeons", &GenOpts::shuffle_dungeons}, {"entrance_houses", nullptr, &GenOpts::entrances},
+    {"entrance_mix", &GenOpts::mix_dungeons},
     {"decoupled", &GenOpts::decoupled}, {"room_shuffle", nullptr, &GenOpts::room_shuffle},
     {"shuffle_instruments", &GenOpts::shuffle_instruments}, {"open_mabe", &GenOpts::open_mabe},
     {"randomize_enemies", &GenOpts::randomize_enemies}, {"enemy_mode", nullptr, &GenOpts::enemy_mode},
@@ -1094,6 +1095,7 @@ static const std::vector<Builtin> &builtins(void) {
         {"trendsanity", {0, 0, 0, 1}}, {"fishing", {0, 0, 0, 1}}, {"rapids", {0, 0, 0, 1}}, {"dampe", {0, 0, 0, 1}},
         {"trade", {0, 0, 0, 1}}, {"blupees", {0, 0, 0, 1}},
         {"entrance_dungeons", {0, 0, 1, 1}}, {"entrance_houses", {0, 0, 2, 2}}, {"decoupled", {0, 0, 0, 1}},
+        {"entrance_mix", {0, 0, 0, 0}},
         {"room_shuffle", {0, 0, 2, 3}}, {"shuffle_instruments", {0, 0, 1, 1}},
         {"open_mabe", {1, 0, 0, 0}}, {"randomize_enemies", {0, 0, 1, 1}}, {"enemy_mode", {0, 0, 0, 1}},
         {"enemy_minibosses", {0, 0, 0, 1}}, {"miniboss_freq", {0, 0, 0, 1}},

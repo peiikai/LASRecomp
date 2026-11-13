@@ -854,6 +854,8 @@
 {"Shuffles where entrances lead, with logic.", "입구가 이어지는 곳을 로직에 맞게 섞습니다."},
 {"Dungeon entrances", "던전 입구"},
 {"Dungeon entrances lead into other dungeons.", "던전 입구가 다른 던전으로 이어집니다."},
+{"Mix with houses & caves", "집과 동굴과 섞기"},
+{"Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.", "던전 입구가 집과 동굴 입구와 함께 섞입니다. 「집과 동굴」이 필요합니다."},
 {"Houses & caves", "집과 동굴"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "집, 동굴, 두 지역을 잇는 동굴을 섞습니다. 마린과 타린의 집과 물속 입구는 그대로입니다."},
 {"Decoupled entrances", "입출구 분리"},

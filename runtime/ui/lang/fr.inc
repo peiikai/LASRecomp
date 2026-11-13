@@ -854,6 +854,8 @@
 {"Shuffles where entrances lead, with logic.", "Mélange la destination des entrées, avec logique."},
 {"Dungeon entrances", "Entrées de donjon"},
 {"Dungeon entrances lead into other dungeons.", "Les entrées de donjon mènent à d'autres donjons."},
+{"Mix with houses & caves", "Mélanger avec maisons et grottes"},
+{"Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.", "Les portes des donjons sont mélangées avec celles des maisons et des grottes. Nécessite Maisons et grottes."},
 {"Houses & caves", "Maisons et grottes"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "Mélange les maisons, les grottes et les grottes qui relient deux zones. La maison de Marine et Tarkin et les entrées aquatiques restent d'origine."},
 {"Decoupled entrances", "Entrées découplées"},

@@ -144,11 +144,17 @@ def build(seed_dir):
         if a != b:
             entered_via[b] = a
 
+    def via_name(door_id):
+        import entrance_logic
+        import hint_sheet
+        d = next((d for d in entrance_logic.load()['doors'] if d['id'] == door_id), None)
+        return hint_sheet.door_name(d) if d else door_id
+
     def area_name(sec):
         n = AREAS.get(sec, 'Elsewhere')
         if sec in entered_via:
-            v = entered_via[sec]  # (mix-dungeon-entrances: a house or cave door's entrance_data id)
-            n += f" - enter through {DUNGEONS[v].split(' (')[0]}'s entrance" if v in DUNGEONS else f' - enter through the {v} door'
+            v = entered_via[sec]  # (mix-dungeon-entrances: a house or cave door's entrance_data id, named by its building)
+            n += f" - enter through {DUNGEONS[v].split(' (')[0] if v in DUNGEONS else via_name(v)}'s entrance"
         return n
 
     out = [f'# Seed {seed}']

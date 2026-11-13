@@ -854,6 +854,8 @@
 {"Shuffles where entrances lead, with logic.", "按逻辑打乱入口通往的地方。"},
 {"Dungeon entrances", "迷宫入口"},
 {"Dungeon entrances lead into other dungeons.", "迷宫入口会通往其他迷宫。"},
+{"Mix with houses & caves", "与房屋与洞窟混合"},
+{"Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.", "迷宫入口与房屋和洞窟的门一起打乱。需要开启“房屋与洞窟”。"},
 {"Houses & caves", "房屋与洞窟"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "打乱房屋、洞窟以及连接两个区域的洞窟。玛林和塔林的家及水中入口保持原样。"},
 {"Decoupled entrances", "入口不对称"},

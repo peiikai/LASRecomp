@@ -854,6 +854,8 @@
 {"Shuffles where entrances lead, with logic.", "Schudt waar ingangen naartoe leiden, met logica."},
 {"Dungeon entrances", "Kerkeringangen"},
 {"Dungeon entrances lead into other dungeons.", "Kerkeringangen leiden naar andere kerkers."},
+{"Mix with houses & caves", "Mengen met huizen & grotten"},
+{"Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.", "Kerkerdeuren worden samen met huis- en grotdeuren geschud. Vereist Huizen & grotten."},
 {"Houses & caves", "Huizen & grotten"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "Schudt huizen, grotten en de grotten die twee gebieden verbinden. Het huis van Marin en Tarin en ingangen in het water blijven origineel."},
 {"Decoupled entrances", "Losgekoppelde ingangen"},

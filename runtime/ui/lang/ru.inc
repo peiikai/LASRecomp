@@ -854,6 +854,8 @@
 {"Shuffles where entrances lead, with logic.", "Перемешивает, куда ведут входы, с учетом логики."},
 {"Dungeon entrances", "Входы в подземелья"},
 {"Dungeon entrances lead into other dungeons.", "Входы в подземелья ведут в другие подземелья."},
+{"Mix with houses & caves", "Смешать с домами и пещерами"},
+{"Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.", "Входы в подземелья перемешиваются вместе с дверями домов и пещер. Нужно «Дома и пещеры»."},
 {"Houses & caves", "Дома и пещеры"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "Перемешивает дома, пещеры и пещеры-переходы между областями. Дом Марин и Тарина и входы через воду остаются на своих местах."},
 {"Decoupled entrances", "Несвязанные входы"},
