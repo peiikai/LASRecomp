@@ -55,7 +55,7 @@ void opt_own_next(void) { g_next_own = true; }
 static int g_indent;
 // opt_child_begin: the run's depth (0: none), its line's top and x, the middle of its last row so far, its parent on
 static int g_child_depth;
-static float g_rail_top, g_rail_x, g_rail_end;
+static float g_rail_top, g_rail_x, g_rail_end, g_rail_stub;
 static bool g_rail_on;
 static std::string g_next_needs;  // (opt_needs_next: the next row's first sentence, in the menus' language)
 void opt_needs_next(const char *parent, const char *value) {
@@ -346,10 +346,12 @@ static int row(const char *label, const std::string &value_en, bool changed, con
 
 void opt_child_begin(bool parent_on) {
     if (g_collect || g_child_depth++) return;  // (a run inside a run: the outer one's line covers it)
-    // from the parent row's foot (its pill ends 3 px above the item), in the margin left of the rows (a pill starts
-    // 3 px into its item: the line sits as far out again)
-    g_rail_top = ImGui::GetItemRectMax().y - 3 * g_scale;
-    g_rail_x = ImGui::GetItemRectMin().x - 3 * g_scale;
+    // from the parent row's middle (its pill: 1 px below the item's top to 3 px above its foot), in the margin left of
+    // the rows (a pill starts 3 px into its item: the line sits 4 px out, in the well's rim), with a stub across toward
+    // the parent that stops just short of it (user 2026-11-12)
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    g_rail_top = (a.y + b.y) * 0.5f - 1 * g_scale;
+    g_rail_x = a.x - 4 * g_scale, g_rail_stub = a.x + 1.5f * g_scale;
     g_rail_end = g_rail_top, g_rail_on = parent_on;
 }
 
@@ -364,7 +366,10 @@ void opt_child_end(void) {
     const PlasticTheme &pt = plastic_theme();
     ImVec4 col = g_rail_on ? pt.ring_sel : ImVec4(pt.ring.x, pt.ring.y, pt.ring.z, pt.ring.w * 0.5f);
     float w = fmaxf(2 * g_scale, 1.0f), x = floorf(g_rail_x) + (fmodf(roundf(w), 2) ? 0.5f : 0);  // (on whole pixels)
-    dl->AddLine(ImVec2(x, g_rail_top), ImVec2(x, g_rail_end), ImGui::ColorConvertFloat4ToU32(col), w);
+    ImU32 c = ImGui::ColorConvertFloat4ToU32(col);
+    float y = floorf(g_rail_top) + (fmodf(roundf(w), 2) ? 0.5f : 0);
+    dl->AddLine(ImVec2(x, y), ImVec2(x, g_rail_end), c, w);
+    dl->AddLine(ImVec2(x - w * 0.5f, y), ImVec2(g_rail_stub, y), c, w);  // (the stub)
     dl->PopClipRect();
 }
 
