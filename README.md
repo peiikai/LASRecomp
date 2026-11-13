@@ -115,55 +115,27 @@ The iOS app is made on your computer from your own game files, then sideloaded.
 
 ## Features
 
-**Runs natively**
-- **This is not emulation.** It runs natively on Windows, macOS and Linux.
+- **This is not emulation.** It runs natively on Windows, macOS, Linux, Android, iPhone and iPad.
 - Works with game versions 1.0.0, 1.0.1 and 1.1.0.
+- **Built-in randomizer:** make seeds in the app, with presets, seed IDs to share, separate saves for each seed,
+  a tracker and a spoiler log. Shuffle items, entrances, dungeon rooms, enemies and more, and switch between
+  vanilla and any seed without restarting.
 - Wider screens show more of the island, up to ultrawide. You can switch back to the original 16:9.
-- Higher resolutions, a "match your display" option and dynamic resolution, with MetalFX (Mac) or FSR 1 (Windows and Linux) upscaling and SMAA anti-aliasing.
+- Higher resolutions, a "match your display" option and dynamic resolution with an FPS target, with MetalFX (Mac)
+  or FSR 1 (Windows, Linux and Android) upscaling and SMAA anti-aliasing.
+- Sharper shadows, ambient occlusion and Frame Generation, each optional.
 - Shaders are prepared ahead of time, so new areas don't stutter.
-- A start screen where you pick vanilla or a randomizer seed, set up your game files and choose your settings.
-- In-game menu: F1, or Home or Minus + Plus on a controller. The controller buttons can be changed in Controls.
-- Switch between vanilla and any randomizer seed without restarting.
-- Keyboard and controller support, with every button remappable. Button prompts match your controller (Xbox, PlayStation or Nintendo).
+- In-game menu: F1, or Home or Minus + Plus on a controller.
+- Keyboard, controller and touch controls, with every button remappable and a touch layout editor. Button prompts
+  match your controller (Xbox, PlayStation or Nintendo).
 - Controller rumble, and the light bar on PlayStation controllers shows Link's health.
-- Controllers that aren't recognised can be added with a mapping file (see [SDL_GameControllerDB](https://github.com/mdqinc/SDL_GameControllerDB)).
-- Play in English, Japanese, Spanish, French, German, Italian, Dutch, Russian, Korean or Chinese (Simplified or Traditional). The menus, randomizer, tracker and spoiler log are in your language too, and Auto follows your system language.
-- Optional extras: 360-degree movement, blur removal, mirror mode, faster walking and hiding the Hero Mode icon.
-- Cosmetics: change Link's tunic, hair, skin and shield colours, the colour of the grass, leaves and sand (with season presets), the water, fences, walls and houses, give enemies random colours, or play with a Game Boy, Game Boy Color or grayscale filter.
+- Stereo or 5.1 surround sound.
+- Play in English, Japanese, Spanish, French, German, Italian, Dutch, Russian, Korean or Chinese (Simplified or
+  Traditional), with menus also in Portuguese (Brazil). Auto follows your system language.
+- Optional extras: 360-degree movement, a hookshot that snaps to 8 directions, faster or instant text, blur removal,
+  mirror mode and faster walking.
+- Cosmetics: colours for Link, the grass, water, walls and more, weather (looks only), and Game Boy style filters.
 - Optional run timer, with LiveSplit support.
-
-**Randomizer**
-- In-game seed generator, with seed IDs for sharing and separate saves for each seed.
-- Shuffles all items, the trade quest, bombs and Magic Powder.
-- Place as many bombs at once as you like.
-- Hint Sheet: every seed starts with one that points you to your next important item.
-- Escape Bottle: every seed starts with it. Use it to warp to the dungeon entrance, or to Marin and Tarin's house outside dungeons.
-- Pickup text says which dungeon a key or dungeon item belongs to.
-- Extra places items can hide:
-  - Potsanity: every pot. Unchecked pots are gold.
-  - Bushsanity: every bush. Unchecked bushes are gold.
-  - Digsanity: every diggable spot on the overworld, about 5,000. Holes stay dug.
-  - Shellsanity: every Secret Seashell hiding spot.
-  - Underwater items: sunken treasures you dive for.
-  - Shopsanity: the shop's items. Buy them or steal them.
-  - Trendsanity: every Trendy Game prize.
-  - Keysanity: keys for any dungeon can be anywhere.
-- Small items from bushes, pots and digging don't stop you with the item scene; important items still do.
-- Item placement is paced, so big seeds don't hand you every key item right away.
-- Pets: companions are items you find. The Rooster helps with Feather checks, Marin opens the desert, and the Ghost unlocks his grave. Switch or send them away from the pause menu.
-- Boss souls and mini-boss souls: a boss won't appear until you find its soul.
-- Triforce Hunt: collect Triforce pieces instead of waking the Wind Fish.
-- Enemy Randomizer: shuffles enemies, optionally with mini-bosses (including Shadow Link) on the overworld. Enemies can change every time you enter an area.
-- Hookshot anything: the hookshot grabs onto any wall or object.
-- Environment and music randomizers. Acorn and Piece of Power drops can be turned off.
-- Entrance Randomizer: shuffles dungeons, houses, caves and connectors, with a decoupled option.
-- Dungeon Room Shuffle: every dungeon is rebuilt from its own rooms each seed.
-  - Coupled: going back through a door takes you back where you came from.
-  - Decoupled: going back through a door takes you somewhere else.
-  - The map can show how rooms connect as you explore.
-- A tracker on the pause menu's map shows how many checks are left in each area and whether you can reach them.
-- The inventory screen shows your keys, dungeon items, trade items and souls for each dungeon.
-- Race mode: the spoiler log stays locked until the credits, and the title screen shows a seed hash so racers can check they have the same seed.
 
 ## Building from source
 
@@ -261,7 +233,7 @@ without touching the installed game, your game files or your saves.
   each attached log counted once (#589), the game files check in the log bot's summary (#600), summaries for
   logs attached by editing a comment (#601), a Linux AppImage build that stops when its container fails (#653), and
   a zig download that starts over after being cut off (#667)
-- **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319), touch menus and on-screen controls for phones (#634), the frame interpolation presenter on CADisplayLink (#649), one shared macOS and iOS host layer (#685), the iOS cleanup after #238 (#697), iOS fixes for saves, errors and Files (#690), a safer, simpler iOS kit export (#704), and seed generation on iOS that shows its progress and handles room shuffle re-runs (#735)
+- **[@ky1vstar](https://github.com/ky1vstar)** - a much faster Linux ARM release build (#319), touch menus and on-screen controls for phones (#634), the frame interpolation presenter on CADisplayLink (#649), one shared macOS and iOS host layer (#685), the iOS cleanup after #238 (#697), iOS fixes for saves, errors and Files (#690), a safer, simpler iOS kit export (#704), seed generation on iOS that shows its progress and handles room shuffle re-runs (#735), a clear message on iPhones and iPads that can't run the game (#761), checksums for every iOS download (#762), and a leaner iOS CI job (#763)
 - **[@theb0rg](https://github.com/theb0rg)** - the fix for AMD integrated graphics on Windows (#335)
 - **[@gtf-dot](https://github.com/gtf-dot)** - the game-text font on Linux (#330)
 - **[@cfcosta](https://github.com/cfcosta)** - full speed on Linux AMD handhelds like the Steam Deck and ROG Ally (#392)

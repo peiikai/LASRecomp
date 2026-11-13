@@ -4,7 +4,8 @@
   - `tools/gen.py` turns the game's executables into C, which is built on the player's machine from their own
     extracted game files.
   - A host stands in for the Switch OS and services (`runtime/kernel.c`, `loader.c`, `services/`).
-  - The game's NVN graphics are drawn with Metal on macOS and Vulkan on Windows and Linux (`runtime/nvn/`).
+  - The game's NVN graphics are drawn with Metal on macOS, iPhone and iPad, and Vulkan on Windows, Linux and
+    Android (`runtime/nvn/`).
   - The randomizer and most features live in `runtime/hle/`, `runtime/ui/` and `tools/rando/`.
   - [README.md](README.md) is the player-facing page. [CONTRIBUTING.md](CONTRIBUTING.md) has the layout, building,
     tests and pull request rules.
@@ -61,7 +62,8 @@
     (`vk_exec_init`), keyed by vendor ID. Each one has a `LARECOMP_VK_*` switch to turn it off, a comment saying
     which driver it was tested on, and a row in [docs/vulkan-gpu-defaults.md](docs/vulkan-gpu-defaults.md).
   - macOS is Metal only. Don't add a MoltenVK path.
-  - Minimums: macOS 15 on Apple Silicon; Windows and Linux with Vulkan 1.3; x86 CPUs with AVX2 and FMA.
+  - Minimums: macOS 15 on Apple Silicon; Windows and Linux with Vulkan 1.3; x86 CPUs with AVX2 and FMA; iOS 16.4;
+    Android 11 (arm64).
 
 - **Testing.**
   - A fix is verified only when you've seen it work in game. A clean build or a quiet log is not enough.
