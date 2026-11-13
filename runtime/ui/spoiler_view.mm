@@ -268,7 +268,11 @@ static void draw_route(int si, const Filter &f) {
 
 static void draw_section(int si, const Filter &f) {
     const Node &n = g_doc[si];
-    if (n.title == "Route") { draw_route(si, f); return; }
+    if (n.title == "Route") {
+        if (!PLAT_TOUCH && f.q.empty()) heading(shown(n.title), false);  // (always: the first rows line up with the left)
+        draw_route(si, f);
+        return;
+    }
     if (si == 0) {  // (the seed's own lines: its ID, settings, starting items)
         if (!PLAT_TOUCH) heading(L("Seed settings"), false);
         for (auto &l : n.lines) ImGui::TextWrapped("%s", shown(l.text).c_str()), ImGui::Spacing();
@@ -278,7 +282,7 @@ static void draw_section(int si, const Filter &f) {
     // the section's name on top (its intro text stays in the HTML page only); the rows line up with the left
     std::vector<Line> top;
     for (auto &l : n.lines) if (!is_text(l)) top.push_back(l);
-    if (!PLAT_TOUCH && f.q.empty() && (folds || !n.lines.empty())) heading(shown(n.title), false);
+    if (!PLAT_TOUCH && f.q.empty()) heading(shown(n.title), false);  // (always: the first rows line up with the left)
     rows(top, f, false, "");  // (Spheres, areas: headers that open; a few blocks (entrances): open, titled)
     for (size_t k = 0; k < n.subs.size(); k++) {
         const Sub &s = n.subs[k];
@@ -421,7 +425,10 @@ int spoiler_view_draw(const std::string &seed, float scale) {
                 draw_section((int)si, f);
                 shown_any = 1;
             }
-            if (!shown_any) ImGui::TextDisabled("%s", L("No matches."));
+            if (!shown_any) {
+                if (!PLAT_TOUCH) heading(L("Search"), false);
+                ImGui::TextDisabled("%s", L("No matches."));
+            }
         } else draw_section(g_sec, f);
         g_enter_right = 0;
         opt_list_end();
