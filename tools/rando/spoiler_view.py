@@ -220,8 +220,18 @@ class Seed:
     def dungeon_title(self, dk):
         n = DUNGEONS[dk]
         if dk in self.entered_via:
-            n += f" - enter through {DUNGEONS[self.entered_via[dk]].split(' (')[0]}'s entrance"
+            n += f" - enter through {self.door_title(self.entered_via[dk])}'s entrance"
         return n
+
+    @staticmethod
+    def door_title(v):
+        """A dungeon's own door, or (mix-dungeon-entrances) a house or cave door's entrance_data id, named by its building."""
+        if v in DUNGEONS:
+            return DUNGEONS[v].split(' (')[0]
+        import entrance_logic
+        import hint_sheet
+        d = next((d for d in entrance_logic.load()['doors'] if d['id'] == v), None)
+        return hint_sheet.door_name(d) if d else v
 
     def name(self, loc):
         c = self.checks.get(loc)
@@ -345,7 +355,7 @@ def section_dungeons(sd, out):
     out.append('# Dungeon entrances')
     for l in sd.S['dungeon-entrances']:
         a, b = [x.strip() for x in l.split('->')]
-        out.append(f'- {DUNGEONS.get(a, a)} entrance leads into {DUNGEONS.get(b, b)}')
+        out.append(f'- {DUNGEONS[a] if a in DUNGEONS else Seed.door_title(a)} entrance leads into {DUNGEONS.get(b, b)}')
 
 
 def section_rooms(sd, seed_dir, out):

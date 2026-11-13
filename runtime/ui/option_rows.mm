@@ -43,6 +43,9 @@ static bool g_cards;
 static bool g_list_cards;
 
 static bool g_next_disabled;
+static bool g_pane_focus;  // (a row of the pane being drawn has the cursor: stick_scroll)
+static bool g_stick_used;  // (this frame's right-stick tilt went to a column already)
+static void stick_scroll(void);
 static std::vector<OptLine> *g_collect;  // (opt_collect_begin: rows are only read, not drawn)
 static bool g_row_button;  // (the next row is an action: a button)
 void opt_disable_next(void) { g_next_disabled = true; }
@@ -53,6 +56,17 @@ void opt_button_next(void) { g_row_button = true; }
 static bool g_next_own;
 void opt_own_next(void) { g_next_own = true; }
 static int g_indent;
+// opt_child_begin: the run's depth (0: none), its line's top and x, the middle of its last row so far, its parent on
+static int g_child_depth;
+static float g_rail_top, g_rail_x, g_rail_end, g_rail_stub;
+static bool g_rail_on;
+static std::string g_next_needs;  // (opt_needs_next: the next row's first sentence, in the menus' language)
+void opt_needs_next(const char *parent, const char *value) {
+    char b[256];
+    if (value) snprintf(b, sizeof b, L("Needs %s set to %s."), L(parent), L(value));
+    else snprintf(b, sizeof b, L("Needs %s."), L(parent));
+    g_next_needs = b;
+}
 static bool g_focus_req, g_take_first;  // (opt_focus_first: requested / this page's first row takes it)
 void opt_focus_first(bool on) { g_focus_req = on; }
 static int g_focus_row = -1;  // (opt_focus_row: this page's row with that index takes the cursor)
@@ -97,11 +111,14 @@ void opt_begin(const char *id, float scale, bool split) {
     g_focus_req = false;
     if (g_take_first) ImGui::NavMoveRequestCancel();  // (this frame's Down goes to the first row instead)
     g_indent = 0;
+    g_child_depth = 0;
+    g_next_needs.clear();
     g_desc_hover.clear(), g_desc_focus.clear();
     g_hov_set = g_foc_set = g_left_hov_set = g_left_foc_set = false;
     g_row_h = 1.9f, g_listed = false;
     g_desc_max_last = g_desc_max, g_desc_max = 0;
-    if (g_page != id) g_page = id, g_desc_shown.clear(), g_desc_max_last = 0, g_desc_w = 0;
+    bool fresh = g_page != id;  // (another page was drawn last: a tab switch, or this page just opened)
+    if (fresh) g_page = id, g_desc_shown.clear(), g_desc_max_last = 0, g_desc_w = 0;
     g_cards = PLAT_TOUCH && !split;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float pane_w = g_cards ? avail.x : avail.x * 0.48f;
@@ -112,10 +129,14 @@ void opt_begin(const char *id, float scale, bool split) {
     }
     ImGui::PushID(id);
     ImGui::BeginChild("##rows", ImVec2(pane_w, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NavFlattened);
+    // back on a page after another one (Video's bottom, Audio, Video again): from its top, not where it was left
+    // (user 2026-11-13; the cursor's first Down lands on the first row already, opt_focus_first)
+    if (fresh) ImGui::SetScrollY(0);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, (g_cards ? 10 : 4) * scale));  // (rows close)
     g_desc_first.clear();
     g_ids.clear();
     g_pane = 0;
+    g_pane_focus = g_stick_used = false;
 }
 
 void opt_section(const char *title) {
@@ -138,6 +159,13 @@ static int row(const char *label, const std::string &value_en, bool changed, con
                bool arrows = false, bool chevron = false) {
     const std::string &value = g_value_shown ? value_en : L_line(value_en);
     const char *desc = L(desc_en);
+    std::string needs;  // (greyed out by a row above: "Needs <parent>." first)
+    if (!g_next_needs.empty() && g_next_disabled) {
+        needs = g_next_needs;
+        if (desc && *desc) needs += " ", needs += desc;
+        desc = needs.c_str();
+    }
+    g_next_needs.clear();
     const char *label_shown = g_label_shown ? label : L(label);
     // (phones: a row with a description is a card wherever it is - a two-pane page's left rows too)
     bool lr = arrows || g_lr_row, cards = g_cards || g_list_cards || (PLAT_TOUCH && desc && *desc);
@@ -177,6 +205,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         if (desc && *desc) desc_h = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize() * dscale, FLT_MAX, desc_w, desc).y;
         h = ImGui::GetFontSize() * 1.3f + desc_h + 26 * g_scale + (value_below ? cfs * 1.4f : 0);
     }
+    if (g_child_depth) g_rail_end = p.y + h * 0.5f - 1 * g_scale;  // (opt_child_begin's line: down to this row's middle)
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));  // (the row's own border shows the selection)
     bool clicked = ImGui::InvisibleButton("##row", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleColor();
@@ -196,7 +225,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
     }
     if (!off && g_row_first < 0) g_row_first = (int)g_rows.size();
-    if (ImGui::IsItemFocused()) g_row_focus = (int)g_rows.size();
+    if (ImGui::IsItemFocused()) g_row_focus = (int)g_rows.size(), g_pane_focus = true;
     g_rows.push_back(dup ? std::string(label) + " #" + std::to_string(dup + 1) : std::string(label));
     g_row_pane.push_back(g_pane);
     bool mark = g_next_mark, warn = g_next_warn;
@@ -237,6 +266,20 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         // left / right belong to the row (navigation would otherwise try to move sideways)
         for (ImGuiKey k : {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_LeftArrow, ImGuiKey_RightArrow})
             ImGui::SetKeyOwner(k, ImGui::GetItemID());
+    }
+    if (foc) {  // (greyed-out rows too: the cursor passes over them)
+        // Up / Down too: opt_nav_step moves between rows (menu.mm). ImGui's own move from a held D-pad ran on its
+        // repeat's frames, not ours - a row skipped now and then - and on a page that scrolls (Video, Cosmetics) it
+        // dropped the cursor at the last row (a gamepad move from a row not yet scrolled fully into view clears it:
+        // imgui.cpp NavUpdateCreateMoveRequest), so the next Down started over near the top (user 2026-11-12). Up
+        // from a pane's top row stays ImGui's: onto the tab bar.
+        bool top = true;
+        for (int i = 0; i + 1 < (int)g_row_pane.size() && top; i++) top = g_row_pane[i] != g_pane;
+        for (ImGuiKey k : {ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown, ImGuiKey_DownArrow})
+            ImGui::SetKeyOwner(k, ImGui::GetItemID());
+        if (!top)
+            for (ImGuiKey k : {ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp, ImGuiKey_UpArrow})
+                ImGui::SetKeyOwner(k, ImGui::GetItemID());
     }
     if (foc) g_desc_focus = desc ? desc : "", g_foc_set = true, g_focused_lr = lr && !off;
     if (hov) g_desc_hover = desc ? desc : "", g_hov_set = true;
@@ -321,6 +364,37 @@ static int row(const char *label, const std::string &value_en, bool changed, con
     if (dup) ImGui::PopID();
     ImGui::PopID();
     return step;
+}
+
+void opt_child_begin(bool parent_on) {
+    if (g_collect || g_child_depth++) return;  // (a run inside a run: the outer one's line covers it)
+    // from the parent row's middle (its pill: 1 px below the item's top to 3 px above its foot), in the margin left of
+    // the rows (a pill starts 3 px into its item: the line sits 4 px out, in the well's rim)
+    ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+    g_rail_top = (a.y + b.y) * 0.5f - 1 * g_scale;
+    g_rail_x = a.x - 4 * g_scale, g_rail_stub = a.x + 1.5f * g_scale;
+    g_rail_end = g_rail_top, g_rail_on = parent_on;
+}
+
+void opt_child_end(void) {
+    if (g_collect || g_child_depth <= 0 || --g_child_depth) return;
+    if (g_rail_end <= g_rail_top) return;
+    // drawn only: no item, nothing moves. The rows' pane clips at its left edge, so the clip reaches out over the margin
+    // (the well's rim, 6 px) - kept to the pane's top and bottom, so a scrolled-off run stays hidden.
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImVec2 c0 = dl->GetClipRectMin(), c1 = dl->GetClipRectMax();
+    dl->PushClipRect(ImVec2(c0.x - 6 * g_scale, c0.y), c1, false);
+    const PlasticTheme &pt = plastic_theme();
+    ImVec4 col = g_rail_on ? pt.ring_sel : ImVec4(pt.ring.x, pt.ring.y, pt.ring.z, pt.ring.w * 0.5f);
+    float w = fmaxf(2 * g_scale, 1.0f), x = floorf(g_rail_x) + (fmodf(roundf(w), 2) ? 0.5f : 0);  // (on whole pixels)
+    ImU32 c = ImGui::ColorConvertFloat4ToU32(col);
+    float y = floorf(g_rail_top) + (fmodf(roundf(w), 2) ? 0.5f : 0);
+    float y1 = floorf(g_rail_end) + (fmodf(roundf(w), 2) ? 0.5f : 0);
+    dl->AddLine(ImVec2(x, y), ImVec2(x, y1), c, w);
+    // the stubs: to the parent at the top, to the last child at the foot (user 2026-11-12)
+    dl->AddLine(ImVec2(x - w * 0.5f, y), ImVec2(g_rail_stub, y), c, w);
+    dl->AddLine(ImVec2(x - w * 0.5f, y1), ImVec2(g_rail_stub, y1), c, w);
+    dl->PopClipRect();
 }
 
 // a value stepped with left / right: the cursor sound (A / click: menu_sfx_frame's decide)
@@ -514,6 +588,7 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
 static void left_end(void) {
     ImGui::PopStyleVar();
     if (const char *t = getenv("LARECOMP_OPT_SCROLL")) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(t));  // (test)
+    if (g_pane_focus) stick_scroll();  // (the rows' column, the cursor in it)
     ImGui::EndChild();
     // the description: the hovered row (mouse) wins, else the selected one (controller), else the last shown
     if (!g_desc_hover.empty()) g_desc_shown = g_desc_hover;
@@ -521,9 +596,10 @@ static void left_end(void) {
     else if (g_desc_shown.empty()) g_desc_shown = g_desc_first;
 }
 
-// The right stick scrolls the right pane while it only shows something to read (a description, the Randomizer's
-// summary) and is longer than the pane; a pane with rows to pick (this frame) keeps the stick still. Speed grows with
-// the tilt, past a small dead zone. Called at the pane's end, inside its child window.
+// The right stick scrolls (user 2026-11-13: the left stick only moves the cursor): the column the cursor is in (its
+// rows), else - the cursor on the tab bar, or its column all in view - the right pane while it only shows something
+// to read (a description, the Randomizer's summary). Speed grows with the tilt, past a small dead zone. Called at a
+// pane's end, inside its child window.
 static bool any_nav_items(ImGuiWindow *w) {
     if (w->DC.NavLayersActiveMaskNext & 1) return true;
     for (ImGuiWindow *c : w->DC.ChildWindows)
@@ -532,7 +608,9 @@ static bool any_nav_items(ImGuiWindow *w) {
 }
 static void stick_scroll(void) {
     ImGuiWindow *w = ImGui::GetCurrentWindow();
-    if (w->ScrollMax.y <= 0 || any_nav_items(w)) return;
+    if (w->ScrollMax.y <= 0 || g_stick_used) return;
+    bool column = g_pane_focus;
+    if (!column && any_nav_items(w)) return;  // (rows to pick, the cursor elsewhere: still)
     float v = ImGui::GetKeyData(ImGuiKey_GamepadRStickDown)->AnalogValue - ImGui::GetKeyData(ImGuiKey_GamepadRStickUp)->AnalogValue;
     const float dead = 0.18f;
     float a = fabsf(v);
@@ -541,10 +619,12 @@ static void stick_scroll(void) {
     float speed = ImGui::GetFontSize() * (2.0f + 26.0f * t * t);  // (pixels a second: a slow crawl to a quick run)
     float dy = speed * ImGui::GetIO().DeltaTime * (v > 0 ? 1 : -1);
     ImGui::SetScrollY(w, ImClamp(w->Scroll.y + dy, 0.0f, w->ScrollMax.y));
+    g_stick_used = true;
 }
 
 // the right pane's child window, in a well beside the left one
 static void right_begin(const char *id, ImGuiWindowFlags flags) {
+    g_pane_focus = false;  // (stick_scroll: a pane of its own)
     ImGui::SameLine(0, 0);
     ImVec2 p = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     float gap = 24 * g_scale, m = 6 * g_scale;  // (the right pane: a well, as the rows')
@@ -597,7 +677,7 @@ void opt_split(void) {
 
 void opt_split_end(void) {
     ImGui::PopStyleVar();
-    stick_scroll();
+    stick_scroll();  // (the cursor in its rows, or only something to read)
     ImGui::EndChild();
     ImGui::PopID();
 }
@@ -621,14 +701,17 @@ void opt_list_begin(void) {
     if (PLAT_TOUCH) {  // (the descriptions are in the cards: the list has the whole pane)
         g_list_cards = true;
         ImGui::BeginChild("##list", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+        g_pane_focus = false;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 10 * g_scale));
         return;
     }
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxh));
     ImGui::BeginChild("##list", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened);
+    g_pane_focus = false;  // (its rows: stick_scroll at opt_list_end)
 }
 
 void opt_list_end(void) {
+    if (g_pane_focus) stick_scroll();  // (the list's column, the cursor in it)
     if (g_list_cards) {
         g_list_cards = false;
         ImGui::PopStyleVar();

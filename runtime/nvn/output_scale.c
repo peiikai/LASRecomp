@@ -1,6 +1,6 @@
 // Output resolution, shared by the Metal and Vulkan backends (each calls output_scale() once per presented frame).
 // Render targets the game sizes for the Switch's 1920x1080 screen are allocated at (sx, sy) times their size; the
-// image is then drawn into (vx, vy, vw, vh) of the window. Video tab "Internal resolution" (g_settings.res_mode):
+// image is then drawn into (vx, vy, vw, vh) of the window. Video tab "Resolution" (g_settings.res_mode):
 //   Match display  render at the window's own pixel size (default)
 //   1x .. 4x       N times the Switch's docked image: 1080 lines x N (wide windows keep their shape: 32:9 at 2x =
 //                  7680 x 2160); capped to the GPU's 16384-pixel texture limit. 1x on an integrated GPU: 720 lines,
@@ -14,12 +14,16 @@
 // LARECOMP_DYN_TEST=<f> (Dynamic pinned at factor f of the allocation: shots at a fixed part), LARECOMP_DYN_START=<f>
 // (Dynamic starts at factor f).
 #include <math.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
 #include <stdlib.h>
 #include <string.h>
 
 #include "../hle.h"
 #include "../settings.h"
 #include "output_scale.h"
+#include "pace.h"
 
 #define MAX_TEX 16384.0
 
@@ -52,7 +56,8 @@ int rt_game_dynres(void) {
 // The GPU time has two parts: the game's (G, scales with the factor: about its area, factor^2) and the window step's
 // (W: the image drawn into the window - upscale, SMAA - and the menu: depends on the window's size only). The budget
 // is for G + W (87% of a 60 Hz frame); a raise must be predicted to fit with room to spare (G x (new / old)^2 with 25%
-// on top, + W: the room is for G, which moves with the scene - W is the window's and steady, and large at 4K / 8K
+// on top, + W: the room is for G, which moves with the scene - W is the window's and steady (but for its jump at
+// 1.00 with a sharp upscaler: g_w_at1), and large at 4K / 8K
 // with an upscaler: 7-9 ms at 7680x4320 with MetalFX on an M3 Max; no fixed raise threshold, so it settles one step
 // under where it would go over instead of hunting), and a step down goes straight to where G + W is predicted to fit
 // with that same room (at most 0.3 at once), so the next raise isn't predicted to fit right away.
@@ -67,7 +72,7 @@ int rt_game_dynres(void) {
 // size). Frames that don't wait (mailbox: a frame every G + W) keep going down to the floor: there every step down is
 // a faster frame. tools/test_dynres.py: the controller against a simulated GPU (the UHD 770 cases).
 #define DYN_DEC_S 0.25      // s per decision, at any frame rate (it was 30 frames: half a second at 60, a whole one at
-                            // 30 - every wait twice as long at Internal FPS target 30)
+                            // 30 - every wait twice as long at FPS target 30)
 #define DYN_NMAX 64         // frames a decision holds at most
 #define DYN_STEP 0.05       // the factor's grid (the floor below its first step): small steps, often - changing the
                             // render scale is free (Dynamic draws into part of the targets), small steps don't show
@@ -109,7 +114,7 @@ static double g_probe_fail_gw, g_probe_fail_at = -1000;      // the last failed 
 // changed at each factor since (G right after a step is the reference at the new factor): the part of G that
 // doesn't scale with the resolution makes area estimates optimistic (UHD 770 1080p: ~6.5 of 9.1 ms at 0.50)
 static double g_floor_g, g_ref_g;
-// Internal FPS target 30: G + W just under where the frames missed 30 (0: none yet), and when it last missed or eased
+// FPS target 30: G + W just under where the frames missed 30 (0: none yet), and when it last missed or eased
 static double g_t30_cap, g_t30_at;
 static int g_t30_late;  // (half seconds in a row with the frames late at target 30)
 static double g_t30_wait = 4, g_t30_off_at = -1e9;  // (on time this long lifts the cap; when it was last lifted)
@@ -129,12 +134,146 @@ static double g_hold_up_at = -100;        // when the hold last stepped up (20 -
 // to where it began, 1.00 on the iPad) and the GPU counts as paced
 // from then on: down only when frames come late (the clock is at its top then, G honest), up when they've been on time
 // (a raise that makes them late is undone, the raise wait doubling as usual).
+// Phones, handhelds and tablets (Android, iOS / iPadOS) count as paced from the start: their GPUs all clock to the load,
+// and finding it out took two futile steps down - a Retroid Pocket 5 (Turnip, G + W read 14.4-14.9 ms at every factor)
+// sank 1.00 -> 0.45 at 60 fps in its first seconds and sat there until it happened to step down again, sometimes for
+// minutes. LARECOMP_DYN_PACED=1 / 0: paced from the start / found by futile steps (as on desktops).
 static bool g_paced;
 static double g_chk_from = -1, g_chk_gw, g_chk_pred;  // the last step down: the factor before, G + W then, predicted after
 static int g_futile;                                  // steps down in a row that saved too little
 static double g_futile_at;                            // when the last was seen
+// Paced, frames came late at g_pc_ceil: raises stay under it until g_pc_until (a wait of 10 s, doubling to a minute when
+// it's hit again within 30 s of the last lift; 10 s again after 2 quiet minutes). The GPU time can't predict a raise
+// here (it reads ~90% of the frame at any factor, more than the frame on a Retroid: 18.3 ms with frames every 18.2), so
+// without it a raise came whenever the frames had been on time: 0.55 -> 0.80 a step a second, late, straight back to
+// 0.55, every ~10 s - a third of the time at 50-55 fps. One step under it the clock is near its top, so G there is honest:
+// G 10% under its first settled measure there (the scene got lighter) lifts it early (g_pc_ref_f / g_pc_ref_g).
+static double g_pc_ceil = 2.0, g_pc_until = -1e9, g_pc_wait = 10.0, g_pc_hit_at = -1e9, g_pc_ref_f = -1, g_pc_ref_g = -1;
+// A raise's late frames have a fallout (iPad Pro M4, iPhone 15 Pro): once a frame misses a vsync the GPU's time about
+// doubles at any factor - the game's and the window's parts alike, ~90% of the 33 ms frame it is given now, so a clock
+// effect, not the resize's - and settles back over the ~2 s after the frames are on time again. Two things made the
+// ceiling never hold: the step under it came late too (the fallout, not that factor's load) and moved the ceiling down a
+// step, and the reference was the first on-time measure one step under - still inflated - so the settle itself read as
+// "10% lighter" and lifted the ceiling 2 s after it was set: 0.75 -> 0.85, late, 0.70, lifted, 0.85 again - 30 steps a
+// minute at a steady load, a quarter of the time with frames late (iPad and iPhone alike, 0.70-0.85). Now the
+// reference waits for the settle (DYN_PC_SETTLE after the last late step), and late frames within DYN_PC_FALLOUT of the
+// ceiling being set, at or under the factor the frames were last on time at (within 4 s: a lower factor is no heavier)
+// with G over that measure by 8% or more (the iPhone's fallout a step or two under: 1.12-1.22x; a factor that is late
+// on its own reads about the same G late as on time: the RP5's 0.70, 7% late, G 13.6 on time and 14.1-14.3 late, the
+// clock at its top then), hold the factor and leave the ceiling where the raise failed. They took their step down at
+// first, one each decision of the spike (the iPhone's: G 2-2.5x for over a second at any factor): 0.75 failed, 0.70 ->
+// 0.65 -> 0.60, and at 0.60 the spike's tail read under 1.08x of 0.75's measure, so it was a ceiling of its own, lifted
+// 12 s later on a real drop - 17 steps a minute. A step under the fit saves nothing here (the clock is the spike), so
+// the factor stays where it was on time; frames still late once the fallout window has passed step down as ever.
+#define DYN_PC_SETTLE 4.0   // s after the last late step before G one step under the ceiling is its reference (it was
+                            // 2: the iPhone's tail still read 12% over the settled G then, so every ceiling was "lifted"
+                            // 2-3 s in, and the climb failed again - 7 of 7 lifts in the 2026-11-13 log)
+#define DYN_PC_FALLOUT 3.0  // s after the ceiling is set: late frames at or under a factor just on time are the fallout
+#define DYN_PC_FALLOUT_G 1.08  // ... with G over its on-time measure there by this
+static double g_pc_set_at = -1e9;                                // when the ceiling was last set
+static double g_pc_ok_f = -1, g_pc_ok_g = -1, g_pc_ok_at = -1e9;  // the factor the frames were last on time at (paced), G then, when
+// The frame pacer holds the game's 30 fps mode for its own reasons (pace.c: frames shown late or busy - a raise's
+// fallout, a hitch burst, the CPU, the window's image) while Dynamic holds nothing itself: every frame then comes 33 ms
+// apart whatever the factor, so late frames say nothing about it, and a paced GPU's time says nothing either (its
+// clock drops the longer it idles at 30: an iPhone 15 Pro read G + W 12 ms at 0.80 just held and 23 ms at 0.65 15 s
+// later). Each decision's late frames stepped the factor down before (0.80 -> 0.31 in 3 s, a ceiling at each step),
+// at the floor the inflated G + W read as 60 out of reach, so Dynamic held 30 of its own and climbed while 30 fit -
+// and the climb raised the GPU time the pacer's way back wanted under its limit: 65 s at 30 fps where 60 fit at 0.80.
+// Now a paced GPU's factor holds still through the pacer's hold (no step for late frames, no ceiling; its test for a
+// raise - frames on time - can't pass at 33 ms a frame. A GPU that isn't paced steps down on G + W over 60's budget
+// and raises on its prediction, as it did), and since its time at 30 can't tell the pacer when 60 fits again, Dynamic
+// asks for 60 at the factor it has once the hold has lasted the probe wait (pace_try_60, as from its own hold); the
+// ceiling's wait, time under it at 60, goes on after the hold. A probe that fails is
+// held again within ~1.5 s: its late frames step down as ever (a step, then the fallout rule), the wait doubles, and
+// the next probe goes to the floor as a hold's does - 60 fits there or nowhere, and from there the climb is a step a
+// second; at the floor, G + W over the budget is Dynamic's own hold (held_back, which puts the probe's factor back).
+static double g_pace_hold_at = -1;  // when the pacer's hold began (-1: not held)
+static bool g_pace_probe;           // the probe out is from the pacer's hold
+static bool g_pace_probe_floor;     // ... taken at the floor
+static int g_pace_probe_fails;      // probes from the pacer's hold that failed in a row (the next goes to the floor)
 static double g_chain_from = -1, g_chain_at;  // the factor before this run of steps down taken with frames on time; the last
 #define DYN_CHECK_SHARE 0.33  // a step down's measured saving at least this share of the predicted one
+// A paced GPU's climb was a step a second. At 60 fps a factor over what the chip's power budget sustains isn't late at
+// once: it runs on time for ~2-4 s, then the clock is cut (an iPhone 15 Pro at thermal state serious: GPU time per frame
+// 8.6 -> 15-27 ms, every frame late, the pacer holding 30). A step a second climbed five steps past the sustainable
+// factor before the first cut showed (0.65 -> 0.90 in 4 s at t=178 of the 2026-11-13 log), and the fallout of the spike
+// walked it back a step at a time through 30 fps holds. A paced raise now waits DYN_PC_RAISE_WAIT before the next, so a
+// cut shows at the step that caused it, twice that at a ceiling set in the last 2 minutes or a step either side of it
+// (the ones that failed last time; pc_raise_wait). A return to 60 (a probe, the pacer's release) waits the same before a
+// raise. A GPU that isn't paced keeps its second: the clock there is no part of the measure.
+#define DYN_PC_RAISE_WAIT 2.0
+// The device's thermal state (output_scale_thermal: 0 nominal, 1 fair, 2 serious, 3 critical). At serious and critical
+// the chip can't hold its clock at the power 60 fps costs at a factor it holds cold: the same iPhone held a steady 60 at
+// 0.65-0.70 for 40 s at a time, and every climb to 0.75-0.85 ran ~2 s, had its clock cut, and ended in a 30 fps hold
+// (6 holds, 24 of 110 two-second windows near 30 fps in 226 s). Its steps down read as the fallout of a raise (held at
+// the factor) and its probes from the pacer's hold tried the factor the hold had, which was the one just cut. The heat
+// rules, on at serious / critical and off once the state has been cooler for DYN_HEAT_COOL_S:
+// - a step a DYN_HEAT_RAISE_WAIT (twice that at a ceiling or a step either side of it), so a climb is caught one step over;
+// - late within DYN_HEAT_CUT_S of a step up or a return to 60 (a probe, the pacer's release) at that factor is the clock
+//   being cut, and that factor is the heat ceiling: raises stay under it for DYN_HEAT_WAIT (the ceiling's 10 s let the
+//   climb back into the cut every time), doubling to DYN_HEAT_WAIT_MAX when the same factor is cut again (another
+//   factor's cut starts at DYN_HEAT_WAIT: 2026-11-13 log 4, 15 minutes at serious - the waits doubled across different
+//   factors to 8 minutes, and the phone sat at 0.60-0.65 where 0.70 held). Late with no step up in the last
+//   DYN_HEAT_CUT_S is the scene's moment, or the tail of a cut above (the GPU time settling while the frames are still
+//   late: the slide 0.85 -> 0.65 at t=600 of that log, a 480 s heat ceiling at each step): a step as the paced rules take
+//   it, under the paced ceiling's short wait, no heat ceiling;
+// - once the wait is out the climb goes onto the ceiling (a probe of it), and a steady DYN_HEAT_STEADY_S there moves it
+//   one step up: the climb back over factors cut at this heat is a step at a time, each proven. (It lifted the ceiling
+//   outright: 10 s steady at 0.70 and it went 0.70 -> 0.95 in 16 s, through three factors cut minutes before, into a cut
+//   and a slide back.) The scene getting lighter under it ends its wait early (the paced ceiling's rule); cooling lifts it;
+// - a probe from the pacer's hold tries a step under the factor the hold had (or the last factor that ran 60 steady at
+//   this heat, if lower), never the floor: the aim is the highest factor that holds a steady 60 at this heat, not a
+//   bounce into another hold.
+// Cooler for DYN_HEAT_COOL_S (fair / nominal: the chip has its clock back): the heat ceiling is lifted and today's rules
+// are back.
+#define DYN_HEAT_RAISE_WAIT 4.0
+#define DYN_HEAT_CUT_S 20.0
+#define DYN_HEAT_WAIT 120.0      // (60 with a 240 cap and 10 s proof retested more: 13% of 15 min under 57 fps in the sim, 7% now)
+#define DYN_HEAT_WAIT_MAX 480.0
+#define DYN_HEAT_STEADY_S 15.0
+#define DYN_HEAT_COOL_S 30.0
+static int g_thermal;  // (0 nominal, 1 fair, 2 serious, 3 critical)
+static const char *const THERMAL_NAME[] = {"nominal", "fair", "serious", "critical"};
+void output_scale_thermal(int state) { g_thermal = state < 0 ? 0 : state > 3 ? 3 : state; }
+static bool g_hot;                  // the heat rules apply
+static double g_cool_since = -1;    // (hot) since when the state has been cooler than serious (-1: it isn't)
+static double g_heat_ceil = 2.0;    // raises don't go over it (2: none)
+#define DYN_HEAT_NF 21              // the factor's grid, 0.00-1.00 by DYN_STEP
+static double g_heat_until[DYN_HEAT_NF];   // per factor: raises onto it wait until then (its clock was cut there)
+static double g_heat_wait[DYN_HEAT_NF];    // ... its wait: DYN_HEAT_WAIT, doubling at each cut within 2 DYN_HEAT_WAIT_MAX of the last
+static double g_heat_cut_at[DYN_HEAT_NF];  // ... when its clock was last cut at this heat (-1e9: not yet)
+static double g_heat_ok_f = -1;     // the last factor that ran 60 steady at this heat (-1: none yet)
+static int heat_i(double f) { int i = (int)lround(f / DYN_STEP); return i < 0 ? 0 : i >= DYN_HEAT_NF ? DYN_HEAT_NF - 1 : i; }
+static void heat_reset(void) {
+    g_heat_ceil = 2.0, g_heat_ok_f = -1;
+    for (int i = 0; i < DYN_HEAT_NF; i++) g_heat_until[i] = g_heat_cut_at[i] = -1e9, g_heat_wait[i] = DYN_HEAT_WAIT;
+}
+static double g_ok_since = -1;      // (paced) since when the frames have been on time at g_dyn (-1: they aren't)
+static double g_up_at = -100, g_up_f = -1;  // the last step up or return to 60 (a raise, a probe, the pacer's release): when, to what
+// the wait after a paced raise (or a return to 60: a probe, the pacer's release) to `up` before the next step (see
+// DYN_PC_RAISE_WAIT): twice as long a step either side of a ceiling set in the last 2 minutes or at it (the raise that
+// failed last time, the step under it that was late in its fallout, the ceiling itself), or of the heat ceiling
+static double pc_raise_wait(double now, double up) {
+    double w = g_hot ? DYN_HEAT_RAISE_WAIT : DYN_PC_RAISE_WAIT;
+    bool near = (now - g_pc_set_at < 120.0 && fabs(up - g_pc_ceil) <= DYN_STEP + 1e-6) ||
+                (g_hot && fabs(up - g_heat_ceil) <= DYN_STEP + 1e-6);
+    return near ? 2 * w : w;
+}
+// a step up or a return to 60 at factor f (see g_up_at): the next raise waits for the clock's response on a paced GPU
+static void dyn_went_up(double now, double f) {
+    g_up_at = now, g_up_f = f;
+    if (g_paced) g_dyn_raise_at = fmax(g_dyn_raise_at, now + pc_raise_wait(now, f));
+}
+// W jumps at 1.00: the sharp upscaler (MetalFX, FSR 1) only runs when the render is smaller than the window, so the
+// window step costs about twice as much just under 1.00 as at it (iPhone 15 Pro: 1.5 ms at 1.00, 3.3 at 0.95; iPad Pro
+// M4: 0.8 and 1.6) - more than the step 1.00 -> 0.95 saves of G (one step: ~10% of it). A step down from 1.00 went to
+// 0.95 and was later still, 0.90 about as late as 1.00, and the slide ended at 0.70 (six steps in 4 s); and a raise
+// through 0.95 never fit, so it never got back to 1.00 when 1.00 would have. Each side is measured when the frames are
+// on time (the measure under 1.00 is the window's, about the same at any factor there; FSR 1 grows with the input, a
+// little); the side not measured yet is estimated at twice / half the other with a sharp upscaler. A step down from
+// 1.00 goes to the factor that saves a step's worth once the jump is paid (dyn_step_down), and a raise skips a step
+// predicted to cost no less than 1.00 (dyn_w_at).
+static double g_w_at1 = -1, g_w_below = -1;
 
 static int hold_vsyncs(void) { return (int)lround(g_hold_dt * 60 / 1000); }
 static bool at_floor(void) { return g_dyn <= g_dyn_floor + 1e-6; }
@@ -148,6 +287,27 @@ static double dyn_fit(double G, double W, double budget) {
     double fit = g_dyn * sqrt(fmax(0, budget - W) / G);
     double f = floor(fit / DYN_STEP + 1e-6) * DYN_STEP;
     return f < g_dyn_floor + DYN_STEP / 2 - 1e-6 ? g_dyn_floor : f;
+}
+// the window step's time at factor f, W being the measure at g_dyn (see g_w_at1): the other side of 1.00 as measured
+// there, or estimated from this side's with a sharp upscaler
+static double dyn_w_at(double f, double W) {
+    bool at1 = g_dyn >= 1.0 - 1e-6, to1 = f >= 1.0 - 1e-6;
+    if (at1 == to1) return W;
+    bool sharp = g_settings.upscaler != UPSCALE_BILINEAR;
+    if (to1) return g_w_at1 >= 0 ? g_w_at1 : sharp ? W / 2 : W;
+    return g_w_below >= 0 ? g_w_below : sharp ? 2 * W : W;
+}
+// one step down from g_dyn - from 1.00 with the window step growing under it, the factor that saves a step's worth (G x
+// (1 - 0.95^2)) once that growth is paid: the steps that cost no less than 1.00 are skipped (at most DYN_MAX_DOWN)
+static double dyn_step_down(double G, double W) {
+    double f = dyn_grid(g_dyn - DYN_STEP);
+    if (g_dyn < 1.0 - 1e-6 || G <= 0) return f;
+    if (g_w_at1 >= 0) W = g_w_at1;  // (paced: the late frames' W is inflated too)
+    double jump = dyn_w_at(f, W) - W;
+    if (jump <= 0) return f;
+    double f2 = f * f - jump / G;  // G f'^2 + W + jump = G f^2 + W
+    double to = f2 > 0 ? floor(sqrt(f2) / DYN_STEP + 1e-6) * DYN_STEP : g_dyn_floor;
+    return dyn_grid(fmax(g_dyn - DYN_MAX_DOWN, to));
 }
 // the floor for a Match display of `lines` render lines: Minimum resolution's lines (1 when the display has that many
 // or fewer)
@@ -183,6 +343,7 @@ static void dyn_window_changed(double now, double from, double to) {
     }
     g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0, g_prev_G = -1;
     g_chk_from = g_chain_from = -1, g_futile = 0;  // (g_paced stays: it's the GPU's)
+    g_w_at1 = g_w_below = -1;  // (the window step at the new size: measured again)
     memset(g_down_gw, 0, sizeof g_down_gw);
     g_dyn_raise_wait = DYN_RAISE_WAIT, g_dyn_raise_at = now + DYN_RAISE_WAIT, g_dyn_last_raise = g_dyn_last_lower = -100;
     g_dyn_cool_until = now + 1.0;
@@ -191,6 +352,7 @@ static void dyn_window_changed(double now, double from, double to) {
         g_dyn * to, g_hold_dt > 0 ? ", the hold goes on" : "");
 }
 
+static bool g_win_setting;  // the upscaler or anti-aliasing setting changed (output_scale): a hold ends at the next decision
 static DynSplit g_split;  // sums since the last decision
 static int g_split_n;
 void output_scale_note_split(const DynSplit *d) {
@@ -222,6 +384,17 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     if (prev_lines > 0 && fabs(lines - prev_lines) > 0.5) dyn_window_changed(now, prev_lines, lines);
     prev_lines = lines;
     dyn_set_floor(lines);
+    static int paced_init;
+    if (!paced_init) {
+        paced_init = 1;
+        const char *e = getenv("LARECOMP_DYN_PACED");
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IPHONE)
+        g_paced = !e || atoi(e) != 0;
+#else
+        g_paced = e && atoi(e) != 0;
+#endif
+        if (g_paced) LOG("[dynres] paced from the start: down when frames come late, up when they're on time\n");
+    }
     static int start = -1;  // LARECOMP_DYN_START=<f>: Dynamic starts at factor f (tests: climbing back from the floor)
     if (start < 0) {
         start = 0;
@@ -265,8 +438,8 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     memcpy(sorted, g_dyn_dt, N * sizeof *sorted);
     qsort(sorted, N, sizeof *sorted, cmp_double);
     double med = N % 2 ? sorted[N / 2] : (sorted[N / 2 - 1] + sorted[N / 2]) / 2;
-    int nkept = 0;
-    for (int i = 0; i < N; i++) if (sorted[i] <= 3 * med) { kept += sorted[i]; nkept++; }
+    int nkept = 0, nlate = 0;  // (nlate: frames shown a vsync late or more, 25 ms+, spikes aside)
+    for (int i = 0; i < N; i++) if (sorted[i] <= 3 * med) { kept += sorted[i]; nkept++; nlate += sorted[i] >= 25.0; }
     bool gpu = g_dyn_gpu_n >= N / 2;
     double avg_dt = kept / nkept, G = gpu ? g_dyn_gpu_sum / g_dyn_gpu_n : -1, W = gpu ? g_dyn_win_sum / g_dyn_gpu_n : 0;
     double avg_gpu = gpu ? G + W : -1;
@@ -279,32 +452,66 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     double prev = g_dyn;
     static int log = -1;  // LARECOMP_LOG_DYNRES=1: every decision, not only the steps
     if (log < 0) log = getenv("LARECOMP_LOG_DYNRES") != NULL;
+    // the heat rules (see DYN_HEAT_RAISE_WAIT): on at serious / critical on a paced GPU, off once cooler for DYN_HEAT_COOL_S
+    if (g_paced && g_thermal >= 2 && !g_hot) {
+        g_hot = true, g_cool_since = -1;
+        heat_reset();
+        g_up_at = now, g_up_f = g_dyn;  // (the factor it has now: late at it soon is its clock cut, as after a step up to it)
+        LOG("[dynres] thermal %s: heat rules on - a step up every %.0f s, a factor whose clock is cut is a ceiling for %.0f s or "
+            "more, probes from the pacer's hold a step under\n", THERMAL_NAME[g_thermal], DYN_HEAT_RAISE_WAIT, DYN_HEAT_WAIT);
+    } else if (g_hot && g_thermal < 2) {
+        if (g_cool_since < 0) g_cool_since = now;
+        else if (now - g_cool_since >= DYN_HEAT_COOL_S) {
+            LOG("[dynres] thermal %s for %.0f s: heat rules off%s\n", THERMAL_NAME[g_thermal], now - g_cool_since,
+                g_heat_ceil < 1.5 ? ", the heat ceiling lifted" : "");
+            g_hot = false, g_cool_since = -1;
+            heat_reset();
+        }
+    } else if (g_hot) g_cool_since = -1;
     double budget = DYN_BUDGET;
     bool hold_up = false;  // (20 -> 30 fps this time: the factor was set to fit it already)
-    // Internal FPS target 30 (pace_target_30: the setting, or outdoors with "30 outdoors, 60 indoors"): held at 30 from
+    // FPS target 30 (pace_target_30: the setting, or outdoors with "30 outdoors, 60 indoors"): held at 30 from
     // the start - the factor only goes down when even 30 doesn't fit, and 60 is never looked for. When the target goes
     // back to 60 (indoors, or the setting changed) that hold ends and Dynamic aims for 60 again, as it would have.
     extern bool pace_target_30(void);
     static bool was_t30;
     bool t30 = pace_target_30();
     if (gpu && t30 && hold_vsyncs() < 2) {
-        LOG("[dynres] Internal FPS target 30: holding 30 fps (game %.1f + window %.1f ms at %.2f)\n", G, W, g_dyn);
+        LOG("[dynres] FPS target 30: holding 30 fps (game %.1f + window %.1f ms at %.2f)\n", G, W, g_dyn);
         g_hold_dt = 2 * 1000 / 60.0, g_hold_w = W;
         g_floor_g = g_ref_g = G, g_ref_pending = false;
         g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
         g_t30_cap = 0, g_t30_at = now, g_t30_late = 0, g_t30_wait = 4, g_t30_off_at = -1e9, g_t30_limits = false;
     } else if (was_t30 && !t30 && g_hold_dt > 0) {
-        LOG("[dynres] Internal FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
+        LOG("[dynres] FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
         g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
     }
     was_t30 = t30;
+    extern bool pace_is_slow(void);
+    bool pacer_hold = gpu && g_hold_dt == 0 && !t30 && pace_is_slow();  // (see g_pace_hold_at)
+    if (pacer_hold && g_pace_hold_at < 0) g_pace_hold_at = now;
+    if (!pacer_hold && g_pace_hold_at >= 0) {  // (the hold's time wasn't time under the ceiling: its wait goes on after)
+        if (g_pc_until > g_pace_hold_at) g_pc_until += now - g_pace_hold_at;
+        g_pace_hold_at = -1;
+        dyn_went_up(now, g_dyn);  // (a return to 60 at this factor: see DYN_HEAT_CUT_S)
+    }
+    if (!pacer_hold && !g_probing) g_pace_probe_fails = 0;
+    bool win_setting = g_win_setting;
+    g_win_setting = false;
+    if (win_setting) g_w_at1 = g_w_below = -1;  // (another upscaler / anti-aliasing: the window step measured again)
     if (gpu) {
+        // the window step on this side of 1.00 (see g_w_at1), from frames on time (paced: late frames inflate it)
+        if (!spikes && (nlate == 0 || !g_paced)) { if (g_dyn >= 1.0 - 1e-6) g_w_at1 = W; else g_w_below = W; }
         if (g_hold_dt > 0 && g_hold_w < 0) g_hold_w = W;  // (the window's size changed: its step's time there)
         else if (g_hold_dt > 0 && t30 && fabs(W - g_hold_w) > fmax(1.0, 0.25 * g_hold_w))
             g_hold_w = W;  // (target 30: the hold is the setting's, not the window step's - the menu opening and closing
                            // moves W 1 -> 6 -> 2 ms; ending the hold judged that half second by 60's budget: 1.00 -> 0.70)
-        else if (g_hold_dt > 0 && fabs(W - g_hold_w) > fmax(1.0, 0.25 * g_hold_w)) {  // another upscaler / AA
-            LOG("[dynres] window step %.1f -> %.1f ms: hold at %.0f fps ended\n", g_hold_w, W, 1000 / g_hold_dt);
+        // Another upscaler / anti-aliasing (output_scale: the setting itself): the hold was learned with the old window step.
+        // It went by W's time before, 25% off ending it - but an upscaler's step grows with its input (FSR 1 on a Retroid
+        // Pocket 5: 4.7 ms at 0.33, 6.6 at 0.85), so a hold climbing as 30 allows ended itself, was judged by 60's budget
+        // (0.85 -> 0.55), held again and climbed again, for good
+        else if (win_setting && g_hold_dt > 0) {
+            LOG("[dynres] window step setting changed: hold at %.0f fps ended\n", 1000 / g_hold_dt);
             g_hold_dt = 0, g_probing = false, g_probe_wait = 10.0, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
         }
         // held at 20 while the frames already come at 30 (every 33.3 ms) with G + W inside the 30 hold's budget (10%
@@ -339,25 +546,75 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                 } else {
                     LOG("[dynres] the floor would fit 60 fps now (game %.1f ms at %.2f: ~%.1f at %.2f, window %.1f): looking for it\n",
                         G, g_dyn, g_floor, g_dyn_floor, W);
-                    g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0;
+                    g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0, g_probe_from = g_dyn;
+                    dyn_went_up(now, g_dyn);
+                    pace_try_60();  // (the game's 30 fps mode, if the frame pacer holds it, ends too: pace.c)
                 }
             }
         }
         // Held at 30 with the GPU 30% idle or more: G may be inflated by a lowered clock (an integrated GPU clocks down
         // while frames wait for the display: UHD 770, 1080p window, G 15.9 ms at 0.50 held at 30 against 9-11 at 60),
-        // so the hold's own measure may never show 60 fitting again (it stayed at 30 for the rest of a run). Every probe
+        // so the hold's own measure may never show 60 fitting again (it stayed at 30 for the rest of a run). Idle by the
+        // floor's estimate, not the GPU's time now: held, the factor climbs while 30 fits (G + W up to 26 ms), so the GPU
+        // looked busy and no probe came (Retroid Pocket 5 at 0.85). The probe ends the frame pacer's hold of the game's
+        // 30 fps mode too (pace_try_60): it only lowered the resolution before, the game stayed at 30 and every probe
+        // failed (pace.c). Every probe
         // wait (10 s, doubling each time a probe fails, at most a minute) it tries 60 at the floor; a probe that fails is
         // back in the hold within ~1.5 s at the factor it had, with frames that were at 30 anyway. After a failed probe
         // the next one waits until the floor's estimate is 10% under what that probe measured there (the scene got
         // lighter) or 2 minutes have passed: a hold that is real (SMAA + FSR 1 at 1080p on the UHD 770) probes rarely.
         double floor_gw = g_ref_g > 0 ? g_floor_g * G / g_ref_g + W : -1;
-        bool probe_ok = now - g_probe_fail_at > 120.0 || (floor_gw > 0 && floor_gw < 0.9 * g_probe_fail_gw);
-        if (g_hold_dt > 0 && !hold_up && !t30 && hold_vsyncs() == 2 && avg_gpu < 0.7 * g_hold_dt && now >= g_probe_at && probe_ok) {
-            LOG("[dynres] held at 30 with the GPU %.0f%% busy (game %.1f + window %.1f ms at %.2f): its clock may be down, "
-                "trying 60 at %.2f\n", 100 * avg_gpu / g_hold_dt, G, W, g_dyn, g_dyn_floor);
+        // (the 2 minutes only where the failed probe came near: G + W within 15% of the budget. A hold 60 can't reach -
+        // SMAA + FSR 1 at 1080p - probed every 2 minutes for good, each probe a second or two of the game's 60 fps mode at
+        // 30 fps: slow motion)
+        bool probe_ok = (now - g_probe_fail_at > 120.0 && g_probe_fail_gw <= 1.15 * DYN_BUDGET) || (floor_gw > 0 && floor_gw < 0.9 * g_probe_fail_gw);
+        double idle_gw = floor_gw > 0 ? floor_gw : avg_gpu;
+        if (g_hold_dt > 0 && !hold_up && !t30 && hold_vsyncs() == 2 && idle_gw < 0.7 * g_hold_dt && now >= g_probe_at && probe_ok) {
+            LOG("[dynres] held at 30 with the GPU %.0f%% busy at the floor (game %.1f + window %.1f ms at %.2f): its clock may "
+                "be down, trying 60 at %.2f\n", 100 * idle_gw / g_hold_dt, G, W, g_dyn, g_dyn_floor);
+            pace_try_60();
             g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0;
             g_hold_up_votes = g_hold_miss = g_hold_met_votes = 0;
             g_probe_from = g_dyn, g_dyn = g_dyn_floor;
+            dyn_went_up(now, g_dyn);
+        }
+        // The pacer's hold with Dynamic holding nothing (see g_pace_hold_at) and a probe out - from the pacer's hold, or
+        // its own hold's at the floor above: held again after the pacer's second of grace and its frames, the probe
+        // failed, and Dynamic's own hold didn't take over (held_back: the floor with G + W over the budget, 4 decisions
+        // in a row - it puts the probe's factor back itself; a floor right at the budget never gave it those, and the
+        // probe stayed out for good). A probe taken at the floor goes back to the factor it left; one taken at the factor
+        // the hold had keeps the step its late frames took
+        if (pacer_hold && g_probing && now - g_probe_start >= 4.0) {
+            g_probe_wait = fmin(g_probe_wait * 2, DYN_PROBE_MAX);
+            g_probe_fail_at = now;
+            if (g_pace_probe) g_pace_probe_fails++;
+            if (g_dyn < g_probe_from && (g_pace_probe_floor || !g_pace_probe)) {
+                LOG("[dynres] 60 fps didn't fit at %.2f: back to %.2f\n", g_dyn, g_probe_from);
+                g_dyn = g_probe_from;
+            }
+            g_probing = g_pace_probe = false;
+            g_probe_at = now + g_probe_wait;
+        }
+        if (pacer_hold && g_paced && !g_probing && now - g_pace_hold_at >= g_probe_wait && now >= g_probe_at) {
+            bool to_floor = g_pace_probe_fails > 0 && !at_floor() && !g_hot;
+            double to = to_floor ? g_dyn_floor : g_dyn;
+            // (at heat: a step under the factor the hold had - the one whose clock was cut -, or the last factor that ran
+            // 60 steady at this heat if that's lower, and under the heat ceiling; a probe that fails keeps its step)
+            if (g_hot && !at_floor()) {
+                to = dyn_grid(g_dyn - DYN_STEP);
+                if (g_heat_ok_f > 0 && g_heat_ok_f < to) to = g_heat_ok_f;
+                if (to >= g_heat_ceil - 1e-6) to = dyn_grid(g_heat_ceil - DYN_STEP);
+            }
+            LOG("[dynres] the frame pacer has held 30 fps for %.0f s (game %.1f + window %.1f ms at %.2f): trying 60 at %.2f%s\n",
+                now - g_pace_hold_at, G, W, g_dyn, to, g_hot && to < g_dyn ? " (a step under at this heat)" : "");
+            pace_try_60();
+            g_probing = g_pace_probe = true, g_pace_probe_floor = to_floor;
+            g_probe_start = now, g_probe_good = 0, g_probe_from = g_dyn;
+            g_dyn = to;
+            dyn_went_up(now, to);
+            // (the frames were on time at this factor before the hold: a probe that comes late is its fallout first - see
+            // DYN_PC_FALLOUT - so it takes a step, not one each decision of the spike)
+            if (g_pc_ok_f >= g_dyn - 1e-6) g_pc_ok_at = now;
         }
         if (g_hold_dt > 0) budget = g_hold_dt * 0.87;
         // Target 30: the frames themselves must come every 33.3 ms. G + W fitting the hold's budget isn't enough where the
@@ -377,16 +634,16 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                                         // on G + W set at 1.00 took a second step down for nothing)
                 if (g_t30_cap <= 0) {
                     g_t30_wait = now - g_t30_off_at < 15.0 ? fmin(2 * g_t30_wait, 60.0) : now - g_t30_off_at > 30.0 ? 4.0 : g_t30_wait;
-                    LOG("[dynres] Internal FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
+                    LOG("[dynres] FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
                         "game kept under %.1f ms (lifted after %.0f s on time)\n", avg_dt, G, W, g_dyn, cap, g_t30_wait);
                 } else if (cap < g_t30_cap)
-                    LOG("[dynres] Internal FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
+                    LOG("[dynres] FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
                         "game kept under %.1f ms\n", avg_dt, G, W, g_dyn, cap);
                 g_t30_cap = g_t30_cap > 0 ? fmin(g_t30_cap, cap) : cap, g_t30_at = now, g_t30_late = 0;
             } else if (late || avg_dt > 1.02 * g_hold_dt)
                 g_t30_at = now;  // (the lift waits for frames on time)
             else if (g_t30_cap > 0 && now - g_t30_at >= g_t30_wait) {
-                LOG("[dynres] Internal FPS target 30: frames on time for %.0f s, the cap (game %.1f ms) lifted\n", g_t30_wait, g_t30_cap);
+                LOG("[dynres] FPS target 30: frames on time for %.0f s, the cap (game %.1f ms) lifted\n", g_t30_wait, g_t30_cap);
                 g_t30_cap = 0, g_t30_off_at = now;
             }
             g_t30_limits = g_t30_cap > 0 && g_t30_cap + W < budget;
@@ -406,8 +663,9 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
             // a probe that failed, or one met a moment ago that didn't last: wait longer for the next
             if (g_probing || now - g_probe_ok_at < 30.0) g_probe_wait = fmin(g_probe_wait * 2, DYN_PROBE_MAX);
-            if (g_probing && now - g_probe_start < 5.0) g_probe_fail_gw = G + W, g_probe_fail_at = now;
-            if (g_probing && now - g_probe_start < 5.0 && g_probe_from > g_dyn) {  // (a probe failed: the hold's factor again)
+            // (a probe is judged within 8 s: the pacer's second of grace, its 60 frames, then this hold's second)
+            if (g_probing && now - g_probe_start < 8.0) g_probe_fail_gw = G + W, g_probe_fail_at = now;
+            if (g_probing && now - g_probe_start < 8.0 && g_probe_from > g_dyn) {  // (a probe failed: the hold's factor again)
                 LOG("[dynres] 60 fps didn't fit: back to %.2f\n", g_probe_from);
                 g_ref_pending = true;  // (the floor's G as just measured; G's reference at that factor next)
                 g_dyn = g_probe_from;
@@ -423,17 +681,23 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                 LOG("[dynres] game %.1f + window %.1f ms at %.2f (a frame every %.1f ms): 60 fps out of reach, holding %.0f "
                     "fps; the factor goes up while G + W fits %.1f ms\n", G, W, g_dyn, avg_dt, 1000 / g_hold_dt, budget);
         }
-        // a probe met 60: two decisions in a row (one could be the game's own frames before its 30 fps mode ends)
-        g_probe_good = g_probing && g_hold_dt == 0 && avg_gpu <= DYN_BUDGET && avg_dt < 20 ? g_probe_good + 1 : 0;
-        if (g_probe_good >= 4) g_probing = false, g_probe_good = 0, g_probe_ok_at = now, g_probe_wait = 10.0;
+        // a probe met 60: two decisions in a row (one could be the game's own frames before its 30 fps mode ends). One from
+        // the pacer's hold: the frames on time (G + W may read over the budget on a paced GPU with the frames on time)
+        bool met60 = g_pace_probe ? !pacer_hold && nlate <= 1 && avg_dt < 20 : avg_gpu <= DYN_BUDGET && avg_dt < 20;
+        g_probe_good = g_probing && g_hold_dt == 0 && met60 ? g_probe_good + 1 : 0;
+        if (g_probe_good >= 4 || (g_pace_probe && !pacer_hold && now - g_probe_start >= 8.0))  // (not held again in 8 s: met)
+            g_probing = g_pace_probe = false, g_pace_probe_fails = 0, g_probe_good = 0, g_probe_ok_at = now, g_probe_wait = 10.0;
     }
     // the last step down's check (see g_paced): its first measure
     if (g_chk_from > 0 && g_dyn == g_chk_from) g_chk_from = -1;  // (undone already)
     if (g_chk_from > 0 && gpu && g_hold_dt == 0 && !spikes) {
         double pred_gain = g_chk_gw - g_chk_pred, gain = g_chk_gw - avg_gpu;
-        bool futile = pred_gain >= 0.5 && gain < DYN_CHECK_SHARE * pred_gain && avg_dt < 17.2;
+        // (frames on time: at most one late - a hitch in the check's quarter second said nothing and reset the count, and
+        // a Retroid took ~55 s and a menu to be found paced)
+        bool on_time = nlate <= 1;
+        bool futile = pred_gain >= 0.5 && gain < DYN_CHECK_SHARE * pred_gain && on_time;
         if (futile) g_futile++, g_futile_at = now;
-        else g_futile = 0;
+        else if (on_time) g_futile = 0;
         if (futile && g_futile < 2)
             LOG("[dynres] %.2f -> %.2f saved %.1f of a predicted %.1f ms (gpu %.1f -> %.1f ms = game %.1f + window %.1f, frames every %.1f ms)\n",
                 g_chk_from, g_dyn, gain, pred_gain, g_chk_gw, avg_gpu, G, W, avg_dt);
@@ -446,14 +710,27 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0;
             memset(g_down_gw, 0, sizeof g_down_gw);
             g_dyn_last_lower = -100, g_dyn_raise_wait = DYN_RAISE_WAIT, g_dyn_raise_at = now + DYN_RAISE_WAIT;
+            g_dyn_last_raise = now;  // (late frames right after: back one step, not straight down - a raise)
             goto decided;
         }
         g_chk_from = -1;
     }
     bool slow = gpu ? avg_gpu > budget : avg_dt > 17.4;
-    // paced (see g_paced): the GPU's time is near the budget at any factor; late frames with the GPU busy are what count
+    // paced (see g_paced): the GPU's time is near the budget at any factor; late frames with the GPU busy are what count.
+    // Late frames a run of them, not one: a GPU too slow for the factor makes many frames late, a hitch (the CPU's, a
+    // stream-in) one now and then - and with the GPU always ~90% busy here each of those read as the GPU's. On a Retroid
+    // Pocket 5 (Turnip at 60 fps: a 35 ms frame every few seconds) every one stepped it down, each raise was undone
+    // within 3 s (the raise wait doubling to 16 s), and it sank to its floor at 60 fps throughout - 486p for minutes.
     bool paced = gpu && g_paced && g_hold_dt == 0;
-    if (paced) slow = avg_dt > 17.4 && avg_gpu > 0.8 * budget;
+    // (and a late frame now with 3 or more in the last second: a factor a little over makes one late every few frames,
+    // under 2 a quarter second - it sat at 0.80 at 55 fps for 46 s)
+    static int late_hist[4];  // late frames of the last 4 decisions (a second)
+    // (the pacer's hold: its 33 ms frames aren't late frames - see g_pace_hold_at -, nor are those of the first second of a
+    // probe of it: the pacer's grace, the clock coming back up)
+    bool no_late = pacer_hold || (g_pace_probe && now - g_probe_start < 1.0);
+    memmove(late_hist + 1, late_hist, 3 * sizeof *late_hist), late_hist[0] = no_late ? 0 : nlate;
+    int late4 = late_hist[0] + late_hist[1] + late_hist[2] + late_hist[3];
+    if (paced) slow = !no_late && ((nlate >= 2 && nlate * 6 >= N) || (nlate >= 1 && late4 >= 3)) && avg_gpu > 0.8 * budget;
     // held, but the frames came slower than the hold's (the display waits one more refresh): over budget too
     if (gpu && g_hold_dt > 0 && avg_dt > 1.2 * g_hold_dt && avg_gpu > 0.8 * budget) slow = true;
     bool hold_wait = hold_up;  // held and over its budget, not yet long enough to act on it (or the hold just stepped up)
@@ -484,8 +761,14 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     // Frames missing vsync often (a frame every 20 ms on average) with the GPU near the budget count as over too. The
     // frames missing 60 outright (G + W over a whole refresh) acts sooner.
     bool must = false;
-    if (g_hold_dt == 0 && !hold_wait) {
-        bool over = slow || (gpu && avg_dt > 20.0 && avg_gpu > 0.8 * budget);
+    if (g_hold_dt == 0 && !hold_wait && paced && no_late) {  // (a paced GPU's time at 30: its clock - see g_pace_hold_at)
+        g_down_hist = 0, g_down_fast_votes = 0;
+        memset(g_down_gw, 0, sizeof g_down_gw);
+    } else if (g_hold_dt == 0 && !hold_wait) {
+        // (not while the frame pacer holds the game at 30 with G + W inside 60's budget: the frames come every 33 ms for the
+        // pacer's reasons - the CPU, the window's image, the GPU's lowered clock - and a lower factor doesn't change that.
+        // A Retroid stepped 0.45 -> 0.40 -> 0.33 there with the GPU at 12 ms)
+        bool over = slow || (gpu && avg_dt > 20.0 && avg_gpu > (pace_is_slow() ? budget : 0.8 * budget));
         if (over && !slow) slow = true;  // (the steps below go by `slow`)
         g_down_hist = (g_down_hist << 1 | over) & 15;
         memmove(g_down_gw + 1, g_down_gw, 3 * sizeof *g_down_gw);
@@ -496,6 +779,26 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         must = __builtin_popcount(g_down_hist) >= DYN_DOWN_VOTES || g_down_fast_votes >= DYN_DOWN_FAST ||
                (slow && g_down_gw[3] > 0 && mean4 > 0.95 * budget);
     }
+    // paced: the factor the frames were on time at (the fallout rule below; at 1.00 too - it was only noted under 1.00, so
+    // the first late moment at 1.00 after a long time there had no on-time measure, and the fallout slid it 1.00 -> 0.70)
+    if (paced && !slow && nlate == 0 && !spikes) g_pc_ok_f = g_dyn, g_pc_ok_g = G, g_pc_ok_at = now;
+    // ... and for how long (at heat: steady 60 for DYN_HEAT_STEADY_S at a factor is the one to probe from; at the heat
+    // ceiling - a probe of it once its wait was out - it moves the ceiling a step up: the next step is the next probe)
+    if (paced && !slow && nlate == 0 && !spikes && !no_late) { if (g_ok_since < 0) g_ok_since = now; }
+    else g_ok_since = -1;
+    if (g_hot && g_ok_since >= 0 && now - g_ok_since >= DYN_HEAT_STEADY_S) {
+        g_heat_ok_f = g_dyn;
+        if (g_dyn >= g_heat_ceil - 1e-6 && g_heat_ceil < 1.5) {
+            double to = g_heat_ceil >= 1.0 - 1e-6 ? 2.0 : dyn_grid(g_heat_ceil + DYN_STEP);
+            if (to < 1.5)
+                LOG("[dynres] thermal %s: 60 fps steady at %.2f for %.0f s: the heat ceiling moves up a step, to %.2f\n",
+                    THERMAL_NAME[g_thermal], g_dyn, now - g_ok_since, to);
+            else
+                LOG("[dynres] thermal %s: 60 fps steady at %.2f for %.0f s: the heat ceiling is lifted\n", THERMAL_NAME[g_thermal],
+                    g_dyn, now - g_ok_since);
+            g_heat_ceil = to;  // (its own wait, if its clock was cut there lately, still holds the raise onto it)
+        }
+    }
     if (slow && !at_floor() && g_hold_dt == 0 && !hold_wait && !must) g_dyn_good = 0;  // (over: waiting to be sure)
     else if (hold_wait || (slow && at_floor())) g_dyn_good = 0;  // (at the floor: nothing lower)
     else if (slow) {
@@ -503,41 +806,123 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         if (gpu && G > 0) {  // straight to where G + W is predicted to fit, with the room a raise would need (G and W of
                              // the last second: one half second's peak would overshoot it, and a raise would follow)
             double g2 = g_prev_G > 0 ? (G + g_prev_G) / 2 : G, w2 = g_prev_G > 0 ? (W + g_prev_W) / 2 : W;
-            down = fmin(down, g_hold_dt > 0 ? dyn_fit(g2, w2, budget * DYN_RAISE_FIT) : dyn_fit(g2 / DYN_UP_FIT, w2, budget));
+            double wd = dyn_w_at(g_dyn - DYN_STEP, w2);  // (from 1.00: the window step under it)
+            down = fmin(down, g_hold_dt > 0 ? dyn_fit(g2, wd, budget * DYN_RAISE_FIT) : dyn_fit(g2 / DYN_UP_FIT, wd, budget));
             down = fmax(down, g_dyn - DYN_MAX_DOWN);
             // a little over (or target 30's frames a little late): one small step - the next decision a quarter second
             // later takes another if it's still over; far over: straight to where it fits
             // (paced: a raise that made the frames late - the step before it fit)
-            if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || (paced && now - g_dyn_last_raise < 3.0)) down = g_dyn - DYN_STEP;
+            // (paced: always one step - the G it would fit is over-read, and the ceiling keeps raises under it; from
+            // 1.00 by the G the frames were last on time with, scaled up to 1.00 - the late one is the fallout's, up
+            // to 1.4x, and the step it gave was 0.90: as late as 1.00)
+            if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || paced) {
+                bool ok = paced && g_pc_ok_f > 0 && now - g_pc_ok_at < 4.0;
+                down = dyn_step_down(ok ? g_pc_ok_g / (g_pc_ok_f * g_pc_ok_f) : g2, w2);
+            }
+        }
+        // (paced, late under the ceiling just set: the fallout once it has read as that - its tail reads nearer the on-time
+        // measure while the frames are still late, and a step then made a lower ceiling of it)
+        bool held = g_pc_hit_at > g_pc_set_at;
+        // (the on-time measure is at a factor up to a step above: G's area there. Further above - the step from 1.00
+        // skipping to 0.85 - scaled by the area from a step under it, or no fallout could ever read over it)
+        double ok_g = g_pc_ok_f > 0 ? g_pc_ok_g * fmin(1.0, (g_dyn / g_pc_ok_f) * (g_dyn / g_pc_ok_f) / ((1 - DYN_STEP) * (1 - DYN_STEP))) : -1;
+        if (paced && now - g_pc_set_at < DYN_PC_FALLOUT && g_dyn < g_pc_ceil - 1e-6 &&
+            (held || (g_dyn <= g_pc_ok_f + 1e-6 && now - g_pc_ok_at < 4.0 && G > DYN_PC_FALLOUT_G * ok_g))) {
+            // late under the ceiling just set, at or under the factor the frames were on time at a moment ago, with G well
+            // over its measure there: the raise's fallout, not this factor's load (see DYN_PC_FALLOUT) - the factor holds
+            // (a step down wouldn't shorten the spike), the ceiling stays
+            if (!held)
+                LOG("[dynres] paced: frames late at %.2f too (game %.1f ms against %.1f on time at %.2f %.1f s ago): the fallout, "
+                    "holding %.2f under the ceiling %.2f\n", g_dyn, G, ok_g, g_pc_ok_f, now - g_pc_ok_at, g_dyn, g_pc_ceil);
+            g_pc_hit_at = now;
+            down = g_dyn;
+        } else if (paced) {  // the factor that went late: the ceiling (see g_pc_ceil)
+            // (hit again soon after a lift: wait longer. Not a step down while one holds - a heavy scene stepping down a
+            // step at a time doubled it at each: through the swamp to a minute, then 360p for a minute after it)
+            if (now >= g_pc_until && now < g_pc_until + 30.0) g_pc_wait = fmin(g_pc_wait * 2, 60.0);
+            else if (now - g_pc_hit_at > 120.0) g_pc_wait = 10.0;
+            // (at heat the heat ceiling keeps raises off a factor whose clock is cut; the scene's moment, or a cut's tail,
+            // gets the short wait - the tail's steps had doubled it, and a scene moment minutes after a cut sat a step
+            // under for 60 s)
+            bool heat_cut = g_hot && now - g_up_at < DYN_HEAT_CUT_S && g_dyn >= g_up_f - 1e-6;
+            if (g_hot && !heat_cut) g_pc_wait = 10.0;
+            g_pc_ceil = g_dyn, g_pc_until = now + g_pc_wait, g_pc_hit_at = g_pc_set_at = now;
+            // (G at the step under, on the grid - the floor's below its first step: 0.40 -> 0.33 at 360p, which never
+            // matched 0.35 and so never lifted early; from 1.00 the step may skip 0.95 and 0.90 - dyn_step_down. The first
+            // on-time measure there once the fallout has settled)
+            g_pc_ref_f = dyn_grid(fmax(g_dyn_floor, down)), g_pc_ref_g = -1;
+            // (at heat: late within DYN_HEAT_CUT_S of the step up to this factor or a return to 60 at it is the clock cut,
+            // and this factor the heat ceiling - each factor keeps its own wait, doubling when it is cut again. Late with
+            // no step up: the scene's moment or a cut's tail, the paced ceiling only)
+            if (heat_cut) {
+                int i = heat_i(g_dyn);
+                g_heat_wait[i] = now - g_heat_cut_at[i] < 2 * DYN_HEAT_WAIT_MAX ? fmin(2 * g_heat_wait[i], DYN_HEAT_WAIT_MAX) : DYN_HEAT_WAIT;
+                g_heat_until[i] = now + g_heat_wait[i], g_heat_cut_at[i] = now;
+                g_heat_ceil = g_dyn;
+                LOG("[dynres] thermal %s: frames late at %.2f %.1f s after going up to it, its clock cut at this heat: raises "
+                    "stay under %.2f for %.0f s\n", THERMAL_NAME[g_thermal], g_dyn, now - g_up_at, g_dyn, g_heat_wait[i]);
+            } else if (g_hot)
+                LOG("[dynres] thermal %s: frames late at %.2f with no step up to it in the last %.0f s: the scene or a cut's tail, "
+                    "not a cut at it - raises stay under it for %.0f s\n", THERMAL_NAME[g_thermal], g_dyn, DYN_HEAT_CUT_S, g_pc_wait);
+            else
+                LOG("[dynres] paced: frames late at %.2f, raises stay under it for %.0f s\n", g_dyn, g_pc_wait);
         }
         g_dyn = fmax(g_dyn_floor, down);
         g_dyn_good = 0;
         g_down_hist = 0, g_down_fast_votes = 0;
         memset(g_down_gw, 0, sizeof g_down_gw);
         // the raise didn't hold (spikes can't undo one any more: they're not in the measure)
-        if (now - g_dyn_last_raise < 10.0) g_dyn_raise_wait = fmin(g_dyn_raise_wait * 2, DYN_RAISE_WAIT_MAX);
+        // (paced: the ceiling waits instead - the climb under it stays a step a second)
+        if (now - g_dyn_last_raise < 10.0 && !paced) g_dyn_raise_wait = fmin(g_dyn_raise_wait * 2, DYN_RAISE_WAIT_MAX);
         g_dyn_last_lower = now;
         g_dyn_raise_at = now + g_dyn_raise_wait;
     } else if (g_dyn < 1.0) {
         // headroom for a while (every decision of it), and not too soon after the last change. With GPU timing: the
         // next step is predicted to fit with room (G scales with the area); without: frames at 60
-        double up = dyn_grid(g_dyn + DYN_STEP);
+        double up = dyn_grid(g_dyn + DYN_STEP), w_up = dyn_w_at(up, W);
+        // the window step cheaper at 1.00 than under it (see g_w_at1): a step predicted to cost no less than 1.00 is
+        // skipped for 1.00 itself (0.95 on the iPhone, 0.90 too with G light enough)
+        if (up < 1.0 - 1e-6 && gpu && G > 0) {
+            double w1 = dyn_w_at(1.0, W);
+            if (G / (g_dyn * g_dyn) + w1 <= G * (up / g_dyn) * (up / g_dyn) + w_up) up = 1.0, w_up = w1;
+        }
         double g_up = G * (up / g_dyn) * (up / g_dyn);
-        bool fits = !gpu || paced ? avg_dt < 16.9 : g_hold_dt > 0 ? g_up + W <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + W <= budget;
+        bool fits = !gpu ? avg_dt < 16.9 : paced ? late4 <= 1 && med < 17.2 : g_hold_dt > 0 ? g_up + w_up <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + w_up <= budget;
         // (a decision with spikes - a level loading, a fade, a cutscene starting - says little about the scene ahead:
         // it starts the count over, so a raise doesn't come from a light loading screen)
         g_dyn_good = fits && !spikes ? g_dyn_good + 1 : 0;
         bool room = fits && g_dyn_good >= DYN_UP_VOTES && now >= g_dyn_raise_at;
+        if (paced && fabs(g_dyn - g_pc_ref_f) < 1e-6 && nlate == 0 && !spikes) {  // (the scene got lighter: lift it now)
+            // (at heat, the heat ceiling's wait with it - a probe of it -, unless this factor's own clock was cut at this
+            // heat: then it proves itself steady first, like any factor cut here)
+            bool heat_lift = g_hot && fabs(g_heat_ceil - g_pc_ceil) < 1e-6 && now < g_heat_until[heat_i(g_heat_ceil)] &&
+                             g_heat_cut_at[heat_i(g_dyn)] < -1e8;
+            if (g_pc_ref_g < 0) { if (now - g_pc_hit_at >= DYN_PC_SETTLE) g_pc_ref_g = G; }  // (settled: DYN_PC_SETTLE)
+            else if (G < 0.9 * g_pc_ref_g && (now < g_pc_until || heat_lift)) {
+                g_pc_until = now;
+                if (heat_lift) g_heat_until[heat_i(g_heat_ceil)] = now;
+                LOG("[dynres] paced: game %.1f -> %.1f ms at %.2f, the ceiling %.2f is lifted\n", g_pc_ref_g, G, g_dyn, g_pc_ceil);
+            }
+        }
+        if (paced && up >= g_pc_ceil - 1e-6 && now < g_pc_until) room = false;
+        // (the heat ceiling: never over it - a steady DYN_HEAT_STEADY_S at it moves it a step up -, and not onto a factor
+        // whose clock was cut while its wait runs)
+        if (paced && g_hot && (up > g_heat_ceil + 1e-6 || now < g_heat_until[heat_i(up)])) room = false;
         if (room) {
             g_dyn = up, g_dyn_good = 0, g_down_hist = 0, g_dyn_last_raise = now, g_dyn_raise_at = now + g_dyn_raise_wait;
+            if (paced) dyn_went_up(now, up);
+            else g_up_at = now, g_up_f = up;
             memset(g_down_gw, 0, sizeof g_down_gw);
         }
         else if (now - g_dyn_last_lower > 30.0 && g_dyn_raise_wait > DYN_RAISE_WAIT) g_dyn_raise_wait = DYN_RAISE_WAIT;  // (30 s of calm: forget the hunting)
     }
     g_dyn = dyn_grid(g_dyn);
-    if (g_futile && (now - g_futile_at > 1.5 || g_dyn > prev)) g_futile = 0;  // (no step down soon after: not in a row)
-    if (g_dyn > prev || (g_dyn < prev && avg_dt >= 17.2) || now - g_chain_at > 5.0) g_chain_from = -1;
-    if (g_dyn < prev && gpu && g_hold_dt == 0 && !g_paced && !g_t30_limits && avg_dt < 17.2) {  // (checked at the next decision)
+    // (in a row: no step between them that saved what it should, and no raise - however far apart. A clock that fills
+    // the frame to just under the budget steps down rarely: a Retroid's futile steps came 46 s apart, each counted as a
+    // first, and it sank one step a minute to 432p at 60 fps. 2 minutes apart: unrelated)
+    if (g_futile && (now - g_futile_at > 120.0 || g_dyn > prev)) g_futile = 0;
+    if (g_dyn > prev || (g_dyn < prev && nlate > 1) || now - g_chain_at > 5.0) g_chain_from = -1;
+    if (g_dyn < prev && gpu && g_hold_dt == 0 && !g_paced && !g_t30_limits && nlate <= 1) {  // (checked at the next decision)
         if (g_chain_from < 0) g_chain_from = prev;
         g_chain_at = now;
         double g2 = g_prev_G > 0 ? (G + g_prev_G) / 2 : G, w2 = g_prev_G > 0 ? (W + g_prev_W) / 2 : W;
@@ -545,6 +930,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     }
 decided:
     g_prev_G = gpu && g_dyn == prev ? G : -1, g_prev_W = W;  // (a change: the next decision measures the new factor)
+    if (g_dyn != prev) g_ok_since = -1;
     if (gpu && g_hold_dt > 0 && g_dyn != prev && !g_ref_pending && g_ref_g > 0)  // the floor's G as of now; G's new reference next time
         g_floor_g *= G / g_ref_g, g_ref_pending = true;
     if (g_dyn != prev || log) {
@@ -560,9 +946,13 @@ decided:
         if (sum_ms >= 0) snprintf(split, sizeof split, "; spans summed %.1f ms", sum_ms);
         char hold[48] = "";
         if (g_hold_dt > 0) snprintf(hold, sizeof hold, ", holding %.0f fps", 1000 / g_hold_dt);
+        char thermal[48] = "";
+#ifdef __APPLE__
+        snprintf(thermal, sizeof thermal, ", thermal %s%s", THERMAL_NAME[g_thermal], g_hot ? " (heat rules)" : "");
+#endif
         LOG("[dynres] %.2f -> %.2f (frame %.1f ms, median %.1f, %d spike%s left out, gpu %.1f ms = game %.1f + window %.1f, "
-            "budget %.1f%s, next raise in %.0f s%s)\n", prev, g_dyn, avg_dt, med, spikes, spikes == 1 ? "" : "s", avg_gpu, G, W,
-            budget, hold, fmax(0, g_dyn_raise_at - now), split);
+            "budget %.1f%s, next raise in %.0f s%s%s)\n", prev, g_dyn, avg_dt, med, spikes, spikes == 1 ? "" : "s", avg_gpu, G, W,
+            budget, hold, fmax(0, g_dyn_raise_at - now), thermal, split);
     }
     memset(&g_split, 0, sizeof g_split);
     g_split_n = 0;
@@ -650,18 +1040,18 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     if (!reshape) shape = 1.0;
     // render height in units of the Switch's 1080 lines
     double h, dyn = 1.0;
-    int mode = g_settings.res_mode;
+    int mode = g_settings.dyn_res ? RES_DYNAMIC : g_settings.res_mode;  // (Dynamic: up to the display, the setting aside)
     // The user changed a setting that changes the GPU's load (the menu, the start screen; Dynamic's own steps are g_dyn,
     // not a setting): the frame pacer's 30 fps hold and backoff were learned under the old load (pace.c).
     static int p_mode = -1, p_ups, p_aa, p_fps;
     if (p_mode >= 0) {
         extern void pace_settings_changed(const char *what);
         if (mode != p_mode) pace_settings_changed("resolution");
-        else if (g_settings.upscaler != p_ups) pace_settings_changed("upscaler");
-        else if (g_settings.antialias != p_aa) pace_settings_changed("anti-aliasing");
-        else if (g_settings.fps_target != p_fps) pace_settings_changed("Internal FPS target");
+        else if (g_settings.upscaler != p_ups) pace_settings_changed("upscaler"), g_win_setting = true;
+        else if (g_settings.antialias != p_aa) pace_settings_changed("anti-aliasing"), g_win_setting = true;
+        else if (settings_fps_target() != p_fps) pace_settings_changed("FPS target");
     }
-    p_mode = mode, p_ups = g_settings.upscaler, p_aa = g_settings.antialias, p_fps = g_settings.fps_target;
+    p_mode = mode, p_ups = g_settings.upscaler, p_aa = g_settings.antialias, p_fps = settings_fps_target();
     if (forced > 0) h = forced;
     else if (mode >= 1 && mode <= 8) h = mode == 1 && g_gpu_integrated ? 720 / 1080.0 : mode;
     else {

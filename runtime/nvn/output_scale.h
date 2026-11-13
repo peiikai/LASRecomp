@@ -18,6 +18,9 @@ double output_scale_dynamic_factor(void);
 // The size the game's frames are drawn at now (pixels: the render scale x 1920x1080); the FPS counter shows it with Dynamic
 void output_scale_render_size(int *w, int *h);
 double output_scale_dynamic_hold_fps(void);
+// The device's thermal state (metal.m: NSProcessInfo, at start and at every change): 0 nominal, 1 fair, 2 serious, 3
+// critical. Dynamic's heat rules on a paced GPU go by it (serious and critical); tools/test_dynres.c sets it
+void output_scale_thermal(int state);
 // The scale of the game's ambient occlusion targets (metal.m / vulkan/textures.c tex_ao) at allocation scale `al`: 1 =
 // the Switch's size, up to 2 (Video tab "Ambient occlusion"). 0: LARECOMP_AO_SCALED=1, they follow the render scale.
 float output_scale_ao(float al);

@@ -1797,7 +1797,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         widescreen_frame_end(frame);
         extern void widescreen_set_factor(float f);
         extern bool widescreen_allowed(void);
-        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution");
+        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Resolution");
         // GPU time since the last frame (exec.c's GPU timer; -1 without one: dynamic resolution goes by frame times):
         // the game's submissions and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before)
         static int count_present = -1;
@@ -2056,6 +2056,22 @@ static void quick_exit_handler(void) {
 // the app in the background with the game paused (phones; runtime/kernel.c's hang watchdog asks): never here
 bool ui_in_background(void) { return false; }
 
+#ifdef __ANDROID__
+// the app may not come back from the background (the system ends it there): keep the pipeline cache and the settings
+// (options changed with the menu still open were lost). From LASRecomp-Android-Plus (MIT).
+// SDL 3 never queues the lifecycle events: they reach an event watcher only, here on the thread that pumps events
+// (ui_run's SDL_WaitEventTimeout). Issue #767.
+static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
+    (void)ud;
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND && g_vk.dev) {
+        vk_pipeline_cache_save();
+        settings_save();
+        LOG("[app] background: saved pipeline cache and settings\n");
+    }
+    return true;
+}
+#endif
+
 void ui_window_init(void) {
     if (window) return;
     atexit(quick_exit_handler);
@@ -2091,6 +2107,9 @@ void ui_window_init(void) {
     }
 #endif
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
+#ifdef __ANDROID__
+    SDL_AddEventWatch(background_watch, NULL);
+#endif
     rt_window_icon(window);
     rt_window_remember(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows
@@ -2144,14 +2163,6 @@ int ui_run(void) {
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
             input_rumble_poll();
-#ifdef __ANDROID__
-            // the app may not come back from the background (the system ends it there): keep the pipeline cache and
-            // the settings (options changed with the menu still open were lost). From LASRecomp-Android-Plus (MIT).
-            if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND && g_vk.dev) {
-                vk_pipeline_cache_save();
-                settings_save();
-            }
-#endif
             if (e.type == SDL_EVENT_QUIT) {
                 input_rumble_stop();
                 input_led_stop();

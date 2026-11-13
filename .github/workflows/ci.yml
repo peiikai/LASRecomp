@@ -459,12 +459,6 @@ jobs:
           key: ${{ steps.deps-sim.outputs.cache-primary-key }}
       - name: Simulator app, the embedded Python's self-test in it
         run: make -j"$(sysctl -n hw.ncpu)" ios-sim-test
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ios-simulator-start-screen
-          path: build/ios-sim/start-screen.png
-          if-no-files-found: ignore
 
   windows:
     needs: changes

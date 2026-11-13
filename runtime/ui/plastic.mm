@@ -46,6 +46,9 @@ const PlasticTheme &plastic_theme(void) {
         t.danger = hex(0x8A3A2C);
         t.tab = hex(0x75563B);
         t.tab_sel = hex(0xE5C589);
+        // a tab under the cursor or the mouse (not the page shown): lit, a step short of the shown page's gold, with its
+        // dark text - it was darker than the other tabs (user 2026-11-12: as the menu bar's entries light up)
+        t.tab_hot = hex(0xC9A86E);
         t.ring = hex(0xAA9B67);
         t.ring_sel = hex(0xECD78E);
         t.text = hex32(0xFFF3DC);

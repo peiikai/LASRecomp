@@ -22,6 +22,7 @@
 #include "record.h"
 #include "../renderer.h"
 #include "../interp.h"
+#include "../hud_stats.h"
 #include "../output_scale.h"
 #include "../pace.h"
 #include "../recolour.h"
@@ -63,6 +64,7 @@ uint64_t prof_up_ns = ~0ull;  // textures.c upload checks (~0: profiling off)
 #define PROF_T0() uint64_t prof_t0_ = prof ? SDL_GetTicksNS() : 0
 #define PROF_ADD(v) do { if (prof) v += SDL_GetTicksNS() - prof_t0_; } while (0)
 static _Atomic int stat_compiles;
+static uint64_t hud_draws, hud_passes, hud_dispatches, hud_compiles;  // (renderer_hud)
 static uint64_t op_counts[CMD_COUNT];
 bool g_debug_frame;
 static char stats_text[2048];
@@ -1182,12 +1184,14 @@ const char *renderer_stats(void) {
         for (int i = 0; i < CMD_COUNT; i++) if (op_counts[i]) LOG(" %d:%llu", i, (unsigned long long)op_counts[i]);
         LOG("\n");
     }
+    int compiles = atomic_exchange(&stat_compiles, 0);
+    hud_compiles += (uint64_t)compiles;
     snprintf(stats_text, sizeof stats_text,
              "%llu draws, %llu skipped, %llu passes, %llu dispatches, %llu flushes, wait %.0fms, compile %d, fbcopy %llu, upload %.1fMB, "
              "deferred %llu, snap %lluKB/%llu",
              (unsigned long long)stat_draws, (unsigned long long)stat_skipped, (unsigned long long)stat_passes,
              (unsigned long long)stat_dispatches, (unsigned long long)stat_flushes, (double)stat_wait_ns / 1e6,
-             atomic_exchange(&stat_compiles, 0), (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
+             compiles, (unsigned long long)stat_feedback_copies, (double)stat_upload_bytes / 1048576.0,
              (unsigned long long)__atomic_exchange_n(&stat_deferred, 0, __ATOMIC_RELAXED), (unsigned long long)(stat_snap_bytes >> 10),
              (unsigned long long)stat_snap_copies);  // (overlap: SyncWaits returned early; storage copies made)
     stat_feedback_copies = stat_upload_bytes = stat_snap_bytes = stat_snap_copies = 0;
@@ -1304,8 +1308,29 @@ const char *renderer_stats(void) {
         prof_tex_checks = prof_tex_samples = prof_tex_full = prof_tex_full_bytes = prof_tex_dyn = 0;
         prof_exec = prof_draw = prof_sets = prof_vtx = prof_submit = prof_pre = prof_key = prof_dyn = prof_tex = prof_up = prof_gpu = 0;
     }
+    hud_draws += stat_draws, hud_passes += stat_passes, hud_dispatches += stat_dispatches;  // (renderer_hud's totals)
     stat_draws = stat_skipped = stat_passes = stat_dispatches = stat_flushes = stat_wait_ns = 0;
     return stats_text;
+}
+
+// Show advanced information (hud_stats.h): the counters add up in renderer_stats each time it empties them; GPU memory
+// is this process's use of the device-local heaps (VK_EXT_memory_budget's, through VMA; without it VMA's own blocks)
+void renderer_hud(RendererHud *r) {
+    extern int g_vk_tex_live;
+    extern uint64_t g_vk_tex_live_bytes;
+    r->draws = hud_draws + stat_draws, r->passes = hud_passes + stat_passes, r->dispatches = hud_dispatches + stat_dispatches;
+    r->compiles = hud_compiles + (uint64_t)atomic_load(&stat_compiles), r->compile_ms = -1;
+    r->textures = g_vk_tex_live, r->texture_bytes = g_vk_tex_live_bytes;
+    r->gpu_bytes = 0;
+    if (g_vk.vma) {
+        const VkPhysicalDeviceMemoryProperties *mp;
+        vmaGetMemoryProperties(g_vk.vma, &mp);
+        VmaBudget b[VK_MAX_MEMORY_HEAPS];
+        vmaGetHeapBudgets(g_vk.vma, b);
+        for (uint32_t i = 0; i < mp->memoryHeapCount; i++)
+            if (mp->memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) r->gpu_bytes += b[i].usage;
+    }
+    r->gpu_name = g_vk.props.deviceName, r->backend = "Vulkan";
 }
 
 static void st_defaults(void) {

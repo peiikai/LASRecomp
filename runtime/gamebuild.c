@@ -45,7 +45,7 @@
 #endif
 #define GAMELIB_IOS_NAME "lasgame-ios.dylib"
 #ifndef IOS_MIN  // (the Makefile's, the one source: the app's MinimumOSVersion, the deps' target, this build's)
-#define IOS_MIN "16.0"
+#define IOS_MIN "16.4"
 #endif
 
 #ifdef _WIN32

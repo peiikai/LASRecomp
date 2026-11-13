@@ -304,6 +304,10 @@ int main(int argc, char **argv) {
 #ifdef __APPLE__
     metal_hud_relaunch();
 #endif
+#if LARECOMP_IOSEXPORT
+    for (int i = 1; i < argc; i++)  // (a command-line run: its lines to the terminal as well as the log)
+        if (!strcmp(argv[i], "--build-ios")) { plat_cli_begin(); break; }
+#endif
     plat_init();
 #ifdef LARECOMP_DYN_BASE
     LOG("[boot] guest window %llx-%llx (moving: rt.h)\n", (unsigned long long)GUEST_LO, (unsigned long long)GUEST_HI);
@@ -332,9 +336,9 @@ int main(int argc, char **argv) {
     bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
-        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <kit.laskit> [game files]: the iOS app, then exit
+        else if (!strcmp(argv[i], "--build-ios")) {  // <kit.laskit> [game files]: the iOS app, then exit
             build_ios = true;
-            if (!realpath(argv[++i], arg_kit)) snprintf(arg_kit, sizeof arg_kit, "%s", argv[i]);
+            if (i + 1 < argc && !realpath(argv[++i], arg_kit)) snprintf(arg_kit, sizeof arg_kit, "%s", argv[i]);
         }
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;

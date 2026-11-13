@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <shellapi.h>
+#include <psapi.h>  // (K32GetProcessMemoryInfo: in kernel32, no psapi.lib)
 #include <timeapi.h>
 #include <io.h>
 #include <wchar.h>
@@ -154,6 +155,11 @@ static BOOL CALLBACK tsc_calibrate(PINIT_ONCE o, PVOID p, PVOID *c) {
     return TRUE;
 }
 #endif
+uint64_t plat_mem_used_bytes(void) {  // (private bytes: Task Manager's Memory column)
+    PROCESS_MEMORY_COUNTERS_EX pm = {.cb = sizeof pm};
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pm, sizeof pm) ? pm.PrivateUsage : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
 #if defined(__x86_64__) || defined(_M_X64)
     InitOnceExecuteOnce(&tsc_once, tsc_calibrate, NULL, NULL);
@@ -409,13 +415,47 @@ static void publish_log(void) {
     ReleaseMutex(g_log_mutex);
 }
 
+// Command-line runs (plat_cli_begin, runtime/platform.h). The release exe is a GUI-subsystem program: started from a
+// console it gets no standard handles, so it attaches to the parent's console and writes there; an inherited pipe or
+// file (a script capturing it) is kept as it is. Either way the session log below takes stderr, as for the GUI launch.
+static HANDLE g_cli_out = INVALID_HANDLE_VALUE;
+static bool g_cli, g_cli_console, g_cli_attached;  // (attached: stderr never reaches that console)
+
+void plat_cli_begin(void) {
+    g_cli = true;
+    HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    if (err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) {
+        if (!DuplicateHandle(GetCurrentProcess(), err, GetCurrentProcess(), &g_cli_out, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            g_cli_out = INVALID_HANDLE_VALUE;
+    } else if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        g_cli_attached = true;
+        g_cli_out = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                OPEN_EXISTING, 0, NULL);
+    }
+    DWORD mode;
+    g_cli_console = g_cli_out != INVALID_HANDLE_VALUE && GetConsoleMode(g_cli_out, &mode);
+}
+
+bool plat_cli_write(const char *s, size_t n) {
+    if (g_cli_out == INVALID_HANDLE_VALUE || (!g_log_path[0] && !g_cli_attached)) return false;
+    while (n) {
+        DWORD w = 0;
+        if (!WriteFile(g_cli_out, s, (DWORD)n, &w, NULL) || !w) break;
+        s += w;
+        n -= w;
+    }
+    return true;
+}
+
+bool plat_cli_tty(void) { return g_cli_console && (g_log_path[0] || g_cli_attached); }
+
 static void log_to_file_without_console(void) {
     // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting.
     // A relaunched game must still join its GUI session and publish its fallback copy on exit.
     const char *inherited = getenv("LASRECOMP_LOG_FILE");
     bool fresh = !inherited || !*inherited;
     HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
-    if (fresh && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
+    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
     char dir[MAX_PATH];
     DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
     if (!n || n >= sizeof dir) return;

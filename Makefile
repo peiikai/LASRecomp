@@ -18,8 +18,8 @@ endif
 # layout into 5.25 GB, runtime/platform/ios.c finds the gap), its own build dir; static SDL3 / FFmpeg from
 # `make deps-ios` (tools/build_deps_ios.sh); the game code is its own framework in the app.
 # the oldest iOS the app runs on: the one place it's spelled (tools/build_deps_ios.sh, tools/bundle_ios.sh and the
-# start screen's iOS game-code build, runtime/gamebuild.c, all take it from here)
-IOS_MIN   ?= 16.0
+# start screen's iOS game-code build, runtime/gamebuild.c, all take it from here). 16.4: Metal's BC pixel formats.
+IOS_MIN   ?= 16.4
 # the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
 PYV       ?= 3.13
 ifeq ($(PLATFORM),ios)

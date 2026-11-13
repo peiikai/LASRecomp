@@ -14,6 +14,7 @@
 #include "maxwell/shader.h"
 #include "nvn.h"
 #include "renderer.h"
+#include "hud_stats.h"
 #include "pace.h"
 #include "interp.h"
 #include "shader_prep.h"
@@ -284,6 +285,20 @@ static inline double now_ms(void) { return (double)clock_gettime_nsec_np(CLOCK_U
                                slow_note_build("pipeline", (uint64_t)((now_ms() - t0_) * 1e6)); r_; })
 
 static uint64_t stat_counters_gpu;  // timing counters given the GPU's time (the game's 30 / 60 fps choice)
+// Show advanced information (hud_stats.h): the counters above add up here each time renderer_stats empties them
+static uint64_t hud_draws, hud_passes, hud_dispatches, hud_compiles;
+static double hud_compile_ms;
+void renderer_hud(RendererHud *r) {
+    extern int g_tex_live;
+    extern uint64_t g_tex_live_bytes;
+    r->draws = hud_draws + stat_draws, r->passes = hud_passes + stat_passes, r->dispatches = hud_dispatches + stat_dispatches;
+    r->compiles = hud_compiles + (uint64_t)stat_compiles, r->compile_ms = hud_compile_ms + stat_compile_ms;
+    r->textures = g_tex_live, r->texture_bytes = g_tex_live_bytes;
+    r->gpu_bytes = dev ? (uint64_t)dev.currentAllocatedSize : 0;
+    static char name[128];
+    if (!name[0] && dev) snprintf(name, sizeof name, "%s", dev.name.UTF8String);
+    r->gpu_name = name, r->backend = "Metal";
+}
 const char *renderer_stats(void) {
     static int dumps;
     if (dumps++ < 3) {
@@ -301,6 +316,8 @@ const char *renderer_stats(void) {
              g_tex_live, g_tex_live_bytes / 1048576.0, g_views_live, (unsigned long)(g_snap_copies ? g_snap_copies.count : 0), (unsigned long long)stat_vcopy, stat_vcopy_bytes / 1024.0, foot / 1048576.0, stat_wait_by[0] / 24e3, (unsigned long long)stat_wait_n[0], stat_wait_by[1] / 24e3, (unsigned long long)stat_wait_n[1], stat_wait_by[2] / 24e3, (unsigned long long)stat_wait_n[2], (unsigned long long)stat_clears_as_load, (unsigned long long)stat_clear_passes,
              (unsigned long long)stat_counters_gpu, pace_is_slow() ? "30" : "60", (unsigned long long)pace_frames_over());
     stat_counters_gpu = 0;
+    hud_draws += stat_draws, hud_passes += stat_passes, hud_dispatches += stat_dispatches;  // (renderer_hud's totals)
+    hud_compiles += stat_compiles, hud_compile_ms += stat_compile_ms;
     stat_compiles = 0;
     stat_feedback_copies = 0;
     stat_compile_ms = 0;

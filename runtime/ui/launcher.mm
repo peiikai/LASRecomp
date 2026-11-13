@@ -827,29 +827,6 @@ static void onedrive_keep(void) {
     fprintf(stderr, "[launcher] %s warning: kept here\n", g_onedrive_name);
 }
 
-#if PLAT_IOS
-// iOS: signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but iOS
-// ends it at a much lower footprint. Shown on the start screen until OK, every launch (runtime/platform/ios.c).
-static bool g_memory_ok_seen;
-static void memory_notice(float s, float w) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
-    ImGui::BeginChild("##memory", ImVec2(w, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
-                      ImGuiWindowFlags_NavFlattened);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  Installed without the increased memory limit"));
-    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s",
-                       L("iOS may close the game when it needs more memory. Sign the app again with the Increased "
-                         "Memory Limit entitlement turned on."));
-    ImGui::PopTextWrapPos();
-    ImGui::Dummy(ImVec2(0, 4 * s));
-    if (ImGui::Button(L("OK"))) g_memory_ok_seen = true;
-    ImGui::EndChild();
-}
-#endif
 
 
 // ------------------------------------------------------------------ the user's own Nintendo fonts (not shipped)
@@ -1531,12 +1508,14 @@ static bool launcher_pad_event(const SDL_Event &e) {
                 if (now != held[i]) { held[i] = now; io.AddKeyEvent(keys[i], now); }
             }
         }
+        // (pressed or not, no analog value: ImGui scrolls the window under the cursor by it - the column moved with the
+        // selection, user 2026-11-13; the right stick scrolls: option_rows.mm stick_scroll)
         if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, v < -0.3f ? -v : 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, v > 0.3f ? v : 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, v < -0.3f ? -v : 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, v > 0.3f ? v : 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTY) {  // (scrolls a right column of plain text: option_rows.mm)
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickUp, v < -0.1f, v < 0 ? -v : 0);
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, v > 0.1f, v > 0 ? v : 0);
@@ -3074,6 +3053,15 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::SetCursorPosX(x0);
                 ImGui::TextDisabled("%s", busy ? L("Set up the game files to play.") : status_hint(status));
             }
+#if PLAT_IOS
+            // signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but
+            // iOS ends it at a much lower footprint (runtime/platform/ios.c). A line under the status, docs/ios.md says
+            // what to do
+            if (plat_ios_memory_entitled() == 0) {
+                ImGui::SetCursorPosX(x0);
+                ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  Installed without the increased memory limit"));
+            }
+#endif
             if (g_onedrive > 0 && !g_settings.onedrive_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
@@ -3081,13 +3069,6 @@ extern "C" void launcher_run(const char *root) {
                 if (r == 1) onedrive_keep();
                 else if (r == 2) choose_data_folder();
             }
-#if PLAT_IOS
-            else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (the same place, when there is no cloud warning)
-                float w = fminf(ds.x * 0.42f, 560 * s);
-                ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
-                memory_notice(s, w);
-            }
-#endif
             if (const char *f = getenv("LARECOMP_LAUNCHER_FONT")) {  // (test) which typeface this window shows
                 const char *b = strrchr(f, '/');
                 ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetWindowPos().x + 20 * s, ImGui::GetWindowPos().y + 16 * s),
