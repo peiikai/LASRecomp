@@ -16,7 +16,7 @@ native Windows, macOS, Linux, Android and iOS application.
 > - macOS - Apple Silicon only, Metal graphics backend + MetalFX
 > - Windows - x86-64 only, Vulkan graphics backend
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
-> - Android - arm64, Vulkan graphics backend - **experimental**: the latest APK is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page
+> - Android - arm64, Vulkan graphics backend
 > - iPhone and iPad - arm64, Metal graphics backend (sideloaded: see [iPhone and iPad](#iphone-and-ipad))
 > - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
