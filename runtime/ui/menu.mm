@@ -1601,12 +1601,13 @@ static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int o
             bool sel = t.id == g_tab;
             if (scroll && sel && shown_sel != t.id) shown_sel = t.id, ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeX);
             bool lit = (ImGui::IsItemFocused() && g.NavCursorVisible) || ImGui::IsItemHovered();
-            ImVec4 col = sel ? pt.tab_sel : lit ? pt.row_mark : pt.tab;
+            bool hot = lit && !sel && t.on;
+            ImVec4 col = sel ? pt.tab_sel : hot ? pt.tab_hot : pt.tab;
             if (sel && lit) col = ImVec4(col.x * 0.88f, col.y * 0.88f, col.z * 0.88f, col.w);  // (the cursor on it: deeper)
             if (!t.on) col.w *= 0.45f;
-            plastic_pill(dl, ImVec2(p.x, p.y + (sel ? 0 : 2 * scale)), ImVec2(p.x + tw[k], p.y + th - 2 * scale), 10 * scale, col,
-                         (sel ? 7 : 4) * scale, sel ? 1.0f : 0.55f, scale, sel);
-            ImU32 tc = sel ? pt.text_sel : t.on ? pt.text : pt.text_dim;
+            plastic_pill(dl, ImVec2(p.x, p.y + (sel || hot ? 0 : 2 * scale)), ImVec2(p.x + tw[k], p.y + th - 2 * scale),
+                         10 * scale, col, (sel || hot ? 7 : 4) * scale, sel || hot ? 1.0f : 0.55f, scale, sel || hot);
+            ImU32 tc = sel || hot ? pt.text_sel : t.on ? pt.text : pt.text_dim;
             ImVec2 ts(text_w[k], tfs);
             dl->AddText(ImGui::GetFont(), tfs, ImVec2(p.x + (tw[k] - ts.x) * 0.5f, p.y + (th - ts.y) * 0.5f - (sel ? 2 : 1) * scale),
                         tc, L(t.name));
