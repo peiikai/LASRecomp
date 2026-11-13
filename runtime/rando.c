@@ -102,6 +102,23 @@ static void load_pchtxt(const char *path) {
     LOG("[rando] %d code words, %d data patches from %s\n", nwords, ndata, path);
 }
 
+// Many bombs at once in every seed (user 2026-11-12; not a setting, vanilla keeps the game's one bomb): LAS's own
+// nice-bombs patch (optional.asm "Rapid-fire Bombs"), added here so seeds made without it get it too. The X/Y bomb
+// condition main+0xd52880 asks main+0xd52970 whether the player's last bomb is still out; the patch answers "no".
+// LARECOMP_NICE_BOMBS=0: test runs keep the one bomb.
+#define NICE_BOMBS_OFF 0xd52958u  // eor w8, w0, #1 -> mov w8, #1 (same offset in every supported version)
+static void add_nice_bombs(void) {
+    const char *e = getenv("LARECOMP_NICE_BOMBS");
+    if (e && !atoi(e)) return;
+    for (int i = 0; i < nwords; i++)
+        if (words[i].addr == MAIN_BASE + NICE_BOMBS_OFF) return;  // (the seed was made with nice-bombs)
+    if (nwords < WORD_TAB) {
+        words[nwords].addr = MAIN_BASE + NICE_BOMBS_OFF;
+        words[nwords].word = 0x52800028;
+        nwords++;
+    }
+}
+
 static void init(void) {
     settings_load();
     const char *seed = getenv("LARECOMP_RANDO_SEED") ? getenv("LARECOMP_RANDO_SEED") : g_settings.rando_seed;
@@ -113,6 +130,7 @@ static void init(void) {
     char p[600];
     snprintf(p, sizeof p, "%s/exefs/1.0.0.pchtxt", g_seed_dir);
     load_pchtxt(p);
+    add_nice_bombs();
     // the seed ID (the start screen writes it next to a seed it makes): it regenerates the same seed, so a log a
     // player attaches to an issue is enough to reproduce their seed
     char id[96] = "";

@@ -142,6 +142,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_ESCAPE` | 0 / 1 | Force the Escape Bottle on or off (also in vanilla). |
 | `LARECOMP_HINT_SHEET` | 0 / 1 | Force the Hint Sheet on or off. |
 | `LARECOMP_ENEMY_RANDOM` | 0 | Turn a seed's enemy randomizer off. |
+| `LARECOMP_NICE_BOMBS` | 0 | Keep the game's one bomb at a time in a randomizer seed. |
 | `LARECOMP_WEATHER` | `off`, `rain`, `snow`, `storm`, `blizzard`, `random` | Override the weather setting. |
 | `LARECOMP_WEATHER_CYCLE` | 0 / 1 | Turn the weather cycle on. |
 | `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
