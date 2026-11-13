@@ -48,8 +48,9 @@ These are the minimums during the beta and may change as development continues.
 | Storage | About 15 GB free |
 
 > [!TIP]
-> On low-end devices around this level, we recommend setting Internal resolution to Dynamic, Minimum resolution to 360p and
-> Internal FPS target to 30.
+> On lower-end devices, or to run cooler and save battery, we recommend setting Internal resolution to Dynamic and
+> Internal FPS target to 30. If a low-end device still can't hold 30 FPS, setting Minimum resolution to 360p can help
+> further, at the cost of a lot of visual quality.
 
 **iPhone and iPad:**
 
@@ -57,6 +58,11 @@ These are the minimums during the beta and may change as development continues.
 |---|---|
 | OS | iOS or iPadOS 16 or newer |
 | Device | 8 GB of RAM: iPhone 15 Pro or newer, or an iPad with an M1 chip or newer |
+
+> [!TIP]
+> On lower-end devices, or to run cooler and save battery, we recommend setting Internal resolution to Dynamic and
+> Internal FPS target to 30. If a low-end device still can't hold 30 FPS, setting Minimum resolution to 360p can help
+> further, at the cost of a lot of visual quality.
 
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
 
