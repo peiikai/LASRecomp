@@ -341,7 +341,7 @@ def split_all(entries):
 # matches them, so they're texts of their own
 PATTERNS = ['leaving %s', 'outside %s', 'Outside %s', 'Room %s', 'Warp hole: %s', 'Level %s', '%s #%s',
             'Bush %s', 'Dig %s', 'Pot %s', 'pot %s', 'pot %s in room %s', '%s: pot %s', '%s: pot %s in room %s',
-            'rupee %s', 'Apple tree (%s), %s of 3', 'Trendy prize %s', 'Trendy figure %s', 'fairy %s', 'Step %s',
+            'rupee %s', 'Apple tree (%s), %s of 3', 'Trendy prize %s', 'Trendy figure %s', 'fairy %s', 'Step %s', 'Sphere %s',
             'Seed %s']
 # the separators L_line joins parts with: a language may have its own ("、" for ", ", " : " in French)
 SEPARATORS = [', ', ': ']

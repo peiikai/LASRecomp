@@ -1,5 +1,5 @@
 // In-game spoiler page (Randomizer tab -> a seed's "Spoiler" button): shows rando/<seed>/spoiler_view.txt, written by
-// tools/rando/spoiler_view.py (the route, everything useful by step, items by area, dungeon entrances and rooms,
+// tools/rando/spoiler_view.py (the route, the spheres, items by area, dungeon entrances and rooms,
 // entrances, hints).
 // Markup: '# ' section, '## ' sub-heading ("12. Mabe Village": a numbered route stop), '### ' folded group inside a
 // sub-heading, '- ' bullet, two-space continuation, plain text otherwise. A line may end in TAB <location> TAB <flags>:

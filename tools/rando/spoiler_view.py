@@ -5,7 +5,7 @@ rando/<seed>/spoiler.html (the same, for a browser).
   spoiler_view.py <seed dir> [...]
 
 Sections: seed and settings, the Route (only what's needed to win, in an order that can be followed: route.json from
-tools/rando/route.py), everything useful by playthrough step, every item by area (the tracker's check names and the
+tools/rando/route.py), the playthrough spheres (useful items only), every item by area (the tracker's check names and the
 game's place names, areas in map order, small items folded away), dungeon entrances, shuffled dungeon rooms,
 shuffled entrances, hints (Hints on). Seeds made before spheres.json existed are regenerated into build/ (same seed =
 same placements) to compute the step list. Presentation only: nothing here changes a seed.
@@ -293,11 +293,11 @@ def section_route(sd, seed_dir, out):
 
 def section_steps(sd, sph, out):
     out.append('')
-    out.append('# Everything useful step by step')
+    out.append('# Spheres')
     if not sph:
-        out.append('(This seed has no step list.)')
+        out.append('(This seed has no sphere list.)')
         return
-    out.append('Each step can be done with what you had after the previous steps (any order within a step).')
+    out.append('Each sphere can be done with what you had after the previous spheres (any order within a sphere).')
     out.append('Only items that open things up are listed; rupees, traps and similar are left out.')
     n = 0
     for s in sph:
@@ -305,7 +305,7 @@ def section_steps(sd, sph, out):
         if not keep:
             continue
         n += 1
-        out.append(f'## Step {n}')
+        out.append(f'## Sphere {n}')
         by_area = {}
         for l, i in keep:
             by_area.setdefault(sd.area(l), []).append((l, i))
