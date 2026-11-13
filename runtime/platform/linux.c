@@ -301,6 +301,14 @@ uint64_t plat_now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
 }
 
+uint64_t plat_mem_used_bytes(void) {  // (resident pages: /proc/self/statm's second field)
+    FILE *f = fopen("/proc/self/statm", "r");
+    unsigned long long size = 0, res = 0;
+    bool ok = f && fscanf(f, "%llu %llu", &size, &res) == 2;
+    if (f) fclose(f);
+    return ok ? res * (uint64_t)sysconf(_SC_PAGESIZE) : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
     struct timespec ts;
     return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec : 0;

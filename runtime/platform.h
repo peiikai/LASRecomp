@@ -109,6 +109,7 @@ int plat_thread_realtime_check(uint64_t period_ns);  // (the calling thread, aft
 int plat_cpu_count(void);  // logical cores this process may run on (its affinity mask); 0 if unknown
 void plat_thread_guest(int prio);  // a guest thread's host scheduling class from its Switch priority (lower = more urgent)
 uint64_t plat_thread_cpu_ns(void);  // the calling thread's CPU time so far (user + system; diagnostics)
+uint64_t plat_mem_used_bytes(void);  // this process's memory in use (0: unknown; Show advanced information)
 // The calling thread is one of the frame's critical threads: on Windows, no power throttling (EcoQoS) for it and, on a
 // hybrid CPU, a preference for the performance cores (selected CPU sets); on Linux with big and little cores (arm64
 // big.LITTLE, Intel hybrid), its affinity limited to the big ones. LARECOMP_PCORE=0: off. Elsewhere a no-op.

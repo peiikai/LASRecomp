@@ -9,6 +9,7 @@
 #include "../game_addresses.h"
 #include "../rt.h"
 #include "../settings.h"
+#include "hud_stats.h"
 #include "pace.h"
 #include "slowframe.h"
 
@@ -204,6 +205,40 @@ static uint64_t pace_scene(void) {
     return h ? h : 1;
 }
 
+// Show advanced information (hud_stats.h): each game frame's time, and the threads' and the GPU's busy share of it
+static struct {
+    uint64_t frames;
+    double fps, cpu_game, cpu_render, gpu, work;
+    float ms[HUD_FRAMES];
+    int n, at;  // (a ring: the next slot)
+} hud = {.cpu_render = -1, .gpu = -1};
+static void hud_note(uint64_t p, uint64_t tc, uint64_t rc, bool render, double gpu_ms) {
+    if (!p || p > 1000000000ull) return;  // (the first frame, or after a stop: no period)
+    double ms = p / 1e6, k = 0.05;  // (the same ~20-frame average as the GPU time's)
+    hud.frames++;
+    hud.ms[hud.at] = (float)ms, hud.at = (hud.at + 1) % HUD_FRAMES;
+    if (hud.n < HUD_FRAMES) hud.n++;
+    double fps = 1000 / ms, cg = 100.0 * tc / p, cr = 100.0 * rc / p;
+    hud.fps = hud.fps > 0 ? hud.fps + (fps - hud.fps) * k : fps;
+    hud.cpu_game = hud.frames > 1 ? hud.cpu_game + (cg - hud.cpu_game) * k : cg;
+    hud.cpu_render = !render ? -1 : hud.cpu_render >= 0 ? hud.cpu_render + (cr - hud.cpu_render) * k : cr;
+    if (gpu_ms >= 0) {
+        double g = 100 * gpu_ms / ms;
+        hud.gpu = hud.gpu >= 0 ? hud.gpu + (g - hud.gpu) * k : g;
+    }
+    // what the frame took to make, without the wait for the display: the slowest of the three (they run side by side)
+    double work = tc / 1e6;
+    if (render && rc / 1e6 > work) work = rc / 1e6;
+    if (gpu_ms > work) work = gpu_ms;
+    hud.work = hud.frames > 1 ? hud.work + (work - hud.work) * k : work;
+}
+void pace_hud(PaceHud *h) {
+    h->frames = hud.frames, h->fps = hud.fps, h->n = hud.n;
+    for (int i = 0; i < hud.n; i++) h->frame_ms[i] = hud.ms[(hud.at - hud.n + i + HUD_FRAMES) % HUD_FRAMES];
+    h->cpu_game = hud.cpu_game, h->cpu_render = hud.cpu_render, h->gpu = hud.gpu, h->work_ms = hud.work;
+    h->hold30 = pace_is_slow();
+}
+
 // The game's own GPU time per frame (pace_frame's moving average, ms; -1: no GPU timer) - frame interpolation's
 // in-betweens get what is left of a frame (metal.m ip_present)
 static double gpu_avg = -1;
@@ -270,6 +305,7 @@ void pace_frame(void) {
     if (pace_slow && rc / 1e6 > cost && rc < 60000000ull) cost = rc / 1e6;
     avg = avg ? avg + (cost - avg) * 0.05 : cost;
     if (gpu_ms >= 0) gpu_avg = gpu_avg >= 0 ? gpu_avg + ((gpu_ms < 100 ? gpu_ms : 100) - gpu_avg) * 0.05 : gpu_ms;
+    if (!first) hud_note(p, tc, rc, rcpu != 0, gpu_ms);
     static int log = -1;  // LARECOMP_LOG_PACE=1: each frame's period, vsync wait and busy time
     if (log < 0) log = getenv("LARECOMP_LOG_PACE") != NULL;
     extern __thread uint64_t g_rq_wait_ns;  // rqueue.c: waits for the render thread (translation), counted as busy

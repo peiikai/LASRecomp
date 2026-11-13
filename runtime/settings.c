@@ -247,6 +247,7 @@ void settings_load(void) {
             for (int i = 0; i < N_FPS_CORNERS; i++)
                 if (!strcmp(val, corners[i])) g_settings.show_fps = i;
         }
+        else if (!strcmp(key, "fps_advanced")) g_settings.fps_advanced = atoi(val) != 0;
         else if (!strcmp(key, "fps_corner")) {
             static const char *const corners[] = {"off", "top_left", "top_right", "bottom_left", "bottom_right"};
             for (int i = 1; i < N_FPS_CORNERS; i++)
@@ -419,6 +420,7 @@ void settings_save(void) {
         fprintf(f, "show_fps = %s\n", corners[c >= 0 && c < N_FPS_CORNERS ? c : 0]);
         c = g_settings.fps_corner;
         fprintf(f, "fps_corner = %s\n", corners[c > 0 && c < N_FPS_CORNERS ? c : FPS_TOP_LEFT]);
+        fprintf(f, "fps_advanced = %d\n", g_settings.fps_advanced);
     }
     fprintf(f, "frame_interp = %d\n", g_settings.frame_interp);
 #ifdef __APPLE__

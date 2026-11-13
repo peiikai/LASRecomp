@@ -366,6 +366,17 @@ static int bc_kind(VkFormat f) {
     }
 }
 
+// the game's textures alive and their memory (create_image / destroy_image; Show advanced information, renderer_hud)
+int g_vk_tex_live;
+uint64_t g_vk_tex_live_bytes;
+static void tex_count(TexBackend *b, int d) {
+    VmaAllocationInfo ai;
+    vmaGetAllocationInfo(g_vk.vma, b->mem, &ai);
+    g_vk_tex_live += d;
+    g_vk_tex_live_bytes = d > 0 ? g_vk_tex_live_bytes + ai.size : g_vk_tex_live_bytes > ai.size ? g_vk_tex_live_bytes - ai.size : 0;
+    if (g_vk_tex_live < 0) g_vk_tex_live = 0;
+}
+
 static void create_image(NvnTexture *t, TexBackend *b) {
     VkFmt mf = fmt_of(t->format);
     b->ax = b->scalable ? tex_alloc_x(b) : 1;
@@ -475,6 +486,7 @@ static void create_image(NvnTexture *t, TexBackend *b) {
     }
     b->format = vf;
     b->width = tw; b->height = th; b->depth = depth; b->layers = layers; b->levels = levels; b->samples = samples;
+    tex_count(b, 1);
     b->aspect = depthfmt ? aspect_of(t->format) : VK_IMAGE_ASPECT_COLOR_BIT;
     b->base_type = type == VK_IMAGE_TYPE_1D ? (layers > 1 ? VK_IMAGE_VIEW_TYPE_1D_ARRAY : VK_IMAGE_VIEW_TYPE_1D)
                  : type == VK_IMAGE_TYPE_3D ? VK_IMAGE_VIEW_TYPE_3D
@@ -533,6 +545,7 @@ static uint32_t level_w(const TexBackend *b, uint32_t lv) { uint32_t v = b->widt
 static uint32_t level_h(const TexBackend *b, uint32_t lv) { uint32_t v = b->height >> lv; return v ? v : 1; }
 
 static void destroy_image(TexBackend *b) {
+    if (b->image && b->mem) tex_count(b, -1);
     views_forget(b);
     if (b->image || b->mem) defer((Dead){.img = b->image, .mem = b->mem});  // (never the same allocation twice)
     b->image = VK_NULL_HANDLE;
