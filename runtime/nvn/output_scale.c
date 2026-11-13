@@ -573,10 +573,14 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || paced) down = g_dyn - DYN_STEP;
         }
         if (paced) {  // the factor that went late: the ceiling (see g_pc_ceil)
-            if (now < g_pc_until + 30.0) g_pc_wait = fmin(g_pc_wait * 2, 60.0);  // (hit again soon after a lift)
+            // (hit again soon after a lift: wait longer. Not a step down while one holds - a heavy scene stepping down a
+            // step at a time doubled it at each: through the swamp to a minute, then 360p for a minute after it)
+            if (now >= g_pc_until && now < g_pc_until + 30.0) g_pc_wait = fmin(g_pc_wait * 2, 60.0);
             else if (now - g_pc_hit_at > 120.0) g_pc_wait = 10.0;
             g_pc_ceil = g_dyn, g_pc_until = now + g_pc_wait, g_pc_hit_at = now;
-            g_pc_ref_f = fmax(g_dyn_floor, g_dyn - DYN_STEP), g_pc_ref_g = -1;  // (G one step under: the first on-time measure there)
+            // (G one step under, on the grid - the floor's below its first step: 0.40 -> 0.33 at 360p, which never matched
+            // 0.35 and so never lifted early. The first on-time measure there)
+            g_pc_ref_f = dyn_grid(g_dyn - DYN_STEP), g_pc_ref_g = -1;
             LOG("[dynres] paced: frames late at %.2f, raises stay under it for %.0f s\n", g_dyn, g_pc_wait);
         }
         g_dyn = fmax(g_dyn_floor, down);

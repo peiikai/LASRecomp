@@ -80,7 +80,8 @@ typedef struct {
     // the frame rate before the change in the next 5 s, steps down and holds ended in the next 15 s (a swing)
     double f_after, f_before;  // (resize_at) the factor 1.5 s after the change / just before it
     int changes_after, slow_after, downs_after;
-    int low_win, n_win;  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
+    int low_win, n_win;
+    double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 15 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -100,6 +101,7 @@ static Result run(const Case *c) {
     int pace_held = 0, pace_ring[60] = {0}, pace_i = 0, pace_over = 0, pace_fit = 0, pace_holds = 0;
     double pace_grace = 0;
     g_pace_try = 0;
+    double f_heavy_min = 2, f_after_heavy = -1;
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
@@ -121,6 +123,8 @@ static Result run(const Case *c) {
             if (resized && now > c->resize_at + 0.1 && now < c->resize_at + 15 && f < last_f) downs_after++;  // (not the change at the switch)
             last_f = f;
         }
+        if (c->heavy_until > 0 && now > c->heavy_at && now < c->heavy_until) f_heavy_min = fmin(f_heavy_min, f);
+        if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 15) f_after_heavy = f;
         double hold = output_scale_dynamic_hold_fps();
         if (hold != last_hold) {
             printf(" | %.0fs hold %.0f", now, hold);
@@ -202,7 +206,7 @@ static Result run(const Case *c) {
                 .hold_changes = hold_changes, .changes_settled = settled, .back30_t = back30, .f_min_last60 = f_min,
                 .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
                 .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after,
-                .low_win = low_win, .n_win = n_win};
+                .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
     if (c->resize_at > 0)
@@ -421,6 +425,12 @@ int main(int argc, char **argv) {
         {.name = "Android RP5, G + W at the budget, paced from the start", .a = 3, .b = 9, .w = 3.9, .fifo = 1,
          .secs = 300, .lines = 1080, .min_lines = 360, .paced = 2.0, .fill = 0.858, .ease = 0.3, .noise = 0.04,
          .wander = 0.03, .jitter = 5, .miss_every = 150, .start_paced = 1},
+        // the RP5 through the swamp (2026-11-12 23:24 log): a heavy stretch steps it down to the 360p floor, a ceiling at
+        // each step with the wait doubling at each (to a minute), and the floor's step never matched the early lift - 360p
+        // for a minute after the swamp. Back up within 15 s of it now
+        {.name = "Android RP5, a heavy stretch 60-100 s (the swamp), paced from the start", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 200, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06,
+         .jitter = 5, .miss_every = 150, .start_paced = 1, .heavy_at = 60, .heavy = 1.6, .heavy_until = 100},
         // the iPad (case 32) with a 35 ms hitch every 2.5 s: stays at 1.00
         {.name = "iPad paced + hitches every 2.5 s", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
          .secs = 120, .lines = 1668, .paced = 2.5, .jitter = 3, .miss_every = 150},
@@ -487,7 +497,8 @@ int main(int argc, char **argv) {
     case 56: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "RP5 paced at the budget: found paced, not stuck low"); break;
     case 57: check(r.low_win * 10 <= r.n_win && r.f_min_last60 >= 0.6, "Android RP5 shape, paced from the start: never near 486p, few slow windows"); break;
     case 58: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "Android RP5 at the budget, paced from the start: high"); break;
-    case 59: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
+    case 59: check(r.f_heavy_min < 0.5 && r.f_after_heavy >= 0.6, "Android RP5 through the swamp: back up within 15 s"); break;
+    case 60: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
