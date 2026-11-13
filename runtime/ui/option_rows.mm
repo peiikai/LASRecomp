@@ -43,6 +43,9 @@ static bool g_cards;
 static bool g_list_cards;
 
 static bool g_next_disabled;
+static bool g_pane_focus;  // (a row of the pane being drawn has the cursor: stick_scroll)
+static bool g_stick_used;  // (this frame's right-stick tilt went to a column already)
+static void stick_scroll(void);
 static std::vector<OptLine> *g_collect;  // (opt_collect_begin: rows are only read, not drawn)
 static bool g_row_button;  // (the next row is an action: a button)
 void opt_disable_next(void) { g_next_disabled = true; }
@@ -129,6 +132,7 @@ void opt_begin(const char *id, float scale, bool split) {
     g_desc_first.clear();
     g_ids.clear();
     g_pane = 0;
+    g_pane_focus = g_stick_used = false;
 }
 
 void opt_section(const char *title) {
@@ -217,7 +221,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         ImGui::ScrollToItem(ImGuiScrollFlags_KeepVisibleEdgeY);
     }
     if (!off && g_row_first < 0) g_row_first = (int)g_rows.size();
-    if (ImGui::IsItemFocused()) g_row_focus = (int)g_rows.size();
+    if (ImGui::IsItemFocused()) g_row_focus = (int)g_rows.size(), g_pane_focus = true;
     g_rows.push_back(dup ? std::string(label) + " #" + std::to_string(dup + 1) : std::string(label));
     g_row_pane.push_back(g_pane);
     bool mark = g_next_mark, warn = g_next_warn;
@@ -580,6 +584,7 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
 static void left_end(void) {
     ImGui::PopStyleVar();
     if (const char *t = getenv("LARECOMP_OPT_SCROLL")) ImGui::SetScrollY(ImGui::GetScrollMaxY() * (float)atof(t));  // (test)
+    if (g_pane_focus) stick_scroll();  // (the rows' column, the cursor in it)
     ImGui::EndChild();
     // the description: the hovered row (mouse) wins, else the selected one (controller), else the last shown
     if (!g_desc_hover.empty()) g_desc_shown = g_desc_hover;
@@ -587,9 +592,10 @@ static void left_end(void) {
     else if (g_desc_shown.empty()) g_desc_shown = g_desc_first;
 }
 
-// The right stick scrolls the right pane while it only shows something to read (a description, the Randomizer's
-// summary) and is longer than the pane; a pane with rows to pick (this frame) keeps the stick still. Speed grows with
-// the tilt, past a small dead zone. Called at the pane's end, inside its child window.
+// The right stick scrolls (user 2026-11-13: the left stick only moves the cursor): the column the cursor is in (its
+// rows), else - the cursor on the tab bar, or its column all in view - the right pane while it only shows something
+// to read (a description, the Randomizer's summary). Speed grows with the tilt, past a small dead zone. Called at a
+// pane's end, inside its child window.
 static bool any_nav_items(ImGuiWindow *w) {
     if (w->DC.NavLayersActiveMaskNext & 1) return true;
     for (ImGuiWindow *c : w->DC.ChildWindows)
@@ -598,7 +604,9 @@ static bool any_nav_items(ImGuiWindow *w) {
 }
 static void stick_scroll(void) {
     ImGuiWindow *w = ImGui::GetCurrentWindow();
-    if (w->ScrollMax.y <= 0 || any_nav_items(w)) return;
+    if (w->ScrollMax.y <= 0 || g_stick_used) return;
+    bool column = g_pane_focus;
+    if (!column && any_nav_items(w)) return;  // (rows to pick, the cursor elsewhere: still)
     float v = ImGui::GetKeyData(ImGuiKey_GamepadRStickDown)->AnalogValue - ImGui::GetKeyData(ImGuiKey_GamepadRStickUp)->AnalogValue;
     const float dead = 0.18f;
     float a = fabsf(v);
@@ -607,10 +615,12 @@ static void stick_scroll(void) {
     float speed = ImGui::GetFontSize() * (2.0f + 26.0f * t * t);  // (pixels a second: a slow crawl to a quick run)
     float dy = speed * ImGui::GetIO().DeltaTime * (v > 0 ? 1 : -1);
     ImGui::SetScrollY(w, ImClamp(w->Scroll.y + dy, 0.0f, w->ScrollMax.y));
+    g_stick_used = true;
 }
 
 // the right pane's child window, in a well beside the left one
 static void right_begin(const char *id, ImGuiWindowFlags flags) {
+    g_pane_focus = false;  // (stick_scroll: a pane of its own)
     ImGui::SameLine(0, 0);
     ImVec2 p = ImGui::GetCursorScreenPos(), avail = ImGui::GetContentRegionAvail();
     float gap = 24 * g_scale, m = 6 * g_scale;  // (the right pane: a well, as the rows')
@@ -663,7 +673,7 @@ void opt_split(void) {
 
 void opt_split_end(void) {
     ImGui::PopStyleVar();
-    stick_scroll();
+    stick_scroll();  // (the cursor in its rows, or only something to read)
     ImGui::EndChild();
     ImGui::PopID();
 }
@@ -687,14 +697,17 @@ void opt_list_begin(void) {
     if (PLAT_TOUCH) {  // (the descriptions are in the cards: the list has the whole pane)
         g_list_cards = true;
         ImGui::BeginChild("##list", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+        g_pane_focus = false;
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 10 * g_scale));
         return;
     }
     ImGui::SetNextWindowSizeConstraints(ImVec2(0, 0), ImVec2(FLT_MAX, maxh));
     ImGui::BeginChild("##list", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_NavFlattened);
+    g_pane_focus = false;  // (its rows: stick_scroll at opt_list_end)
 }
 
 void opt_list_end(void) {
+    if (g_pane_focus) stick_scroll();  // (the list's column, the cursor in it)
     if (g_list_cards) {
         g_list_cards = false;
         ImGui::PopStyleVar();

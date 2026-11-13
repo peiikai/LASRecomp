@@ -627,7 +627,15 @@ static void drain_events(ImGuiIO &io) {
     for (const QEvent &q : ev) {
         switch (q.kind) {
         case QEvent::KEY: io.AddKeyEvent(q.key, q.down); break;
-        case QEvent::ANALOG: io.AddKeyAnalogEvent(q.key, q.value > 0.1f, q.value); break;
+        case QEvent::ANALOG: {
+            // the left stick only steps the cursor (pressed or not): ImGui also scrolls the window under the cursor by
+            // its analog value, so a tilt moved the column and the selection at once (user 2026-11-13). The right
+            // stick scrolls (option_rows.mm stick_scroll).
+            bool lstick = q.key == ImGuiKey_GamepadLStickUp || q.key == ImGuiKey_GamepadLStickDown ||
+                          q.key == ImGuiKey_GamepadLStickLeft || q.key == ImGuiKey_GamepadLStickRight;
+            io.AddKeyAnalogEvent(q.key, q.value > 0.1f, lstick ? 0.0f : q.value);
+            break;
+        }
         case QEvent::MOUSE_POS: io.AddMousePosEvent(q.x, q.y); break;
         case QEvent::MOUSE_BUTTON: io.AddMouseButtonEvent(q.button, q.down); break;
         case QEvent::WHEEL: io.AddMouseWheelEvent(q.x, q.y); break;
