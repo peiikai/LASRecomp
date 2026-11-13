@@ -681,12 +681,22 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
-    static const char *fps_corners[] = {LN("Off"), LN("Top left"), LN("Top right"), LN("Bottom left"), LN("Bottom right")};
-    opt_choice("Show FPS", &g_settings.show_fps, fps_corners, N_FPS_CORNERS, FPS_OFF,
-               "Shows the frame rate in a corner of the screen.");
-    opt_toggle("Frame Generation", &g_settings.frame_interp, false,
-               "Experimental. Draws extra images between the game's frames for smoother motion, up to your display's "
-               "refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.");
+    {   // on / off, and its corner under it (user 2026-11-12): show_fps is the corner shown (or off), fps_corner the one
+        // it comes back to
+        static const char *corners[] = {LN("Top left"), LN("Top right"), LN("Bottom left"), LN("Bottom right")};
+        bool on = g_settings.show_fps != FPS_OFF;
+        if (g_settings.fps_corner <= FPS_OFF || g_settings.fps_corner >= N_FPS_CORNERS) g_settings.fps_corner = FPS_TOP_LEFT;
+        if (opt_toggle("Show FPS", &on, false, "Shows the frame rate in a corner of the screen."))
+            g_settings.show_fps = on ? g_settings.fps_corner : FPS_OFF;
+        opt_child_begin(on);
+        if (!on) opt_disable_next(), opt_needs_next("Show FPS");
+        int ci = g_settings.fps_corner - FPS_TOP_LEFT;
+        if (opt_choice("Position", &ci, corners, 4, 0, "Which corner the frame rate sits in.")) {
+            g_settings.fps_corner = FPS_TOP_LEFT + ci;
+            if (on) g_settings.show_fps = g_settings.fps_corner;
+        }
+        opt_child_end();
+    }
 #ifdef __APPLE__
     if (opt_toggle("Metal HUD", &g_settings.metal_hud, false,
                    "Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a "
@@ -695,18 +705,9 @@ static void tab_display(void) {
         ImGui::OpenPopup("##hudrestart");
     metal_hud_restart_popup(scale);
 #endif
-    {   // (a live preview, as an Off / On choice)
-        static const char *oo[] = {LN("Off"), LN("On")};
-        int rb = g_settings.blur_removal;
-        if (opt_preview("Remove blur", &rb, oo, 2, 0, "Turns off the tilt-shift blur at the top and bottom of the screen."))
-            g_settings.blur_removal = rb;
-    }
-    if (!PLAT_TOUCH) {  // (a phone's window is the screen, and the app in the background is paused anyway)
-        opt_toggle("Pause on focus lost", &g_settings.pause_unfocused, false,
-                   "The game pauses while its window isn't in front.");
+    if (!PLAT_TOUCH)  // (a phone's window is the screen)
         opt_toggle("Remember window size", &g_settings.remember_window, false,
                    "The window opens at the size it was when you quit.");
-    }
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)
@@ -748,25 +749,9 @@ static void tab_display(void) {
         if (opt_preview("Internal resolution", &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
-    if (g_settings.res_mode == RES_DYNAMIC) {  // Dynamic's floor (output_scale.c dyn_set_floor)
-        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
-        static const int min_lines[] = {360, 540, 720};
-        int mi = 1;
-        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
-        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
-                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
-            g_settings.dyn_min = min_lines[mi];
-    }
-    {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
-        static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
-        static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
-        int fi = 2;
-        for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
-        if (opt_choice("Internal FPS target", &fi, fps, 3, 2,
-                       "The frame rate the game aims for. At 30, Dynamic resolution only lowers the resolution when 30 "
-                       "doesn't fit. 30 outdoors, 60 indoors runs the overworld at 30 and houses, caves and dungeons at 60."))
-            g_settings.fps_target = fps_target[fi];
-    }
+    // Internal resolution's options under it: the upscaler (any resolution but Match display) and Dynamic's floor; the
+    // line beside them lit while either applies (user 2026-11-12)
+    opt_child_begin(g_settings.res_mode != RES_MATCH);
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__
         static const char *ups[] = {LN("Bilinear"), LN("MetalFX")};
@@ -783,11 +768,33 @@ static void tab_display(void) {
             snprintf(udm, sizeof udm, "%s\n\n%s", L(ud),
                      L("Does nothing at Match display, since the game already renders at your screen's resolution."));
             ud = udm;
-            opt_disable_next();
+            opt_disable_next();  // (its note says why, in place of a "Needs" line: no one value turns it on)
         }
         preview_text(LN("Configure how the game is scaled up to fit your window."), NULL);
         if (opt_preview("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
             g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR, g_settings.upscaler_auto = false;
+    }
+    {  // Dynamic's floor (output_scale.c dyn_set_floor)
+        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
+        static const int min_lines[] = {360, 540, 720};
+        int mi = 1;
+        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
+        bool dyn = g_settings.res_mode == RES_DYNAMIC;
+        if (!dyn) opt_disable_next(), opt_needs_next("Internal resolution", "Dynamic");
+        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
+                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
+            g_settings.dyn_min = min_lines[mi];
+    }
+    opt_child_end();
+    {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
+        static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
+        static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
+        int fi = 2;
+        for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
+        if (opt_choice("Internal FPS target", &fi, fps, 3, 2,
+                       "The frame rate the game aims for. At 30, Dynamic resolution only lowers the resolution when 30 "
+                       "doesn't fit. 30 outdoors, 60 indoors runs the overworld at 30 and houses, caves and dungeons at 60."))
+            g_settings.fps_target = fps_target[fi];
     }
     static const char *aa[] = {LN("Off"), LN("SMAA")};
     preview_text(LN("Configure the smoothing of jagged edges. SMAA keeps textures sharp."), NULL);
@@ -805,6 +812,10 @@ static void tab_display(void) {
                "resolution, so their edges are sharper. Higher uses more graphics memory. 0.5x is faster with blockier "
                "edges. Off removes them.");
 
+    opt_section("Experimental");  // (user 2026-11-12)
+    opt_toggle("Frame Generation", &g_settings.frame_interp, false,
+               "Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On "
+               "a 120 Hz display the game shows 120 fps. Some visual glitches are possible.");
     opt_end();
 }
 
@@ -1304,12 +1315,13 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // The live preview (live_preview.h) of a row on the page shown: instead of the tabs, until it closes. The pages with
-// opt_preview rows: Video, Cosmetics.
+// opt_preview rows: Video, Cosmetics, General (Remove blur).
 static float g_preview_scale = 1;
 static void preview_page(void) {
     // (the page drawn last: the bar's Cosmetics is a page alone, which leaves g_tab as Settings had it)
     if (g_shown_tab == 0) tab_display();
     else if (g_shown_tab == 7) tab_cosmetics();
+    else if (g_shown_tab == 11) general_draw(ImGui::GetFontSize() / 34);  // (as tab_display's scale)
 #if PLAT_TOUCH
     else if (g_tab == 10) touch_tab_draw(g_preview_scale);
 #endif
