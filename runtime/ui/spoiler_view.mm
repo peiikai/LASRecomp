@@ -241,16 +241,7 @@ static void draw_route(int si, const Filter &f) {
     for (size_t k = 0; k < n.subs.size(); k++)
         if (!done[k] && n.subs[k].title != "Finish") { current = (int)k; break; }
     bool searching = !f.q.empty();
-    if (!searching)
-        for (auto &l : n.lines) ImGui::TextWrapped("%s", shown(l.text).c_str());
-    int got, total, ndone = 0;
-    route_progress(n, f, &got, &total);
-    if (f.linked && total) {
-        char b[64];
-        snprintf(b, sizeof b, L("%d of %d collected"), got, total);
-        ImGui::Spacing();
-        plastic_progress_bar((float)got / total, ImVec2(-1, 0), b, ImGui::GetFontSize() / 16);
-    }
+    int ndone = 0;
     for (char d : done) ndone += d;
     bool show_done = false;
     if (ndone && !searching && !f.hide_done) {
@@ -348,14 +339,19 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     const char *base = dir ? strrchr(dir, '/') : NULL;
     static char q[64];
     static bool hide_done, useful_only;
+    static bool q_test;  // (test: LARECOMP_SPOILER_QUERY fills the search once)
+    if (!q_test && (q_test = true) && getenv("LARECOMP_SPOILER_QUERY")) snprintf(q, sizeof q, "%s", getenv("LARECOMP_SPOILER_QUERY"));
     Filter f;
     f.linked = dir && seed == (base ? base + 1 : dir);
     f.hide_done = f.linked && hide_done, f.useful_only = useful_only, f.q = lower(q);
 
-    // (the left column's rows: the sections from g_doc[1] on, then the seed's own as the last one)
-    if (g_back_left >= 0) opt_focus_row(g_back_left == 0 ? (int)g_doc.size() - 1 : g_back_left - 1), g_back_left = -1;
+    // (the left column's rows: Search, the sections from g_doc[1] on, then the seed's own as the last one)
+    if (g_back_left >= 0) opt_focus_row(g_back_left == 0 ? (int)g_doc.size() : g_back_left), g_back_left = -1;
     opt_begin("##spoiler", scale, true);
     opt_compact();
+    ui_text_inline(true);  // (filters as typed: typed into directly, not through a prompt)
+    opt_text("Search", q, sizeof q, "Search items and places", NULL);
+    ui_text_inline(false);
     for (size_t i = 1; i <= g_doc.size(); i++) {
         int si = i < g_doc.size() ? (int)i : 0;
         const Node &n = g_doc[si];
@@ -364,6 +360,10 @@ int spoiler_view_draw(const std::string &seed, float scale) {
             int got, total;
             route_progress(n, f, &got, &total);
             snprintf(v, sizeof v, "%d / %d", got, total);
+        } else if (n.title == "Spheres") {  // (how many spheres, not how many items)
+            int c = 0;
+            for (auto &sb : n.subs) c += count_sub(sb, f) > 0;
+            snprintf(v, sizeof v, "%d", c);
         } else if (si != 0) snprintf(v, sizeof v, "%d", count_node(n, f));
         if (si == g_sec) opt_mark_next();
         opt_shown_next();
@@ -372,9 +372,6 @@ int spoiler_view_draw(const std::string &seed, float scale) {
         if (opt_item_nav_focused() || (ImGui::IsItemHovered() && !in_right)) g_sec = si;
     }
     ImGui::Dummy(ImVec2(0, 6 * scale));
-    ui_text_inline(true);  // (filters as typed: typed into directly, not through a prompt)
-    opt_text("Search", q, sizeof q, "Search items and places", NULL);
-    ui_text_inline(false);
     opt_toggle("Useful items only", &useful_only, false, NULL);
     if (f.linked) opt_toggle("Hide checked", &hide_done, false, NULL);
     // ---- right: the chosen section
@@ -385,7 +382,17 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     if (g_sec >= 0 && g_sec < (int)g_doc.size()) {
         opt_list_begin();
         if (g_enter_right && g_doc[g_sec].title != "Route") opt_focus_next_row(), g_enter_right = 0;
-        draw_section(g_sec, f);
+        if (!f.q.empty()) {  // (searching: what matches in every section, live as it's typed)
+            int shown_any = 0;
+            for (size_t si = 1; si < g_doc.size(); si++) {
+                const Node &n = g_doc[si];
+                if (n.title == "Route" || n.title == "Spheres" || !count_node(n, f)) continue;  // (the same items again)
+                heading(shown(n.title), false);
+                draw_section((int)si, f);
+                shown_any = 1;
+            }
+            if (!shown_any) ImGui::TextDisabled("%s", L("No matches."));
+        } else draw_section(g_sec, f);
         g_enter_right = 0;
         opt_list_end();
         opt_desc_text();
