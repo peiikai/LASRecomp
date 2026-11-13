@@ -1,5 +1,5 @@
 # LAS Recomp's release builds: the macOS arm64 .dmg (make dmg), the Windows x64 .zip (make dist), the Linux
-# x86_64 / aarch64 AppImages (make appimage) and the iOS kit .laskit (make ios-kit: the iOS app without game code
+# x86_64 / aarch64 AppImages (make appimage), the signed Android .apk (from Beta 6) and the iOS kit .laskit (make ios-kit: the iOS app without game code
 # plus the tools any of those desktops completes it with), each from the same commit, put on a DRAFT
 # GitHub release with their sha256s. It never publishes: a person reads the draft, writes the notes and publishes
 # it. None of the files holds game code or game files (the start screen builds the game code from the player's own
@@ -33,7 +33,7 @@ on:
         required: false
         default: ''
       platforms:
-        description: 'Test builds only: the platforms the fix targets (macos, windows, linux, linux-aarch64; comma list). Empty: all'
+        description: 'Test builds only: the platforms the fix targets (macos, windows, linux, linux-aarch64, android, ios; comma list). Empty: all'
         required: false
         default: ''
 permissions:
@@ -84,10 +84,10 @@ jobs:
           fi
           # the platforms whose files ship: all for a release; a test build may name only the ones its fix targets
           PLATFORMS=${PLATFORMS//,/ }
-          if [ -z "${PLATFORMS// /}" ]; then PLATFORMS="macos windows linux linux-aarch64 ios"
+          if [ -z "${PLATFORMS// /}" ]; then PLATFORMS="macos windows linux linux-aarch64 android ios"
           elif [[ $TAG != test-* && $TAG != ci-test-* ]]; then echo "::error::platforms: only for test builds; a release ships all"; exit 1; fi
           for p in $PLATFORMS; do
-            case $p in macos|windows|linux|linux-aarch64|ios) ;; *) echo "::error::platform '$p': macos, windows, linux, linux-aarch64 or ios"; exit 1 ;; esac
+            case $p in macos|windows|linux|linux-aarch64|android|ios) ;; *) echo "::error::platform '$p': macos, windows, linux, linux-aarch64, android or ios"; exit 1 ;; esac
           done
           echo "platforms=$(echo $PLATFORMS)" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -373,6 +373,67 @@ jobs:
           compression-level: 0
 
   # (a release published on GitHub: a line on top of its notes while the files build)
+  # the Android app (as experimental.yml's android job) as a release build: this release's LARECOMP_VERSION, no
+  # experimental stamp (its update check takes the normal releases), signed with the published APKs' key (the
+  # repository's secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD: it installs over an experimental build)
+  android:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: NDK and CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;30.0.16248370" "cmake;3.30.4" "platforms;android-36" > /dev/null
+      - name: Dependencies cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: android/deps/out
+          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh', 'android/gen/**') }}
+      - name: Dependencies (SDL3, shaderc, volk, Vulkan headers; the game code builder)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          bash android/deps/build_deps.sh
+          bash android/deps/build_gen_deps.sh
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: android/deps/out
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          LARECOMP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          LARECOMP_VERSION_NAME: ${{ needs.check.outputs.version }}
+        run: |
+          [ -n "$KEYSTORE_B64" ] && [ -n "$LARECOMP_KEYSTORE_PASSWORD" ] || { echo "::error::the signing key secrets are not set"; exit 1; }
+          export LARECOMP_KEYSTORE=$RUNNER_TEMP/lasrecomp.keystore
+          echo "$KEYSTORE_B64" | base64 -d > "$LARECOMP_KEYSTORE"
+          # (Android's version code only grows: minutes since 2026-01-01, as experimental.yml's)
+          export LARECOMP_VERSION_CODE=$(( ($(date -u +%s) - $(date -u -d 20260101 +%s)) / 60 ))
+          (cd android && ./gradlew assembleRelease --console=plain)
+          rm -f "$LARECOMP_KEYSTORE"
+      - name: Signed, and no game files
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify --print-certs "$APK"
+          tools/check_apk.sh "$APK"
+          mkdir -p build/dist && cp "$APK" "build/dist/LAS Recomp-$VERSION-android.apk" && ls -la build/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: build/dist/*.apk
+          if-no-files-found: error
+          compression-level: 0
+
   announce:
     needs: check
     if: github.event_name == 'release' && needs.check.outputs.skip != 'true'
@@ -391,7 +452,7 @@ jobs:
           gh release edit "$TAG" --notes-file new.md
 
   release:
-    needs: [check, macos, windows, linux, ios]
+    needs: [check, macos, windows, linux, android, ios]
     if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -412,11 +473,11 @@ jobs:
         run: |
           cd dist
           ls -la
-          [ "$(ls | wc -l)" = 5 ] || { echo "::error::expected 5 files"; exit 1; }
+          [ "$(ls | wc -l)" = 6 ] || { echo "::error::expected 6 files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
           for f in *; do
             case $f in *-macOS.dmg) p=macos ;; *-windows.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
-                        *-linux-aarch64.AppImage) p=linux-aarch64 ;; *-iOS.laskit) p=ios ;;
+                        *-linux-aarch64.AppImage) p=linux-aarch64 ;; *-iOS.laskit) p=ios ;; *-android.apk) p=android ;;
                         *) echo "::error::unknown file $f"; exit 1 ;; esac
             [[ " $PLATFORMS " == *" $p "* ]] || { echo "built, not shipped: $f"; rm "$f"; }
           done
@@ -453,7 +514,7 @@ jobs:
 
   # (a release published on GitHub whose build failed: the "being built" line says so instead)
   failed:
-    needs: [check, macos, windows, linux, ios, release]
+    needs: [check, macos, windows, linux, android, ios, release]
     if: failure() && github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:
