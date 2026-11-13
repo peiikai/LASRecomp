@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #endif
 #include <SDL3/SDL.h>
+#include <float.h>
 #include <math.h>
 #include <pthread.h>
 #include <atomic>
@@ -39,6 +40,7 @@ extern "C" {
 #include "../hle.h"
 #include "../settings.h"
 #include "../nvn/output_scale.h"
+#include "../nvn/hud_stats.h"
 #include "../menu_sfx.h"
 #include "menu.h"
 void input_reset(void);
@@ -695,6 +697,10 @@ static void tab_display(void) {
             g_settings.fps_corner = FPS_TOP_LEFT + ci;
             if (on) g_settings.show_fps = g_settings.fps_corner;
         }
+        if (!on) opt_disable_next(), opt_needs_next("Show FPS");
+        opt_toggle("Show advanced information", &g_settings.fps_advanced, false,
+                   "Adds a frame time graph, CPU and GPU load, memory, the renderer's work, shader builds and the "
+                   "current level. Mostly for testing and bug reports.");
         opt_child_end();
     }
 #ifdef __APPLE__
@@ -1811,6 +1817,189 @@ static void bar_draw(ImGuiIO &io, float scale) {
     ImGui::PopFont();
 }
 
+// Show FPS > Show advanced information (user 2026-11-12): the frame rate counter as a developer overlay, in the
+// counter's corner - the frame rate (and the game's own under Frame Generation), the last 2 s of game frame times
+// against the frame pacing target, the game thread's, the render thread's and the GPU's busy share of a frame,
+// Dynamic's resolution, memory, the renderer's work per frame, shader builds and where the game is. A see-through box
+// as the plain counter's, not the menus' plastic. (hud_stats.h: what it reads; called inside the "##fps" corner set up)
+extern "C" const char *game_level_name(void);    // hle/widescreen.c
+extern "C" bool game_camera_zone_id(uint32_t *id);
+// Show FPS's counter (user 2026-11-12): the frame rate alone in the advanced overlay's box, its number bright and "fps"
+// dim beside it (it showed Dynamic's resolution under it too: that's the advanced overlay's now)
+static void fps_box(float scale) {
+    const float fk = 1.5f;  // (as the advanced overlay)
+    scale *= fk;
+    ImGui::SetNextWindowBgAlpha(0.62f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8 * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * scale, 9 * scale));
+    ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImFont *font = ImGui::GetFont();
+    float big = ImGui::GetFontSize() * fk, small = big * 0.5f;
+    char b[32];
+    snprintf(b, sizeof b, "%.0f", g_ov_cache ? g_fps_shown : ImGui::GetIO().Framerate);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float nw = font->CalcTextSizeA(big, FLT_MAX, 0, b).x, gap = small * 0.4f;
+    dl->AddText(font, big, p, IM_COL32(255, 255, 255, 255), b);
+    dl->AddText(font, small, ImVec2(p.x + nw + gap, p.y + big - small * 1.25f), IM_COL32(180, 178, 169, 255), "fps");
+    ImGui::Dummy(ImVec2(nw + gap + font->CalcTextSizeA(small, FLT_MAX, 0, "fps").x, big));
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+static void perf_overlay(float scale) {
+    // half as big again as the menus' scale at every size (user 2026-11-12: easier to read), as long as the box fits
+    // the window's height
+    const float fk = fmaxf(1.0f, fminf(1.5f, ImGui::GetIO().DisplaySize.y * 0.9f / (330 * scale)));
+    scale *= fk;  // (the fonts are drawn at the menus' scale: their sizes take fk below)
+    PaceHud ph;
+    RendererHud rh;
+    pace_hud(&ph);
+    renderer_hud(&rh);
+    // per frame / per second figures, over half-second windows
+    static uint64_t w_frames, w_draws, w_passes, w_disp, w_comp;
+    static double w_comp_ms, w_t;
+    static double draws, passes, disp, comp_s, comp_ms_s;
+    double now = ImGui::GetTime();
+    if (now - w_t >= 0.5) {
+        double df = (double)(ph.frames - w_frames), dt = now - w_t;
+        if (w_t > 0 && df > 0) {
+            draws = (rh.draws - w_draws) / df, passes = (rh.passes - w_passes) / df, disp = (rh.dispatches - w_disp) / df;
+            comp_s = (rh.compiles - w_comp) / dt, comp_ms_s = rh.compile_ms >= 0 ? (rh.compile_ms - w_comp_ms) / dt : -1;
+        }
+        w_frames = ph.frames, w_draws = rh.draws, w_passes = rh.passes, w_disp = rh.dispatches, w_comp = rh.compiles;
+        w_comp_ms = rh.compile_ms, w_t = now;
+    }
+
+    ImGui::SetNextWindowBgAlpha(0.62f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8 * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * scale, 9 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * scale, 2 * scale));
+    ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImU32 c_text = IM_COL32(255, 255, 255, 255), c_dim = IM_COL32(180, 178, 169, 255);
+    const ImU32 c_ok = IM_COL32(151, 196, 89, 255), c_warn = IM_COL32(239, 159, 39, 255), c_bad = IM_COL32(240, 149, 149, 255);
+    float big = ImGui::GetFontSize() * fk, small = big * 0.5f, w = 250 * scale;
+    ImFont *font = ImGui::GetFont();
+    auto text = [&](ImVec2 at, float size, ImU32 col, const char *t) { dl->AddText(font, size, at, col, t); };
+    auto width = [&](float size, const char *t) { return font->CalcTextSizeA(size, FLT_MAX, 0, t).x; };
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float y = p.y;
+
+    // the frame rate shown; under Frame Generation the game's own beside it
+    double shown = g_ov_cache ? g_fps_shown : ImGui::GetIO().Framerate;
+    char b[96], r[96];
+    snprintf(b, sizeof b, "%.0f", shown);
+    text(ImVec2(p.x, y), big, c_text, b);
+    float x = p.x + width(big, b) + small * 0.4f;
+    text(ImVec2(x, y + big - small * 1.25f), small, c_dim, "fps");
+    // the frame's work against the target's time (user 2026-11-12, as Metal HUD: "8 / 16.7 ms" has room to spare; the
+    // frame's own time sits at the target while it keeps up): 60's, or 30's while the game runs at 30 (Internal FPS
+    // target 30, or frame pacing holding it there)
+    double game_ms = ph.work_ms;
+    float target = ph.hold30 || g_settings.fps_target == FPS_TARGET_30 ? 33.3f : 16.7f;
+    if (g_settings.frame_interp && ph.fps > 0 && shown > ph.fps * 1.3)
+        snprintf(r, sizeof r, L("%.0f game, %.1f / %.1f ms"), ph.fps, game_ms, target);
+    else snprintf(r, sizeof r, "%.1f / %.1f ms", game_ms, target);
+    text(ImVec2(p.x + w - width(small, r), y + big - small * 1.25f), small, c_dim, r);
+    y += big + 4 * scale;
+
+    // the game frames' times: a line against the target (60, or 30 while frame pacing holds it), spikes in amber
+    float gh = 38 * scale, top_ms = target * 2.5f;
+    dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + gh), IM_COL32(255, 255, 255, 18), 3 * scale);
+    float ty = y + gh - gh * target / top_ms;
+    for (float dx = 0; dx < w; dx += 6 * scale)
+        dl->AddLine(ImVec2(p.x + dx, ty), ImVec2(p.x + fminf(dx + 3 * scale, w), ty), IM_COL32(255, 255, 255, 60), 1);
+    if (ph.n > 1) {
+        float step = w / (HUD_FRAMES - 1);
+        for (int i = 1; i < ph.n; i++) {
+            float x0 = p.x + w - (ph.n - i) * step, x1 = x0 + step;
+            float y0 = y + gh - gh * fminf(ph.frame_ms[i - 1], top_ms) / top_ms;
+            float y1 = y + gh - gh * fminf(ph.frame_ms[i], top_ms) / top_ms;
+            dl->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), ph.frame_ms[i] > target * 1.5f ? c_warn : c_ok, 1.5f * scale);
+        }
+    }
+    y += gh + 6 * scale;
+
+    // busy shares: a bar and its percent each (green, amber past 75%, red past 95%: the frame no longer fits)
+    float lw = width(small, L("Render")) + small, bw = w - lw - width(small, "100%") - small;
+    auto bar = [&](const char *label, double pct) {
+        text(ImVec2(p.x, y), small, c_dim, label);
+        float bx = p.x + lw, by = y + small * 0.35f, bh = small * 0.4f;
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), IM_COL32(255, 255, 255, 46), bh * 0.5f);
+        if (pct >= 0) {
+            ImU32 c = pct > 95 ? c_bad : pct > 75 ? c_warn : c_ok;
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * (float)fmin(pct, 100) / 100, by + bh), c, bh * 0.5f);
+            snprintf(r, sizeof r, "%.0f%%", pct);
+        } else snprintf(r, sizeof r, "-");
+        text(ImVec2(p.x + w - width(small, r), y), small, c_text, r);
+        y += small * 1.25f;
+    };
+    bar(L("Game"), ph.cpu_game);
+    if (ph.cpu_render >= 0) bar(L("Render"), ph.cpu_render);
+    bar("GPU", ph.gpu);
+    y += 3 * scale;
+
+    // label / value lines
+    auto line = [&](const char *label, const char *value, ImU32 vc) {
+        text(ImVec2(p.x, y), small, c_dim, label);
+        text(ImVec2(p.x + w - width(small, value), y), small, vc, value);
+        y += small * 1.25f;
+    };
+    int rw = 0, rh2 = 0;  // (the size the game draws at, whatever Internal resolution is; Dynamic's share of it too)
+    output_scale_render_size(&rw, &rh2);
+    if (rw > 0) {
+        if (g_settings.res_mode == RES_DYNAMIC)
+            snprintf(r, sizeof r, "%dx%d  %.0f%%", rw, rh2, output_scale_dynamic_factor() * 100);
+        else snprintf(r, sizeof r, "%dx%d", rw, rh2);
+        line(L("Resolution"), r, c_text);
+    }
+    uint64_t ram = plat_mem_used_bytes();
+    snprintf(r, sizeof r, "%.1f GB", ram / 1073741824.0);
+    if (ram) line(L("Memory"), r, c_text);
+    if (rh.gpu_bytes) {
+        snprintf(r, sizeof r, "%.1f GB", rh.gpu_bytes / 1073741824.0);
+        line(L("GPU memory"), r, c_text);
+    }
+    snprintf(r, sizeof r, "%d  %.0f MB", rh.textures, rh.texture_bytes / 1048576.0);
+    line(L("Textures"), r, c_text);
+    snprintf(r, sizeof r, "%.0f / %.0f / %.0f", draws, passes, disp);
+    line(L("Draws / passes / dispatches"), r, c_text);
+    if (comp_ms_s >= 0) snprintf(r, sizeof r, L("%.0f a second, %.0f ms"), comp_s, comp_ms_s);
+    else snprintf(r, sizeof r, L("%.0f a second"), comp_s);
+    line(L("Shaders built"), r, comp_s > 0 ? c_warn : c_text);
+    if (game_in_play()) {
+        uint32_t zone;
+        if (game_camera_zone_id(&zone)) snprintf(r, sizeof r, "%s  %X", game_level_name(), zone);
+        else snprintf(r, sizeof r, "%s", game_level_name());
+        line(L("Level"), r, c_text);
+    }
+    if (ph.hold30) line(L("Frame pacing"), L("Holding 30 fps"), c_warn);
+    y += 2 * scale;
+    // the system's name and version, short (user 2026-11-12): plat_system_info's up to its details - "macOS 15.4",
+    // "Windows 11", "Android 15" (not the phone's model and kernel), "Debian GNU/Linux 12" - and a long Linux name
+    // cut at 24 characters
+    static char os_name[64];
+    if (!os_name[0]) {
+        PlatSysInfo si = {};
+        plat_system_info(&si);
+        snprintf(os_name, sizeof os_name, "%s", si.os);
+        os_name[strcspn(os_name, "(,")] = 0;
+        for (size_t n = strlen(os_name); n && os_name[n - 1] == ' '; n--) os_name[n - 1] = 0;
+        if (strlen(os_name) > 24) strcpy(os_name + 21, "...");  // (os-release names are ASCII)
+    }
+    snprintf(r, sizeof r, "%s · %s · %s", rh.gpu_name ? rh.gpu_name : "", rh.backend ? rh.backend : "", os_name);
+    text(ImVec2(p.x, y), small * 0.9f, c_dim, r);
+    float fw = width(small * 0.9f, r);  // (a long GPU name: the box widens for it)
+    y += small * 1.1f;
+
+    ImGui::Dummy(ImVec2(fmaxf(w, fw), y - p.y));
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
+
 // Whether menu_render draws anything: the menu, the keyboard, an overlay (FPS, inventory, tracker, chaos, race, a
 // pickup card, the d-pad cross, the touch controls).
 static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin, bool dpad,
@@ -1873,7 +2062,9 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         char rk[64], dk[160] = "";
         // (only the FPS counter, the run timer and the d-pad cross; input only reaches ImGui while the menu or the name
         // entry is up)
-        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !touch && race_overlay_key(rk, sizeof rk)) {
+        // (not the advanced overlay: it changes every frame)
+        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !touch && !(g_settings.show_fps && g_settings.fps_advanced) &&
+            race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
@@ -1957,25 +2148,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         float m = 16 * scale;
         ImGui::SetNextWindowPos(ImVec2(right ? io.DisplaySize.x - m : m, bottom ? io.DisplaySize.y - m : m), 0,
                                 ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-        ImGui::SetNextWindowBgAlpha(0.5f);
-        ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        char fps_text[32];
-        snprintf(fps_text, sizeof fps_text, L("%.0f fps"), g_ov_cache ? g_fps_shown : io.Framerate);
-        int rw = 0, rh = 0;  // (Dynamic resolution: the size it draws the game at now, under the frame rate)
-        if (g_settings.res_mode == RES_DYNAMIC) output_scale_render_size(&rw, &rh);
-        if (rw > 0) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0));
-        ImGui::TextUnformatted(fps_text);
-        if (rw > 0) {  // (small enough to fit the frame rate's width: the counter keeps its size, a short line taller)
-            char res_text[32];
-            snprintf(res_text, sizeof res_text, "%dx%d", rw, rh);
-            float k = fminf(0.55f, ImGui::CalcTextSize(fps_text).x / fmaxf(1.0f, ImGui::CalcTextSize(res_text).x));
-            ImGui::SetWindowFontScale(k);
-            ImGui::TextUnformatted(res_text);
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::PopStyleVar();
-        }
-        ImGui::End();
+        if (g_settings.fps_advanced) perf_overlay(scale);
+        else fps_box(scale);
     }
 
     if (race) race_overlay_draw(io.DisplaySize, g_menu_font_big, scale);

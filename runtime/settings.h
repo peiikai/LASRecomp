@@ -60,6 +60,7 @@ typedef struct {
     bool metal_hud;      // macOS: Apple's Metal Performance HUD over the game (runtime/nvn/metal.m metal_hud_apply)
     int show_fps;        // FPS_*: the frame rate counter's corner (FPS_OFF: none)
     int fps_corner;      // FPS_* (not off): the corner Show FPS goes back to when turned on (the menu's Position row)
+    bool fps_advanced;   // Show advanced information: the frame rate counter as a developer overlay (menu.mm perf_overlay)
     int dpad_mode;       // DPAD_*: what the d-pad (and arrow keys) do in play: nothing, items (runtime/hle/dpad_items.c), move Link
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
     int rumble_strength; // its intensity, percent (25 / 50 / 75 / 100)
