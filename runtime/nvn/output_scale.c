@@ -592,9 +592,10 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         else if (now - g_dyn_last_lower > 30.0 && g_dyn_raise_wait > DYN_RAISE_WAIT) g_dyn_raise_wait = DYN_RAISE_WAIT;  // (30 s of calm: forget the hunting)
     }
     g_dyn = dyn_grid(g_dyn);
-    // (no step down soon after: not in a row. Within the chain's 5 s - it was 1.5, and a Retroid's second futile step came
-    // 2 s after its first: each was logged as a first)
-    if (g_futile && (now - g_futile_at > 5.0 || g_dyn > prev)) g_futile = 0;
+    // (in a row: no step between them that saved what it should, and no raise - however far apart. A clock that fills
+    // the frame to just under the budget steps down rarely: a Retroid's futile steps came 46 s apart, each counted as a
+    // first, and it sank one step a minute to 432p at 60 fps. 2 minutes apart: unrelated)
+    if (g_futile && (now - g_futile_at > 120.0 || g_dyn > prev)) g_futile = 0;
     if (g_dyn > prev || (g_dyn < prev && nlate > 1) || now - g_chain_at > 5.0) g_chain_from = -1;
     if (g_dyn < prev && gpu && g_hold_dt == 0 && !g_paced && !g_t30_limits && nlate <= 1) {  // (checked at the next decision)
         if (g_chain_from < 0) g_chain_from = prev;

@@ -61,6 +61,8 @@ typedef struct {
     double wf;          // > 0: W grows with the factor: W = w * (1 + wf * (f - 0.5)) (RP5 FSR 1: 4.7 ms at 0.33, 6.6 at 0.85)
     double noise;       // > 0: G's frame-to-frame noise amplitude (default 0.04 = +-2%)
     double cpu_until;   // > 0: the CPU time above ends then (s)
+    double ease;        // > 0: paced: the share of the way the clock moves each frame (default 0.05; the RP5's settles within
+                        // a decision: a step down saves nothing measurable)
     double fill;        // > 0: paced: the clock eases to where G + W is this share of a frame (default 0.9)
     double gpu_read;    // > 0: the reported GPU times are this many times the frame's real GPU wall time (Turnip over-reads)
     double pace_fit_ms; // > 0: the pacer releases when G + W < this for 60 frames (default 13; 10 = backing off; -1 never)
@@ -140,7 +142,7 @@ static Result run(const Case *c) {
         double g = (c->a + c->b * f * f * area) * scene * (1 - nz / 2 + nz * rnd()) * clk, w = w_base * area * (0.99 + 0.02 * rnd()) * clk;
         if (c->paced > 0) {  // the clock eases (over ~0.3 s) to where G + W takes 90% of a 60 Hz frame, never above full
             double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * 16.667 / full));
-            clk += (want - clk) * 0.05;
+            clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
         }
         if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
@@ -403,6 +405,12 @@ int main(int argc, char **argv) {
         {.name = "RP5 shape, steady scene: 0.80 is 7% late", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
          .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06, .wander = 0.01,
          .jitter = 5, .miss_every = 150},
+        // the RP5 on fb357faf (2026-11-12 23:03 log): the clock fills to G + W ~14.4 ms, right at the budget, so steps
+        // down come one at a time, 46 s apart (0.55 -> 0.50 ... 0.45 -> 0.40), each saving nothing - but never two
+        // within 5 s, so it never counted as paced, and a raise was never predicted to fit: 432p at 60 fps for minutes
+        {.name = "RP5 paced, G + W right at the budget: futile steps far apart", .a = 3, .b = 9, .w = 3.9, .fifo = 1,
+         .secs = 300, .lines = 1080, .min_lines = 360, .paced = 2.0, .fill = 0.858, .ease = 0.3, .noise = 0.04, .wander = 0.03, .jitter = 5,
+         .miss_every = 150},
         // the iPad (case 32) with a 35 ms hitch every 2.5 s: stays at 1.00
         {.name = "iPad paced + hitches every 2.5 s", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
          .secs = 120, .lines = 1668, .paced = 2.5, .jitter = 3, .miss_every = 150},
@@ -465,7 +473,8 @@ int main(int argc, char **argv) {
     case 44: check(r.changes_settled <= 2, "a hold 60 can't reach: no probes every 2 minutes"); break;
     case 52: case 53: case 54: check(r.low_win * 10 <= r.n_win, "RP5 shape: at most 1 in 10 windows under 57 fps"); break;
     case 55: check(r.low_win <= 4 && r.changes_settled <= 20 && r.f_end >= 0.7, "RP5, steady scene: settles under the late step, no sawtooth"); break;
-    case 56: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
+    case 56: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "RP5 paced at the budget: found paced, not stuck low"); break;
+    case 57: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
