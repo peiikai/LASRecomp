@@ -1081,13 +1081,15 @@
 {"Boots", "くつ"},
 {"Bracelet", "ブレスレット"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< 戻る"},
-{"Spoiler log - %s", "スポイラーログ - %s"},
+{"%d of %d collected", "%d / %d 回収済み"},
+{"Stops done", "済んだ地点"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "このシードには表示できるスポイラーログがありません。スポイラーログをオフにして作ったシードや、古いバージョンで作ったシードにはありません。"},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "すべてのアイテムの場所と、シードをクリアするための手順を表示します。"},
 {"Reveal spoilers", "ネタバレを表示"},
+{"Back", "戻る"},
+{"Seed settings", "シードの設定"},
+{"Search", "検索"},
 {"Search items and places", "アイテムと場所を検索"},
-{"Search the spoiler log", "スポイラーログを検索"},
 {"Useful items only", "役立つアイテムのみ"},
 {"Hide checked", "済みを隠す"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "%dか所"},
 {"Load a save to warp.", "ワープするにはセーブデータをロードしてください。"},
 {"Places", "場所"},
-{"Search", "検索"},
 {"Search places...", "場所を検索..."},
 {"Link is here", "リンクはここ"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", "、"},
 {": ", "："},
 // not used any more
+{"< Back", "< 戻る"},
+{"Spoiler log - %s", "スポイラーログ - %s"},
+{"Search the spoiler log", "スポイラーログを検索"},
 {"Everything useful step by step", "役立つものを順番にすべて"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "各ステップは、それまでのステップで手に入れたもので進められます（ステップ内の順番は自由）。"},
 {"(This seed has no step list.)", "（このシードにはステップ一覧がありません。）"},

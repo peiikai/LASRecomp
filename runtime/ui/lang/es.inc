@@ -1081,13 +1081,15 @@
 {"Boots", "Botas"},
 {"Bracelet", "Brazalete"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< Volver"},
-{"Spoiler log - %s", "Registro de spoilers - %s"},
+{"%d of %d collected", "%d de %d recogidos"},
+{"Stops done", "Paradas hechas"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "Esta semilla no tiene registro de spoilers. Las semillas creadas con el registro desactivado o con una versión anterior no lo tienen."},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "Aquí se ve dónde está cada objeto, además de una ruta paso a paso para completar la semilla."},
 {"Reveal spoilers", "Mostrar spoilers"},
+{"Back", "Volver"},
+{"Seed settings", "Ajustes de la semilla"},
+{"Search", "Buscar"},
 {"Search items and places", "Buscar objetos y lugares"},
-{"Search the spoiler log", "Buscar en el registro de spoilers"},
 {"Useful items only", "Solo objetos útiles"},
 {"Hide checked", "Ocultar revisadas"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "%d lugares"},
 {"Load a save to warp.", "Carga una partida para teletransportarte."},
 {"Places", "Lugares"},
-{"Search", "Buscar"},
 {"Search places...", "Buscar lugares..."},
 {"Link is here", "Link está aquí"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", ", "},
 {": ", ": "},
 // not used any more
+{"< Back", "< Volver"},
+{"Spoiler log - %s", "Registro de spoilers - %s"},
+{"Search the spoiler log", "Buscar en el registro de spoilers"},
 {"Everything useful step by step", "Todo lo útil, paso a paso"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "Cada paso se puede hacer con lo que tenías tras los pasos anteriores (en cualquier orden dentro de un paso)."},
 {"(This seed has no step list.)", "(Esta semilla no tiene lista de pasos.)"},

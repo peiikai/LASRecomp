@@ -1081,13 +1081,15 @@
 {"Boots", "신발"},
 {"Bracelet", "팔찌"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< 뒤로"},
-{"Spoiler log - %s", "스포일러 로그 - %s"},
+{"%d of %d collected", "%d / %d 획득"},
+{"Stops done", "완료한 지점"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "이 시드에는 보여 줄 스포일러 로그가 없습니다. 스포일러 로그를 끄고 만든 시드나 이전 버전에서 만든 시드에는 없습니다."},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "모든 아이템의 위치와 시드를 클리어하는 단계별 루트를 보여 줍니다."},
 {"Reveal spoilers", "스포일러 보기"},
+{"Back", "뒤로"},
+{"Seed settings", "시드 설정"},
+{"Search", "검색"},
 {"Search items and places", "아이템과 장소 검색"},
-{"Search the spoiler log", "스포일러 로그 검색"},
 {"Useful items only", "유용한 아이템만"},
 {"Hide checked", "체크 끝난 곳 숨기기"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "%d곳"},
 {"Load a save to warp.", "워프하려면 세이브 데이터를 불러오세요."},
 {"Places", "장소"},
-{"Search", "검색"},
 {"Search places...", "장소 검색..."},
 {"Link is here", "링크가 있는 곳"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", ", "},
 {": ", ": "},
 // not used any more
+{"< Back", "< 뒤로"},
+{"Spoiler log - %s", "스포일러 로그 - %s"},
+{"Search the spoiler log", "스포일러 로그 검색"},
 {"Everything useful step by step", "유용한 것 전부, 단계별로"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "각 단계는 이전 단계까지 얻은 것으로 진행할 수 있습니다 (단계 안에서는 순서 자유)."},
 {"(This seed has no step list.)", "(이 시드에는 단계 목록이 없습니다.)"},

@@ -1081,13 +1081,15 @@
 {"Boots", "Сапоги"},
 {"Bracelet", "Браслет"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< Назад"},
-{"Spoiler log - %s", "Журнал спойлеров — %s"},
+{"%d of %d collected", "Собрано %d из %d"},
+{"Stops done", "Пройденные точки"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "У этого сида нет журнала спойлеров. Его нет у сидов, созданных с отключенным журналом или в старой версии."},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "Здесь видно, где лежит каждый предмет, и есть пошаговый маршрут прохождения сида."},
 {"Reveal spoilers", "Показать спойлеры"},
+{"Back", "Назад"},
+{"Seed settings", "Настройки сида"},
+{"Search", "Поиск"},
 {"Search items and places", "Поиск предметов и мест"},
-{"Search the spoiler log", "Поиск по журналу спойлеров"},
 {"Useful items only", "Только полезные предметы"},
 {"Hide checked", "Скрыть пройденные"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "мест: %d"},
 {"Load a save to warp.", "Загрузите сохранение, чтобы перемещаться."},
 {"Places", "Места"},
-{"Search", "Поиск"},
 {"Search places...", "Поиск мест..."},
 {"Link is here", "Линк здесь"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", ", "},
 {": ", ": "},
 // not used any more
+{"< Back", "< Назад"},
+{"Spoiler log - %s", "Журнал спойлеров — %s"},
+{"Search the spoiler log", "Поиск по журналу спойлеров"},
 {"Everything useful step by step", "Всё полезное по шагам"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "Каждый шаг можно выполнить с тем, что у вас было после предыдущих шагов (внутри шага — в любом порядке)."},
 {"(This seed has no step list.)", "(У этого сида нет списка шагов.)"},

@@ -654,7 +654,7 @@ static void gen_overlay(float scale) {
     ImGui::EndPopup();
 }
 
-bool spoiler_view_draw(const std::string &seed, float scale);  // spoiler_view.mm
+int spoiler_view_draw(const std::string &seed, float scale);  // spoiler_view.mm: 0 closed, 2 took B
 static std::string g_spoiler_seed;  // seed whose spoiler page is open
 
 // ---- the tab, in two columns (as the Controls tab's Configure inputs): Seeds and the seed option categories on the
@@ -1471,7 +1471,9 @@ extern "C" void rando_tab_draw(float scale) {
     static bool spoiler_test;  // LARECOMP_SPOILER_TEST=<seed>: open that seed's spoiler page (test hook)
     if (!spoiler_test && getenv("LARECOMP_SPOILER_TEST")) { spoiler_test = true; g_spoiler_seed = getenv("LARECOMP_SPOILER_TEST"); }
     if (!g_spoiler_seed.empty()) {  // the spoiler page replaces the tab until Back
-        if (!spoiler_view_draw(g_spoiler_seed, scale)) g_spoiler_seed.clear();
+        int r = spoiler_view_draw(g_spoiler_seed, scale);
+        if (r != 1) g_back_frame = ImGui::GetFrameCount();  // (B was the page's: not the menu's as well)
+        if (r == 0) g_spoiler_seed.clear();
         return;
     }
     static bool opts_once;  // the options the player last set (larecomp.ini)

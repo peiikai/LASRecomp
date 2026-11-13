@@ -1081,13 +1081,15 @@
 {"Boots", "Bottes"},
 {"Bracelet", "Bracelet"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< Retour"},
-{"Spoiler log - %s", "Spoiler log - %s"},
+{"%d of %d collected", "%d sur %d récupérés"},
+{"Stops done", "Étapes faites"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "Cette seed n'a pas de spoiler log à afficher. Les seeds créées avec le spoiler log désactivé ou par une ancienne version n'en ont pas."},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "Ceci montre où se trouve chaque objet, avec un parcours étape par étape pour finir la seed."},
 {"Reveal spoilers", "Afficher les spoilers"},
+{"Back", "Retour"},
+{"Seed settings", "Réglages de la seed"},
+{"Search", "Chercher"},
 {"Search items and places", "Chercher objets et lieux"},
-{"Search the spoiler log", "Chercher dans le spoiler log"},
 {"Useful items only", "Objets utiles seulement"},
 {"Hide checked", "Masquer les faits"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "%d lieux"},
 {"Load a save to warp.", "Charge une sauvegarde pour te téléporter."},
 {"Places", "Lieux"},
-{"Search", "Chercher"},
 {"Search places...", "Chercher un lieu..."},
 {"Link is here", "Link est ici"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", ", "},
 {": ", " : "},
 // not used any more
+{"< Back", "< Retour"},
+{"Spoiler log - %s", "Spoiler log - %s"},
+{"Search the spoiler log", "Chercher dans le spoiler log"},
 {"Everything useful step by step", "Tout ce qui est utile, étape par étape"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "Chaque étape peut se faire avec ce que tu avais après les étapes précédentes (dans n'importe quel ordre au sein d'une étape)."},
 {"(This seed has no step list.)", "(Cette seed n'a pas de liste d'étapes.)"},

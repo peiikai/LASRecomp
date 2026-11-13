@@ -1081,13 +1081,15 @@
 {"Boots", "鞋子"},
 {"Bracelet", "手鐲"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< 返回"},
-{"Spoiler log - %s", "劇透紀錄 - %s"},
+{"%d of %d collected", "已取得 %d / %d"},
+{"Stops done", "已完成的站點"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "這個種子沒有可顯示的劇透紀錄。關閉劇透紀錄或用舊版產生的種子沒有紀錄。"},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "這裡會顯示每個道具的位置，以及破關種子的逐步路線。"},
 {"Reveal spoilers", "顯示劇透"},
+{"Back", "返回"},
+{"Seed settings", "種子設定"},
+{"Search", "搜尋"},
 {"Search items and places", "搜尋道具和地點"},
-{"Search the spoiler log", "搜尋劇透紀錄"},
 {"Useful items only", "僅顯示有用道具"},
 {"Hide checked", "隱藏已檢查"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "%d個地點"},
 {"Load a save to warp.", "載入存檔後才能傳送。"},
 {"Places", "地點"},
-{"Search", "搜尋"},
 {"Search places...", "搜尋地點..."},
 {"Link is here", "林克在這裡"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", "、"},
 {": ", "："},
 // not used any more
+{"< Back", "< 返回"},
+{"Spoiler log - %s", "劇透紀錄 - %s"},
+{"Search the spoiler log", "搜尋劇透紀錄"},
 {"Everything useful step by step", "所有有用內容，逐步列出"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "每一步都能用前面步驟取得的道具完成（同一步內順序不拘）。"},
 {"(This seed has no step list.)", "（此種子沒有步驟清單。）"},

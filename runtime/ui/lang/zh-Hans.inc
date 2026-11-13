@@ -1081,13 +1081,15 @@
 {"Boots", "鞋子"},
 {"Bracelet", "手镯"},
 // runtime/ui/spoiler_view.mm
-{"< Back", "< 返回"},
-{"Spoiler log - %s", "剧透日志 - %s"},
+{"%d of %d collected", "已获得 %d / %d"},
+{"Stops done", "已完成的站点"},
 {"This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older version don't have one.", "这个种子没有可显示的剧透日志。关闭“剧透日志”或用旧版本生成的种子没有日志。"},
 {"This shows where every item is, plus a step-by-step route to beat the seed.", "这里会显示所有道具的位置，以及通关这个种子的逐步路线。"},
 {"Reveal spoilers", "显示剧透"},
+{"Back", "返回"},
+{"Seed settings", "种子设置"},
+{"Search", "搜索"},
 {"Search items and places", "搜索道具和地点"},
-{"Search the spoiler log", "搜索剧透日志"},
 {"Useful items only", "仅显示有用道具"},
 {"Hide checked", "隐藏已检查"},
 // runtime/ui/tracker_overlay.mm
@@ -1177,7 +1179,6 @@
 {"%d places", "%d个地点"},
 {"Load a save to warp.", "读取存档后才能传送。"},
 {"Places", "地点"},
-{"Search", "搜索"},
 {"Search places...", "搜索地点..."},
 {"Link is here", "林克在这里"},
 // warp_data.h
@@ -1809,6 +1810,9 @@
 {", ", "、"},
 {": ", "："},
 // not used any more
+{"< Back", "< 返回"},
+{"Spoiler log - %s", "剧透日志 - %s"},
+{"Search the spoiler log", "搜索剧透日志"},
 {"Everything useful step by step", "所有有用内容，逐步列出"},
 {"Each step can be done with what you had after the previous steps (any order within a step).", "每一步都能用之前步骤得到的东西完成（同一步内顺序随意）。"},
 {"(This seed has no step list.)", "（此种子没有步骤列表。）"},
