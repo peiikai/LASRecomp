@@ -59,6 +59,7 @@ Settings g_settings = {
     .controller_light = true,
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
     .show_fps = FPS_OFF,
+    .fps_corner = FPS_TOP_LEFT,
     .touch_opacity = 0.6f,
     .touch_edit_button = true,
     .touch_hide_xy_hud = true,  // (the on-screen X / Y show the items)
@@ -246,6 +247,11 @@ void settings_load(void) {
             for (int i = 0; i < N_FPS_CORNERS; i++)
                 if (!strcmp(val, corners[i])) g_settings.show_fps = i;
         }
+        else if (!strcmp(key, "fps_corner")) {
+            static const char *const corners[] = {"off", "top_left", "top_right", "bottom_left", "bottom_right"};
+            for (int i = 1; i < N_FPS_CORNERS; i++)
+                if (!strcmp(val, corners[i])) g_settings.fps_corner = i;
+        }
         else if (!strcmp(key, "frame_interp")) g_settings.frame_interp = atoi(val) != 0;
         else if (!strcmp(key, "metal_hud")) g_settings.metal_hud = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // (auto: never chosen, the GPU's default)
@@ -374,6 +380,7 @@ void settings_load(void) {
     fclose(f);
     if (!tip_key) g_settings.menu_tip_seen = true;  // (a settings file from before the note: not a first launch)
     if (!aspect_key) g_settings.aspect_asked = true;  // (likewise: the aspect ratio was chosen already)
+    if (g_settings.show_fps > FPS_OFF && g_settings.show_fps < N_FPS_CORNERS) g_settings.fps_corner = g_settings.show_fps;
     // (a settings file from before the Randomizer row: the seed PLAY started last is the row's start)
     if (!g_settings.rando_last[0]) strlcpy(g_settings.rando_last, g_settings.rando_seed, sizeof g_settings.rando_last);
     if (g_settings.volume < 0) g_settings.volume = 0;
@@ -410,6 +417,8 @@ void settings_save(void) {
         static const char *const corners[] = {"off", "top_left", "top_right", "bottom_left", "bottom_right"};
         int c = g_settings.show_fps;
         fprintf(f, "show_fps = %s\n", corners[c >= 0 && c < N_FPS_CORNERS ? c : 0]);
+        c = g_settings.fps_corner;
+        fprintf(f, "fps_corner = %s\n", corners[c > 0 && c < N_FPS_CORNERS ? c : FPS_TOP_LEFT]);
     }
     fprintf(f, "frame_interp = %d\n", g_settings.frame_interp);
 #ifdef __APPLE__
