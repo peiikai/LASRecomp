@@ -1872,6 +1872,73 @@ static void perf_overlay(float scale) {
         w_comp_ms = rh.compile_ms, w_t = now;
     }
 
+    const ImU32 c_text = IM_COL32(255, 255, 255, 255), c_dim = IM_COL32(180, 178, 169, 255);
+    const ImU32 c_ok = IM_COL32(151, 196, 89, 255), c_warn = IM_COL32(239, 159, 39, 255), c_bad = IM_COL32(240, 149, 149, 255);
+    ImFont *font = ImGui::GetFont();
+    float big = ImGui::GetFontSize() * fk, small = big * 0.5f;
+    auto width = [&](float size, const char *t) { return font->CalcTextSizeA(size, FLT_MAX, 0, t).x; };
+
+    // what it shows, first: the box is as wide as its widest row (a wider font or a longer translation, Android's
+    // "Draws / passes / dispatches" ran into its value) and its footer, 250 at least
+    double shown = g_ov_cache ? g_fps_shown : ImGui::GetIO().Framerate;
+    char fps_n[16], head[96];
+    snprintf(fps_n, sizeof fps_n, "%.0f", shown);
+    // the frame's work against the target's time (user 2026-11-12, as Metal HUD: "8 / 16.7 ms" has room to spare; the
+    // frame's own time sits at the target while it keeps up): 60's, or 30's while the game runs at 30 (Internal FPS
+    // target 30, or frame pacing holding it there); under Frame Generation the game's own frame rate before it
+    float target = ph.hold30 || g_settings.fps_target == FPS_TARGET_30 ? 33.3f : 16.7f;
+    if (g_settings.frame_interp && ph.fps > 0 && shown > ph.fps * 1.3)
+        snprintf(head, sizeof head, L("%.0f game, %.1f / %.1f ms"), ph.fps, ph.work_ms, target);
+    else snprintf(head, sizeof head, "%.1f / %.1f ms", ph.work_ms, target);
+    struct Line { const char *label; char value[80]; ImU32 col; };
+    Line lines[8];
+    int nl = 0;
+    auto add = [&](const char *label, ImU32 col) -> char * {
+        Line &l = lines[nl++];
+        l.label = label, l.col = col, l.value[0] = 0;
+        return l.value;
+    };
+    int rw = 0, rh2 = 0;  // (the size the game draws at, whatever Internal resolution is; Dynamic's share of it too)
+    output_scale_render_size(&rw, &rh2);
+    if (rw > 0) {
+        if (g_settings.res_mode == RES_DYNAMIC)
+            snprintf(add(L("Resolution"), c_text), 80, "%dx%d  %.0f%%", rw, rh2, output_scale_dynamic_factor() * 100);
+        else snprintf(add(L("Resolution"), c_text), 80, "%dx%d", rw, rh2);
+    }
+    if (uint64_t ram = plat_mem_used_bytes()) snprintf(add(L("Memory"), c_text), 80, "%.1f GB", ram / 1073741824.0);
+    if (rh.gpu_bytes) snprintf(add(L("GPU memory"), c_text), 80, "%.1f GB", rh.gpu_bytes / 1073741824.0);
+    snprintf(add(L("Textures"), c_text), 80, "%d  %.0f MB", rh.textures, rh.texture_bytes / 1048576.0);
+    snprintf(add(L("Draws / passes / dispatches"), c_text), 80, "%.0f / %.0f / %.0f", draws, passes, disp);
+    {
+        char *v = add(L("Shaders built"), comp_s > 0 ? c_warn : c_text);
+        if (comp_ms_s >= 0) snprintf(v, 80, L("%.0f a second, %.0f ms"), comp_s, comp_ms_s);
+        else snprintf(v, 80, L("%.0f a second"), comp_s);
+    }
+    if (game_in_play()) {
+        uint32_t zone;
+        char *v = add(L("Level"), c_text);
+        if (game_camera_zone_id(&zone)) snprintf(v, 80, "%s  %X", game_level_name(), zone);
+        else snprintf(v, 80, "%s", game_level_name());
+    }
+    if (ph.hold30) snprintf(add(L("Frame pacing"), c_warn), 80, "%s", L("Holding 30 fps"));
+    // the system's name and version, short (user 2026-11-12): plat_system_info's up to its details - "macOS 15.4",
+    // "Windows 11", "Android 15" (not the phone's model and kernel), "Debian GNU/Linux 12" - and a long Linux name
+    // cut at 24 characters
+    static char os_name[64];
+    if (!os_name[0]) {
+        PlatSysInfo si = {};
+        plat_system_info(&si);
+        snprintf(os_name, sizeof os_name, "%s", si.os);
+        os_name[strcspn(os_name, "(,")] = 0;
+        for (size_t n = strlen(os_name); n && os_name[n - 1] == ' '; n--) os_name[n - 1] = 0;
+        if (strlen(os_name) > 24) strcpy(os_name + 21, "...");  // (os-release names are ASCII)
+    }
+    char foot[256];
+    snprintf(foot, sizeof foot, "%s · %s · %s", rh.gpu_name ? rh.gpu_name : "", rh.backend ? rh.backend : "", os_name);
+    float gap = small * 1.2f, w = fmaxf(250 * scale, width(small * 0.9f, foot));
+    w = fmaxf(w, width(big, fps_n) + small * 0.4f + width(small, "fps") + gap + width(small, head));
+    for (int i = 0; i < nl; i++) w = fmaxf(w, width(small, lines[i].label) + gap + width(small, lines[i].value));
+
     ImGui::SetNextWindowBgAlpha(0.62f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8 * scale);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * scale, 9 * scale));
@@ -1879,34 +1946,17 @@ static void perf_overlay(float scale) {
     ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
     ImDrawList *dl = ImGui::GetWindowDrawList();
-    const ImU32 c_text = IM_COL32(255, 255, 255, 255), c_dim = IM_COL32(180, 178, 169, 255);
-    const ImU32 c_ok = IM_COL32(151, 196, 89, 255), c_warn = IM_COL32(239, 159, 39, 255), c_bad = IM_COL32(240, 149, 149, 255);
-    float big = ImGui::GetFontSize() * fk, small = big * 0.5f, w = 250 * scale;
-    ImFont *font = ImGui::GetFont();
     auto text = [&](ImVec2 at, float size, ImU32 col, const char *t) { dl->AddText(font, size, at, col, t); };
-    auto width = [&](float size, const char *t) { return font->CalcTextSizeA(size, FLT_MAX, 0, t).x; };
     ImVec2 p = ImGui::GetCursorScreenPos();
     float y = p.y;
 
-    // the frame rate shown; under Frame Generation the game's own beside it
-    double shown = g_ov_cache ? g_fps_shown : ImGui::GetIO().Framerate;
-    char b[96], r[96];
-    snprintf(b, sizeof b, "%.0f", shown);
-    text(ImVec2(p.x, y), big, c_text, b);
-    float x = p.x + width(big, b) + small * 0.4f;
-    text(ImVec2(x, y + big - small * 1.25f), small, c_dim, "fps");
-    // the frame's work against the target's time (user 2026-11-12, as Metal HUD: "8 / 16.7 ms" has room to spare; the
-    // frame's own time sits at the target while it keeps up): 60's, or 30's while the game runs at 30 (Internal FPS
-    // target 30, or frame pacing holding it there)
-    double game_ms = ph.work_ms;
-    float target = ph.hold30 || g_settings.fps_target == FPS_TARGET_30 ? 33.3f : 16.7f;
-    if (g_settings.frame_interp && ph.fps > 0 && shown > ph.fps * 1.3)
-        snprintf(r, sizeof r, L("%.0f game, %.1f / %.1f ms"), ph.fps, game_ms, target);
-    else snprintf(r, sizeof r, "%.1f / %.1f ms", game_ms, target);
-    text(ImVec2(p.x + w - width(small, r), y + big - small * 1.25f), small, c_dim, r);
+    // the frame rate shown (under Frame Generation the in-betweens too), the work / target pair on the right
+    text(ImVec2(p.x, y), big, c_text, fps_n);
+    text(ImVec2(p.x + width(big, fps_n) + small * 0.4f, y + big - small * 1.25f), small, c_dim, "fps");
+    text(ImVec2(p.x + w - width(small, head), y + big - small * 1.25f), small, c_dim, head);
     y += big + 4 * scale;
 
-    // the game frames' times: a line against the target (60, or 30 while frame pacing holds it), spikes in amber
+    // the game frames' times: a line against the target, spikes in amber
     float gh = 38 * scale, top_ms = target * 2.5f;
     dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + gh), IM_COL32(255, 255, 255, 18), 3 * scale);
     float ty = y + gh - gh * target / top_ms;
@@ -1924,7 +1974,9 @@ static void perf_overlay(float scale) {
     y += gh + 6 * scale;
 
     // busy shares: a bar and its percent each (green, amber past 75%, red past 95%: the frame no longer fits)
-    float lw = width(small, L("Render")) + small, bw = w - lw - width(small, "100%") - small;
+    float lw = fmaxf(width(small, L("Game")), fmaxf(width(small, L("Render")), width(small, "GPU"))) + small;
+    float bw = w - lw - width(small, "100%") - small;
+    char r[32];
     auto bar = [&](const char *label, double pct) {
         text(ImVec2(p.x, y), small, c_dim, label);
         float bx = p.x + lw, by = y + small * 0.35f, bh = small * 0.4f;
@@ -1942,60 +1994,16 @@ static void perf_overlay(float scale) {
     bar("GPU", ph.gpu);
     y += 3 * scale;
 
-    // label / value lines
-    auto line = [&](const char *label, const char *value, ImU32 vc) {
-        text(ImVec2(p.x, y), small, c_dim, label);
-        text(ImVec2(p.x + w - width(small, value), y), small, vc, value);
+    for (int i = 0; i < nl; i++) {  // label / value lines
+        text(ImVec2(p.x, y), small, c_dim, lines[i].label);
+        text(ImVec2(p.x + w - width(small, lines[i].value), y), small, lines[i].col, lines[i].value);
         y += small * 1.25f;
-    };
-    int rw = 0, rh2 = 0;  // (the size the game draws at, whatever Internal resolution is; Dynamic's share of it too)
-    output_scale_render_size(&rw, &rh2);
-    if (rw > 0) {
-        if (g_settings.res_mode == RES_DYNAMIC)
-            snprintf(r, sizeof r, "%dx%d  %.0f%%", rw, rh2, output_scale_dynamic_factor() * 100);
-        else snprintf(r, sizeof r, "%dx%d", rw, rh2);
-        line(L("Resolution"), r, c_text);
     }
-    uint64_t ram = plat_mem_used_bytes();
-    snprintf(r, sizeof r, "%.1f GB", ram / 1073741824.0);
-    if (ram) line(L("Memory"), r, c_text);
-    if (rh.gpu_bytes) {
-        snprintf(r, sizeof r, "%.1f GB", rh.gpu_bytes / 1073741824.0);
-        line(L("GPU memory"), r, c_text);
-    }
-    snprintf(r, sizeof r, "%d  %.0f MB", rh.textures, rh.texture_bytes / 1048576.0);
-    line(L("Textures"), r, c_text);
-    snprintf(r, sizeof r, "%.0f / %.0f / %.0f", draws, passes, disp);
-    line(L("Draws / passes / dispatches"), r, c_text);
-    if (comp_ms_s >= 0) snprintf(r, sizeof r, L("%.0f a second, %.0f ms"), comp_s, comp_ms_s);
-    else snprintf(r, sizeof r, L("%.0f a second"), comp_s);
-    line(L("Shaders built"), r, comp_s > 0 ? c_warn : c_text);
-    if (game_in_play()) {
-        uint32_t zone;
-        if (game_camera_zone_id(&zone)) snprintf(r, sizeof r, "%s  %X", game_level_name(), zone);
-        else snprintf(r, sizeof r, "%s", game_level_name());
-        line(L("Level"), r, c_text);
-    }
-    if (ph.hold30) line(L("Frame pacing"), L("Holding 30 fps"), c_warn);
     y += 2 * scale;
-    // the system's name and version, short (user 2026-11-12): plat_system_info's up to its details - "macOS 15.4",
-    // "Windows 11", "Android 15" (not the phone's model and kernel), "Debian GNU/Linux 12" - and a long Linux name
-    // cut at 24 characters
-    static char os_name[64];
-    if (!os_name[0]) {
-        PlatSysInfo si = {};
-        plat_system_info(&si);
-        snprintf(os_name, sizeof os_name, "%s", si.os);
-        os_name[strcspn(os_name, "(,")] = 0;
-        for (size_t n = strlen(os_name); n && os_name[n - 1] == ' '; n--) os_name[n - 1] = 0;
-        if (strlen(os_name) > 24) strcpy(os_name + 21, "...");  // (os-release names are ASCII)
-    }
-    snprintf(r, sizeof r, "%s · %s · %s", rh.gpu_name ? rh.gpu_name : "", rh.backend ? rh.backend : "", os_name);
-    text(ImVec2(p.x, y), small * 0.9f, c_dim, r);
-    float fw = width(small * 0.9f, r);  // (a long GPU name: the box widens for it)
+    text(ImVec2(p.x, y), small * 0.9f, c_dim, foot);
     y += small * 1.1f;
 
-    ImGui::Dummy(ImVec2(fmaxf(w, fw), y - p.y));
+    ImGui::Dummy(ImVec2(w, y - p.y));
     ImGui::End();
     ImGui::PopStyleVar(3);
 }
