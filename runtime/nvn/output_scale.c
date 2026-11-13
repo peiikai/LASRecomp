@@ -20,6 +20,7 @@
 #include "../hle.h"
 #include "../settings.h"
 #include "output_scale.h"
+#include "pace.h"
 
 #define MAX_TEX 16384.0
 
@@ -340,21 +341,28 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                     LOG("[dynres] the floor would fit 60 fps now (game %.1f ms at %.2f: ~%.1f at %.2f, window %.1f): looking for it\n",
                         G, g_dyn, g_floor, g_dyn_floor, W);
                     g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0;
+                    pace_try_60();  // (the game's 30 fps mode, if the frame pacer holds it, ends too: pace.c)
                 }
             }
         }
         // Held at 30 with the GPU 30% idle or more: G may be inflated by a lowered clock (an integrated GPU clocks down
         // while frames wait for the display: UHD 770, 1080p window, G 15.9 ms at 0.50 held at 30 against 9-11 at 60),
-        // so the hold's own measure may never show 60 fitting again (it stayed at 30 for the rest of a run). Every probe
+        // so the hold's own measure may never show 60 fitting again (it stayed at 30 for the rest of a run). Idle by the
+        // floor's estimate, not the GPU's time now: held, the factor climbs while 30 fits (G + W up to 26 ms), so the GPU
+        // looked busy and no probe came (Retroid Pocket 5 at 0.85). The probe ends the frame pacer's hold of the game's
+        // 30 fps mode too (pace_try_60): it only lowered the resolution before, the game stayed at 30 and every probe
+        // failed (pace.c). Every probe
         // wait (10 s, doubling each time a probe fails, at most a minute) it tries 60 at the floor; a probe that fails is
         // back in the hold within ~1.5 s at the factor it had, with frames that were at 30 anyway. After a failed probe
         // the next one waits until the floor's estimate is 10% under what that probe measured there (the scene got
         // lighter) or 2 minutes have passed: a hold that is real (SMAA + FSR 1 at 1080p on the UHD 770) probes rarely.
         double floor_gw = g_ref_g > 0 ? g_floor_g * G / g_ref_g + W : -1;
         bool probe_ok = now - g_probe_fail_at > 120.0 || (floor_gw > 0 && floor_gw < 0.9 * g_probe_fail_gw);
-        if (g_hold_dt > 0 && !hold_up && !t30 && hold_vsyncs() == 2 && avg_gpu < 0.7 * g_hold_dt && now >= g_probe_at && probe_ok) {
-            LOG("[dynres] held at 30 with the GPU %.0f%% busy (game %.1f + window %.1f ms at %.2f): its clock may be down, "
-                "trying 60 at %.2f\n", 100 * avg_gpu / g_hold_dt, G, W, g_dyn, g_dyn_floor);
+        double idle_gw = floor_gw > 0 ? floor_gw : avg_gpu;
+        if (g_hold_dt > 0 && !hold_up && !t30 && hold_vsyncs() == 2 && idle_gw < 0.7 * g_hold_dt && now >= g_probe_at && probe_ok) {
+            LOG("[dynres] held at 30 with the GPU %.0f%% busy at the floor (game %.1f + window %.1f ms at %.2f): its clock may "
+                "be down, trying 60 at %.2f\n", 100 * idle_gw / g_hold_dt, G, W, g_dyn, g_dyn_floor);
+            pace_try_60();
             g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0;
             g_hold_up_votes = g_hold_miss = g_hold_met_votes = 0;
             g_probe_from = g_dyn, g_dyn = g_dyn_floor;
@@ -406,8 +414,9 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
             // a probe that failed, or one met a moment ago that didn't last: wait longer for the next
             if (g_probing || now - g_probe_ok_at < 30.0) g_probe_wait = fmin(g_probe_wait * 2, DYN_PROBE_MAX);
-            if (g_probing && now - g_probe_start < 5.0) g_probe_fail_gw = G + W, g_probe_fail_at = now;
-            if (g_probing && now - g_probe_start < 5.0 && g_probe_from > g_dyn) {  // (a probe failed: the hold's factor again)
+            // (a probe is judged within 8 s: the pacer's second of grace, its 60 frames, then this hold's second)
+            if (g_probing && now - g_probe_start < 8.0) g_probe_fail_gw = G + W, g_probe_fail_at = now;
+            if (g_probing && now - g_probe_start < 8.0 && g_probe_from > g_dyn) {  // (a probe failed: the hold's factor again)
                 LOG("[dynres] 60 fps didn't fit: back to %.2f\n", g_probe_from);
                 g_ref_pending = true;  // (the floor's G as just measured; G's reference at that factor next)
                 g_dyn = g_probe_from;

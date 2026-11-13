@@ -20,6 +20,8 @@ static int g_t30;  // (the case's Internal FPS target is 30)
 bool pace_target_30(void) { return g_t30; }  // (output_scale.c's Internal FPS target: nvn/pace.c)
 static bool g_menu;  // (the case's menu is open: wmenu_at .. wmenu_until)
 bool menu_is_open(void) { return g_menu; }  // (output_scale.c holds Dynamic while the menu is open: runtime/ui/menu.mm)
+static int g_pace_try;  // (pacer cases: Dynamic asked the frame pacer to try 60 - nvn/pace.c pace_try_60)
+void pace_try_60(void) { g_pace_try = 1; }
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
@@ -47,6 +49,10 @@ typedef struct {
     double paced;       // > 0: the GPU's clock follows the load (Apple GPUs: iPad Pro M4): it clocks down until G + W is
                         // about 90% of the frame, down to 1 / paced of its full clock - its times x up to `paced`
     double w1;          // > 0: the window step at 1.00 (MetalFX only runs below 1.00: W is w there)
+    int pacer;          // the frame pacer (nvn/pace.c) as well: 12 of the last 60 frames late hold the game at 30 (whole
+                        // 33.3 ms frames); it goes back to 60 when the GPU's time (G + W, as measured: a lowered clock
+                        // counts) is under 13 ms for 60 frames in a row, or at once when Dynamic asks (pace_try_60) -
+                        // either way with a second's grace before frames count again
 } Case;
 
 typedef struct {
@@ -75,6 +81,9 @@ static Result run(const Case *c) {
     double clk = 1;   // (clock_slow: the GPU's times x this - 1 at full clock)
     double f_after = -1, f_before = -1, p_before = 0;
     int changes_after = 0, slow_after = 0, downs_after = 0;
+    int pace_held = 0, pace_ring[60] = {0}, pace_i = 0, pace_over = 0, pace_fit = 0, pace_holds = 0;
+    double pace_grace = 0;
+    g_pace_try = 0;
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
@@ -126,6 +135,31 @@ static Result run(const Case *c) {
         }
         if (c->cpu > 0) p = c->fifo ? ceil((c->cpu + gw) / 16.667 - 1e-9) * 16.667 : c->cpu + gw;
         if (c->t30 && p < 33.333) p = 33.333;
+        if (c->pacer) {
+            if (pace_held && g_pace_try) {
+                pace_held = 0, pace_grace = now + 1, pace_over = pace_fit = 0, memset(pace_ring, 0, sizeof pace_ring);
+                printf(" | %.0fs pacer: 60", now);
+                if (++col % 8 == 0) printf("\n ");
+            }
+            g_pace_try = 0;
+            if (pace_held) {
+                if (p < 33.333) p = 33.333;
+                pace_fit = gw < 13 ? pace_fit + 1 : 0;
+                if (pace_fit >= 60) {
+                    pace_held = 0, pace_grace = now + 1, pace_over = 0, memset(pace_ring, 0, sizeof pace_ring);
+                    printf(" | %.0fs pacer: 60 (gpu)", now);
+                    if (++col % 8 == 0) printf("\n ");
+                }
+            } else if (now >= pace_grace) {
+                int o = p > 17.5;
+                pace_over += o - pace_ring[pace_i], pace_ring[pace_i] = o, pace_i = (pace_i + 1) % 60;
+                if (pace_over >= 12) {
+                    pace_held = 1, pace_fit = 0, pace_holds++;
+                    printf(" | %.0fs pacer: 30", now);
+                    if (++col % 8 == 0) printf("\n ");
+                }
+            }
+        }
         if (c->stall_at > 0 && now > c->stall_at && now < c->stall_until) p += c->stall_ms;
         if (p < 16.667) p = 16.667;
         if (c->resize_at > 0 && now > c->resize_at - 3 && now <= c->resize_at) p_before = fmax(p_before, p);
@@ -264,6 +298,13 @@ int main(int argc, char **argv) {
         // Dynamic stepped 1.00 -> 0.55 behind the menu; it must stay at 1.00, with the menu open and after it closes
         {.name = "iPad M4, clock follows the load, the menu open 40-60 s (W 5 ms, fifo)", .a = 2.5, .b = 4.5, .w = 1.6,
          .w1 = 0.8, .fifo = 1, .secs = 120, .lines = 1668, .paced = 2.5, .wmenu_at = 40, .wmenu_until = 60, .wmenu = 5},
+        // Retroid Pocket 5 (Turnip R6, 1080p, FSR 1 + SMAA: W 3.3 ms; G 3.8 at 0.50 in a light scene), target 60, with the
+        // frame pacer: a heavy stretch 30-60 s (x3.5: the floor misses 60) holds the game at 30. Held, the Adreno clocks
+        // down (times x1.6) and the hold climbs, so the pacer's own way back (the GPU under 13 ms) never comes; Dynamic's
+        // probes for 60 dropped to the floor, but the game stayed in its 30 fps mode - so each failed and backed off. It
+        // stayed at 30 with 60 fitting at 0.80. The probe must hand 60 to the pacer: back to 60 after the heavy stretch
+        {.name = "RP5, pacer holds 30, clock drops, heavy 30-60 s (fifo)", .a = 4.5, .b = 10, .w = 3.3, .fifo = 1, .secs = 240,
+         .lines = 1080, .clock_slow = 1.6, .heavy_at = 30, .heavy = 2.0, .heavy_until = 60, .pacer = 1},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -315,6 +356,7 @@ int main(int argc, char **argv) {
                    "iPad M4, clock follows the load: stays at 1.00"); break;
     case 34: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 58, "iPad M4, menu open and closed: stays at 1.00"); break;
     case 33: check(r.f_end == 1.0 && r.fps_end > 58, "iPad M4, heavy stretch: back to 1.00 after it"); break;
+    case 35: check(r.fps_end > 58 && r.f_end >= 0.7, "RP5, pacer held at 30: back to 60 after the heavy stretch"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }

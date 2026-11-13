@@ -57,6 +57,11 @@
 //   spawned, a render scale change; or a frame over 100 ms) frames are left out of the count, late or busy;
 // - the frames over must be spread through the window (some in each quarter of it: 15 frames, 1/4 s at 60), not
 //   bunched as after a hitch nothing signalled.
+// Dynamic resolution's hold (output_scale.c) and this one meet: Dynamic held at 30 raises its factor while 30 fits, and a
+// GPU at half load clocks down (Turnip on a Retroid Pocket 5: G + W 17 ms at 360p held, 7 ms at 540p at 60), so the GPU
+// time above never comes under 13 ms - the way back was Dynamic's look for 60 at its floor, which only lowered the
+// resolution and left the game in its 30 fps mode: it failed every time and waited up to a minute between tries. That
+// look now ends this hold too (pace_try_60), with a hitch's grace; frames that don't fit hold again as on a first try.
 // A user setting that changes the GPU's load (the resolution, the upscaler, anti-aliasing: pace_settings_changed) starts
 // the hold and the backoff over: they were learned under the old load (after 4x, where 60 was out of reach, a lower
 // resolution stayed at 30 outdoors, backing off: 10 ms GPU limit, up to 16x the wait). The hold ends and 60 gets a
@@ -160,6 +165,9 @@ void pace_settings_changed(const char *what) {
     __atomic_store_n(&reset_what, what, __ATOMIC_RELEASE);
 }
 
+static int try_60;
+void pace_try_60(void) { __atomic_store_n(&try_60, 1, __ATOMIC_RELEASE); }
+
 bool pace_is_slow(void) { return pace_slow; }
 uint64_t pace_frames_over(void) {
     uint64_t n = stat_pace_over;
@@ -219,6 +227,7 @@ void pace_frame(void) {
     static int idx, nover, nbusy, calm, clear, backoff = 1;
     static bool late_hold;  // (the hold was started by frames shown late more than by busy ones)
     static uint64_t back_at;  // when frame pacing last went back to 60 (0: not yet)
+    static bool try_back;     // (that was Dynamic's look for 60: a hold right after it keeps the backoff)
     static double avg;  // cost (ms at 60 fps), moving average (~20 frames)
     static uint64_t last_tcpu, last_rcpu;
     extern uint64_t rq_render_cpu_ns(void);  // rqueue.c: the render thread's CPU time so far (0: no render thread)
@@ -245,6 +254,15 @@ void pace_frame(void) {
         nover = nbusy = 0;
         memset(over, 0, sizeof over);
         memset(recent, 0, sizeof recent);
+    }
+    if (__atomic_exchange_n(&try_60, 0, __ATOMIC_ACQ_REL) && on && pace_slow) {  // (see above)
+        LOG("[pace] dynamic resolution looks for 60 at its floor: trying 60\n");
+        pace_slow = late_hold = false, back_at = now, try_back = true;
+        clear = calm = cpu_clear = 0, gpu_said = 0;
+        nover = nbusy = 0;
+        memset(over, 0, sizeof over);
+        memset(recent, 0, sizeof recent);
+        pace_hitch("a try at 60");
     }
     if (first || p > 100000000ull) {  // (loading, a hitch: not a pace, and maybe a new scene)
         clear = calm = cpu_clear = 0, scene = 0;
@@ -345,7 +363,8 @@ void pace_frame(void) {
     if (!pace_slow && nover >= 12 && med >= 13.0f && quarters == 4) {
         pace_slow = true, calm = clear = cpu_clear = 0, gpu_said = 0;
         late_hold = nbusy < 12;
-        if (back_at && now - back_at < 20000000000ull && backoff < 16) backoff *= 2;  // (flickering: wait longer)
+        if (back_at && now - back_at < 20000000000ull && backoff < 16 && !try_back) backoff *= 2;  // (flickering: wait longer)
+        try_back = false;
         LOG("[pace] frames don't fit 60 fps (%d of the last 60 over 16.2 ms busy or shown late, %d by busy time, median %.1f): "
             "holding the game's 30 fps mode%s\n", nover, nbusy, med, backoff > 1 ? " (backing off)" : "");
     } else if (pace_slow) {
@@ -371,7 +390,7 @@ void pace_frame(void) {
             LOG("[pace] %d frames with %s headroom on gameplay frames (%.1f ms a frame at 60 on average, median %.1f, at most "
                 "%.1f%s): back to the game's own choice\n", clear >= clear_n ? clear : calm, clear >= clear_n ? "clear" : "enough",
                 avg, med, peak, g);
-            pace_slow = false, nover = nbusy = 0, back_at = now;
+            pace_slow = false, nover = nbusy = 0, back_at = now, try_back = false;
             memset(over, 0, sizeof over);
             memset(recent, 0, sizeof recent);
         }
