@@ -142,17 +142,19 @@ extern "C" void difficulty_draw(float scale) {
     opt_begin("##gameplay", scale);
     opt_section("Gameplay");
     {
-        static const char *const names[] = {LN("Normal"), LN("Brisk"), LN("Running"), LN("Sprinting"), LN("Zoomies")};
-        static const float mult[] = {1, 1.25f, 1.5f, 1.75f, 2.5f};
+        // (the multiplier itself, user 2026-11-12: it was Brisk / Running / Sprinting / Zoomies)
+        static const char *const names[] = {LN("Normal"), "1.25x", "1.5x", "1.75x", "2x", "2.25x", "2.5x"};
+        static const float mult[] = {1, 1.25f, 1.5f, 1.75f, 2, 2.25f, 2.5f};
+        enum { N = sizeof mult / sizeof mult[0] };
         int wi = 0;  // (the closest step to the setting)
-        for (int i = 0; i < 5; i++)
+        for (int i = 0; i < N; i++)
             if (fabsf(mult[i] - g_settings.walk_speed) < fabsf(mult[wi] - g_settings.walk_speed)) wi = i;
-        if (opt_choice("Walk speed", &wi, names, 5, 0, "How fast Link walks. Doesn't change the Pegasus Boots or swimming.")) {
+        if (opt_choice("Walk speed", &wi, names, N, 0, "How fast Link walks. Doesn't change the Pegasus Boots or swimming.")) {
             g_settings.walk_speed = mult[wi];
             settings_save();
         }
         opt_child_begin(wi != 0);
-        if (wi == 0) opt_disable_next(), opt_needs_next("Walk speed", LN("Brisk or faster"));
+        if (wi == 0) opt_disable_next(), opt_needs_next("Walk speed", LN("1.25x or faster"));
         if (opt_toggle("Indoors", &g_settings.walk_speed_dungeons, false,
                        "Use the walk speed in houses, caves and dungeons too."))
             settings_save();
