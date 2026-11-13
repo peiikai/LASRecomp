@@ -1950,3 +1950,5 @@
 {"Needs %s set to %s.", "Benötigt „%s“ auf „%s“."},
 {"Brisk or faster", "Zügig oder schneller"},
 {"Experimental", "Experimentell"},
+{"Position", "Position"},
+{"Which corner the frame rate sits in.", "In welcher Ecke die Bildrate sitzt."},

@@ -1950,3 +1950,5 @@
 {"Needs %s set to %s.", "「%s」を「%s」にする必要があります。"},
 {"Brisk or faster", "速め以上"},
 {"Experimental", "実験的"},
+{"Position", "位置"},
+{"Which corner the frame rate sits in.", "フレームレートを表示する隅。"},

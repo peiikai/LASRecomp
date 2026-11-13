@@ -52,6 +52,8 @@ extern "C" void difficulty_frame(void) {}
 
 // General tab: the menus' and the game's language, text speed, the Hero Mode icon and the speedrun timer - settings
 // that change how the game is shown, not how it plays (user, 2026-11-11). The start screen's System tab stays apart.
+extern "C" void input_apply_background(void);  // hle/input.c
+
 extern "C" void general_draw(float scale) {
     opt_begin("##general", scale);
     opt_section("General");
@@ -79,6 +81,21 @@ extern "C" void general_draw(float scale) {
     if (opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
                    "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file."))
         settings_save();
+    // (from Video, user 2026-11-12; a phone's window is the screen, and the app in the background is paused anyway)
+    if (!PLAT_TOUCH && opt_toggle("Pause on focus lost", &g_settings.pause_unfocused, false,
+                                  "The game pauses while its window isn't in front."))
+        settings_save();
+    // (from Controls, user 2026-11-12)
+    if (!PLAT_TOUCH && opt_toggle("Allow background inputs", &g_settings.bg_input, false,
+                                  "Controllers keep working while another window is in front. macOS may ask for Input "
+                                  "Monitoring permission."))
+        input_apply_background(), settings_save();
+    {   // (from Video, user 2026-11-12: a live preview, as an Off / On choice)
+        static const char *const oo[] = {LN("Off"), LN("On")};
+        int rb = g_settings.blur_removal;
+        if (opt_preview("Remove blur", &rb, oo, 2, 0, "Turns off the tilt-shift blur at the top and bottom of the screen."))
+            g_settings.blur_removal = rb, settings_save();
+    }
 
     // run timer / LiveSplit (runtime/hle/run_timer.c, runtime/livesplit.c, runtime/ui/race_overlay.mm)
     opt_section("Speedrun");

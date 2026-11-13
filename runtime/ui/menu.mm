@@ -681,9 +681,22 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
-    static const char *fps_corners[] = {LN("Off"), LN("Top left"), LN("Top right"), LN("Bottom left"), LN("Bottom right")};
-    opt_choice("Show FPS", &g_settings.show_fps, fps_corners, N_FPS_CORNERS, FPS_OFF,
-               "Shows the frame rate in a corner of the screen.");
+    {   // on / off, and its corner under it (user 2026-11-12): show_fps is the corner shown (or off), fps_corner the one
+        // it comes back to
+        static const char *corners[] = {LN("Top left"), LN("Top right"), LN("Bottom left"), LN("Bottom right")};
+        bool on = g_settings.show_fps != FPS_OFF;
+        if (g_settings.fps_corner <= FPS_OFF || g_settings.fps_corner >= N_FPS_CORNERS) g_settings.fps_corner = FPS_TOP_LEFT;
+        if (opt_toggle("Show FPS", &on, false, "Shows the frame rate in a corner of the screen."))
+            g_settings.show_fps = on ? g_settings.fps_corner : FPS_OFF;
+        opt_child_begin(on);
+        if (!on) opt_disable_next(), opt_needs_next("Show FPS");
+        int ci = g_settings.fps_corner - FPS_TOP_LEFT;
+        if (opt_choice("Position", &ci, corners, 4, 0, "Which corner the frame rate sits in.")) {
+            g_settings.fps_corner = FPS_TOP_LEFT + ci;
+            if (on) g_settings.show_fps = g_settings.fps_corner;
+        }
+        opt_child_end();
+    }
 #ifdef __APPLE__
     if (opt_toggle("Metal HUD", &g_settings.metal_hud, false,
                    "Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a "
@@ -692,18 +705,9 @@ static void tab_display(void) {
         ImGui::OpenPopup("##hudrestart");
     metal_hud_restart_popup(scale);
 #endif
-    {   // (a live preview, as an Off / On choice)
-        static const char *oo[] = {LN("Off"), LN("On")};
-        int rb = g_settings.blur_removal;
-        if (opt_preview("Remove blur", &rb, oo, 2, 0, "Turns off the tilt-shift blur at the top and bottom of the screen."))
-            g_settings.blur_removal = rb;
-    }
-    if (!PLAT_TOUCH) {  // (a phone's window is the screen, and the app in the background is paused anyway)
-        opt_toggle("Pause on focus lost", &g_settings.pause_unfocused, false,
-                   "The game pauses while its window isn't in front.");
+    if (!PLAT_TOUCH)  // (a phone's window is the screen)
         opt_toggle("Remember window size", &g_settings.remember_window, false,
                    "The window opens at the size it was when you quit.");
-    }
 
     opt_section("Rendering");
     // display order -> RES_* (the ini / enum order predates the menu order)
@@ -1311,12 +1315,13 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // The live preview (live_preview.h) of a row on the page shown: instead of the tabs, until it closes. The pages with
-// opt_preview rows: Video, Cosmetics.
+// opt_preview rows: Video, Cosmetics, General (Remove blur).
 static float g_preview_scale = 1;
 static void preview_page(void) {
     // (the page drawn last: the bar's Cosmetics is a page alone, which leaves g_tab as Settings had it)
     if (g_shown_tab == 0) tab_display();
     else if (g_shown_tab == 7) tab_cosmetics();
+    else if (g_shown_tab == 11) general_draw(ImGui::GetFontSize() / 34);  // (as tab_display's scale)
 #if PLAT_TOUCH
     else if (g_tab == 10) touch_tab_draw(g_preview_scale);
 #endif

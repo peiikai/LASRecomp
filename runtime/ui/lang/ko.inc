@@ -1950,3 +1950,5 @@
 {"Needs %s set to %s.", "'%s'을(를) '%s'(으)로 설정해야 합니다."},
 {"Brisk or faster", "빠른 걸음 이상"},
 {"Experimental", "실험적"},
+{"Position", "위치"},
+{"Which corner the frame rate sits in.", "프레임 레이트를 표시할 구석입니다."},

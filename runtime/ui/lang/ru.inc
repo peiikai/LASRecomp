@@ -1950,3 +1950,5 @@
 {"Needs %s set to %s.", "Нужно «%s»: «%s»."},
 {"Brisk or faster", "Бодрая или быстрее"},
 {"Experimental", "Экспериментальное"},
+{"Position", "Положение"},
+{"Which corner the frame rate sits in.", "В каком углу показывается частота кадров."},

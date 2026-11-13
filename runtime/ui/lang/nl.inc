@@ -1950,3 +1950,5 @@
 {"Needs %s set to %s.", "Vereist ‘%s’ op ‘%s’."},
 {"Brisk or faster", "Vlot of sneller"},
 {"Experimental", "Experimenteel"},
+{"Position", "Positie"},
+{"Which corner the frame rate sits in.", "In welke hoek de framerate staat."},

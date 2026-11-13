@@ -1950,3 +1950,5 @@
 {"Needs %s set to %s.", "需要将“%s”设为“%s”。"},
 {"Brisk or faster", "轻快或更快"},
 {"Experimental", "实验性"},
+{"Position", "位置"},
+{"Which corner the frame rate sits in.", "帧率显示在哪个角落。"},
