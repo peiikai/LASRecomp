@@ -129,7 +129,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal`, `frame_interp`, `powerup_music` (0 / 1), `dpad_mode` (0-2), `text_speed` (0-2), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
+| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal`, `frame_interp`, `powerup_music` (0 / 1), `dpad_mode` (0-2), `text_speed` (0-2), `shadows` (0-5: Off, 0.5x, Default, 2x, 3x, 4x), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
 | `LARECOMP_COSMETICS` | `frame:tunic:hearts,...` | Set the tunic and heart colours (palette name or `#RRGGBB`) at that frame. |
 | `LARECOMP_DAMAGE` | multiplier, or `ohko` | Override the damage taken setting. |
 | `LARECOMP_WALK_SPEED` | multiplier | Override the walk speed setting. |
@@ -145,10 +145,15 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_NICE_BOMBS` | 0 | Keep the game's one bomb at a time in a randomizer seed. |
 | `LARECOMP_WEATHER` | `off`, `rain`, `snow`, `storm`, `blizzard`, `random` | Override the weather setting. |
 | `LARECOMP_WEATHER_CYCLE` | 0 / 1 | Turn the weather cycle on. |
-| `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
-| `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link, as the randomizer option will. |
+| `LARECOMP_WEATHER_CYCLE_START` | `rain`, `snow`, `storm`, `blizzard` | A new weather cycle starts with this weather, 20 seconds before the next change. |
+| `LARECOMP_WEATHER_CYCLE_SPEED` | multiplier | Run the weather cycle's clock this many times faster. |
+| `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link outside a Weather Cycle seed too. |
+| `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link outside a Weather Cycle seed too. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |
-| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on (`3`: the menu bar's Randomizer, `5` its Cheats, `7` its Cosmetics). |
+| `LARECOMP_MENU_TAB` | page number | The page the overlay menu opens on: `2` Save Editor, `3` Randomizer, `4` Warp, `5` Cheats, `7` Cosmetics, `9` Quit, `10` Reset. Other numbers open Settings on that tab (`0` Video, `1` Audio, `6` Gameplay, `8` Controls, `11` General). |
+| `LARECOMP_MENU_BAR` | entry number | Open the menu bar alone, its cursor on that entry: `0` Settings, `1` Cosmetics, `2` Randomizer, `3` Warp, `4` Save Editor, `5` Cheats, `6` Reset, `7` Quit, `8` the close button. |
+| `LARECOMP_TOUCH_SHOW_INPUT` | 0 / 1 | iPhone, iPad and Android: show scripted input (`LARECOMP_INPUT`) on the touch controls, the buttons lit and the stick moved. |
+| `LARECOMP_UPDATE_TAGS` | `tag,tag,...` | The update check sees these release tags instead of asking GitHub (no network). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
@@ -167,6 +172,9 @@ All of these write to the log (`lasrecomp.log` in the data folder, or the run's 
 | `LARECOMP_LOG_FLAGS` | 1 | Log event flag changes in the loaded save. |
 | `LARECOMP_LOG_INTERVAL` | 1 | Log each change of the game's present interval (its 60 / 30 fps mode). |
 | `LARECOMP_LOG_DYNRES` | 1 | Log every dynamic resolution decision, not only the steps. |
+| `LARECOMP_LOG_WEATHER` | 1 | Log the weather cycle's clock stopping and going on. |
+| `LARECOMP_LOG_TRACKER` | 1 | Log the Tracker's state for each check, and what the ones out of reach still need, once after each update. |
+| `LARECOMP_METAL_HUD` | 1 | Mac, iPhone and iPad. Set by the app itself when it starts with the Metal HUD setting on; not needed by hand. |
 | `LARECOMP_FNPROF` | `from:to` (frames) | Sample which game functions run between those frames, to `build/fnprof.txt`. `0:<to>` starts at process start. |
 | `LARECOMP_DEBUG_FRAME` | frame | Dump that frame's render passes to `build/pass_NNN.png` and log its draws (F9 does the same for the next frame). |
 | `LARECOMP_DEBUG_FRAMES` | count | With `LARECOMP_DEBUG_FRAME` (Vulkan): dump that many frames in a row. |

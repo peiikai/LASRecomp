@@ -25,7 +25,7 @@ Pull requests that include Nintendo files can't be merged. Screenshots and short
 
 Report bugs as a [GitHub issue](https://github.com/peiikai/LASRecomp/issues). Please include:
 
-- your platform (macOS / Windows / Linux), hardware (CPU, GPU) and window size / aspect ratio
+- your platform (macOS / Windows / Linux / Android / iPhone / iPad), hardware (CPU, GPU) and window size / aspect ratio
 - what you did, what happened, and what you expected
 - for randomizer problems: the **seed ID** (Randomizer, the seed's Copy seed ID), the settings, and where you got stuck
   (area / room, which items you had). A seed ID reproduces the exact seed on the same LAS Recomp version.
@@ -38,7 +38,7 @@ Report bugs as a [GitHub issue](https://github.com/peiikai/LASRecomp/issues). Pl
 `main` holds the last release and isn't where development happens, so don't base your work on it. Work happens on
 the current development branch:
 
-- during the beta period: the latest `beta_<n>` branch (for example `beta_5`)
+- during the beta period: the latest `beta_<n>` branch (for example `beta_6`)
 - after 1.0: the latest `vX.Y.Zb` branch, for the next version (for example `v1.1.0b`)
 
 Pick the highest-numbered one in the [branch list](https://github.com/peiikai/LASRecomp/branches). Base your branch
@@ -48,7 +48,8 @@ already be there or in progress. Rebase onto it if it has moved since you branch
 
 ## Building
 
-See the README's "Building from source" for macOS and [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows.
+See the README's "Building from source" for macOS, [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows,
+[docs/linux.md](docs/linux.md) for Linux and [docs/android.md](docs/android.md) for Android.
 In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start screen, `make gen` once to recompile the game code from
 them, then `make -j10`. The randomizer needs its Python environment in
 `third_party/LAS-Randomizer/venv`.
