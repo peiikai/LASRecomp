@@ -583,7 +583,7 @@
 {"Show FPS", "FPSを表示"},
 {"Shows the frame rate in a corner of the screen.", "画面の隅にフレームレートを表示します。"},
 {"Frame Generation", "フレーム生成"},
-{"Experimental. Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "実験的な機能です。ゲームのフレームの間に画像を追加して、画面のリフレッシュレートまで動きを滑らかにします。120 Hz の画面では 120 fps で表示されます。表示の乱れが起きることがあります。"},
+{"Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "ゲームのフレームの間に画像を追加して、画面のリフレッシュレートまで動きを滑らかにします。120 Hz の画面では 120 fps で表示されます。表示の乱れが起きることがあります。"},
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "フレームレート、GPU時間、メモリを表示するAppleのパフォーマンスオーバーレイを表示します。オンにするには再起動が必要な場合があります。"},
 {"On", "オン"},
@@ -1949,3 +1949,4 @@
 {"Needs %s.", "「%s」が必要です。"},
 {"Needs %s set to %s.", "「%s」を「%s」にする必要があります。"},
 {"Brisk or faster", "速め以上"},
+{"Experimental", "実験的"},

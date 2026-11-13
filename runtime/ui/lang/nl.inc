@@ -583,7 +583,7 @@
 {"Show FPS", "FPS tonen"},
 {"Shows the frame rate in a corner of the screen.", "Toont de framerate in een hoek van het scherm."},
 {"Frame Generation", "Framegeneratie"},
-{"Experimental. Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "Experimenteel. Tekent extra beelden tussen de frames van het spel voor vloeiendere beweging, tot de verversingssnelheid van je scherm. Op een 120 Hz-scherm toont het spel 120 fps. Grafische fouten zijn mogelijk."},
+{"Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "Tekent extra beelden tussen de frames van het spel voor vloeiendere beweging, tot de verversingssnelheid van je scherm. Op een 120 Hz-scherm toont het spel 120 fps. Grafische fouten zijn mogelijk."},
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "Toont de prestatie-overlay van Apple met framerate, GPU-tijd en geheugen. Aanzetten kan een herstart vereisen."},
 {"On", "Aan"},
@@ -1949,3 +1949,4 @@
 {"Needs %s.", "Vereist ‘%s’."},
 {"Needs %s set to %s.", "Vereist ‘%s’ op ‘%s’."},
 {"Brisk or faster", "Vlot of sneller"},
+{"Experimental", "Experimenteel"},

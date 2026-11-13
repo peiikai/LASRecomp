@@ -583,7 +583,7 @@
 {"Show FPS", "FPS 표시"},
 {"Shows the frame rate in a corner of the screen.", "화면 모서리에 프레임 레이트를 표시합니다."},
 {"Frame Generation", "프레임 생성"},
-{"Experimental. Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "실험적 기능입니다. 게임 프레임 사이에 이미지를 추가해 화면 주사율까지 움직임을 부드럽게 합니다. 120Hz 화면에서는 120fps로 표시됩니다. 화면에 오류가 생길 수 있습니다."},
+{"Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "게임 프레임 사이에 이미지를 추가해 화면 주사율까지 움직임을 부드럽게 합니다. 120Hz 화면에서는 120fps로 표시됩니다. 화면에 오류가 생길 수 있습니다."},
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "프레임 레이트, GPU 시간, 메모리를 보여 주는 Apple의 성능 오버레이를 표시합니다. 켜려면 다시 시작해야 할 수 있습니다."},
 {"On", "켜기"},
@@ -1949,3 +1949,4 @@
 {"Needs %s.", "'%s' 설정이 필요합니다."},
 {"Needs %s set to %s.", "'%s'을(를) '%s'(으)로 설정해야 합니다."},
 {"Brisk or faster", "빠른 걸음 이상"},
+{"Experimental", "실험적"},

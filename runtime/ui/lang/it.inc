@@ -583,7 +583,7 @@
 {"Show FPS", "Mostra FPS"},
 {"Shows the frame rate in a corner of the screen.", "Mostra il frame rate in un angolo dello schermo."},
 {"Frame Generation", "Generazione dei fotogrammi"},
-{"Experimental. Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "Sperimentale. Aggiunge immagini tra i fotogrammi del gioco per un movimento più fluido, fino alla frequenza di aggiornamento del tuo schermo. Su uno schermo a 120 Hz il gioco mostra 120 fps. Possono comparire difetti visivi."},
+{"Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "Aggiunge immagini tra i fotogrammi del gioco per un movimento più fluido, fino alla frequenza di aggiornamento del tuo schermo. Su uno schermo a 120 Hz il gioco mostra 120 fps. Possono comparire difetti visivi."},
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "Mostra l'overlay delle prestazioni di Apple con frame rate, tempo GPU e memoria. Attivarlo potrebbe richiedere un riavvio."},
 {"On", "Sì"},
@@ -1949,3 +1949,4 @@
 {"Needs %s.", "Richiede «%s»."},
 {"Needs %s set to %s.", "Richiede «%s» su «%s»."},
 {"Brisk or faster", "Svelta o più"},
+{"Experimental", "Sperimentale"},

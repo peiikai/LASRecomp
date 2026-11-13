@@ -583,7 +583,7 @@
 {"Show FPS", "顯示FPS"},
 {"Shows the frame rate in a corner of the screen.", "在畫面一角顯示影格率。"},
 {"Frame Generation", "影格生成"},
-{"Experimental. Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "實驗性功能。在遊戲影格之間插入額外畫面，使動作更流暢，最高可達螢幕更新率。在 120 Hz 螢幕上，遊戲以 120 fps 顯示。可能出現畫面瑕疵。"},
+{"Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.", "在遊戲影格之間插入額外畫面，使動作更流暢，最高可達螢幕更新率。在 120 Hz 螢幕上，遊戲以 120 fps 顯示。可能出現畫面瑕疵。"},
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "顯示Apple的效能疊加層，包括影格率、GPU時間和記憶體。開啟後可能需要重新啟動。"},
 {"On", "開"},
@@ -1949,3 +1949,4 @@
 {"Needs %s.", "需要開啟「%s」。"},
 {"Needs %s set to %s.", "需要將「%s」設為「%s」。"},
 {"Brisk or faster", "輕快或更快"},
+{"Experimental", "實驗性"},
