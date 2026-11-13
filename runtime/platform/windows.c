@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <shellapi.h>
+#include <psapi.h>  // (K32GetProcessMemoryInfo: in kernel32, no psapi.lib)
 #include <timeapi.h>
 #include <io.h>
 #include <wchar.h>
@@ -154,6 +155,11 @@ static BOOL CALLBACK tsc_calibrate(PINIT_ONCE o, PVOID p, PVOID *c) {
     return TRUE;
 }
 #endif
+uint64_t plat_mem_used_bytes(void) {  // (private bytes: Task Manager's Memory column)
+    PROCESS_MEMORY_COUNTERS_EX pm = {.cb = sizeof pm};
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pm, sizeof pm) ? pm.PrivateUsage : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
 #if defined(__x86_64__) || defined(_M_X64)
     InitOnceExecuteOnce(&tsc_once, tsc_calibrate, NULL, NULL);

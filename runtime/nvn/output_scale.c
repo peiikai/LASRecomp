@@ -1,6 +1,6 @@
 // Output resolution, shared by the Metal and Vulkan backends (each calls output_scale() once per presented frame).
 // Render targets the game sizes for the Switch's 1920x1080 screen are allocated at (sx, sy) times their size; the
-// image is then drawn into (vx, vy, vw, vh) of the window. Video tab "Internal resolution" (g_settings.res_mode):
+// image is then drawn into (vx, vy, vw, vh) of the window. Video tab "Resolution" (g_settings.res_mode):
 //   Match display  render at the window's own pixel size (default)
 //   1x .. 4x       N times the Switch's docked image: 1080 lines x N (wide windows keep their shape: 32:9 at 2x =
 //                  7680 x 2160); capped to the GPU's 16384-pixel texture limit. 1x on an integrated GPU: 720 lines,
@@ -71,7 +71,7 @@ int rt_game_dynres(void) {
 // size). Frames that don't wait (mailbox: a frame every G + W) keep going down to the floor: there every step down is
 // a faster frame. tools/test_dynres.py: the controller against a simulated GPU (the UHD 770 cases).
 #define DYN_DEC_S 0.25      // s per decision, at any frame rate (it was 30 frames: half a second at 60, a whole one at
-                            // 30 - every wait twice as long at Internal FPS target 30)
+                            // 30 - every wait twice as long at FPS target 30)
 #define DYN_NMAX 64         // frames a decision holds at most
 #define DYN_STEP 0.05       // the factor's grid (the floor below its first step): small steps, often - changing the
                             // render scale is free (Dynamic draws into part of the targets), small steps don't show
@@ -113,7 +113,7 @@ static double g_probe_fail_gw, g_probe_fail_at = -1000;      // the last failed 
 // changed at each factor since (G right after a step is the reference at the new factor): the part of G that
 // doesn't scale with the resolution makes area estimates optimistic (UHD 770 1080p: ~6.5 of 9.1 ms at 0.50)
 static double g_floor_g, g_ref_g;
-// Internal FPS target 30: G + W just under where the frames missed 30 (0: none yet), and when it last missed or eased
+// FPS target 30: G + W just under where the frames missed 30 (0: none yet), and when it last missed or eased
 static double g_t30_cap, g_t30_at;
 static int g_t30_late;  // (half seconds in a row with the frames late at target 30)
 static double g_t30_wait = 4, g_t30_off_at = -1e9;  // (on time this long lifts the cap; when it was last lifted)
@@ -308,20 +308,20 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     if (log < 0) log = getenv("LARECOMP_LOG_DYNRES") != NULL;
     double budget = DYN_BUDGET;
     bool hold_up = false;  // (20 -> 30 fps this time: the factor was set to fit it already)
-    // Internal FPS target 30 (pace_target_30: the setting, or outdoors with "30 outdoors, 60 indoors"): held at 30 from
+    // FPS target 30 (pace_target_30: the setting, or outdoors with "30 outdoors, 60 indoors"): held at 30 from
     // the start - the factor only goes down when even 30 doesn't fit, and 60 is never looked for. When the target goes
     // back to 60 (indoors, or the setting changed) that hold ends and Dynamic aims for 60 again, as it would have.
     extern bool pace_target_30(void);
     static bool was_t30;
     bool t30 = pace_target_30();
     if (gpu && t30 && hold_vsyncs() < 2) {
-        LOG("[dynres] Internal FPS target 30: holding 30 fps (game %.1f + window %.1f ms at %.2f)\n", G, W, g_dyn);
+        LOG("[dynres] FPS target 30: holding 30 fps (game %.1f + window %.1f ms at %.2f)\n", G, W, g_dyn);
         g_hold_dt = 2 * 1000 / 60.0, g_hold_w = W;
         g_floor_g = g_ref_g = G, g_ref_pending = false;
         g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
         g_t30_cap = 0, g_t30_at = now, g_t30_late = 0, g_t30_wait = 4, g_t30_off_at = -1e9, g_t30_limits = false;
     } else if (was_t30 && !t30 && g_hold_dt > 0) {
-        LOG("[dynres] Internal FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
+        LOG("[dynres] FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
         g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
     }
     was_t30 = t30;
@@ -420,16 +420,16 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                                         // on G + W set at 1.00 took a second step down for nothing)
                 if (g_t30_cap <= 0) {
                     g_t30_wait = now - g_t30_off_at < 15.0 ? fmin(2 * g_t30_wait, 60.0) : now - g_t30_off_at > 30.0 ? 4.0 : g_t30_wait;
-                    LOG("[dynres] Internal FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
+                    LOG("[dynres] FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
                         "game kept under %.1f ms (lifted after %.0f s on time)\n", avg_dt, G, W, g_dyn, cap, g_t30_wait);
                 } else if (cap < g_t30_cap)
-                    LOG("[dynres] Internal FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
+                    LOG("[dynres] FPS target 30: frames every %.1f ms with game %.1f + window %.1f ms at %.2f: "
                         "game kept under %.1f ms\n", avg_dt, G, W, g_dyn, cap);
                 g_t30_cap = g_t30_cap > 0 ? fmin(g_t30_cap, cap) : cap, g_t30_at = now, g_t30_late = 0;
             } else if (late || avg_dt > 1.02 * g_hold_dt)
                 g_t30_at = now;  // (the lift waits for frames on time)
             else if (g_t30_cap > 0 && now - g_t30_at >= g_t30_wait) {
-                LOG("[dynres] Internal FPS target 30: frames on time for %.0f s, the cap (game %.1f ms) lifted\n", g_t30_wait, g_t30_cap);
+                LOG("[dynres] FPS target 30: frames on time for %.0f s, the cap (game %.1f ms) lifted\n", g_t30_wait, g_t30_cap);
                 g_t30_cap = 0, g_t30_off_at = now;
             }
             g_t30_limits = g_t30_cap > 0 && g_t30_cap + W < budget;
@@ -732,7 +732,7 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     if (!reshape) shape = 1.0;
     // render height in units of the Switch's 1080 lines
     double h, dyn = 1.0;
-    int mode = g_settings.res_mode;
+    int mode = g_settings.dyn_res ? RES_DYNAMIC : g_settings.res_mode;  // (Dynamic: up to the display, the setting aside)
     // The user changed a setting that changes the GPU's load (the menu, the start screen; Dynamic's own steps are g_dyn,
     // not a setting): the frame pacer's 30 fps hold and backoff were learned under the old load (pace.c).
     static int p_mode = -1, p_ups, p_aa, p_fps;
@@ -741,9 +741,9 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
         if (mode != p_mode) pace_settings_changed("resolution");
         else if (g_settings.upscaler != p_ups) pace_settings_changed("upscaler"), g_win_setting = true;
         else if (g_settings.antialias != p_aa) pace_settings_changed("anti-aliasing"), g_win_setting = true;
-        else if (g_settings.fps_target != p_fps) pace_settings_changed("Internal FPS target");
+        else if (settings_fps_target() != p_fps) pace_settings_changed("FPS target");
     }
-    p_mode = mode, p_ups = g_settings.upscaler, p_aa = g_settings.antialias, p_fps = g_settings.fps_target;
+    p_mode = mode, p_ups = g_settings.upscaler, p_aa = g_settings.antialias, p_fps = settings_fps_target();
     if (forced > 0) h = forced;
     else if (mode >= 1 && mode <= 8) h = mode == 1 && g_gpu_integrated ? 720 / 1080.0 : mode;
     else {

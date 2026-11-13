@@ -61,6 +61,12 @@ uint64_t plat_now_ns(void) {
     return mach_absolute_time() * tb.numer / tb.denom;
 }
 
+uint64_t plat_mem_used_bytes(void) {  // (the footprint Activity Monitor shows as Memory)
+    struct task_vm_info vmi;
+    mach_msg_type_number_t n = TASK_VM_INFO_COUNT;
+    return task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vmi, &n) == KERN_SUCCESS ? vmi.phys_footprint : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
     struct timespec ts;
     return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec : 0;
