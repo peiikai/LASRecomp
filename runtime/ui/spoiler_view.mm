@@ -331,16 +331,21 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     if (free_b && in_right && (opt_pressed_back() || (opt_pressed_left() && !opt_focused_lr()))) g_back_left = g_sec, ret = 2;
     else if (free_b && !in_right && opt_pressed_back()) return 0;
 
-    if (!PLAT_TOUCH || g_missing || !revealed) {  // (touch: the page has the whole screen, its columns their headings)
+    if (!PLAT_TOUCH) {  // (touch: the page has the whole screen, its columns their headings)
         ImGui::TextColored(plastic_col(plastic_theme().title), "%s", seed.c_str());
         ImGui::TextDisabled("%s", L("Spoiler log"));
         ImGui::Spacing();
     }
     if (g_missing || !revealed) {
-#if PLAT_TOUCH
-        if (plastic_close_corner(44 * scale, scale)) return 0;  // (one column: the screen's corner)
-#endif
         opt_begin("##spoiler_gate", scale);
+#if PLAT_TOUCH
+        // (one column: as the seed's own page and Cosmetics - the X in the panel with the page's name on its line,
+        // the seed's name under it. In the screen's corner it was cut off and under the FPS counter.)
+        if (plastic_close_pane(44 * scale, scale)) { opt_end(); return 0; }
+        pane_heading(L("Spoiler log"), scale);
+        ImGui::TextColored(plastic_col(plastic_theme().title), "%s", seed.c_str());
+        ImGui::Spacing();
+#endif
         if (g_missing) {
             ImGui::TextWrapped("%s", L("This seed has no spoiler log to show. Seeds made with Spoiler log off or by an older "
                                        "version don't have one."));
