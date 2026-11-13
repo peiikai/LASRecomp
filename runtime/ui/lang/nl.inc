@@ -583,7 +583,7 @@
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "Toont de prestatie-overlay van Apple met framerate, GPU-tijd en geheugen. Aanzetten kan een herstart vereisen."},
 {"On", "Aan"},
-{"Remove blur", "Vervaging weg"},
+{"Remove tilt-shift blur", "Tilt-shift-vervaging weg"},
 {"Turns off the tilt-shift blur at the top and bottom of the screen.", "Zet de tilt-shiftvervaging boven- en onderaan het scherm uit."},
 {"Pause on focus lost", "Pauze zonder focus"},
 {"The game pauses while its window isn't in front.", "Het spel pauzeert zolang het venster niet vooraan staat."},

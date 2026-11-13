@@ -583,7 +583,7 @@
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "フレームレート、GPU時間、メモリを表示するAppleのパフォーマンスオーバーレイを表示します。オンにするには再起動が必要な場合があります。"},
 {"On", "オン"},
-{"Remove blur", "ぼかしを消す"},
+{"Remove tilt-shift blur", "ティルトシフトのぼかしを消す"},
 {"Turns off the tilt-shift blur at the top and bottom of the screen.", "画面の上下にかかるミニチュア風のぼかしを消します。"},
 {"Pause on focus lost", "非アクティブ時に一時停止"},
 {"The game pauses while its window isn't in front.", "ウィンドウが前面にないあいだ、ゲームを一時停止します。"},

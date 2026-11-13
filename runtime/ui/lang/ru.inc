@@ -583,7 +583,7 @@
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "Показывает оверлей производительности Apple с частотой кадров, временем GPU и памятью. Для включения может понадобиться перезапуск."},
 {"On", "Вкл."},
-{"Remove blur", "Убрать размытие"},
+{"Remove tilt-shift blur", "Убрать размытие тилт-шифт"},
 {"Turns off the tilt-shift blur at the top and bottom of the screen.", "Отключает размытие «тилт-шифт» вверху и внизу экрана."},
 {"Pause on focus lost", "Пауза без фокуса"},
 {"The game pauses while its window isn't in front.", "Игра стоит на паузе, пока её окно не на переднем плане."},

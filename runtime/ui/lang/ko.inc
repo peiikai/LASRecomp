@@ -583,7 +583,7 @@
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "프레임 레이트, GPU 시간, 메모리를 보여 주는 Apple의 성능 오버레이를 표시합니다. 켜려면 다시 시작해야 할 수 있습니다."},
 {"On", "켜기"},
-{"Remove blur", "흐림 효과 끄기"},
+{"Remove tilt-shift blur", "틸트 시프트 흐림 끄기"},
 {"Turns off the tilt-shift blur at the top and bottom of the screen.", "화면 위아래의 틸트 시프트 흐림 효과를 끕니다."},
 {"Pause on focus lost", "포커스 잃으면 일시 정지"},
 {"The game pauses while its window isn't in front.", "창이 앞에 없는 동안 게임이 일시 정지됩니다."},

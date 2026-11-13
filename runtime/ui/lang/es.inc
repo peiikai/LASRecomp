@@ -583,7 +583,7 @@
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "Muestra la capa de rendimiento de Apple con la tasa de fotogramas, el tiempo de GPU y la memoria. Activarlo puede requerir reiniciar."},
 {"On", "Activado"},
-{"Remove blur", "Quitar desenfoque"},
+{"Remove tilt-shift blur", "Quitar desenfoque tilt-shift"},
 {"Turns off the tilt-shift blur at the top and bottom of the screen.", "Quita el desenfoque de efecto maqueta de la parte superior e inferior de la pantalla."},
 {"Pause on focus lost", "Pausar sin foco"},
 {"The game pauses while its window isn't in front.", "El juego se pausa mientras su ventana no está delante."},

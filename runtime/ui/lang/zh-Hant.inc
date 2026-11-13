@@ -583,7 +583,7 @@
 {"Metal HUD", "Metal HUD"},
 {"Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a restart.", "顯示Apple的效能疊加層，包括影格率、GPU時間和記憶體。開啟後可能需要重新啟動。"},
 {"On", "開"},
-{"Remove blur", "移除模糊"},
+{"Remove tilt-shift blur", "移除移軸模糊"},
 {"Turns off the tilt-shift blur at the top and bottom of the screen.", "關閉畫面上下方的移軸模糊效果。"},
 {"Pause on focus lost", "失去焦點時暫停"},
 {"The game pauses while its window isn't in front.", "視窗不在最前面時，遊戲會暫停。"},
