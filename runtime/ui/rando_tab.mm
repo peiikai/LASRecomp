@@ -1470,13 +1470,21 @@ static void seed_sheet(float scale, const char *active) {
     GenOpts so = g_opts;  // (the seed's own options, for its room shuffle; a seed from before IDs: the rows all open)
     bool rooms = !sp || sp->id.empty() || !seed_id_decode(sp->id.c_str(), so).empty() || so.room_shuffle;
 #if PLAT_TOUCH
-    g_close_pressed = plastic_close_corner(44 * scale, scale);  // (one column: the screen's corner, as on Settings)
+    // touch: as Cosmetics and Cheats (menu.mm menu_page_head) - the X at the top right of the rows' panel with the
+    // page's name on its line, then the seed's name and ID and the rows in a list that scrolls under it. In the
+    // screen's corner the X was cut off and under the FPS counter.
+    opt_begin("##rando_sheet", scale);
+    g_close_pressed = plastic_close_pane(44 * scale, scale);
+    pane_heading("Randomizer", scale);
+    opt_list_begin();
 #endif
     ImGui::TextColored(plastic_col(plastic_theme().title), "%s", active);
     ImGui::TextDisabled(L("Seed ID: %s"), sp && !sp->id.empty() ? sp->id.c_str() : "-");
     if (sp && sp->race) ImGui::TextDisabled(L("Race mode. Seed hash: %s"), hash_names(sp->id).c_str());
     ImGui::Spacing();
+#if !PLAT_TOUCH
     opt_begin("##rando_sheet", scale);
+#endif
     row_tracker();
     row_door_letters(rooms);
     bool locked = sp && sp->race && !sp->race_done;  // (race mode: shut until the credits)
@@ -1492,6 +1500,9 @@ static void seed_sheet(float scale, const char *active) {
     else ImGui::Dummy(ImVec2(0, row_h));
     if (opt_action("Switch to vanilla", "", "Leave this seed and play the normal game. Your seed's saves stay put."))
         play_seed("");
+#if PLAT_TOUCH
+    opt_list_end();
+#endif
     opt_end();
 }
 
