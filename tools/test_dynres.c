@@ -55,7 +55,8 @@ typedef struct {
                         // about 90% of the frame, down to 1 / paced of its full clock - its times x up to `paced`
     double w1;          // > 0: the window step at 1.00 (MetalFX only runs below 1.00: W is w there)
     int start_paced;    // the controller counts the GPU as paced from the start (Android / iOS: LARECOMP_DYN_PACED)
-    int pacer;          // the frame pacer (nvn/pace.c) as well: 12 of the last 60 frames late hold the game at 30 (whole
+    int pacer;          // the frame pacer (nvn/pace.c) as well: 12 of the last 60 frames late, some in each quarter of
+                        // them (its spread rule: not one burst), hold the game at 30 (whole
                         // 33.3 ms frames); it goes back to 60 when the GPU's time (G + W, as measured: a lowered clock
                         // counts) is under 13 ms for 60 frames in a row, or at once when Dynamic asks (pace_try_60) -
                         // either way with a second's grace before frames count again
@@ -77,6 +78,9 @@ typedef struct {
                         // scene costs more minutes in)
     double light;       // > 0: (light_at) the scene's multiplier from then on (0: 0.6)
     double start;       // > 0: Dynamic starts at this factor (LARECOMP_DYN_START: climbing to 1.00 from under it)
+    double hold_clock;  // > 0: (pacer) the GPU's clock drops while the pacer holds 30 - half of each frame idle (an iPhone 15
+                        // Pro: G + W 12 ms at 0.80 just held, 23 ms at 0.65 15 s later): its times ease to x this over ~10 s
+                        // held, and back to x1 within the first frames of the game's 60 fps mode (back-to-back there)
 } Case;
 
 typedef struct {
@@ -94,6 +98,8 @@ typedef struct {
     double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 15 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
     double f_light;       // (light_at) the factor 15 s after the scene got lighter
     double f_min_first;   // the lowest factor within 10 s of the first change (2: none): a slide from 1.00
+    double pace_s, pace_longest;  // (pacer) seconds the frame pacer held 30 in all, and its longest hold
+    double f_min;         // the lowest factor of the whole run
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -119,6 +125,7 @@ static Result run(const Case *c) {
     double sag_fast = 0, sag_slow = 0;  // (sag) the clock's sag now: its fast and slow parts
     double f_heavy_min = 2, f_after_heavy = -1, f_light = -1;
     double first_t = -1, f_min_first = 2;
+    double pace_s = 0, pace_cur = 0, pace_longest = 0, f_min_run = 2;
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
@@ -154,6 +161,7 @@ static Result run(const Case *c) {
             if (c->heavy_until > 0 && now > c->heavy_until && near30(hold) && !back30) back30 = now;
         }
         if (now > c->secs - 60) { f_min = fmin(f_min, f); f_max = fmax(f_max, f); }
+        f_min_run = fmin(f_min_run, f);
         double scene = (1 + (c->wobble > 0 ? c->wobble : 0.03) * sin(now * 2 * M_PI / 20)) * (c->light_at > 0 && now > c->light_at ? (c->light > 0 ? c->light : 0.6) : 1.0);
         if (c->heat > 0) scene *= 1 + (c->heat - 1) * now / c->secs;
         if (c->heavy_at > 0 && now > c->heavy_at && (c->heavy_until <= 0 || now < c->heavy_until)) scene *= c->heavy;
@@ -169,6 +177,10 @@ static Result run(const Case *c) {
         if (c->paced > 0) {  // the clock eases (over ~0.3 s) to where G + W takes 90% of a 60 Hz frame, never above full
             double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * 16.667 / full));
             clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
+        }
+        if (c->hold_clock > 0) {  // (see Case: held, the clock eases down over ~10 s; released, it is back within ~0.3 s)
+            double want = pace_held ? c->hold_clock : 1.0;
+            clk += (want - clk) * (want > clk ? 0.004 : 0.1);
         }
         if (c->sag > 0) {  // the first late frame after on-time ones puts the clock down: times x sag, most of it back within
                            // half a second, the rest over ~2 s of wall time, whatever the factor (the iPad's 0.85: 1.55x late,
@@ -207,7 +219,13 @@ static Result run(const Case *c) {
             } else if (now >= pace_grace) {
                 int o = p > 17.5;
                 pace_over += o - pace_ring[pace_i], pace_ring[pace_i] = o, pace_i = (pace_i + 1) % 60;
-                if (pace_over >= 12) {
+                int quarters = 0;  // (pace.c: frames over in each quarter of the window, oldest first)
+                for (int q = 0; q < 4; q++) {
+                    int any = 0;
+                    for (int i = 0; i < 15 && !any; i++) any = pace_ring[(pace_i + q * 15 + i) % 60];
+                    quarters += any;
+                }
+                if (pace_over >= 12 && quarters == 4) {
                     pace_held = 1, pace_fit = 0, pace_holds++;
                     printf(" | %.0fs pacer: 30", now);
                     if (++col % 8 == 0) printf("\n ");
@@ -228,6 +246,8 @@ static Result run(const Case *c) {
         double rd = c->gpu_read > 0 ? c->gpu_read : 1.0;
         g_prev = g * rd, w_prev = w * rd;
         g_pace_slow = c->pacer && pace_held;
+        if (pace_held) { pace_s += p / 1000, pace_cur += p / 1000; pace_longest = fmax(pace_longest, pace_cur); }
+        else pace_cur = 0;
         p_last = p;
         now += p / 1000;
         win_n++; if (now - win_t0 >= 2.0) { n_win++; if (win_n / (now - win_t0) < 57) low_win++; win_t0 = now, win_n = 0; }
@@ -239,9 +259,11 @@ static Result run(const Case *c) {
                 .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
                 .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after,
                 .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy, .f_light = f_light,
-                .f_min_first = f_min_first};
+                .f_min_first = f_min_first, .pace_s = pace_s, .pace_longest = pace_longest, .f_min = f_min_run};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
+    if (c->pacer)
+        printf("  the frame pacer held 30 fps for %.0f s in all, %.0f s at most; the lowest factor %.2f\n", pace_s, pace_longest, f_min_run);
     if (c->resize_at > 0)
         printf("  window %.0f -> %.0f lines at %.0f s: factor %.2f 1.5 s later, %d change%s in 8 s, %d slower frame%s in 5 s, "
                "%d step%s down / hold%s ended in 15 s\n", c->lines > 0 ? c->lines : 2160, c->lines2, c->resize_at, f_after,
@@ -506,6 +528,15 @@ int main(int argc, char **argv) {
         // 3 = 15.1 > 14.5), while 1.00 costs 9.5 + 1.5 = 11
         {.name = "Mac MetalFX, 1.00 fits (G 9.5 + W 1.5), from 0.80: back to 1.00", .a = 2, .b = 7.5, .w = 3.0, .w1 = 1.5,
          .fifo = 1, .secs = 120, .lines = 1440, .start = 0.80},
+        // the iPhone (case 61's shape, thermal state serious: 0.80 holds 60, 0.85 is late) with the frame pacer (2026-11-13
+        // log, t=743-810): the raise to 0.85 fails, its fallout holds the game at 30 (a late hold, backing off: the way
+        // back wants the GPU under 10 ms), and the clock drops while held. Dynamic read the 33 ms frames as late and
+        // stepped 0.80 -> 0.31 in 3 s (a ceiling at each step), the floor's inflated G + W read as 60 out of reach, so it
+        // held 30 itself and climbed to 0.70 - which kept the GPU over the pacer's limit - until its own probe at the
+        // floor 65 s in. It must sit still at 0.80 through the hold and ask for 60 there within the probe wait
+        {.name = "iPhone 15 Pro, the pacer holds 30 after a failed raise, the clock drops held", .a = 2.5, .b = 14, .w = 4, .w1 = 2,
+         .fifo = 1, .secs = 240, .lines = 1179, .start_paced = 1, .sag = 2.0, .pacer = 1, .pace_fit_ms = 10, .hold_clock = 1.9,
+         .start = 0.80},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -563,7 +594,8 @@ int main(int argc, char **argv) {
     case 36: check(r.fps_end > 58 && r.f_end >= 0.7, "RP5, pacer held at 30: back to 60 after the heavy stretch"); break;
     case 37: case 38: check(r.fps_end > 58 && r.low_win * 10 <= r.n_win, "paced, one step partly late: under it, few slow windows"); break;
     case 40: check(r.changes_settled <= 2 && near(r.hold_end, 30), "held 30, W grows with the factor: the hold goes on, no cycling"); break;
-    case 43: check(r.f_end == 1.0, "CPU-bound pacer hold, GPU fits 60: no step down for nothing"); break;
+    // (one step at most: the 0.8-budget vote before the pacer holds - its spread rule takes ~1 s - then nothing lower)
+    case 43: check(r.f_end >= 0.95, "CPU-bound pacer hold, GPU fits 60: no step down for nothing"); break;
     case 44: check(r.changes_settled <= 2, "a hold 60 can't reach: no probes every 2 minutes"); break;
     case 52: case 53: case 54: check(r.low_win * 10 <= r.n_win, "RP5 shape: at most 1 in 10 windows under 57 fps"); break;
     case 55: check(r.low_win <= 4 && r.changes_settled <= 20 && r.f_end >= 0.7, "RP5, steady scene: settles under the late step, no sawtooth"); break;
@@ -588,6 +620,12 @@ int main(int argc, char **argv) {
     case 66: check(r.f_min_first >= 0.8 && r.f_end >= 0.8 && r.changes_settled <= 4 && r.fps_end > 58,
                    "Mac MetalFX at the budget: a step from 1.00 skips 0.95, settles"); break;
     case 67: check(r.f_end == 1.0 && r.fps_end > 58, "Mac MetalFX, 1.00 fits: reached from 0.80"); break;
+    // (it was: 0.46 (the floor) each time, Dynamic's own hold at 30 for 10 s of each, the pacer holding 19-28 s at a time
+    // and 163 s of the 240, 136 steps, 93 of 119 slow windows. The holds that remain are the ceiling's probes of 0.85 -
+    // each a late raise whose fallout holds the pacer, which here never comes back on its own)
+    case 68: check(r.f_min >= 0.7 && r.hold_changes == 0 && r.pace_longest <= 12 && r.pace_s <= 80 && r.low_win <= 50 &&
+                   r.changes_settled <= 20 && r.f_end >= 0.75,
+                   "iPhone, the pacer holds 30: the factor sits still, 60 again at it within the probe wait"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }

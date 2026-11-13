@@ -172,6 +172,25 @@ static double g_pc_ceil = 2.0, g_pc_until = -1e9, g_pc_wait = 10.0, g_pc_hit_at 
 #define DYN_PC_FALLOUT_G 1.08  // ... with G over its on-time measure there by this
 static double g_pc_set_at = -1e9;                                // when the ceiling was last set
 static double g_pc_ok_f = -1, g_pc_ok_g = -1, g_pc_ok_at = -1e9;  // the factor the frames were last on time at (paced), G then, when
+// The frame pacer holds the game's 30 fps mode for its own reasons (pace.c: frames shown late or busy - a raise's
+// fallout, a hitch burst, the CPU, the window's image) while Dynamic holds nothing itself: every frame then comes 33 ms
+// apart whatever the factor, so late frames say nothing about it, and a paced GPU's time says nothing either (its
+// clock drops the longer it idles at 30: an iPhone 15 Pro read G + W 12 ms at 0.80 just held and 23 ms at 0.65 15 s
+// later). Each decision's late frames stepped the factor down before (0.80 -> 0.31 in 3 s, a ceiling at each step),
+// at the floor the inflated G + W read as 60 out of reach, so Dynamic held 30 of its own and climbed while 30 fit -
+// and the climb raised the GPU time the pacer's way back wanted under its limit: 65 s at 30 fps where 60 fit at 0.80.
+// Now a paced GPU's factor holds still through the pacer's hold (no step for late frames, no ceiling; its test for a
+// raise - frames on time - can't pass at 33 ms a frame. A GPU that isn't paced steps down on G + W over 60's budget
+// and raises on its prediction, as it did), and since its time at 30 can't tell the pacer when 60 fits again, Dynamic
+// asks for 60 at the factor it has once the hold has lasted the probe wait (pace_try_60, as from its own hold); the
+// ceiling's wait, time under it at 60, goes on after the hold. A probe that fails is
+// held again within ~1.5 s: its late frames step down as ever (a step, then the fallout rule), the wait doubles, and
+// the next probe goes to the floor as a hold's does - 60 fits there or nowhere, and from there the climb is a step a
+// second; at the floor, G + W over the budget is Dynamic's own hold (held_back, which puts the probe's factor back).
+static double g_pace_hold_at = -1;  // when the pacer's hold began (-1: not held)
+static bool g_pace_probe;           // the probe out is from the pacer's hold
+static bool g_pace_probe_floor;     // ... taken at the floor
+static int g_pace_probe_fails;      // probes from the pacer's hold that failed in a row (the next goes to the floor)
 static double g_chain_from = -1, g_chain_at;  // the factor before this run of steps down taken with frames on time; the last
 #define DYN_CHECK_SHARE 0.33  // a step down's measured saving at least this share of the predicted one
 // W jumps at 1.00: the sharp upscaler (MetalFX, FSR 1) only runs when the render is smaller than the window, so the
@@ -381,6 +400,14 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
     }
     was_t30 = t30;
+    extern bool pace_is_slow(void);
+    bool pacer_hold = gpu && g_hold_dt == 0 && !t30 && pace_is_slow();  // (see g_pace_hold_at)
+    if (pacer_hold && g_pace_hold_at < 0) g_pace_hold_at = now;
+    if (!pacer_hold && g_pace_hold_at >= 0) {  // (the hold's time wasn't time under the ceiling: its wait goes on after)
+        if (g_pc_until > g_pace_hold_at) g_pc_until += now - g_pace_hold_at;
+        g_pace_hold_at = -1;
+    }
+    if (!pacer_hold && !g_probing) g_pace_probe_fails = 0;
     bool win_setting = g_win_setting;
     g_win_setting = false;
     if (win_setting) g_w_at1 = g_w_below = -1;  // (another upscaler / anti-aliasing: the window step measured again)
@@ -431,7 +458,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                 } else {
                     LOG("[dynres] the floor would fit 60 fps now (game %.1f ms at %.2f: ~%.1f at %.2f, window %.1f): looking for it\n",
                         G, g_dyn, g_floor, g_dyn_floor, W);
-                    g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0;
+                    g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0, g_probe_from = g_dyn;
                     pace_try_60();  // (the game's 30 fps mode, if the frame pacer holds it, ends too: pace.c)
                 }
             }
@@ -460,6 +487,35 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             g_hold_dt = 0, g_probing = true, g_probe_start = now, g_probe_good = 0;
             g_hold_up_votes = g_hold_miss = g_hold_met_votes = 0;
             g_probe_from = g_dyn, g_dyn = g_dyn_floor;
+        }
+        // The pacer's hold with Dynamic holding nothing (see g_pace_hold_at) and a probe out - from the pacer's hold, or
+        // its own hold's at the floor above: held again after the pacer's second of grace and its frames, the probe
+        // failed, and Dynamic's own hold didn't take over (held_back: the floor with G + W over the budget, 4 decisions
+        // in a row - it puts the probe's factor back itself; a floor right at the budget never gave it those, and the
+        // probe stayed out for good). A probe taken at the floor goes back to the factor it left; one taken at the factor
+        // the hold had keeps the step its late frames took
+        if (pacer_hold && g_probing && now - g_probe_start >= 4.0) {
+            g_probe_wait = fmin(g_probe_wait * 2, DYN_PROBE_MAX);
+            g_probe_fail_at = now;
+            if (g_pace_probe) g_pace_probe_fails++;
+            if (g_dyn < g_probe_from && (g_pace_probe_floor || !g_pace_probe)) {
+                LOG("[dynres] 60 fps didn't fit at %.2f: back to %.2f\n", g_dyn, g_probe_from);
+                g_dyn = g_probe_from;
+            }
+            g_probing = g_pace_probe = false;
+            g_probe_at = now + g_probe_wait;
+        }
+        if (pacer_hold && g_paced && !g_probing && now - g_pace_hold_at >= g_probe_wait && now >= g_probe_at) {
+            bool to_floor = g_pace_probe_fails > 0 && !at_floor();
+            LOG("[dynres] the frame pacer has held 30 fps for %.0f s (game %.1f + window %.1f ms at %.2f): trying 60 at %.2f\n",
+                now - g_pace_hold_at, G, W, g_dyn, to_floor ? g_dyn_floor : g_dyn);
+            pace_try_60();
+            g_probing = g_pace_probe = true, g_pace_probe_floor = to_floor;
+            g_probe_start = now, g_probe_good = 0, g_probe_from = g_dyn;
+            if (to_floor) g_dyn = g_dyn_floor;
+            // (the frames were on time at this factor before the hold: a probe that comes late is its fallout first - see
+            // DYN_PC_FALLOUT - so it takes a step, not one each decision of the spike)
+            if (g_pc_ok_f >= g_dyn - 1e-6) g_pc_ok_at = now;
         }
         if (g_hold_dt > 0) budget = g_hold_dt * 0.87;
         // Target 30: the frames themselves must come every 33.3 ms. G + W fitting the hold's budget isn't enough where the
@@ -526,9 +582,12 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                 LOG("[dynres] game %.1f + window %.1f ms at %.2f (a frame every %.1f ms): 60 fps out of reach, holding %.0f "
                     "fps; the factor goes up while G + W fits %.1f ms\n", G, W, g_dyn, avg_dt, 1000 / g_hold_dt, budget);
         }
-        // a probe met 60: two decisions in a row (one could be the game's own frames before its 30 fps mode ends)
-        g_probe_good = g_probing && g_hold_dt == 0 && avg_gpu <= DYN_BUDGET && avg_dt < 20 ? g_probe_good + 1 : 0;
-        if (g_probe_good >= 4) g_probing = false, g_probe_good = 0, g_probe_ok_at = now, g_probe_wait = 10.0;
+        // a probe met 60: two decisions in a row (one could be the game's own frames before its 30 fps mode ends). One from
+        // the pacer's hold: the frames on time (G + W may read over the budget on a paced GPU with the frames on time)
+        bool met60 = g_pace_probe ? !pacer_hold && nlate <= 1 && avg_dt < 20 : avg_gpu <= DYN_BUDGET && avg_dt < 20;
+        g_probe_good = g_probing && g_hold_dt == 0 && met60 ? g_probe_good + 1 : 0;
+        if (g_probe_good >= 4 || (g_pace_probe && !pacer_hold && now - g_probe_start >= 8.0))  // (not held again in 8 s: met)
+            g_probing = g_pace_probe = false, g_pace_probe_fails = 0, g_probe_good = 0, g_probe_ok_at = now, g_probe_wait = 10.0;
     }
     // the last step down's check (see g_paced): its first measure
     if (g_chk_from > 0 && g_dyn == g_chk_from) g_chk_from = -1;  // (undone already)
@@ -567,9 +626,12 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     // (and a late frame now with 3 or more in the last second: a factor a little over makes one late every few frames,
     // under 2 a quarter second - it sat at 0.80 at 55 fps for 46 s)
     static int late_hist[4];  // late frames of the last 4 decisions (a second)
-    memmove(late_hist + 1, late_hist, 3 * sizeof *late_hist), late_hist[0] = nlate;
+    // (the pacer's hold: its 33 ms frames aren't late frames - see g_pace_hold_at -, nor are those of the first second of a
+    // probe of it: the pacer's grace, the clock coming back up)
+    bool no_late = pacer_hold || (g_pace_probe && now - g_probe_start < 1.0);
+    memmove(late_hist + 1, late_hist, 3 * sizeof *late_hist), late_hist[0] = no_late ? 0 : nlate;
     int late4 = late_hist[0] + late_hist[1] + late_hist[2] + late_hist[3];
-    if (paced) slow = ((nlate >= 2 && nlate * 6 >= N) || (nlate >= 1 && late4 >= 3)) && avg_gpu > 0.8 * budget;
+    if (paced) slow = !no_late && ((nlate >= 2 && nlate * 6 >= N) || (nlate >= 1 && late4 >= 3)) && avg_gpu > 0.8 * budget;
     // held, but the frames came slower than the hold's (the display waits one more refresh): over budget too
     if (gpu && g_hold_dt > 0 && avg_dt > 1.2 * g_hold_dt && avg_gpu > 0.8 * budget) slow = true;
     bool hold_wait = hold_up;  // held and over its budget, not yet long enough to act on it (or the hold just stepped up)
@@ -600,11 +662,13 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     // Frames missing vsync often (a frame every 20 ms on average) with the GPU near the budget count as over too. The
     // frames missing 60 outright (G + W over a whole refresh) acts sooner.
     bool must = false;
-    if (g_hold_dt == 0 && !hold_wait) {
+    if (g_hold_dt == 0 && !hold_wait && paced && no_late) {  // (a paced GPU's time at 30: its clock - see g_pace_hold_at)
+        g_down_hist = 0, g_down_fast_votes = 0;
+        memset(g_down_gw, 0, sizeof g_down_gw);
+    } else if (g_hold_dt == 0 && !hold_wait) {
         // (not while the frame pacer holds the game at 30 with G + W inside 60's budget: the frames come every 33 ms for the
         // pacer's reasons - the CPU, the window's image, the GPU's lowered clock - and a lower factor doesn't change that.
         // A Retroid stepped 0.45 -> 0.40 -> 0.33 there with the GPU at 12 ms)
-        extern bool pace_is_slow(void);
         bool over = slow || (gpu && avg_dt > 20.0 && avg_gpu > (pace_is_slow() ? budget : 0.8 * budget));
         if (over && !slow) slow = true;  // (the steps below go by `slow`)
         g_down_hist = (g_down_hist << 1 | over) & 15;
