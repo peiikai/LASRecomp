@@ -126,6 +126,13 @@ void iosexport_default_path(char *out, size_t n) {
     snprintf(out, n, "%s" SEP "Downloads" SEP "LAS Recomp-%s-iOS.ipa", home && *home ? home : ".", larecomp_version());
 }
 
+// One 0-1 across the whole export: the game code build (its own 0-1) fills the first BUILD_SHARE, the .ipa the rest.
+#define BUILD_SHARE 0.95
+static void (*g_outer_progress)(double, const char *);
+static void build_progress(double f, const char *step) {
+    if (g_outer_progress) g_outer_progress(f * BUILD_SHARE, step);
+}
+
 bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size_t why_size) {
     uint64_t t0 = plat_now_ns();
     ZipReader *kit = kit_open(o->kit, why, why_size);
@@ -133,15 +140,18 @@ bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size
 
     // 1. the game code library for iOS (<data root>/cache/ios-build/lasgame-ios.dylib; its own build cache)
     char dir[1100];
-    GameBuildOpts b = {o->progress, o->jobs, o->cancelled, GAMEBUILD_IOS, kit};
-    if (!ios_dir(game_dir, dir, sizeof dir, why, why_size) || !gamebuild_run(dir, &b, why, why_size)) {
+    g_outer_progress = o->progress;
+    GameBuildOpts b = {o->progress ? build_progress : NULL, o->jobs, o->cancelled, GAMEBUILD_IOS, kit};
+    bool built = ios_dir(game_dir, dir, sizeof dir, why, why_size) && gamebuild_run(dir, &b, why, why_size);
+    g_outer_progress = NULL;
+    if (!built) {
         zip_close(kit);
         return false;
     }
 
     // 2. the .ipa: the kit's Payload/ entries as they are (no recompression) +
     //    Payload/LAS Recomp.app/Frameworks/LASGame.framework/{LASGame,LASGame.id}
-    if (o->progress) o->progress(0.97, "Writing the .ipa...");
+    if (o->progress) o->progress(BUILD_SHARE, "Writing the .ipa...");
     char tmp[1200], lib[1100], id[1100], zwhy[256];
     snprintf(tmp, sizeof tmp, "%s.tmp", o->out_ipa);
     snprintf(lib, sizeof lib, "%s" SEP "lasgame-ios.dylib", dir);
@@ -157,6 +167,7 @@ bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size
         if (strncmp(e.name, "Payload/", 8) != 0) continue;
         ok = zip_add_from(w, kit, i);
         copied++;
+        if (o->progress) o->progress(BUILD_SHARE + (1 - BUILD_SHARE) * 0.9 * (i + 1) / n, "Writing the .ipa...");
     }
     // (the framework's folder and Info.plist are in the kit already: tools/bundle_ios.sh SKELETON=1)
     const char *fw = "Payload/LAS Recomp.app/Frameworks/LASGame.framework";
