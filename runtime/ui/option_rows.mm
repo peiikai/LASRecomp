@@ -259,6 +259,20 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         for (ImGuiKey k : {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_LeftArrow, ImGuiKey_RightArrow})
             ImGui::SetKeyOwner(k, ImGui::GetItemID());
     }
+    if (foc) {  // (greyed-out rows too: the cursor passes over them)
+        // Up / Down too: opt_nav_step moves between rows (menu.mm). ImGui's own move from a held D-pad ran on its
+        // repeat's frames, not ours - a row skipped now and then - and on a page that scrolls (Video, Cosmetics) it
+        // dropped the cursor at the last row (a gamepad move from a row not yet scrolled fully into view clears it:
+        // imgui.cpp NavUpdateCreateMoveRequest), so the next Down started over near the top (user 2026-11-12). Up
+        // from a pane's top row stays ImGui's: onto the tab bar.
+        bool top = true;
+        for (int i = 0; i + 1 < (int)g_row_pane.size() && top; i++) top = g_row_pane[i] != g_pane;
+        for (ImGuiKey k : {ImGuiKey_GamepadDpadDown, ImGuiKey_GamepadLStickDown, ImGuiKey_DownArrow})
+            ImGui::SetKeyOwner(k, ImGui::GetItemID());
+        if (!top)
+            for (ImGuiKey k : {ImGuiKey_GamepadDpadUp, ImGuiKey_GamepadLStickUp, ImGuiKey_UpArrow})
+                ImGui::SetKeyOwner(k, ImGui::GetItemID());
+    }
     if (foc) g_desc_focus = desc ? desc : "", g_foc_set = true, g_focused_lr = lr && !off;
     if (hov) g_desc_hover = desc ? desc : "", g_hov_set = true;
     if (g_desc_first.empty() && desc) g_desc_first = desc;
