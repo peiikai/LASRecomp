@@ -748,29 +748,9 @@ static void tab_display(void) {
         if (opt_preview("Internal resolution", &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
-    {  // Dynamic's floor (output_scale.c dyn_set_floor)
-        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
-        static const int min_lines[] = {360, 540, 720};
-        int mi = 1;
-        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
-        bool dyn = g_settings.res_mode == RES_DYNAMIC;
-        opt_child_begin(dyn);
-        if (!dyn) opt_disable_next(), opt_needs_next("Internal resolution", "Dynamic");
-        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
-                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
-            g_settings.dyn_min = min_lines[mi];
-        opt_child_end();
-    }
-    {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
-        static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
-        static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
-        int fi = 2;
-        for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
-        if (opt_choice("Internal FPS target", &fi, fps, 3, 2,
-                       "The frame rate the game aims for. At 30, Dynamic resolution only lowers the resolution when 30 "
-                       "doesn't fit. 30 outdoors, 60 indoors runs the overworld at 30 and houses, caves and dungeons at 60."))
-            g_settings.fps_target = fps_target[fi];
-    }
+    // Internal resolution's options under it: the upscaler (any resolution but Match display) and Dynamic's floor; the
+    // line beside them lit while either applies (user 2026-11-12)
+    opt_child_begin(g_settings.res_mode != RES_MATCH);
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__
         static const char *ups[] = {LN("Bilinear"), LN("MetalFX")};
@@ -787,11 +767,33 @@ static void tab_display(void) {
             snprintf(udm, sizeof udm, "%s\n\n%s", L(ud),
                      L("Does nothing at Match display, since the game already renders at your screen's resolution."));
             ud = udm;
-            opt_disable_next();
+            opt_disable_next();  // (its note says why, in place of a "Needs" line: no one value turns it on)
         }
         preview_text(LN("Configure how the game is scaled up to fit your window."), NULL);
         if (opt_preview("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
             g_settings.upscaler = ui ? UPSCALE_SHARP : UPSCALE_BILINEAR, g_settings.upscaler_auto = false;
+    }
+    {  // Dynamic's floor (output_scale.c dyn_set_floor)
+        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
+        static const int min_lines[] = {360, 540, 720};
+        int mi = 1;
+        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
+        bool dyn = g_settings.res_mode == RES_DYNAMIC;
+        if (!dyn) opt_disable_next(), opt_needs_next("Internal resolution", "Dynamic");
+        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
+                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
+            g_settings.dyn_min = min_lines[mi];
+    }
+    opt_child_end();
+    {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
+        static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
+        static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
+        int fi = 2;
+        for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
+        if (opt_choice("Internal FPS target", &fi, fps, 3, 2,
+                       "The frame rate the game aims for. At 30, Dynamic resolution only lowers the resolution when 30 "
+                       "doesn't fit. 30 outdoors, 60 indoors runs the overworld at 30 and houses, caves and dungeons at 60."))
+            g_settings.fps_target = fps_target[fi];
     }
     static const char *aa[] = {LN("Off"), LN("SMAA")};
     preview_text(LN("Configure the smoothing of jagged edges. SMAA keeps textures sharp."), NULL);
