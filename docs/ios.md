@@ -125,7 +125,8 @@ What is still open or worth knowing. Fixed items are in git history.
   [runtime/platform/ios.entitlements](../runtime/platform/ios.entitlements)); on iOS 27 it opens 507 GB but needs a
   paid team. On iOS 27.0.1 without `increased-memory-limit`, an iPad Pro M4 (8 GB) still placed the window above
   the shared cache (`0x70_0000_0000`), gave a 5120 MB limit instead of 8192, and played the overworld at 60 fps for
-  4 minutes with a 2.7 GB peak footprint. An iPhone on iOS 27 without it is not measured.
+  4 minutes with a 2.7 GB peak footprint. An iPhone 15 Pro (8 GB) on iOS 27.2 without it got a 3376 MB limit and
+  played the overworld for 4 minutes with a 2.4 GB peak footprint, about 1 GB under the limit.
 - The start screen's notice (`plat_ios_memory_entitled`, `LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1` to see it on any
   desktop) covers the message, not a placement failure. `plat_reserve_guest` without the entitlement has no test.
 
