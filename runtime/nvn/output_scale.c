@@ -733,9 +733,14 @@ decided:
         if (sum_ms >= 0) snprintf(split, sizeof split, "; spans summed %.1f ms", sum_ms);
         char hold[48] = "";
         if (g_hold_dt > 0) snprintf(hold, sizeof hold, ", holding %.0f fps", 1000 / g_hold_dt);
+        char thermal[32] = "";
+#ifdef __APPLE__
+        extern const char *renderer_thermal_state(void);  // metal.m: the device's thermal state (a warm phone throttles)
+        snprintf(thermal, sizeof thermal, ", thermal %s", renderer_thermal_state());
+#endif
         LOG("[dynres] %.2f -> %.2f (frame %.1f ms, median %.1f, %d spike%s left out, gpu %.1f ms = game %.1f + window %.1f, "
-            "budget %.1f%s, next raise in %.0f s%s)\n", prev, g_dyn, avg_dt, med, spikes, spikes == 1 ? "" : "s", avg_gpu, G, W,
-            budget, hold, fmax(0, g_dyn_raise_at - now), split);
+            "budget %.1f%s, next raise in %.0f s%s%s)\n", prev, g_dyn, avg_dt, med, spikes, spikes == 1 ? "" : "s", avg_gpu, G, W,
+            budget, hold, fmax(0, g_dyn_raise_at - now), thermal, split);
     }
     memset(&g_split, 0, sizeof g_split);
     g_split_n = 0;

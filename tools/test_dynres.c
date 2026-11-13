@@ -24,6 +24,9 @@ static int g_pace_slow;  // (pacer cases: the pacer holds the game at 30 - nvn/p
 bool pace_is_slow(void) { return g_pace_slow; }
 static int g_pace_try;  // (pacer cases: Dynamic asked the frame pacer to try 60 - nvn/pace.c pace_try_60)
 void pace_try_60(void) { g_pace_try = 1; }
+#ifdef __APPLE__
+const char *renderer_thermal_state(void) { return "nominal"; }  // (output_scale.c's step line: nvn/metal.m)
+#endif
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
