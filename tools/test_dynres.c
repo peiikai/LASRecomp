@@ -70,6 +70,10 @@ typedef struct {
     double sag;         // > 0: paced: a frame missing a vsync after on-time frames puts the clock down - its times x this at
                         // once, easing back as the clock does (the iPad / iPhone fallout of a raise's late frames: GPU
                         // time ~2x at any factor for a second, game and window parts alike, settling over ~2 s)
+    double heat;        // > 0: G x this by the end of the run, rising from x1 at the start (a phone warming up: the same
+                        // scene costs more minutes in)
+    double light;       // > 0: (light_at) the scene's multiplier from then on (0: 0.6)
+    double start;       // > 0: Dynamic starts at this factor (LARECOMP_DYN_START: climbing to 1.00 from under it)
 } Case;
 
 typedef struct {
@@ -86,6 +90,7 @@ typedef struct {
     int low_win, n_win;
     double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 15 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
     double f_light;       // (light_at) the factor 15 s after the scene got lighter
+    double f_min_first;   // the lowest factor within 10 s of the first change (2: none): a slide from 1.00
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -93,6 +98,7 @@ static Result run(const Case *c) {
     g_rng = 7;
     g_t30 = c->t30;
     g_settings.dyn_min = c->min_lines ? c->min_lines : 540;
+    g_settings.upscaler = c->w1 > 0 ? UPSCALE_SHARP : UPSCALE_BILINEAR;  // (the window step's jump at 1.00: a sharp upscaler's)
     double now = 1.0, f = output_scale_dynamic_factor(), g_prev = -1, w_prev = -1;
     double frames_end = 0, t_end = 0, last_f = f, f_min = 1, f_max = 0, last_hold = 0, hold_t = 0;
     int changes = 0, hold_changes = 0, settled = 0;
@@ -109,6 +115,7 @@ static Result run(const Case *c) {
     int ok_run = 0;          // (sag) frames on time in a row before it
     double sag_fast = 0, sag_slow = 0;  // (sag) the clock's sag now: its fast and slow parts
     double f_heavy_min = 2, f_after_heavy = -1, f_light = -1;
+    double first_t = -1, f_min_first = 2;
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
@@ -123,6 +130,7 @@ static Result run(const Case *c) {
         if (c->resize_at > 0 && !resized) f_before = f;
         if (f != last_f) {
             printf(" | %.0fs %.2f", now, f);
+            if (first_t < 0) first_t = now;
             if (++col % 8 == 0) printf("\n ");
             if (now > c->secs - 60) changes++;
             if (now > 20) settled++;
@@ -133,6 +141,7 @@ static Result run(const Case *c) {
         if (c->heavy_until > 0 && now > c->heavy_at && now < c->heavy_until) f_heavy_min = fmin(f_heavy_min, f);
         if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 15) f_after_heavy = f;
         if (c->light_at > 0 && f_light < 0 && now > c->light_at + 15) f_light = f;
+        if (first_t >= 0 && now < first_t + 10) f_min_first = fmin(f_min_first, f);
         double hold = output_scale_dynamic_hold_fps();
         if (hold != last_hold) {
             printf(" | %.0fs hold %.0f", now, hold);
@@ -142,7 +151,8 @@ static Result run(const Case *c) {
             if (c->heavy_until > 0 && now > c->heavy_until && near30(hold) && !back30) back30 = now;
         }
         if (now > c->secs - 60) { f_min = fmin(f_min, f); f_max = fmax(f_max, f); }
-        double scene = (1 + (c->wobble > 0 ? c->wobble : 0.03) * sin(now * 2 * M_PI / 20)) * (c->light_at > 0 && now > c->light_at ? 0.6 : 1.0);
+        double scene = (1 + (c->wobble > 0 ? c->wobble : 0.03) * sin(now * 2 * M_PI / 20)) * (c->light_at > 0 && now > c->light_at ? (c->light > 0 ? c->light : 0.6) : 1.0);
+        if (c->heat > 0) scene *= 1 + (c->heat - 1) * now / c->secs;
         if (c->heavy_at > 0 && now > c->heavy_at && (c->heavy_until <= 0 || now < c->heavy_until)) scene *= c->heavy;
         if (c->wander > 0) {  // mean-reverting over ~3 s, typical size c->wander
             double gauss = (rnd() + rnd() + rnd() + rnd() - 2) * 1.732, dt = 1 / 60.0;
@@ -225,7 +235,8 @@ static Result run(const Case *c) {
                 .hold_changes = hold_changes, .changes_settled = settled, .back30_t = back30, .f_min_last60 = f_min,
                 .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
                 .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after,
-                .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy, .f_light = f_light};
+                .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy, .f_light = f_light,
+                .f_min_first = f_min_first};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
     if (c->resize_at > 0)
@@ -470,11 +481,34 @@ int main(int argc, char **argv) {
         // late: it must sit at 0.80 between probes - a probe is two steps, not six
         {.name = "iPhone 15 Pro, a heavier sag: the fit holds through the fallout", .a = 1, .b = 17, .w = 3.5, .w1 = 2,
          .fifo = 1, .secs = 240, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 3.0},
+        // the iPhone warming up (2026-11-13 log, 2556x1179, MetalFX): 1.00 held 60 for 78 s with the GPU creeping 12.8 ->
+        // 14 ms, then went late, and the window step is 1.5 ms at 1.00 but ~3 ms under it (MetalFX only runs there), so
+        // 0.95 cost more than 1.00 and 0.90 as much: it slid 1.00 -> 0.70 in 4 s, and after each climb 0.85 failed,
+        // the fallout hold expired with frames still late, and the settle (2 s) read as the scene getting lighter, so
+        // it cycled 0.70 -> 0.85 -> 0.70 every 20-30 s. G 12.5 + W 1.5 (+ 2 ms of CPU) at 1.00, warming 15% over the run:
+        // 0.85 fits throughout. A step down from 1.00 must land near the fit, and it must settle under the ceiling
+        {.name = "iPhone 15 Pro, MetalFX window step 1.5 at 1.00 / 3.0 under it, warming 15%", .a = 2.5, .b = 10, .w = 3.0,
+         .w1 = 1.5, .fifo = 1, .secs = 240, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0, .cpu = 2, .heat = 1.15},
+        // the same with a lighter scene from 150 s (x0.85: leaving the heavy area, or the phone cooling): 1.00 fits
+        // again by the end - back to it, through the window step's jump
+        {.name = "iPhone 15 Pro, the window step's jump, warming then lighter from 150 s", .a = 2.5, .b = 10, .w = 3.0,
+         .w1 = 1.5, .fifo = 1, .secs = 240, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0, .cpu = 2, .heat = 1.15,
+         .light_at = 150, .light = 0.85},
+        // a Mac (desktop rules, no clock pacing) with MetalFX, 1.00 right at the budget (G 13 + W 1.5): the step down must
+        // not land on 0.95 (G 11.7 + W 3 = 14.7: more than 1.00), and it must settle
+        {.name = "Mac MetalFX, 1.00 at the budget (G 13 + W 1.5, W 3.0 under 1.00)", .a = 2.5, .b = 10.5, .w = 3.0, .w1 = 1.5,
+         .fifo = 1, .secs = 120, .lines = 1440},
+        // the same Mac, lighter (G 9.5 + W 1.5 at 1.00: fits with room), starting at 0.80: it must reach 1.00. It climbed to
+        // 0.95 (G 8.8 + W 3 = 11.8) and sat there: a raise to 1.00 was judged with the window step under 1.00 (G 9.7 / 0.8 +
+        // 3 = 15.1 > 14.5), while 1.00 costs 9.5 + 1.5 = 11
+        {.name = "Mac MetalFX, 1.00 fits (G 9.5 + W 1.5), from 0.80: back to 1.00", .a = 2, .b = 7.5, .w = 3.0, .w1 = 1.5,
+         .fifo = 1, .secs = 120, .lines = 1440, .start = 0.80},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
     int i = atoi(argv[1]);
     if (cases[i].start_paced) setenv("LARECOMP_DYN_PACED", "1", 1);
+    if (cases[i].start > 0) { char f[16]; snprintf(f, sizeof f, "%.2f", cases[i].start); setenv("LARECOMP_DYN_START", f, 1); }
     Result r = run(&cases[i]);
     // (Minimum resolution 540p unless a case says: 0.50 in a 1080p window, 0.25 at 4K)
     switch (i) {
@@ -543,6 +577,14 @@ int main(int argc, char **argv) {
     // (the fit between probes, a probe two steps: it was 24 steps after 20 s, sitting at 0.70, two under the fit)
     case 63: check(r.changes_settled <= 12 && r.f_min_last60 >= 0.8 && r.low_win <= 15 && r.fps_end > 58,
                    "iPhone heavier sag: the fit holds through the fallout, a probe is two steps"); break;
+    // (one step from 1.00 lands near the fit - no slide; a probe of 1.00 every ceiling wait at most, each a few steps)
+    case 64: check(r.f_min_first >= 0.8 && r.f_min_last60 >= 0.8 && r.changes_settled <= 24 && r.low_win <= 15 && r.fps_end > 58,
+                   "iPhone warming, the window step's jump: no slide from 1.00, settles under the ceiling"); break;
+    case 65: check(r.f_min_first >= 0.8 && r.f_end == 1.0 && r.fps_end > 58,
+                   "iPhone warming then lighter: back to 1.00"); break;
+    case 66: check(r.f_min_first >= 0.8 && r.f_end >= 0.8 && r.changes_settled <= 4 && r.fps_end > 58,
+                   "Mac MetalFX at the budget: a step from 1.00 skips 0.95, settles"); break;
+    case 67: check(r.f_end == 1.0 && r.fps_end > 58, "Mac MetalFX, 1.00 fits: reached from 0.80"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
