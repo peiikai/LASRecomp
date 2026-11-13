@@ -79,6 +79,14 @@ fetch https://files.pythonhosted.org/packages/source/o/oead/oead-1.3.0.tar.gz \
       87145c68dcddec8967fd56565e057cbbb83382554d744fbb5b38295b0dfa615f oead-1.3.0.tar.gz
 fetch https://files.pythonhosted.org/packages/source/P/PyYAML/pyyaml-6.0.2.tar.gz \
       d584d9ec91ad65861cc08d42e834324ef890a082e591037abe114850ff7bbc3e pyyaml-6.0.2.tar.gz
+fetch https://files.pythonhosted.org/packages/source/q/quicktex/quicktex-0.2.1.tar.gz \
+      1cdd8ff55c0dcf77973e3187076bcb8df91ec3b433a7563638ff2a2b7852f6d0 quicktex-0.2.1.tar.gz
+EVFL_WHL=evfl-1.2.0-py3-none-any.whl
+fetch https://files.pythonhosted.org/packages/py3/e/evfl/$EVFL_WHL \
+      dbfb7c68a99ccbc2942636a7153fe9bae7d869ada31c0cdf441145cc71a4ffde $EVFL_WHL
+APPDIRS_WHL=appdirs-1.4.4-py2.py3-none-any.whl
+fetch https://files.pythonhosted.org/packages/py2.py3/a/appdirs/$APPDIRS_WHL \
+      a841dacd6b99318a741b166adb07e19ee71a274450e68237b4650ca1055ab128 $APPDIRS_WHL
 
 SLICE=$P/Python.xcframework/$SLICENAME
 if [ ! -f "$SLICE/Python.framework/Python" ]; then
@@ -103,9 +111,9 @@ fi
 EXT=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')  # .cpython-313-iphoneos.so
 WHEELTAG=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_platform().replace("-", "_").replace(".", "_"))')  # ios_13_0_arm64_iphoneos
 
-# The randomizer's requirements.txt is what the generator is written against; the natively built packages below are
-# pinned here by hand (each needs its own recipe), so a bump there must not go unnoticed: every pin is checked
-# against the file's specifier, and the pure-Python ones are taken from the file as they are.
+# The randomizer's requirements.txt is what the generator is written against; the packages here are pinned by hand
+# (the native ones each need their own recipe, and every download has its checksum), so a bump there must not go
+# unnoticed: every pin is checked against the file's specifier.
 REQ=third_party/LAS-Randomizer/requirements.txt
 req() {  # name [version]: the file's line for name; with a version, fail unless it satisfies the line
     "$HOSTPY" - "$REQ" "$@" <<'EOF'
@@ -129,6 +137,8 @@ req oead 1.3.0 >/dev/null
 req PyYAML 6.0.2 >/dev/null
 req quicktex 0.2.1 >/dev/null
 req Pillow 10.4.0 >/dev/null
+req evfl 1.2.0 >/dev/null
+req appdirs 1.4.4 >/dev/null
 
 if [ ! -f "$P/lib/libkeystone.0.dylib" ]; then
     unpack keystone-0.9.2.tar.gz keystone-$TAG
@@ -160,9 +170,7 @@ fi
 # through CC / CXX, which CMake honours.
 QUICKTEX_WHL=quicktex-0.2.1-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
 if [ ! -f "$P/wheels/$QUICKTEX_WHL" ]; then
-    "$HOSTPY" -m pip download -q --no-deps --no-binary :all: -d "$P/wheels" "quicktex~=0.2.1"
-    rm -rf "$S/quicktex-$TAG" && mkdir -p "$S/quicktex-$TAG"
-    tar -xf "$P"/wheels/quicktex-0.2.1.tar.gz -C "$S/quicktex-$TAG" --strip-components 1
+    unpack quicktex-0.2.1.tar.gz quicktex-$TAG
     CROSS_CC=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_config_var("CC"))')  # arm64-apple-ios[-simulator]-clang
     (cd "$S/quicktex-$TAG" && PATH="$SLICE/bin:$(dirname "$(command -v cmake)"):$(dirname "$(command -v ninja)"):$PATH" \
         CC=$CROSS_CC CXX=${CROSS_CC}++ CFLAGS="$MAPFLAGS" CXXFLAGS="$MAPFLAGS" \
@@ -186,8 +194,7 @@ if [ ! -f "$SP/oead$EXT" ]; then
     unzip -qo "$P/wheels/$OEAD_WHL" -d "$SP"
     unzip -qo "$P/wheels/$PILLOW_WHL" -d "$SP"
     rm -f "$SP"/PIL/_imagingtk*.so  # (Tk: not there)
-    "$HOSTPY" -m pip download -q --no-deps -d "$P/wheels" "$(req evfl)" "$(req appdirs)"
-    for w in "$P"/wheels/evfl-*.whl "$P"/wheels/appdirs-*.whl; do unzip -qo "$w" -d "$SP"; done
+    unzip -qo "$S/$EVFL_WHL" -d "$SP" && unzip -qo "$S/$APPDIRS_WHL" -d "$SP"
     unpack pyyaml-6.0.2.tar.gz pyyaml && cp -R "$S/pyyaml/lib/yaml" "$SP/yaml"
     unpack keystone-0.9.2.tar.gz keystone-py && cp -R "$S/keystone-py/bindings/python/keystone" "$SP/keystone"
     # keystone.py asks ctypes for 'libkeystone.dylib': the runtime loads the framework first (ios_python.m), and
@@ -209,12 +216,12 @@ cp "$P/Python.xcframework/lib/python$PYV/LICENSE.txt" "$L/Python-LICENSE.txt"
 unpack keystone-0.9.2.tar.gz keystone-lic && cp "$S/keystone-lic/COPYING" "$L/keystone-COPYING.txt" &&
     cp "$S/keystone-lic/bindings/python/LICENSE.TXT" "$L/keystone-python-LICENSE.txt"
 unpack oead-1.3.0.tar.gz oead-lic && cp "$S/oead-lic/LICENSE.md" "$L/oead-LICENSE.md"
-mkdir -p "$S/quicktex-lic" && tar -xf "$P/wheels/quicktex-0.2.1.tar.gz" -C "$S/quicktex-lic" --strip-components 1 &&
-    cp "$S/quicktex-lic/LICENSE.md" "$L/quicktex-LICENSE.md"
+unpack quicktex-0.2.1.tar.gz quicktex-lic && cp "$S/quicktex-lic/LICENSE.md" "$L/quicktex-LICENSE.md"
 unpack pyyaml-6.0.2.tar.gz pyyaml-lic && cp "$S/pyyaml-lic/LICENSE" "$L/PyYAML-LICENSE.txt"
 rm -rf "$S"/{sdl,ffmpeg,keystone,oead,quicktex,pyyaml}-lic
-for w in evfl appdirs pillow; do  # (the pure-Python wheels and BeeWare's Pillow: their dist-info)
-    unzip -qo "$P"/wheels/$w-*.whl "$w-*.dist-info/LICENSE*" -d "$S/$w-lic" && cp "$S"/$w-lic/$w-*.dist-info/LICENSE* "$L/$w-LICENSE.txt"
+for f in "$S/$EVFL_WHL" "$S/$APPDIRS_WHL" "$P/wheels/$PILLOW_WHL"; do  # (the pure-Python wheels and BeeWare's Pillow: their dist-info)
+    w=$(basename "$f" | cut -d- -f1)
+    unzip -qo "$f" "$w-*.dist-info/LICENSE*" -d "$S/$w-lic" && cp "$S"/$w-lic/$w-*.dist-info/LICENSE* "$L/$w-LICENSE.txt"
     rm -rf "$S/$w-lic"
 done
 ls "$L"
