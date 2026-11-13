@@ -113,6 +113,23 @@ The iOS app is made on your computer from your own game files, then sideloaded.
 6. Open the app and choose that folder when it asks for your game files. Use the same game version as the files
    on your computer.
 
+### Increased Memory Limit
+
+LAS Recomp asks iOS for more memory than a normal app gets. iOS only grants it when the tool that signs the app also
+turns on Increased Memory Limit for the app's App ID. Not every tool does. Without it, iOS may close the game when it
+needs more memory, and the start screen says "Installed without the increased memory limit".
+
+| How the app is installed | Keeps it |
+|---|---|
+| AltStore Classic 2.2 or newer | Yes |
+| [Impactor](https://github.com/claration/impactor), from a computer | Yes |
+| Xcode, with a free (Personal Team) or paid Apple account | Yes |
+| SideStore 0.7.0 with a free Apple account | No |
+| Sideloadly and other tools | Check the start screen |
+
+If your sideloader didn't add it, see [docs/ios.md](docs/ios.md#increased-memory-limit) for a one-time fix with
+GetMoreRam. More on the iOS app is there too.
+
 ## Features
 
 - **This is not emulation.** It runs natively on Windows, macOS, Linux, Android, iPhone and iPad.

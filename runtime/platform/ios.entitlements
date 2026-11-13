@@ -4,7 +4,7 @@
 <dict>
 	<!-- The game's 2-3 GB footprint needs the raised jetsam limit (free with any team). It changes the address space
 	     too: the 5.25 GB guest window (runtime/rt.h, placed by plat_place_guest in runtime/platform/ios.c) gets a
-	     52 GB gap with it and 5.5 GB without on an iPhone 15 Pro, iOS 26.5 (docs/ios-tech-debt.md). -->
+	     52 GB gap with it and 5.5 GB without on an iPhone 15 Pro, iOS 26.5 (docs/ios.md). -->
 	<key>com.apple.developer.kernel.increased-memory-limit</key>
 	<true/>
 </dict>
