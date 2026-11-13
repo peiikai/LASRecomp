@@ -270,7 +270,7 @@ static void draw_section(int si, const Filter &f) {
     const Node &n = g_doc[si];
     if (n.title == "Route") { draw_route(si, f); return; }
     if (si == 0) {  // (the seed's own lines: its ID, settings, starting items)
-        heading(L("Seed settings"), false);
+        if (!PLAT_TOUCH) heading(L("Seed settings"), false);
         for (auto &l : n.lines) ImGui::TextWrapped("%s", shown(l.text).c_str()), ImGui::Spacing();
         return;
     }
@@ -278,7 +278,7 @@ static void draw_section(int si, const Filter &f) {
     // the section's name on top (its intro text stays in the HTML page only); the rows line up with the left
     std::vector<Line> top;
     for (auto &l : n.lines) if (!is_text(l)) top.push_back(l);
-    if (f.q.empty() && (folds || !n.lines.empty())) heading(shown(n.title), false);
+    if (!PLAT_TOUCH && f.q.empty() && (folds || !n.lines.empty())) heading(shown(n.title), false);
     rows(top, f, false, "");  // (Spheres, areas: headers that open; a few blocks (entrances): open, titled)
     for (size_t k = 0; k < n.subs.size(); k++) {
         const Sub &s = n.subs[k];
@@ -304,6 +304,16 @@ static void draw_section(int si, const Filter &f) {
     }
 }
 
+#if PLAT_TOUCH
+// a column's heading on the full-screen touch page: level with the X, pinned (as rando_tab.mm's pane_heading)
+static void pane_heading(const std::string &title, float scale) {
+    float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+    ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
+    ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(title.c_str()).c_str());
+    ImGui::SetCursorPosY(top + bx + 4 * scale);
+}
+#endif
+
 // Returns 0 when the page was closed (B on its left column, Back, or the X on touch screens), 2 when B / Left stepped
 // back within it (the menu mustn't take that B too), else 1.
 int spoiler_view_draw(const std::string &seed, float scale) {
@@ -317,9 +327,11 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     if (free_b && in_right && (opt_pressed_back() || (opt_pressed_left() && !opt_focused_lr()))) g_back_left = g_sec, ret = 2;
     else if (free_b && !in_right && opt_pressed_back()) return 0;
 
-    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", seed.c_str());
-    ImGui::TextDisabled("%s", L("Spoiler log"));
-    ImGui::Spacing();
+    if (!PLAT_TOUCH || g_missing || !revealed) {  // (touch: the page has the whole screen, its columns their headings)
+        ImGui::TextColored(plastic_col(plastic_theme().title), "%s", seed.c_str());
+        ImGui::TextDisabled("%s", L("Spoiler log"));
+        ImGui::Spacing();
+    }
     if (g_missing || !revealed) {
 #if PLAT_TOUCH
         if (plastic_close_corner(44 * scale, scale)) return 0;  // (one column: the screen's corner)
@@ -354,8 +366,13 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     if (g_back_left >= 0) opt_focus_row(g_back_left == 0 ? (int)g_doc.size() : g_back_left), g_back_left = -1;
     opt_begin("##spoiler", scale, true);
     opt_compact();
+#if PLAT_TOUCH
+    pane_heading(L("Sections"), scale);
+    ImGui::BeginChild("##left_list", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);  // (the heading pinned: the list scrolls)
+#else
     ImGui::Dummy(ImVec2(0, ImGui::GetStyle().ItemSpacing.y));  // (the right column's list starts this much lower)
     heading(L("Sections"), false);  // (level with the right column's first heading: the rows line up)
+#endif
     ui_text_inline(true);  // (filters as typed: typed into directly, not through a prompt)
     opt_text("Search", q, sizeof q, "Search items and places", NULL);
     ui_text_inline(false);
@@ -381,10 +398,16 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     ImGui::Dummy(ImVec2(0, 6 * scale));
     opt_toggle("Useful items only", &useful_only, false, NULL);
     if (f.linked) opt_toggle("Hide checked", &hide_done, false, NULL);
+#if PLAT_TOUCH
+    ImGui::EndChild();  // (##left_list)
+#endif
     // ---- right: the chosen section
     opt_split();
 #if PLAT_TOUCH
     if (plastic_close_pane(44 * scale, scale)) { opt_split_end(); return 0; }
+    if (!f.q.empty()) pane_heading(L("Search"), scale);
+    else if (g_sec == 0) pane_heading(L("Seed settings"), scale);
+    else if (g_sec > 0 && g_sec < (int)g_doc.size()) pane_heading(shown(g_doc[g_sec].title), scale);
 #endif
     if (g_sec >= 0 && g_sec < (int)g_doc.size()) {
         opt_list_begin();
