@@ -1002,6 +1002,24 @@ extern "C" bool tracker_overlay_wanted(void) {
     return g_loaded > 0;
 }
 
+// The spoiler page (spoiler_view.mm): has the running seed's check `loc` been collected? 1 yes, 0 no, -1 can't tell
+// (no seed running, or a check the save has no flag for: shop shelves, instruments). Render thread, like the drawing.
+extern "C" int tracker_check_collected(const char *loc) {
+    static std::unordered_map<std::string, int> idx;
+    static size_t idx_for = ~(size_t)0;
+    if (!rando_seed_dir()) return -1;
+    if (!g_loaded) load();
+    if (g_loaded <= 0) return -1;
+    if (idx_for != g_checks.size()) {
+        idx.clear();
+        for (size_t i = 0; i < g_checks.size(); i++) idx[g_checks[i].name] = (int)i;
+        idx_for = g_checks.size();
+    }
+    auto it = idx.find(loc);
+    if (it == idx.end() || g_checks[it->second].flag < 0) return -1;
+    return flag_set(g_checks[it->second].flag) ? 1 : 0;
+}
+
 // status colours (best first: in logic, trick logic, needs an item, collected) and their text
 static const ImU32 kStCol[4] = {IM_COL32(0x3F, 0xBF, 0x7F, 255), IM_COL32(0xA5, 0x8A, 0xF0, 255), IM_COL32(0xF2, 0xA3, 0x3A, 255),
                                 IM_COL32(0x6F, 0x7C, 0x82, 255)};

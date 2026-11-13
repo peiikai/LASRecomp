@@ -562,6 +562,12 @@ def main():
     import hint_sheet  # the Hint Sheet's steps: progression items in playthrough order
     print('hint sheet steps:', hint_sheet.steps(sh.logic_defs, pl, settings, lambda k, acc: sh.checkAccess(k, acc, settings['logic']),
                                                 sph, out_dir), flush=True)
+    try:  # the spoiler's Route (presentation only: tools/rando/route.py)
+        import route
+        print('route:', route.build(sh.logic_defs, pl, settings, lambda k, acc: sh.checkAccess(k, acc, settings['logic']),
+                                    sph, out_dir), 'stops', flush=True)
+    except Exception as e:
+        print('route: skipped:', e, flush=True)
     if settings.get('hints'):  # owl statues and phone booths (tools/rando/seed_hints.py)
         import seed_hints
         print('hints:', seed_hints.pick(sh.logic_defs, pl, settings, lambda k, acc: sh.checkAccess(k, acc, settings['logic']),
