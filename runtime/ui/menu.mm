@@ -6,6 +6,7 @@
 #import <Metal/Metal.h>
 #endif
 #include <SDL3/SDL.h>
+#include <float.h>
 #include <math.h>
 #include <pthread.h>
 #include <atomic>
@@ -39,6 +40,7 @@ extern "C" {
 #include "../hle.h"
 #include "../settings.h"
 #include "../nvn/output_scale.h"
+#include "../nvn/hud_stats.h"
 #include "../menu_sfx.h"
 #include "menu.h"
 void input_reset(void);
@@ -681,12 +683,26 @@ static void tab_display(void) {
         g_settings.fullscreen = fs;
         g_want_fullscreen_apply.store(true);
     }
-    static const char *fps_corners[] = {LN("Off"), LN("Top left"), LN("Top right"), LN("Bottom left"), LN("Bottom right")};
-    opt_choice("Show FPS", &g_settings.show_fps, fps_corners, N_FPS_CORNERS, FPS_OFF,
-               "Shows the frame rate in a corner of the screen.");
-    opt_toggle("Frame Generation", &g_settings.frame_interp, false,
-               "Experimental. Draws extra images between the game's frames for smoother motion, up to your display's "
-               "refresh rate. On a 120 Hz display the game shows 120 fps. Some visual glitches are possible.");
+    {   // on / off, and its corner under it (user 2026-11-12): show_fps is the corner shown (or off), fps_corner the one
+        // it comes back to
+        static const char *corners[] = {LN("Top left"), LN("Top right"), LN("Bottom left"), LN("Bottom right")};
+        bool on = g_settings.show_fps != FPS_OFF;
+        if (g_settings.fps_corner <= FPS_OFF || g_settings.fps_corner >= N_FPS_CORNERS) g_settings.fps_corner = FPS_TOP_LEFT;
+        if (opt_toggle("Show FPS", &on, false, "Shows the frame rate in a corner of the screen."))
+            g_settings.show_fps = on ? g_settings.fps_corner : FPS_OFF;
+        opt_child_begin(on);
+        if (!on) opt_disable_next(), opt_needs_next("Show FPS");
+        int ci = g_settings.fps_corner - FPS_TOP_LEFT;
+        if (opt_choice("Position", &ci, corners, 4, 0, "Which corner the frame rate sits in.")) {
+            g_settings.fps_corner = FPS_TOP_LEFT + ci;
+            if (on) g_settings.show_fps = g_settings.fps_corner;
+        }
+        if (!on) opt_disable_next(), opt_needs_next("Show FPS");
+        opt_toggle("Show advanced information", &g_settings.fps_advanced, false,
+                   "Adds a frame time graph, CPU and GPU load, memory, the renderer's work, shader builds and the "
+                   "current level. Mostly for testing and bug reports.");
+        opt_child_end();
+    }
 #ifdef __APPLE__
     if (opt_toggle("Metal HUD", &g_settings.metal_hud, false,
                    "Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a "
@@ -695,30 +711,23 @@ static void tab_display(void) {
         ImGui::OpenPopup("##hudrestart");
     metal_hud_restart_popup(scale);
 #endif
-    {   // (a live preview, as an Off / On choice)
-        static const char *oo[] = {LN("Off"), LN("On")};
-        int rb = g_settings.blur_removal;
-        if (opt_preview("Remove blur", &rb, oo, 2, 0, "Turns off the tilt-shift blur at the top and bottom of the screen."))
-            g_settings.blur_removal = rb;
-    }
-    if (!PLAT_TOUCH) {  // (a phone's window is the screen, and the app in the background is paused anyway)
-        opt_toggle("Pause on focus lost", &g_settings.pause_unfocused, false,
-                   "The game pauses while its window isn't in front.");
+    if (!PLAT_TOUCH)  // (a phone's window is the screen)
         opt_toggle("Remember window size", &g_settings.remember_window, false,
                    "The window opens at the size it was when you quit.");
-    }
 
     opt_section("Rendering");
+    // (user 2026-11-12) Resolution first, then Dynamic resolution - its own toggle, Resolution set aside while it's
+    // on - with the FPS target it holds and its floor; the Upscaler further down, above Anti-aliasing
+    bool dyn = g_settings.dyn_res;
     // display order -> RES_* (the ini / enum order predates the menu order)
     // (up to 4x: 7680 x 4320, 8K - more only ran out of GPU memory, and sat next to 75% in the list)
-    // (Match display in the middle: left from it 75% / 50% / 25%, right Dynamic then 1x-4x; user 2026-10-11)
-    static const char *res[] = {LN("25%"), LN("50%"), LN("75%"), LN("Match display"), LN("Dynamic"),
-                                LN("1x"), LN("2x"), LN("3x"), LN("4x")};
-    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, RES_DYNAMIC, 1, 2, 3, 4};
+    // (Match display in the middle: left from it 75% / 50% / 25%, right 1x-4x; user 2026-10-11)
+    static const char *res[] = {LN("25%"), LN("50%"), LN("75%"), LN("Match display"), LN("1x"), LN("2x"), LN("3x"), LN("4x")};
+    static const int res_mode[] = {RES_Q25, RES_Q50, RES_Q75, RES_MATCH, 1, 2, 3, 4};
     enum { RES_MATCH_AT = 3 };
     enum { NRES = sizeof res_mode / sizeof res_mode[0] };
     {
-        int ri = RES_MATCH_AT, rdef = RES_MATCH_AT;  // (rdef: the GPU's default - Dynamic on an integrated GPU)
+        int ri = RES_MATCH_AT, rdef = RES_MATCH_AT;  // (rdef: the GPU's default)
         for (int i = 0; i < NRES; i++) {
             if (res_mode[i] == g_settings.res_mode) ri = i;
             if (res_mode[i] == g_default_res_mode) rdef = i;
@@ -726,47 +735,64 @@ static void tab_display(void) {
         float sx, sy;
         renderer_get_scale(&sx, &sy);
         char d[1024];  // (in the menus' language already: the row leaves it as it is)
-        int n = snprintf(d, sizeof d,
-                         g_gpu_integrated
-                             ? L("How sharp the 3D image is. Match display uses your screen's resolution, and Dynamic "
-                                 "goes as sharp as your GPU can at full speed. 1x to 4x multiply the Switch's 1080p, and "
-                                 "1x is 720p on this GPU. 75%%, 50%% and 25%% are for slower machines.\n\nRendering at "
-                                 "%.0f x %.0f.")
-                             : L("How sharp the 3D image is. Match display uses your screen's resolution, and Dynamic "
-                                 "goes as sharp as your GPU can at full speed. 1x to 4x multiply the Switch's 1080p. 75%%, "
-                                 "50%% and 25%% are for slower machines.\n\nRendering at %.0f x %.0f."),
-                         1920.0 * sx, 1080.0 * sy);
-        if (g_settings.res_mode == RES_DYNAMIC && n > 0 && n < (int)sizeof d) {
-            char dyn[256];
-            snprintf(dyn, sizeof dyn, L("Dynamic is at %.0f%% of the display right now."), output_scale_dynamic_factor() * 100);
-            snprintf(d + n, sizeof d - n, " %s", dyn);
-        }
+        snprintf(d, sizeof d,
+                 g_gpu_integrated
+                     ? L("How sharp the 3D image is. Match display uses your screen's resolution. 1x to 4x multiply the "
+                         "Switch's 1080p, and 1x is 720p on this GPU. 75%%, 50%% and 25%% are for slower machines.\n\n"
+                         "Rendering at %.0f x %.0f.")
+                     : L("How sharp the 3D image is. Match display uses your screen's resolution. 1x to 4x multiply the "
+                         "Switch's 1080p. 75%%, 50%% and 25%% are for slower machines.\n\nRendering at %.0f x %.0f."),
+                 1920.0 * sx, 1080.0 * sy);
         char note[32];  // (the preview's value: "50% (800×450)", its text the user's - 2026-11-03)
         snprintf(note, sizeof note, "%.0f×%.0f", 1920.0 * sx, 1080.0 * sy);
         preview_text(LN("Configure the resolution used for rendering the game. Higher values are more demanding on "
                         "your graphics hardware."), note);
-        if (opt_preview("Internal resolution", &ri, res, NRES, rdef, d, false))
+        if (dyn) opt_disable_next(), opt_needs_next("Dynamic resolution", "Off");
+        if (opt_preview("Resolution", &ri, res, NRES, rdef, d, false))
             g_settings.res_mode = res_mode[ri], g_settings.res_auto = false;
     }
-    if (g_settings.res_mode == RES_DYNAMIC) {  // Dynamic's floor (output_scale.c dyn_set_floor)
-        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
-        static const int min_lines[] = {360, 540, 720};
-        int mi = 1;
-        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
-        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
-                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
-            g_settings.dyn_min = min_lines[mi];
+    {
+        char now[160] = "", d[640];  // (in the menus' language already: the row leaves it as it is)
+        if (dyn)
+            snprintf(now, sizeof now, L("Dynamic is at %.0f%% of the display right now."), output_scale_dynamic_factor() * 100);
+        snprintf(d, sizeof d, "%s%s%s",
+                 L("Raises and lowers the resolution as needed to hold your FPS target, up to your screen's resolution. "
+                   "The Resolution setting is set aside while it's on."),
+                 now[0] ? "\n\n" : "", now);
+        if (opt_toggle("Dynamic resolution", &g_settings.dyn_res, false, d)) dyn = g_settings.dyn_res;
     }
-    {   // the game's own two frame rates (pace.c pace_target_30); display order -> FPS_TARGET_*
+    // FPS target and Minimum resolution on Dynamic's line (user 2026-11-12): what it holds and how low it goes, both
+    // Dynamic's own - greyed out while it's off (with a resolution of the player's, the frame pacer decides)
+    opt_child_begin(dyn);
+    {   // the game's own two frame rates (pace.c pace_target_30), under Dynamic resolution: what it holds (user 2026-11-12;
+        // was "Internal FPS target"); display order -> FPS_TARGET_*
         static const char *fps[] = {LN("30"), LN("30 outdoors, 60 indoors"), LN("60")};
         static const int fps_target[] = {FPS_TARGET_30, FPS_TARGET_MIXED, FPS_TARGET_60};
         int fi = 2;
         for (int i = 0; i < 3; i++) if (fps_target[i] == g_settings.fps_target) fi = i;
-        if (opt_choice("Internal FPS target", &fi, fps, 3, 2,
-                       "The frame rate the game aims for. At 30, Dynamic resolution only lowers the resolution when 30 "
-                       "doesn't fit. 30 outdoors, 60 indoors runs the overworld at 30 and houses, caves and dungeons at 60."))
+        if (!dyn) opt_disable_next(), opt_needs_next("Dynamic resolution");
+        if (opt_choice("FPS target", &fi, fps, 3, 2,
+                       "The frame rate Dynamic resolution aims for. 60FPS will prioritize smoothness, 30FPS will "
+                       "prioritize visual quality."))
             g_settings.fps_target = fps_target[fi];
     }
+    {  // Dynamic's floor (output_scale.c dyn_set_floor)
+        static const char *mins[] = {LN("360p"), LN("540p"), LN("720p")};
+        static const int min_lines[] = {360, 540, 720};
+        int mi = 1;
+        for (int i = 0; i < 3; i++) if (min_lines[i] == g_settings.dyn_min) mi = i;
+        if (!dyn) opt_disable_next(), opt_needs_next("Dynamic resolution");
+        if (opt_choice("Minimum resolution", &mi, mins, 3, 1,
+                       "How low Dynamic can go. Lower keeps the frame rate up in busy scenes but looks softer."))
+            g_settings.dyn_min = min_lines[mi];
+    }
+    opt_child_end();
+    // the upscaler, above Anti-aliasing (user 2026-11-12): does something only while the game renders below the window - a share of it (25-75%), 1x-4x short
+    // of the window's height (1x is 720 lines on an integrated GPU), or Dynamic
+    int rm = g_settings.res_mode, lines = rm >= 1 && rm <= 8 ? (rm == 1 && g_gpu_integrated ? 720 : 1080 * rm) : 0;
+    int win_h = g_win_px_h > 1 ? g_win_px_h : (int)ImGui::GetIO().DisplaySize.y;
+    bool below = rm == RES_Q25 || rm == RES_Q50 || rm == RES_Q75 || (lines > 0 && lines < win_h);
+    bool scaled = dyn || below;  // (no line to Resolution: Dynamic turns it on too - user 2026-11-12)
     {   // each OS's own upscaler next to bilinear (UPSCALE_SHARP: MetalFX on macOS, AMD FSR 1 on Windows)
 #ifdef __APPLE__
         static const char *ups[] = {LN("Bilinear"), LN("MetalFX")};
@@ -779,11 +805,12 @@ static void tab_display(void) {
 #endif
         int ui = g_settings.upscaler == UPSCALE_BILINEAR ? 0 : 1;
         char udm[1024];
-        if (g_settings.res_mode == RES_MATCH) {  // (renders at the window's size: nothing to scale up)
+        if (!scaled) {  // (renders at the window's size or above: nothing to scale up)
             snprintf(udm, sizeof udm, "%s\n\n%s", L(ud),
-                     L("Does nothing at Match display, since the game already renders at your screen's resolution."));
+                     L("Does nothing unless the game renders below your screen's resolution: a lower Resolution, or "
+                       "Dynamic resolution."));
             ud = udm;
-            opt_disable_next();
+            opt_disable_next();  // (its note says why, in place of a "Needs" line: no one value turns it on)
         }
         preview_text(LN("Configure how the game is scaled up to fit your window."), NULL);
         if (opt_preview("Upscaler", &ui, ups, 2, g_default_upscaler == UPSCALE_BILINEAR ? 0 : 1, ud))
@@ -805,6 +832,10 @@ static void tab_display(void) {
                "resolution, so their edges are sharper. Higher uses more graphics memory. 0.5x is faster with blockier "
                "edges. Off removes them.");
 
+    opt_section("Experimental");  // (user 2026-11-12)
+    opt_toggle("Frame Generation", &g_settings.frame_interp, false,
+               "Draws extra images between the game's frames for smoother motion, up to your display's refresh rate. On "
+               "a 120 Hz display the game shows 120 fps. Some visual glitches are possible.");
     opt_end();
 }
 
@@ -1304,12 +1335,13 @@ static void focus_check(bool down, bool up, bool any_down, int focused_tab, int 
 
 // The tab bar and its pages, into the current window: the in-game menu, and the start screen's Settings (in_game
 // The live preview (live_preview.h) of a row on the page shown: instead of the tabs, until it closes. The pages with
-// opt_preview rows: Video, Cosmetics.
+// opt_preview rows: Video, Cosmetics, General (Remove blur).
 static float g_preview_scale = 1;
 static void preview_page(void) {
     // (the page drawn last: the bar's Cosmetics is a page alone, which leaves g_tab as Settings had it)
     if (g_shown_tab == 0) tab_display();
     else if (g_shown_tab == 7) tab_cosmetics();
+    else if (g_shown_tab == 11) general_draw(ImGui::GetFontSize() / 34);  // (as tab_display's scale)
 #if PLAT_TOUCH
     else if (g_tab == 10) touch_tab_draw(g_preview_scale);
 #endif
@@ -1799,6 +1831,197 @@ static void bar_draw(ImGuiIO &io, float scale) {
     ImGui::PopFont();
 }
 
+// Show FPS > Show advanced information (user 2026-11-12): the frame rate counter as a developer overlay, in the
+// counter's corner - the frame rate (and the game's own under Frame Generation), the last 2 s of game frame times
+// against the frame pacing target, the game thread's, the render thread's and the GPU's busy share of a frame,
+// Dynamic's resolution, memory, the renderer's work per frame, shader builds and where the game is. A see-through box
+// as the plain counter's, not the menus' plastic. (hud_stats.h: what it reads; called inside the "##fps" corner set up)
+extern "C" const char *game_level_name(void);    // hle/widescreen.c
+extern "C" bool game_camera_zone_id(uint32_t *id);
+// Show FPS's counter (user 2026-11-12): the frame rate alone in the advanced overlay's box, its number bright and "fps"
+// dim beside it (it showed Dynamic's resolution under it too: that's the advanced overlay's now)
+static void fps_box(float scale) {
+    const float fk = 1.5f;  // (as the advanced overlay)
+    scale *= fk;
+    ImGui::SetNextWindowBgAlpha(0.62f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8 * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * scale, 9 * scale));
+    ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    ImFont *font = ImGui::GetFont();
+    float big = ImGui::GetFontSize() * fk, small = big * 0.5f;
+    char b[32];
+    snprintf(b, sizeof b, "%.0f", g_ov_cache ? g_fps_shown : ImGui::GetIO().Framerate);
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float nw = font->CalcTextSizeA(big, FLT_MAX, 0, b).x, gap = small * 0.4f;
+    dl->AddText(font, big, p, IM_COL32(255, 255, 255, 255), b);
+    dl->AddText(font, small, ImVec2(p.x + nw + gap, p.y + big - small * 1.25f), IM_COL32(180, 178, 169, 255), "fps");
+    ImGui::Dummy(ImVec2(nw + gap + font->CalcTextSizeA(small, FLT_MAX, 0, "fps").x, big));
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
+static void perf_overlay(float scale) {
+    // half as big again as the menus' scale at every size (user 2026-11-12: easier to read), as long as the box fits
+    // the window's height
+    const float fk = fmaxf(1.0f, fminf(1.5f, ImGui::GetIO().DisplaySize.y * 0.9f / (330 * scale)));
+    scale *= fk;  // (the fonts are drawn at the menus' scale: their sizes take fk below)
+    PaceHud ph;
+    RendererHud rh;
+    pace_hud(&ph);
+    renderer_hud(&rh);
+    // per frame / per second figures, over half-second windows
+    static uint64_t w_frames, w_draws, w_passes, w_disp, w_comp;
+    static double w_comp_ms, w_t;
+    static double draws, passes, disp, comp_s, comp_ms_s;
+    double now = ImGui::GetTime();
+    if (now - w_t >= 0.5) {
+        double df = (double)(ph.frames - w_frames), dt = now - w_t;
+        if (w_t > 0 && df > 0) {
+            draws = (rh.draws - w_draws) / df, passes = (rh.passes - w_passes) / df, disp = (rh.dispatches - w_disp) / df;
+            comp_s = (rh.compiles - w_comp) / dt, comp_ms_s = rh.compile_ms >= 0 ? (rh.compile_ms - w_comp_ms) / dt : -1;
+        }
+        w_frames = ph.frames, w_draws = rh.draws, w_passes = rh.passes, w_disp = rh.dispatches, w_comp = rh.compiles;
+        w_comp_ms = rh.compile_ms, w_t = now;
+    }
+
+    const ImU32 c_text = IM_COL32(255, 255, 255, 255), c_dim = IM_COL32(180, 178, 169, 255);
+    const ImU32 c_ok = IM_COL32(151, 196, 89, 255), c_warn = IM_COL32(239, 159, 39, 255), c_bad = IM_COL32(240, 149, 149, 255);
+    ImFont *font = ImGui::GetFont();
+    float big = ImGui::GetFontSize() * fk, small = big * 0.5f;
+    auto width = [&](float size, const char *t) { return font->CalcTextSizeA(size, FLT_MAX, 0, t).x; };
+
+    // what it shows, first: the box is as wide as its widest row (a wider font or a longer translation, Android's
+    // "Draws / passes / dispatches" ran into its value) and its footer, 250 at least
+    double shown = g_ov_cache ? g_fps_shown : ImGui::GetIO().Framerate;
+    char fps_n[16], head[96];
+    snprintf(fps_n, sizeof fps_n, "%.0f", shown);
+    // the frame's work against the target's time (user 2026-11-12, as Metal HUD: "8 / 16.7 ms" has room to spare; the
+    // frame's own time sits at the target while it keeps up): 60's, or 30's while the game runs at 30 (Internal FPS
+    // target 30, or frame pacing holding it there); under Frame Generation the game's own frame rate before it
+    float target = ph.hold30 || settings_fps_target() == FPS_TARGET_30 ? 33.3f : 16.7f;
+    if (g_settings.frame_interp && ph.fps > 0 && shown > ph.fps * 1.3)
+        snprintf(head, sizeof head, L("%.0f game, %.1f / %.1f ms"), ph.fps, ph.work_ms, target);
+    else snprintf(head, sizeof head, "%.1f / %.1f ms", ph.work_ms, target);
+    struct Line { const char *label; char value[80]; ImU32 col; };
+    Line lines[8];
+    int nl = 0;
+    auto add = [&](const char *label, ImU32 col) -> char * {
+        Line &l = lines[nl++];
+        l.label = label, l.col = col, l.value[0] = 0;
+        return l.value;
+    };
+    int rw = 0, rh2 = 0;  // (the size the game draws at, whatever Internal resolution is; Dynamic's share of it too)
+    output_scale_render_size(&rw, &rh2);
+    if (rw > 0) {
+        if (g_settings.dyn_res)
+            snprintf(add(L("Resolution"), c_text), 80, "%dx%d  %.0f%%", rw, rh2, output_scale_dynamic_factor() * 100);
+        else snprintf(add(L("Resolution"), c_text), 80, "%dx%d", rw, rh2);
+    }
+    if (uint64_t ram = plat_mem_used_bytes()) snprintf(add(L("Memory"), c_text), 80, "%.1f GB", ram / 1073741824.0);
+    if (rh.gpu_bytes) snprintf(add(L("GPU memory"), c_text), 80, "%.1f GB", rh.gpu_bytes / 1073741824.0);
+    snprintf(add(L("Textures"), c_text), 80, "%d  %.0f MB", rh.textures, rh.texture_bytes / 1048576.0);
+    snprintf(add(L("Draws / passes / dispatches"), c_text), 80, "%.0f / %.0f / %.0f", draws, passes, disp);
+    {
+        char *v = add(L("Shaders built"), comp_s > 0 ? c_warn : c_text);
+        if (comp_ms_s >= 0) snprintf(v, 80, L("%.0f a second, %.0f ms"), comp_s, comp_ms_s);
+        else snprintf(v, 80, L("%.0f a second"), comp_s);
+    }
+    if (game_in_play()) {
+        uint32_t zone;
+        char *v = add(L("Level"), c_text);
+        if (game_camera_zone_id(&zone)) snprintf(v, 80, "%s  %X", game_level_name(), zone);
+        else snprintf(v, 80, "%s", game_level_name());
+    }
+    if (ph.hold30) snprintf(add(L("Frame pacing"), c_warn), 80, "%s", L("Holding 30 fps"));
+    // the system's name and version, short (user 2026-11-12): plat_system_info's up to its details - "macOS 15.4",
+    // "Windows 11", "Android 15" (not the phone's model and kernel), "Debian GNU/Linux 12" - and a long Linux name
+    // cut at 24 characters
+    static char os_name[64];
+    if (!os_name[0]) {
+        PlatSysInfo si = {};
+        plat_system_info(&si);
+        snprintf(os_name, sizeof os_name, "%s", si.os);
+        os_name[strcspn(os_name, "(,")] = 0;
+        for (size_t n = strlen(os_name); n && os_name[n - 1] == ' '; n--) os_name[n - 1] = 0;
+        if (strlen(os_name) > 24) strcpy(os_name + 21, "...");  // (os-release names are ASCII)
+    }
+    char foot[256];
+    snprintf(foot, sizeof foot, "%s · %s · %s", rh.gpu_name ? rh.gpu_name : "", rh.backend ? rh.backend : "", os_name);
+    float gap = small * 1.2f, w = fmaxf(250 * scale, width(small * 0.9f, foot));
+    w = fmaxf(w, width(big, fps_n) + small * 0.4f + width(small, "fps") + gap + width(small, head));
+    for (int i = 0; i < nl; i++) w = fmaxf(w, width(small, lines[i].label) + gap + width(small, lines[i].value));
+
+    ImGui::SetNextWindowBgAlpha(0.62f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8 * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12 * scale, 9 * scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6 * scale, 2 * scale));
+    ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
+                                    ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    auto text = [&](ImVec2 at, float size, ImU32 col, const char *t) { dl->AddText(font, size, at, col, t); };
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float y = p.y;
+
+    // the frame rate shown (under Frame Generation the in-betweens too), the work / target pair on the right
+    text(ImVec2(p.x, y), big, c_text, fps_n);
+    text(ImVec2(p.x + width(big, fps_n) + small * 0.4f, y + big - small * 1.25f), small, c_dim, "fps");
+    text(ImVec2(p.x + w - width(small, head), y + big - small * 1.25f), small, c_dim, head);
+    y += big + 4 * scale;
+
+    // the game frames' times: a line against the target, spikes in amber
+    float gh = 38 * scale, top_ms = target * 2.5f;
+    dl->AddRectFilled(ImVec2(p.x, y), ImVec2(p.x + w, y + gh), IM_COL32(255, 255, 255, 18), 3 * scale);
+    float ty = y + gh - gh * target / top_ms;
+    for (float dx = 0; dx < w; dx += 6 * scale)
+        dl->AddLine(ImVec2(p.x + dx, ty), ImVec2(p.x + fminf(dx + 3 * scale, w), ty), IM_COL32(255, 255, 255, 60), 1);
+    if (ph.n > 1) {
+        float step = w / (HUD_FRAMES - 1);
+        for (int i = 1; i < ph.n; i++) {
+            float x0 = p.x + w - (ph.n - i) * step, x1 = x0 + step;
+            float y0 = y + gh - gh * fminf(ph.frame_ms[i - 1], top_ms) / top_ms;
+            float y1 = y + gh - gh * fminf(ph.frame_ms[i], top_ms) / top_ms;
+            dl->AddLine(ImVec2(x0, y0), ImVec2(x1, y1), ph.frame_ms[i] > target * 1.5f ? c_warn : c_ok, 1.5f * scale);
+        }
+    }
+    y += gh + 6 * scale;
+
+    // busy shares: a bar and its percent each (green, amber past 75%, red past 95%: the frame no longer fits)
+    float lw = fmaxf(width(small, L("Game")), fmaxf(width(small, L("Render")), width(small, "GPU"))) + small;
+    float bw = w - lw - width(small, "100%") - small;
+    char r[32];
+    auto bar = [&](const char *label, double pct) {
+        text(ImVec2(p.x, y), small, c_dim, label);
+        float bx = p.x + lw, by = y + small * 0.35f, bh = small * 0.4f;
+        dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw, by + bh), IM_COL32(255, 255, 255, 46), bh * 0.5f);
+        if (pct >= 0) {
+            ImU32 c = pct > 95 ? c_bad : pct > 75 ? c_warn : c_ok;
+            dl->AddRectFilled(ImVec2(bx, by), ImVec2(bx + bw * (float)fmin(pct, 100) / 100, by + bh), c, bh * 0.5f);
+            snprintf(r, sizeof r, "%.0f%%", pct);
+        } else snprintf(r, sizeof r, "-");
+        text(ImVec2(p.x + w - width(small, r), y), small, c_text, r);
+        y += small * 1.25f;
+    };
+    bar(L("Game"), ph.cpu_game);
+    if (ph.cpu_render >= 0) bar(L("Render"), ph.cpu_render);
+    bar("GPU", ph.gpu);
+    y += 3 * scale;
+
+    for (int i = 0; i < nl; i++) {  // label / value lines
+        text(ImVec2(p.x, y), small, c_dim, lines[i].label);
+        text(ImVec2(p.x + w - width(small, lines[i].value), y), small, lines[i].col, lines[i].value);
+        y += small * 1.25f;
+    }
+    y += 2 * scale;
+    text(ImVec2(p.x, y), small * 0.9f, c_dim, foot);
+    y += small * 1.1f;
+
+    ImGui::Dummy(ImVec2(w, y - p.y));
+    ImGui::End();
+    ImGui::PopStyleVar(3);
+}
+
 // Whether menu_render draws anything: the menu, the keyboard, an overlay (FPS, inventory, tracker, chaos, race, a
 // pickup card, the d-pad cross, the touch controls).
 static bool render_needed(bool open, bool kbd, bool inv, bool trk, bool trkd, bool chaos, bool race, bool flyin, bool dpad,
@@ -1861,13 +2084,15 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         char rk[64], dk[160] = "";
         // (only the FPS counter, the run timer and the d-pad cross; input only reaches ImGui while the menu or the name
         // entry is up)
-        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !touch && race_overlay_key(rk, sizeof rk)) {
+        // (not the advanced overlay: it changes every frame)
+        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !touch && !(g_settings.show_fps && g_settings.fps_advanced) &&
+            race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
             pthread_mutex_unlock(&q_lock);
             if (dpad) dpad_overlay_key(dk, sizeof dk);
             int rw = 0, rh = 0;  // (Dynamic: the render size shown with the frame rate)
-            if (g_settings.show_fps && g_settings.res_mode == RES_DYNAMIC) output_scale_render_size(&rw, &rh);
+            if (g_settings.show_fps && g_settings.dyn_res) output_scale_render_size(&rw, &rh);
             if (!events) snprintf(key, sizeof key, "%.0fx%.0f fps %d %.0f %dx%d | %s | %s", tw, th, (int)g_settings.show_fps,
                                   g_settings.show_fps ? g_fps_shown : 0.0, rw, rh, rk, dk);
         }
@@ -1945,25 +2170,8 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         float m = 16 * scale;
         ImGui::SetNextWindowPos(ImVec2(right ? io.DisplaySize.x - m : m, bottom ? io.DisplaySize.y - m : m), 0,
                                 ImVec2(right ? 1.0f : 0.0f, bottom ? 1.0f : 0.0f));
-        ImGui::SetNextWindowBgAlpha(0.5f);
-        ImGui::Begin("##fps", NULL, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                        ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
-        char fps_text[32];
-        snprintf(fps_text, sizeof fps_text, L("%.0f fps"), g_ov_cache ? g_fps_shown : io.Framerate);
-        int rw = 0, rh = 0;  // (Dynamic resolution: the size it draws the game at now, under the frame rate)
-        if (g_settings.res_mode == RES_DYNAMIC) output_scale_render_size(&rw, &rh);
-        if (rw > 0) ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, 0));
-        ImGui::TextUnformatted(fps_text);
-        if (rw > 0) {  // (small enough to fit the frame rate's width: the counter keeps its size, a short line taller)
-            char res_text[32];
-            snprintf(res_text, sizeof res_text, "%dx%d", rw, rh);
-            float k = fminf(0.55f, ImGui::CalcTextSize(fps_text).x / fmaxf(1.0f, ImGui::CalcTextSize(res_text).x));
-            ImGui::SetWindowFontScale(k);
-            ImGui::TextUnformatted(res_text);
-            ImGui::SetWindowFontScale(1.0f);
-            ImGui::PopStyleVar();
-        }
-        ImGui::End();
+        if (g_settings.fps_advanced) perf_overlay(scale);
+        else fps_box(scale);
     }
 
     if (race) race_overlay_draw(io.DisplaySize, g_menu_font_big, scale);

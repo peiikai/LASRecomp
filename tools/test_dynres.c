@@ -12,7 +12,7 @@
 #include "../runtime/settings.h"
 #include "../runtime/nvn/output_scale.h"
 
-Settings g_settings = {.res_mode = RES_DYNAMIC, .dyn_min = 540};  // (Minimum resolution: each case sets it, run())
+Settings g_settings = {.res_mode = RES_MATCH, .dyn_res = true, .dyn_min = 540};  // (Minimum resolution: each case sets it, run())
 bool g_gpu_integrated = true;
 void pace_hitch(const char *why) { (void)why; }  // (output_scale.c's render scale changes: nvn/pace.c)
 void pace_settings_changed(const char *what) { (void)what; }  // (output_scale.c's setting watch: nvn/pace.c)

@@ -504,7 +504,12 @@ class ModsProcess(QtCore.QThread):
         event_tools.insertEventAfter(flow.flowchart, 'Event128', 'Event58')
 
         # make the fairy queen send the player to the proper exit if Shuffle Dungeons is on
-        if self.settings['shuffle-dungeons']:
+        if self.settings.get('dungeon-exits'):  # (LAS Recomp: dungeon doors mixed with houses - outside its exit door)
+            destin = self.settings['dungeon-exits']['color-dungeon']
+            warp_event = event_tools.findEvent(flow.flowchart, 'Event37')
+            warp_event.data.params.data['level'] = re.match('(.+)_\\d\\d[A-Z]', destin).group(1)
+            warp_event.data.params.data['locator'] = destin
+        elif self.settings['shuffle-dungeons']:
             ent_keys = list(self.placements['dungeon-entrances'].keys())
             ent_values = list(self.placements['dungeon-entrances'].values())
             d = data.DUNGEON_ENTRANCES[ent_keys[ent_values.index('color-dungeon')]]
@@ -1491,7 +1496,11 @@ class ModsProcess(QtCore.QThread):
             
             item_key, item_index, model_path, model_name = self.getItemInfo(room, self.dungeon_trap_models)
 
-            if self.settings['shuffle-dungeons']:
+            if self.settings.get('dungeon-exits'):  # (LAS Recomp: dungeon doors mixed with houses - outside its exit door)
+                cur_dun = re.match('(.+)_\\d\\d[A-Z]', data.INSTRUMENT_ROOMS[room]).group(1)
+                destination = next(self.settings['dungeon-exits'][k] for k, v in data.DUNGEON_ENTRANCES.items()
+                                   if re.match('(.+)_\\d\\d[A-Z]', v[0]).group(1) == cur_dun)
+            elif self.settings['shuffle-dungeons']:
                 cur_dun = re.match('(.+)_\\d\\d[A-Z]', data.INSTRUMENT_ROOMS[room]).group(1)
                 for k,v in data.DUNGEON_ENTRANCES.items():
                     dun = re.match('(.+)_\\d\\d[A-Z]', v[0]).group(1)

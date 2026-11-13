@@ -51,6 +51,15 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
 bool opt_text_editing(const char *label);
 // the next row is shown greyed out and can't be changed (e.g. forced by the seed)
 void opt_disable_next(void);
+// Rows that only matter while the row above them is on (its options): opt_child_begin after the parent row, the
+// children, opt_child_end. They sit at the same left edge as their parent, with a line down the pane's margin beside
+// them (bright while the parent is on, faint while it's off); the caller greys them out (opt_disable_next) while the
+// parent is off. Runs nest: a child's own children stay on the one line.
+void opt_child_begin(bool parent_on);
+void opt_child_end(void);
+// the next row is greyed out because of a row above it: its description starts with "Needs <parent>." (value: "Needs
+// <parent> set to <value>.") - English names, shown in the menus' language
+void opt_needs_next(const char *parent, const char *value = NULL);
 // the next row is drawn as chosen (pale orange without the cursor: the list shown beside it)
 void opt_mark_next(void);
 // the next row's value in red (a problem: e.g. the same button bound twice)

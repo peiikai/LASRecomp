@@ -59,6 +59,7 @@ Settings g_settings = {
     .controller_light = true,
     .menu_confirm = MENU_CONFIRM_CONTROLLER,
     .show_fps = FPS_OFF,
+    .fps_corner = FPS_TOP_LEFT,
     .touch_opacity = 0.6f,
     .touch_edit_button = true,
     .touch_hide_xy_hud = true,  // (the on-screen X / Y show the items)
@@ -185,7 +186,7 @@ bool g_gpu_integrated;
 static const char *res_name(int m) {
     static char n[8];
     if (m >= 1 && m <= 8) { snprintf(n, sizeof n, "%dx", m); return n; }
-    return m == RES_DYNAMIC ? "dynamic" : m == RES_Q75 ? "75%" : m == RES_Q50 ? "50%" : m == RES_Q25 ? "25%" : "match";
+    return m == RES_Q75 ? "75%" : m == RES_Q50 ? "50%" : m == RES_Q25 ? "25%" : "match";
 }
 
 void settings_resolve_defaults(bool integrated) {
@@ -196,10 +197,10 @@ void settings_resolve_defaults(bool integrated) {
     g_default_res_mode = RES_MATCH;  // (Dynamic is not a default until it is reliable: user 2026-10-18)
     if (g_settings.upscaler_auto) g_settings.upscaler = g_default_upscaler;
     if (g_settings.res_auto) g_settings.res_mode = g_default_res_mode;
-    LOG("[settings] %s GPU: upscaler %s (%s), resolution %s (%s), anti-aliasing %s\n", integrated ? "integrated" : "discrete / other",
+    LOG("[settings] %s GPU: upscaler %s (%s), resolution %s (%s)%s, anti-aliasing %s\n", integrated ? "integrated" : "discrete / other",
         g_settings.upscaler == UPSCALE_BILINEAR ? "bilinear" : g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "metalfx",
         g_settings.upscaler_auto ? "default" : "chosen", res_name(g_settings.res_mode), g_settings.res_auto ? "default" : "chosen",
-        g_settings.antialias == AA_SMAA ? "smaa" : "off");
+        g_settings.dyn_res ? ", dynamic" : "", g_settings.antialias == AA_SMAA ? "smaa" : "off");
 }
 
 void settings_load(void) {
@@ -246,13 +247,21 @@ void settings_load(void) {
             for (int i = 0; i < N_FPS_CORNERS; i++)
                 if (!strcmp(val, corners[i])) g_settings.show_fps = i;
         }
+        else if (!strcmp(key, "fps_advanced")) g_settings.fps_advanced = atoi(val) != 0;
+        else if (!strcmp(key, "fps_corner")) {
+            static const char *const corners[] = {"off", "top_left", "top_right", "bottom_left", "bottom_right"};
+            for (int i = 1; i < N_FPS_CORNERS; i++)
+                if (!strcmp(val, corners[i])) g_settings.fps_corner = i;
+        }
         else if (!strcmp(key, "frame_interp")) g_settings.frame_interp = atoi(val) != 0;
         else if (!strcmp(key, "metal_hud")) g_settings.metal_hud = atoi(val) != 0;
         else if (!strcmp(key, "resolution")) {  // (auto: never chosen, the GPU's default)
             int n = atoi(val);
             g_settings.res_auto = !strcmp(val, "auto");
             if (g_settings.res_auto) { g_settings.res_mode = g_default_res_mode; continue; }
-            g_settings.res_mode = !strcmp(val, "dynamic") ? RES_DYNAMIC : (!strcmp(val, "75%") || !strcmp(val, "67%")) ? RES_Q75 :
+            // ("dynamic": older files, when Dynamic was one of these - its toggle now, over Match display)
+            if (!strcmp(val, "dynamic")) { g_settings.dyn_res = true, g_settings.res_mode = RES_MATCH; continue; }
+            g_settings.res_mode = (!strcmp(val, "75%") || !strcmp(val, "67%")) ? RES_Q75 :
                                   !strcmp(val, "50%") ? RES_Q50 : !strcmp(val, "25%") ? RES_Q25 :
                                   (n >= 1 && n <= 4) ? n : n > 4 ? 4 : RES_MATCH;  // (5x-8x were removed)
         }
@@ -266,6 +275,7 @@ void settings_load(void) {
             g_settings.shadow_quality = !strcmp(val, "2x") || !strcmp(val, "high") ? SHADOW_2X
                                       : !strcmp(val, "3x") ? SHADOW_3X : !strcmp(val, "4x") ? SHADOW_4X : !strcmp(val, "off") ? SHADOW_OFF
                                       : !strcmp(val, "0.5x") ? SHADOW_HALF : SHADOW_DEFAULT;
+        else if (!strcmp(key, "dynamic_resolution")) g_settings.dyn_res = atoi(val) != 0;
         else if (!strcmp(key, "dynamic_min")) {
             int m = atoi(val);  // (anything else, the old 25 / 50 / 75%: 540)
             g_settings.dyn_min = m == 360 || m == 720 ? m : 540;
@@ -374,6 +384,7 @@ void settings_load(void) {
     fclose(f);
     if (!tip_key) g_settings.menu_tip_seen = true;  // (a settings file from before the note: not a first launch)
     if (!aspect_key) g_settings.aspect_asked = true;  // (likewise: the aspect ratio was chosen already)
+    if (g_settings.show_fps > FPS_OFF && g_settings.show_fps < N_FPS_CORNERS) g_settings.fps_corner = g_settings.show_fps;
     // (a settings file from before the Randomizer row: the seed PLAY started last is the row's start)
     if (!g_settings.rando_last[0]) strlcpy(g_settings.rando_last, g_settings.rando_seed, sizeof g_settings.rando_last);
     if (g_settings.volume < 0) g_settings.volume = 0;
@@ -410,6 +421,9 @@ void settings_save(void) {
         static const char *const corners[] = {"off", "top_left", "top_right", "bottom_left", "bottom_right"};
         int c = g_settings.show_fps;
         fprintf(f, "show_fps = %s\n", corners[c >= 0 && c < N_FPS_CORNERS ? c : 0]);
+        c = g_settings.fps_corner;
+        fprintf(f, "fps_corner = %s\n", corners[c > 0 && c < N_FPS_CORNERS ? c : FPS_TOP_LEFT]);
+        fprintf(f, "fps_advanced = %d\n", g_settings.fps_advanced);
     }
     fprintf(f, "frame_interp = %d\n", g_settings.frame_interp);
 #ifdef __APPLE__
@@ -425,6 +439,7 @@ void settings_save(void) {
     }
     fprintf(f, "ambient_occlusion = %s\n", g_settings.ao_quality == AO_HIGH ? "high" : g_settings.ao_quality == AO_OFF ? "off" : "switch");
     fprintf(f, "resolution = %s\n", g_settings.res_auto ? "auto" : res_name(g_settings.res_mode));
+    fprintf(f, "dynamic_resolution = %d\n", g_settings.dyn_res);
     fprintf(f, "dynamic_min = %d\n", g_settings.dyn_min);
     fprintf(f, "fps_target = %s\n", g_settings.fps_target == FPS_TARGET_30 ? "30" : g_settings.fps_target == FPS_TARGET_MIXED ? "mixed" : "60");
     fprintf(f, "inv_keys = %d\n", g_settings.inv_keys);
