@@ -71,8 +71,8 @@ Still open:
   iOS Simulator too (`make ios-sim`: `IOS_SIM=1` in the Makefile, `SIM=1` in `build_deps_ios.sh` - the simulator
   SDK, `-mios-simulator-version-min`, the xcframework's `ios-arm64_x86_64-simulator` slice, BeeWare's simulator
   Pillow wheel; nothing patched) and runs the self-test in it ([tools/test_ios_sim.sh](../tools/test_ios_sim.sh):
-  `simctl` boots a simulator, installs, launches with the variable, reads `lasrecomp.log` from the data container;
-  the start screen's screenshot is an artifact). Without game files the generator step reports itself skipped and
+  `simctl` boots a simulator, installs, launches with the variable, reads `lasrecomp.log` from the data container).
+  Without game files the generator step reports itself skipped and
   the imports are the test; `SIM_ROMFS=<dir>` by hand runs the generator twice and compares, as on a device
   (291 identical files on an iPhone 17 Pro Max simulator). What the simulator taught: it refuses an executable
   whose ad-hoc signature carries an entitlement ("Security policy issue"), so the simulator app is signed plain;
