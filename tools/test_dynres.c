@@ -20,6 +20,10 @@ static int g_t30;  // (the case's Internal FPS target is 30)
 bool pace_target_30(void) { return g_t30; }  // (output_scale.c's Internal FPS target: nvn/pace.c)
 static bool g_menu;  // (the case's menu is open: wmenu_at .. wmenu_until)
 bool menu_is_open(void) { return g_menu; }  // (output_scale.c holds Dynamic while the menu is open: runtime/ui/menu.mm)
+static int g_pace_slow;  // (pacer cases: the pacer holds the game at 30 - nvn/pace.c pace_is_slow)
+bool pace_is_slow(void) { return g_pace_slow; }
+static int g_pace_try;  // (pacer cases: Dynamic asked the frame pacer to try 60 - nvn/pace.c pace_try_60)
+void pace_try_60(void) { g_pace_try = 1; }
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
@@ -47,6 +51,22 @@ typedef struct {
     double paced;       // > 0: the GPU's clock follows the load (Apple GPUs: iPad Pro M4): it clocks down until G + W is
                         // about 90% of the frame, down to 1 / paced of its full clock - its times x up to `paced`
     double w1;          // > 0: the window step at 1.00 (MetalFX only runs below 1.00: W is w there)
+    int start_paced;    // the controller counts the GPU as paced from the start (Android / iOS: LARECOMP_DYN_PACED)
+    int pacer;          // the frame pacer (nvn/pace.c) as well: 12 of the last 60 frames late hold the game at 30 (whole
+                        // 33.3 ms frames); it goes back to 60 when the GPU's time (G + W, as measured: a lowered clock
+                        // counts) is under 13 ms for 60 frames in a row, or at once when Dynamic asks (pace_try_60) -
+                        // either way with a second's grace before frames count again
+    int miss_every;     // > 0: one frame in this many misses a vsync (a CPU-side hitch: 35 ms, 59.5 fps windows)
+    double jitter;      // > 0: about once a second a frame's period is this much longer and the next's that much shorter
+                        // (Android: present times jitter, frames of 20-23 ms with no vsync missed - max 22 ms every 2 s)
+    double wf;          // > 0: W grows with the factor: W = w * (1 + wf * (f - 0.5)) (RP5 FSR 1: 4.7 ms at 0.33, 6.6 at 0.85)
+    double noise;       // > 0: G's frame-to-frame noise amplitude (default 0.04 = +-2%)
+    double cpu_until;   // > 0: the CPU time above ends then (s)
+    double ease;        // > 0: paced: the share of the way the clock moves each frame (default 0.05; the RP5's settles within
+                        // a decision: a step down saves nothing measurable)
+    double fill;        // > 0: paced: the clock eases to where G + W is this share of a frame (default 0.9)
+    double gpu_read;    // > 0: the reported GPU times are this many times the frame's real GPU wall time (Turnip over-reads)
+    double pace_fit_ms; // > 0: the pacer releases when G + W < this for 60 frames (default 13; 10 = backing off; -1 never)
 } Case;
 
 typedef struct {
@@ -60,6 +80,8 @@ typedef struct {
     // the frame rate before the change in the next 5 s, steps down and holds ended in the next 15 s (a swing)
     double f_after, f_before;  // (resize_at) the factor 1.5 s after the change / just before it
     int changes_after, slow_after, downs_after;
+    int low_win, n_win;
+    double f_heavy_min, f_after_heavy;  // (heavy_until) the lowest factor in the heavy stretch / the factor 15 s after it  // 2-s windows under 57 fps / all (a sawtooth hides in "60 fps over the last 10 s")
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -75,6 +97,11 @@ static Result run(const Case *c) {
     double clk = 1;   // (clock_slow: the GPU's times x this - 1 at full clock)
     double f_after = -1, f_before = -1, p_before = 0;
     int changes_after = 0, slow_after = 0, downs_after = 0;
+    double win_t0 = 1.0; int win_n = 0, low_win = 0, n_win = 0;
+    int pace_held = 0, pace_ring[60] = {0}, pace_i = 0, pace_over = 0, pace_fit = 0, pace_holds = 0;
+    double pace_grace = 0;
+    g_pace_try = 0;
+    double f_heavy_min = 2, f_after_heavy = -1;
     printf("%s\n  t=0s %.2f", c->name, f);
     int col = 0;
     while (now < c->secs) {
@@ -96,6 +123,8 @@ static Result run(const Case *c) {
             if (resized && now > c->resize_at + 0.1 && now < c->resize_at + 15 && f < last_f) downs_after++;  // (not the change at the switch)
             last_f = f;
         }
+        if (c->heavy_until > 0 && now > c->heavy_at && now < c->heavy_until) f_heavy_min = fmin(f_heavy_min, f);
+        if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 15) f_after_heavy = f;
         double hold = output_scale_dynamic_hold_fps();
         if (hold != last_hold) {
             printf(" | %.0fs hold %.0f", now, hold);
@@ -113,10 +142,12 @@ static Result run(const Case *c) {
             scene *= exp(walk);
         }
         double w_base = c->w1 > 0 && f >= 1.0 - 1e-6 ? c->w1 : c->w;
-        double g = (c->a + c->b * f * f * area) * scene * (0.98 + 0.04 * rnd()) * clk, w = w_base * area * (0.99 + 0.02 * rnd()) * clk;
+        if (c->wf > 0) w_base *= 1 + c->wf * (f - 0.5);
+        double nz = c->noise > 0 ? c->noise : 0.04;
+        double g = (c->a + c->b * f * f * area) * scene * (1 - nz / 2 + nz * rnd()) * clk, w = w_base * area * (0.99 + 0.02 * rnd()) * clk;
         if (c->paced > 0) {  // the clock eases (over ~0.3 s) to where G + W takes 90% of a 60 Hz frame, never above full
-            double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, 0.9 * 16.667 / full));
-            clk += (want - clk) * 0.05;
+            double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * 16.667 / full));
+            clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
         }
         if (c->wmenu_at > 0 && now > c->wmenu_at && now < c->wmenu_until) w = c->wmenu * (0.99 + 0.02 * rnd());
         double gw = g + w, p = c->fifo ? ceil(gw / 16.667 - 1e-9) * 16.667 : gw;
@@ -124,23 +155,60 @@ static Result run(const Case *c) {
             double busy = gw / fmax(p, 16.667), target = busy < 0.6 ? c->clock_slow : busy > 0.8 ? 1.0 : clk;
             clk += (target - clk) * fmin(1.0, p / 1000.0);
         }
-        if (c->cpu > 0) p = c->fifo ? ceil((c->cpu + gw) / 16.667 - 1e-9) * 16.667 : c->cpu + gw;
+        if (c->cpu > 0 && (c->cpu_until <= 0 || now < c->cpu_until)) p = c->fifo ? ceil((c->cpu + gw) / 16.667 - 1e-9) * 16.667 : c->cpu + gw;
         if (c->t30 && p < 33.333) p = 33.333;
+        if (c->pacer) {
+            if (pace_held && g_pace_try) {
+                pace_held = 0, pace_grace = now + 1, pace_over = pace_fit = 0, memset(pace_ring, 0, sizeof pace_ring);
+                printf(" | %.0fs pacer: 60", now);
+                if (++col % 8 == 0) printf("\n ");
+            }
+            g_pace_try = 0;
+            if (pace_held) {
+                if (p < 33.333) p = 33.333;
+                double fit_ms = c->pace_fit_ms > 0 ? c->pace_fit_ms : c->pace_fit_ms < 0 ? -1 : 13;
+                pace_fit = fit_ms > 0 && gw < fit_ms ? pace_fit + 1 : 0;
+                if (pace_fit >= 60) {
+                    pace_held = 0, pace_grace = now + 1, pace_over = 0, memset(pace_ring, 0, sizeof pace_ring);
+                    printf(" | %.0fs pacer: 60 (gpu)", now);
+                    if (++col % 8 == 0) printf("\n ");
+                }
+            } else if (now >= pace_grace) {
+                int o = p > 17.5;
+                pace_over += o - pace_ring[pace_i], pace_ring[pace_i] = o, pace_i = (pace_i + 1) % 60;
+                if (pace_over >= 12) {
+                    pace_held = 1, pace_fit = 0, pace_holds++;
+                    printf(" | %.0fs pacer: 30", now);
+                    if (++col % 8 == 0) printf("\n ");
+                }
+            }
+        }
         if (c->stall_at > 0 && now > c->stall_at && now < c->stall_until) p += c->stall_ms;
         if (p < 16.667) p = 16.667;
+        if (c->jitter > 0) {
+            static double owe;
+            static int jn;
+            if (owe > 0) p = fmax(1.0, p - owe), owe = 0;
+            else if (++jn % 60 == 0) p += c->jitter, owe = c->jitter;
+            if (c->miss_every > 0 && jn % c->miss_every == 7) p += 16.667;
+        }
         if (c->resize_at > 0 && now > c->resize_at - 3 && now <= c->resize_at) p_before = fmax(p_before, p);
         if (resized && now < c->resize_at + 5 && p > p_before + 1) slow_after++;
-        g_prev = g, w_prev = w;
+        double rd = c->gpu_read > 0 ? c->gpu_read : 1.0;
+        g_prev = g * rd, w_prev = w * rd;
+        g_pace_slow = c->pacer && pace_held;
         now += p / 1000;
+        win_n++; if (now - win_t0 >= 2.0) { n_win++; if (win_n / (now - win_t0) < 57) low_win++; win_t0 = now, win_n = 0; }
         if (now > c->secs - 10) frames_end++, t_end += p / 1000;
     }
     // (by name: the fields' order once differed from this list, so f_min_last60 got hold_t, changes_settled f_min, ...)
     Result r = {.f_end = f, .fps_end = frames_end / t_end, .hold_end = last_hold, .changes_last60 = changes,
                 .hold_changes = hold_changes, .changes_settled = settled, .back30_t = back30, .f_min_last60 = f_min,
                 .f_max_last60 = f_max, .hold_t = hold_t, .f_after = f_after, .f_before = f_before,
-                .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after};
-    printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s\n",
-           r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled);
+                .changes_after = changes_after, .slow_after = slow_after, .downs_after = downs_after,
+                .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy};
+    printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
+           r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
     if (c->resize_at > 0)
         printf("  window %.0f -> %.0f lines at %.0f s: factor %.2f 1.5 s later, %d change%s in 8 s, %d slower frame%s in 5 s, "
                "%d step%s down / hold%s ended in 15 s\n", c->lines > 0 ? c->lines : 2160, c->lines2, c->resize_at, f_after,
@@ -264,10 +332,113 @@ int main(int argc, char **argv) {
         // Dynamic stepped 1.00 -> 0.55 behind the menu; it must stay at 1.00, with the menu open and after it closes
         {.name = "iPad M4, clock follows the load, the menu open 40-60 s (W 5 ms, fifo)", .a = 2.5, .b = 4.5, .w = 1.6,
          .w1 = 0.8, .fifo = 1, .secs = 120, .lines = 1668, .paced = 2.5, .wmenu_at = 40, .wmenu_until = 60, .wmenu = 5},
+        // Retroid Pocket 5 at target 60 (Turnip R6, 1080p, FSR 1 + SMAA: W 3.9 ms): the Adreno's clock follows the load like
+        // the iPad's (G + W 14.3-15.6 ms at 0.50 ... 0.33, steps saving nothing), and present times jitter (a 20-23 ms frame
+        // every second or two, no vsync missed). Paced, it raised only after a second of frames averaging under 16.9 ms:
+        // the jittered frames broke that every time and it sat at 0.45 (486p) for minutes with 60 fps throughout
+        {.name = "RP5, clock follows the load, frame times jitter (fifo)", .a = 3, .b = 9, .w = 3.9, .fifo = 1, .secs = 150,
+         .lines = 1080, .paced = 2.0, .jitter = 5, .miss_every = 150},
+        // Retroid Pocket 5 (Turnip R6, 1080p, FSR 1 + SMAA: W 3.3 ms; G 3.8 at 0.50 in a light scene), target 60, with the
+        // frame pacer: a heavy stretch 30-60 s (x3.5: the floor misses 60) holds the game at 30. Held, the Adreno clocks
+        // down (times x1.6) and the hold climbs, so the pacer's own way back (the GPU under 13 ms) never comes; Dynamic's
+        // probes for 60 dropped to the floor, but the game stayed in its 30 fps mode - so each failed and backed off. It
+        // stayed at 30 with 60 fitting at 0.80. The probe must hand 60 to the pacer: back to 60 after the heavy stretch
+        {.name = "RP5, pacer holds 30, clock drops, heavy 30-60 s (fifo)", .a = 4.5, .b = 10, .w = 3.3, .fifo = 1, .secs = 240,
+         .lines = 1080, .clock_slow = 1.6, .heavy_at = 30, .heavy = 2.0, .heavy_until = 60, .pacer = 1},
+        // the RP5 / pacer review cases (Retroid Pocket 5 logs, 2026-11-12): late-frame runs, W growing with the factor,
+        // GPU times over-reading the frame, the pacer backing off
+        // paced GPU where one grid step (0.90) has full-clock G + W = 16.4 ms: ~8% late frames (noise 4%)
+        {.name = "paced, 0.90 is 8% late (noise 4%)", .a = 3, .b = 11.72, .w = 3.9, .fifo = 1, .secs = 240,
+         .lines = 1080, .paced = 2.0, .jitter = 5, .miss_every = 150},
+        // the same with 10% G noise: a wider partial-late band
+        {.name = "paced, 0.90 is partially late (noise 10%)", .a = 3, .b = 11.72, .w = 3.9, .fifo = 1, .secs = 240,
+         .lines = 1080, .paced = 2.0, .jitter = 5, .miss_every = 150, .noise = 0.10},
+        // RP5 at 30 with the pacer: W grows with the factor (4.7 at 0.33 -> 6.6 at 0.85 in the 215406 log)
+        {.name = "held 30, W grows with the factor (RP5 FSR 1)", .a = 4.5, .b = 10, .w = 4.7, .wf = 0.8, .fifo = 1, .secs = 240,
+         .lines = 1080, .min_lines = 360, .clock_slow = 1.6, .heavy_at = 30, .heavy = 2.0, .pacer = 1},
+        // 1080p SMAA + FSR 1 real hold (case 3) with W growing 30% over the climb
+        {.name = "1080p SMAA + FSR 1 held 30, W grows with the factor", 6.5, 10.4, 8.1, 1, 0, 300, 0, 0, 0, 0, 0, 1080,
+         .wf = 0.86},
+        // pacer backing off (release needs G + W < 10): a light floor whose clocked-down G + W at 30 is under 14.5
+        {.name = "pacer backing off, light floor (G+W 10.4 at the floor at 30)", .a = 3, .b = 6, .w = 2, .fifo = 1, .secs = 240,
+         .lines = 1080, .clock_slow = 1.6, .heavy_at = 20, .heavy = 3.0, .heavy_until = 40, .pacer = 1, .pace_fit_ms = 10},
+        // the same, pacer first try (13 ms)
+        {.name = "pacer first try, light floor", .a = 3, .b = 6, .w = 2, .fifo = 1, .secs = 240,
+         .lines = 1080, .clock_slow = 1.6, .heavy_at = 20, .heavy = 3.0, .heavy_until = 40, .pacer = 1},
+        // CPU-bound pacer hold at target 60 (fast GPU: G 11 + W 1 at 1.00): the pacer never releases; Dynamic?
+        {.name = "CPU-bound pacer hold, GPU 12 ms at 1.00", .a = 2, .b = 9, .w = 1, .fifo = 1, .secs = 120,
+         .lines = 1080, .cpu = 20, .pacer = 1, .pace_fit_ms = -1},
+        // a real hold for 10 minutes: how often does it probe (each probe: the floor + 60 mode slow motion)
+        {.name = "1080p SMAA + FSR 1 real hold, 600 s, pacer", 6.5, 10.4, 8.1, 1, 0, 600, 0, 0, 0, 0, 0, 1080, .pacer = 1},
+        // case 35 with the load wandering 5%: how long until it counts as paced
+        {.name = "RP5 paced, load wandering 5%", .a = 3, .b = 9, .w = 3.9, .fifo = 1, .secs = 150,
+         .lines = 1080, .paced = 2.0, .jitter = 5, .miss_every = 150, .wander = 0.05},
+        // case 36 without the clock drop: the pacer may release on its own while Dynamic still holds 30
+        {.name = "pacer holds 30, no clock drop, heavy 30-60 s", .a = 4.5, .b = 10, .w = 3.3, .fifo = 1, .secs = 240,
+         .lines = 1080, .heavy_at = 30, .heavy = 2.0, .heavy_until = 60, .pacer = 1},
+        // a short heavy burst (2 s) holds the pacer, backing off (release under 10 ms); mild clock drop x1.2; the floor's
+        // G + W at 30 reads 12 ms: Dynamic neither holds nor climbs, the pacer never sees < 10
+        {.name = "pacer backing off after a 2 s burst, mild clock drop, floor reads 12 ms", .a = 5, .b = 8, .w = 3, .fifo = 1,
+         .secs = 180, .lines = 1080, .clock_slow = 1.2, .heavy_at = 20, .heavy = 3.0, .heavy_until = 22.5, .pacer = 1, .pace_fit_ms = 10},
+        // the same on the pacer's first try (13 ms)
+        {.name = "pacer first try after a 2 s burst, mild clock drop, floor reads 12 ms", .a = 5, .b = 8, .w = 3, .fifo = 1,
+         .secs = 180, .lines = 1080, .clock_slow = 1.2, .heavy_at = 20, .heavy = 3.0, .heavy_until = 22.5, .pacer = 1},
+        // CPU-bound for 30 s then not (GPU 12 at 1.00), pacer backing off
+        {.name = "CPU-bound 30 s then light, pacer backing off", .a = 2, .b = 9, .w = 1, .fifo = 1, .secs = 120,
+         .lines = 1080, .cpu = 20, .cpu_until = 30, .pacer = 1, .pace_fit_ms = 10},
+        // a 1 s hitch burst (every frame +17 ms) holds the pacer, backing off (release under 10 ms); mild clock drop x1.2;
+        // 60 fits at 1.00 (G 11 + W 2 = 13 ms at full clock)
+        {.name = "hitch burst holds the pacer (backing off), mild clock drop, 60 fits at 1.00", .a = 3, .b = 8, .w = 2, .fifo = 1,
+         .secs = 180, .lines = 1080, .clock_slow = 1.2, .stall_at = 20, .stall_until = 21.5, .stall_ms = 17, .pacer = 1, .pace_fit_ms = 10},
+        {.name = "the same, pacer first try (13 ms)", .a = 3, .b = 8, .w = 2, .fifo = 1,
+         .secs = 180, .lines = 1080, .clock_slow = 1.2, .stall_at = 20, .stall_until = 21.5, .stall_ms = 17, .pacer = 1},
+        // the RP5 on 44e00622 (lasrecomp.log t=40-320, target 60, Minimum 360p): G mostly fixed (game 12.2 at 0.60,
+        // 13.7 at 0.80 with the clock at its top), W 4.2 at 0.55 -> 5.0 at 0.80, GPU times over-read the frame (gpu 18.3 ms
+        // with frames every 18.2 = 1 in 12 late), a mild clock drop, a 35 ms hitch every few seconds
+        {.name = "RP5 on 44e00622: W grows, GPU over-reads 1.14x, clock fills to 77%", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06, .wander = 0.03,
+         .jitter = 5, .miss_every = 150},
+        // the same, lighter (0.90 is the edge)
+        {.name = "RP5 shape, lighter (edge near 0.95)", .a = 7.6, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06, .wander = 0.03,
+         .jitter = 5, .miss_every = 150},
+        // the same, a heavy stretch 100-160 s (x1.15) then light again: must step down in it and come back after
+        {.name = "RP5 shape, heavy 100-160 s (x1.12)", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06, .wander = 0.03,
+         .jitter = 5, .miss_every = 150, .heavy_at = 100, .heavy = 1.12, .heavy_until = 160},
+        // the case above with a steadier scene (wander 1%): 0.80 is 7% late all the time, as the log's t=160-206 (55 fps for 46 s)
+        {.name = "RP5 shape, steady scene: 0.80 is 7% late", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06, .wander = 0.01,
+         .jitter = 5, .miss_every = 150},
+        // the RP5 on fb357faf (2026-11-12 23:03 log): the clock fills to G + W ~14.4 ms, right at the budget, so steps
+        // down come one at a time, 46 s apart (0.55 -> 0.50 ... 0.45 -> 0.40), each saving nothing - but never two
+        // within 5 s, so it never counted as paced, and a raise was never predicted to fit: 432p at 60 fps for minutes
+        {.name = "RP5 paced, G + W right at the budget: futile steps far apart", .a = 3, .b = 9, .w = 3.9, .fifo = 1,
+         .secs = 300, .lines = 1080, .min_lines = 360, .paced = 2.0, .fill = 0.858, .ease = 0.3, .noise = 0.04, .wander = 0.03, .jitter = 5,
+         .miss_every = 150},
+        // Android / iOS: paced from the start. The RP5 (2026-11-12 23:19 log) holds 60 at 720p (0.67) and more, but on
+        // desktop rules it sank 1.00 -> 0.45 in its first seconds (each step "saving" because the level was still loading)
+        // and sat at 486p. The same two shapes, paced from the start
+        {.name = "Android RP5 shape, paced from the start", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 300, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06,
+         .wander = 0.03, .jitter = 5, .miss_every = 150, .start_paced = 1},
+        {.name = "Android RP5, G + W at the budget, paced from the start", .a = 3, .b = 9, .w = 3.9, .fifo = 1,
+         .secs = 300, .lines = 1080, .min_lines = 360, .paced = 2.0, .fill = 0.858, .ease = 0.3, .noise = 0.04,
+         .wander = 0.03, .jitter = 5, .miss_every = 150, .start_paced = 1},
+        // the RP5 through the swamp (2026-11-12 23:24 log): a heavy stretch steps it down to the 360p floor, a ceiling at
+        // each step with the wait doubling at each (to a minute), and the floor's step never matched the early lift - 360p
+        // for a minute after the swamp. Back up within 15 s of it now
+        {.name = "Android RP5, a heavy stretch 60-100 s (the swamp), paced from the start", .a = 8.8, .b = 5.0, .w = 3.6, .wf = 0.6,
+         .fifo = 1, .secs = 200, .lines = 1080, .min_lines = 360, .paced = 1.3, .fill = 0.77, .gpu_read = 1.14, .noise = 0.06,
+         .jitter = 5, .miss_every = 150, .start_paced = 1, .heavy_at = 60, .heavy = 1.6, .heavy_until = 100},
+        // the iPad (case 32) with a 35 ms hitch every 2.5 s: stays at 1.00
+        {.name = "iPad paced + hitches every 2.5 s", .a = 2.5, .b = 4.5, .w = 1.6, .w1 = 0.8, .fifo = 1,
+         .secs = 120, .lines = 1668, .paced = 2.5, .jitter = 3, .miss_every = 150},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
     int i = atoi(argv[1]);
+    if (cases[i].start_paced) setenv("LARECOMP_DYN_PACED", "1", 1);
     Result r = run(&cases[i]);
     // (Minimum resolution 540p unless a case says: 0.50 in a 1080p window, 0.25 at 4K)
     switch (i) {
@@ -315,6 +486,19 @@ int main(int argc, char **argv) {
                    "iPad M4, clock follows the load: stays at 1.00"); break;
     case 34: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 58, "iPad M4, menu open and closed: stays at 1.00"); break;
     case 33: check(r.f_end == 1.0 && r.fps_end > 58, "iPad M4, heavy stretch: back to 1.00 after it"); break;
+    case 35: check(r.f_end >= 0.95 && r.fps_end > 58, "RP5, clock follows the load, jitter: back up to full size"); break;
+    case 36: check(r.fps_end > 58 && r.f_end >= 0.7, "RP5, pacer held at 30: back to 60 after the heavy stretch"); break;
+    case 37: case 38: check(r.fps_end > 58 && r.low_win * 10 <= r.n_win, "paced, one step partly late: under it, few slow windows"); break;
+    case 40: check(r.changes_settled <= 2 && near(r.hold_end, 30), "held 30, W grows with the factor: the hold goes on, no cycling"); break;
+    case 43: check(r.f_end == 1.0, "CPU-bound pacer hold, GPU fits 60: no step down for nothing"); break;
+    case 44: check(r.changes_settled <= 2, "a hold 60 can't reach: no probes every 2 minutes"); break;
+    case 52: case 53: case 54: check(r.low_win * 10 <= r.n_win, "RP5 shape: at most 1 in 10 windows under 57 fps"); break;
+    case 55: check(r.low_win <= 4 && r.changes_settled <= 20 && r.f_end >= 0.7, "RP5, steady scene: settles under the late step, no sawtooth"); break;
+    case 56: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "RP5 paced at the budget: found paced, not stuck low"); break;
+    case 57: check(r.low_win * 10 <= r.n_win && r.f_min_last60 >= 0.6, "Android RP5 shape, paced from the start: never near 486p, few slow windows"); break;
+    case 58: check(r.f_end >= 0.95 && r.f_min_last60 >= 0.9, "Android RP5 at the budget, paced from the start: high"); break;
+    case 59: check(r.f_heavy_min < 0.5 && r.f_after_heavy >= 0.6, "Android RP5 through the swamp: back up within 15 s"); break;
+    case 60: check(r.f_end == 1.0 && r.low_win == 0, "iPad paced with hitches: stays at 1.00"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
