@@ -850,6 +850,8 @@
 {"Shuffles where entrances lead, with logic.", "Mezcla adónde llevan las entradas, con lógica."},
 {"Dungeon entrances", "Entradas de mazmorras"},
 {"Dungeon entrances lead into other dungeons.", "Las entradas de las mazmorras llevan a otras mazmorras."},
+{"Mix with houses & caves", "Mezclar con casas y cuevas"},
+{"Dungeon doors are shuffled together with house and cave doors.", "Las puertas de las mazmorras se mezclan con las de casas y cuevas."},
 {"Houses & caves", "Casas y cuevas"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "Mezcla casas, cuevas y las cuevas que unen dos zonas. La casa de Marin y Tarin y las entradas por agua no cambian."},
 {"Decoupled entrances", "Entradas desacopladas"},

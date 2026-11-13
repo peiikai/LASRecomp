@@ -174,6 +174,7 @@ struct GenOpts {
     bool fast_egg = true;
     bool no_start_mambo = false;  // Manbo's Mambo not given at the start (before the split: with the Ocarina)
     bool weather_cycle = false;  // weather-cycle: the overworld's weather changes on its own (runtime/nvn/weather_cycle.c)
+    bool mix_dungeons = false;  // mix-dungeon-entrances: dungeon doors shuffled with the houses' (entrance_logic.py)
 };
 static GenOpts g_opts;
 
@@ -240,9 +241,9 @@ static bool *opt_flags(GenOpts &o, int i) {  // the yes/no options, in ID order 
                  &o.digs, &o.miniboss_souls, &o.no_start_sword, &o.no_start_shield, &o.no_start_ocarina,
                  &o.tunic_upgrades, &o.shellsanity, &o.race, &o.random_cosmetics, &o.apples, &o.chest_looks,
                  &o.retired_key_rings, &o.hints, &o.rocks, &o.fast_egg, &o.compass_differs, &o.no_start_mambo,
-                 &o.weather_cycle, &o.retired_labyrinth};
+                 &o.weather_cycle, &o.retired_labyrinth, &o.mix_dungeons};
                  // (order after random_cosmetics: apples, chest_looks, key rings (retired), hints, rocks, fast_egg,
-                 // compass_differs, no_start_mambo, weather_cycle, labyrinth (retired))
+                 // compass_differs, no_start_mambo, weather_cycle, labyrinth (retired), mix_dungeons)
     return i < (int)(sizeof f / sizeof *f) ? f[i] : NULL;
 }
 
@@ -540,6 +541,8 @@ static void start_generation(void) {
     fprintf(f, " \"triforce-hunt\": %d, \"triforce-extra\": %d,\n", g_opts.tri_needed, g_opts.tri_extra * 25);
     fprintf(f, " \"starting-instruments\": %d,\n", g_opts.start_instruments);
     fprintf(f, " \"entrance-tier\": %d, \"entrance-decoupled\": %s,\n", g_opts.entrances, g_opts.entrances >= 2 && g_opts.decoupled ? "true" : "false");
+    if (g_opts.mix_dungeons && g_opts.shuffle_dungeons && g_opts.entrances >= 2)  // (off: not written, seeds as before)
+        fprintf(f, " \"mix-dungeon-entrances\": true,\n");
     fprintf(f, " \"pet-rooster\": %s, \"pet-ghost\": %s, \"open-desert\": %s,\n", g_opts.pet_rooster ? "true" : "false",
             g_opts.pet_ghost ? "true" : "false", g_opts.pet_marin ? "false" : "true");
     fprintf(f, " \"include\": [\"5-seashell-reward\", \"15-seashell-reward\", \"30-seashell-reward\", \"40-seashell-reward\", \"50-seashell-reward\"],\n");
@@ -843,6 +846,10 @@ static void rows_world(float scale) {
         }
         opt_child_begin(houses);
         if (!houses) opt_disable_next(), opt_needs_next("Houses & caves");
+        else if (!dungeons) opt_disable_next(), opt_needs_next("Dungeon entrances");  // (mix-dungeon-entrances: both kinds)
+        opt_toggle("Mix with houses & caves", &g_opts.mix_dungeons, false,
+                   "Dungeon doors are shuffled together with house and cave doors.");
+        if (!houses) opt_disable_next(), opt_needs_next("Houses & caves");
         opt_toggle("Decoupled entrances", &g_opts.decoupled, false,
                    "Leaving a house drops you outside a different door than the one you came in.");
         opt_child_end();
@@ -1076,6 +1083,7 @@ static const OptName kOptNames[] = {  // (names the built-in presets use; inv: t
     {"fishing", &GenOpts::inc_fishing}, {"rapids", &GenOpts::inc_rapids}, {"dampe", &GenOpts::inc_dampe},
     {"trade", &GenOpts::inc_trade}, {"blupees", &GenOpts::inc_blue},
     {"entrance_dungeons", &GenOpts::shuffle_dungeons}, {"entrance_houses", nullptr, &GenOpts::entrances},
+    {"entrance_mix", &GenOpts::mix_dungeons},
     {"decoupled", &GenOpts::decoupled}, {"room_shuffle", nullptr, &GenOpts::room_shuffle},
     {"shuffle_instruments", &GenOpts::shuffle_instruments}, {"open_mabe", &GenOpts::open_mabe},
     {"randomize_enemies", &GenOpts::randomize_enemies}, {"enemy_mode", nullptr, &GenOpts::enemy_mode},
@@ -1106,6 +1114,7 @@ static const std::vector<Builtin> &builtins(void) {
         {"trendsanity", {0, 0, 0, 1}}, {"fishing", {0, 0, 0, 1}}, {"rapids", {0, 0, 0, 1}}, {"dampe", {0, 0, 0, 1}},
         {"trade", {0, 0, 0, 1}}, {"blupees", {0, 0, 0, 1}},
         {"entrance_dungeons", {0, 0, 1, 1}}, {"entrance_houses", {0, 0, 2, 2}}, {"decoupled", {0, 0, 0, 1}},
+        {"entrance_mix", {0, 0, 0, 0}},
         {"room_shuffle", {0, 0, 2, 3}}, {"shuffle_instruments", {0, 0, 1, 1}},
         {"open_mabe", {1, 0, 0, 0}}, {"randomize_enemies", {0, 0, 1, 1}}, {"enemy_mode", {0, 0, 0, 1}},
         {"enemy_minibosses", {0, 0, 0, 1}}, {"miniboss_freq", {0, 0, 0, 1}},

@@ -49,9 +49,10 @@ FLAGS = ['bomb_bag', 'powder_bag', 'environments', 'pets_in_dungeons', 'skip_sto
          'tunic_upgrades', 'shellsanity', 'race', 'random_cosmetics', 'apples', 'chest_looks',
          'retired_key_rings',  # (key rings, removed: the slot stays so seed IDs keep their layout)
          'hints', 'rocks', 'fast_egg', 'compass_differs', 'no_start_mambo', 'weather_cycle',
-         'retired_labyrinth']  # (the Labyrinth, removed: the slot stays so seed IDs keep their layout)
+         'retired_labyrinth',  # (the Labyrinth, removed: the slot stays so seed IDs keep their layout)
+         'mix_dungeons']
          # (order after random_cosmetics: apples, chest looks, retired key rings, hints, rocks, fast_egg, compass_differs,
-         # no_start_mambo, weather_cycle, retired labyrinth)
+         # no_start_mambo, weather_cycle, retired labyrinth, mix dungeons)
 ROOM_IDS = {'off': 0, 'coupled': 2, 'decoupled': 3}  # room_shuffle in the ID (1: the retired Coherent)
 BITS = 150  # (v5: 30 characters; v4 IDs had 125 - decode reads both)
 TIMEOUT = 900  # (seconds per seed)
@@ -160,7 +161,8 @@ def request(sid, o):
         **({'apples': True} if o.get('apples') else {}),
         **({'chest-looks': True} if o.get('chest_looks') else {}),
         **({'hints': True} if o.get('hints') else {}), **({'rocks': True} if o.get('rocks') else {}),
-        **({'fast-egg': True} if o.get('fast_egg') else {})}  # (only when on: seeds without it stay as they were)
+        **({'fast-egg': True} if o.get('fast_egg') else {}),
+        **({'mix-dungeon-entrances': True} if o.get('mix_dungeons') and o['shuffle_dungeons'] and tier >= 2 else {})}  # (only when on: seeds without it stay as they were)
 
 
 def stealing(o):
@@ -352,6 +354,8 @@ def main():
     ap.add_argument('--souls', action='store_true', help='every random mix with boss and mini-boss souls on')
     ap.add_argument('--triforce', type=int, metavar='N', help='every random mix a Triforce hunt for N pieces '
                     '(extra pieces cycled: none / +25%% / +50%%)')
+    ap.add_argument('--mix-dungeons', action='store_true', help='every random mix with dungeon entrances mixed into '
+                    'the houses & caves (entrance tier 2, dungeon entrances on)')
     ap.add_argument('--start-instruments', type=int, choices=range(9), metavar='N',
                     help='every random mix starts with N instruments (0 - 8)')
     ap.add_argument('--hints', action='store_true', help='every random mix with Hints on (seed_hints.py)')
@@ -383,6 +387,8 @@ def main():
             o['rocks'] = True
         if args.entrances is not None:
             o['entrances'], o['bushes'] = args.entrances, True
+        if args.mix_dungeons:
+            o.update(mix_dungeons=True, shuffle_dungeons=True, entrances=2)
         if args.triforce:
             o['triforce_needed'], o['triforce_extra'] = args.triforce, i % 3
         if args.start_instruments is not None:

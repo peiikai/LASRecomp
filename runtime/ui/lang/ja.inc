@@ -850,6 +850,8 @@
 {"Shuffles where entrances lead, with logic.", "ロジックに沿って、入口の行き先をシャッフルします。"},
 {"Dungeon entrances", "ダンジョンの入口"},
 {"Dungeon entrances lead into other dungeons.", "ダンジョンの入口が別のダンジョンにつながります。"},
+{"Mix with houses & caves", "家とどうくつと混ぜる"},
+{"Dungeon doors are shuffled together with house and cave doors.", "ダンジョンの入口が家とどうくつの入口といっしょにシャッフルされます。"},
 {"Houses & caves", "家とどうくつ"},
 {"Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water entrances stay vanilla.", "家、どうくつ、2つのエリアをつなぐどうくつをシャッフルします。マリンとタリンの家と水中の入口は通常のままです。"},
 {"Decoupled entrances", "入口と出口を分ける"},
