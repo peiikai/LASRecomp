@@ -210,8 +210,10 @@ attribute, so the `removexattr` on the linker is gone too.
   Measuring on a 4 GB device: a virtual iPhone ("Lime") can be given 4 GB, once it runs past the title screen
   (its paravirtual GPU has no BC formats).
 - **Textures on GPUs without BC, and the two copies of every texture, are one problem; the two answers worked out
-  so far don't fit together.** The facts first. Metal has the BC formats on Apple7 (A14) and later only; the
-  iPhones without them (8, X, XR / XS, 11, SE 2) are exactly the 3-4 GB ones, so whatever replaces BC there has to
+  so far don't fit together.** The facts first. Metal has the BC formats on every Apple9 GPU (A17 Pro, M3) and
+  newer, on some Apple7 / Apple8 ones (A14-A16, M1, M2: `supportsBCTextureCompression` says which; Metal Feature Set
+  Tables) and on none before; the iPhones before the A14 (8, X, XR / XS, 11, SE 2) are the 3-4 GB ones, which of the
+  A14-A16 ones have BC is not measured yet, so whatever replaces BC there has to
   save memory, not spend it. The game's textures (a scan of every BNTX in the 1565 bfres / arc / bntx files, all
   mips): 16 824 BC textures, 3.66 GB - BC5 1.6 GB (4275, 3969 of them snorm normal maps), BC4 1.17 GB (7843
   masks), BC1 0.8 GB (3946), BC3 82 MB, BC7 8.5 MB (22 models: the village houses' interiors, the library, some
@@ -269,7 +271,8 @@ attribute, so the `removexattr` on the linker is gone too.
   texture live on a 4 GB phone (guest memory, disk cache, or nowhere because the file is the source), and derive
   both the transcode and the guest-copy release from that. Until then the decoder branch stays unmerged and Lime
   runs it from a local stash ("lime: dumb BC->RGBA8 decoder …": `git stash show -p --include-untracked stash@{N} |
-  patch -p1` over any tree, `patch -p1 -R` to take it off; three files, nothing else in it).
+  patch -p1` over any tree, `patch -p1 -R` to take it off; three files, nothing else in it). With it the app is
+  launched with `LARECOMP_NO_BC_CHECK=1`: without BC the app otherwise stops at start with a message (metal.m).
 - **`increased-memory-limit` changes the address space too, not only the memory limit.** Signed without it, an
   iPhone 15 Pro (iOS 26.5) gives the window a gap of 5.5 GB instead of 52 GB - the packed 5.25 GB layout fits with
   ~128 MB to spare - and plays the overworld at 60 fps with a 1.8-1.9 GB footprint. The comment in

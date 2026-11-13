@@ -2451,6 +2451,17 @@ void ui_window_init(void) {
     SDL_MetalView view = SDL_Metal_CreateView(window);
     layer = (__bridge CAMetalLayer *)SDL_Metal_GetLayer(view);
     dev = MTLCreateSystemDefaultDevice();
+    // The game's textures are mostly BC (metal_format): on iOS every Apple9 GPU (A17 Pro, M3) and newer has it, an
+    // Apple7 / Apple8 one (A14-A16, M1, M2) only some (Metal Feature Set Tables), older ones none. Say so instead of
+    // failing at the first texture. Not on macOS: every Mac it runs on has them. Not in the Simulator
+    // either: its GPU has no BC on any Mac, and only the start screen runs there (tools/test_ios_sim.sh).
+    if (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !dev.supportsBCTextureCompression && !getenv("LARECOMP_NO_BC_CHECK")) {
+        static const char msg[] = "This iPhone or iPad can't run LAS Recomp: its graphics chip has no support for the "
+                                  "game's texture formats (BC).";
+        fprintf(stderr, "FATAL: %s (the GPU has no BC texture formats)\n", msg);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, window);
+        exit(1);
+    }
     settings_resolve_defaults(false);  // (Apple GPUs keep MetalFX as the default upscaler)
     layer.device = dev;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;

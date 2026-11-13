@@ -55,7 +55,7 @@ These are the minimums during the beta and may change as development continues.
 
 | | Minimum |
 |---|---|
-| OS | iOS or iPadOS 16 or newer |
+| OS | iOS or iPadOS 16.4 or newer |
 | Device | iPhone 15 Pro or newer<br>iPad Pro (2021) or newer<br>iPad Air (2022) or newer<br>iPad mini (2024) or newer |
 | Storage | About 15 GB free |
 
