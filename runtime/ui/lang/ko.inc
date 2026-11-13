@@ -2130,3 +2130,4 @@
 {"This seed picked your look. Commit to it!", "이 시드가 외형을 정했습니다. 받아들이세요!"},
 {"shared", "공용"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "마린이 풀의 아이템이 되며, 마린이 없으면 사막에 갈 수 없습니다."},
+{"Sections", "섹션"},

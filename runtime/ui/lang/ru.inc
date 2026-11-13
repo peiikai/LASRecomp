@@ -2130,3 +2130,4 @@
 {"This seed picked your look. Commit to it!", "Этот сид выбрал вам внешний вид. Смиритесь!"},
 {"shared", "общий"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "Марин — предмет в общем пуле, без нее путь в пустыню закрыт."},
+{"Sections", "Разделы"},

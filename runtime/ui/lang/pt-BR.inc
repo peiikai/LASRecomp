@@ -2130,3 +2130,4 @@
 {"This seed picked your look. Commit to it!", "Esta seed escolheu seu visual. Aceite!"},
 {"shared", "compartilhada"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "Marin é um item na lista, e o deserto fica bloqueado sem ela."},
+{"Sections", "Seções"},

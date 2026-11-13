@@ -2130,3 +2130,4 @@
 {"This seed picked your look. Commit to it!", "Deze seed heeft je uiterlijk gekozen. Hou je eraan!"},
 {"shared", "gedeeld"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "Marin is een voorwerp in de pool, en zonder haar is de woestijn geblokkeerd."},
+{"Sections", "Onderdelen"},

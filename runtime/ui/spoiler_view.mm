@@ -270,11 +270,16 @@ static void draw_section(int si, const Filter &f) {
     const Node &n = g_doc[si];
     if (n.title == "Route") { draw_route(si, f); return; }
     if (si == 0) {  // (the seed's own lines: its ID, settings, starting items)
+        heading(L("Seed settings"), false);
         for (auto &l : n.lines) ImGui::TextWrapped("%s", shown(l.text).c_str()), ImGui::Spacing();
         return;
     }
-    rows(n.lines, f, false, "");
-    bool folds = n.subs.size() > 3;  // (Spheres, areas: headers that open; a few blocks (entrances): open, titled)
+    bool folds = n.subs.size() > 3;
+    // the section's name on top (its intro text stays in the HTML page only); the rows line up with the left
+    std::vector<Line> top;
+    for (auto &l : n.lines) if (!is_text(l)) top.push_back(l);
+    if (f.q.empty() && (folds || !n.lines.empty())) heading(shown(n.title), false);
+    rows(top, f, false, "");  // (Spheres, areas: headers that open; a few blocks (entrances): open, titled)
     for (size_t k = 0; k < n.subs.size(); k++) {
         const Sub &s = n.subs[k];
         if (!count_sub(s, f)) continue;
@@ -349,6 +354,8 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     if (g_back_left >= 0) opt_focus_row(g_back_left == 0 ? (int)g_doc.size() : g_back_left), g_back_left = -1;
     opt_begin("##spoiler", scale, true);
     opt_compact();
+    ImGui::Dummy(ImVec2(0, ImGui::GetStyle().ItemSpacing.y));  // (the right column's list starts this much lower)
+    heading(L("Sections"), false);  // (level with the right column's first heading: the rows line up)
     ui_text_inline(true);  // (filters as typed: typed into directly, not through a prompt)
     opt_text("Search", q, sizeof q, "Search items and places", NULL);
     ui_text_inline(false);

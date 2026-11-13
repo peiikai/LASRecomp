@@ -2130,3 +2130,4 @@
 {"This seed picked your look. Commit to it!", "見た目はこのシードが決めました。これで行きましょう！"},
 {"shared", "共有"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "マリンがアイテムプールのアイテムになり、マリンがいないと砂漠に入れません。"},
+{"Sections", "セクション"},

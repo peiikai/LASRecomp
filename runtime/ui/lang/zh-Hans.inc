@@ -2130,3 +2130,4 @@
 {"This seed picked your look. Commit to it!", "你的外观由这个种子决定。就这样吧！"},
 {"shared", "共用"},
 {"Marin is an item in the pool, and the desert is blocked without her.", "玛林是道具池中的道具，没有她就进不了沙漠。"},
+{"Sections", "分区"},
