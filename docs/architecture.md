@@ -44,8 +44,8 @@ The game draws through NVN, the Switch's GPU API, with shaders compiled for the 
    its textures, buffers and state.
 2. **Render thread** (`runtime/nvn/rqueue.c`): the lists are translated and run on a thread of our own, so the game
    can start the next frame meanwhile.
-3. **Backends**: Metal on macOS (`renderer.m`, `metal.m`) and Vulkan on Windows and Linux (`runtime/nvn/vulkan/`,
-   with the Vulkan Memory Allocator). Each turns the recorded commands into its own render passes, pipelines and
+3. **Backends**: Metal on macOS, iPhone and iPad (`renderer.m`, `metal.m`) and Vulkan on Windows, Linux and Android
+   (`runtime/nvn/vulkan/`, with the Vulkan Memory Allocator). Each turns the recorded commands into its own render passes, pipelines and
    draws.
 4. **Shaders** (`runtime/nvn/maxwell/translate.c`): one translator turns Maxwell shader code into Metal Shading
    Language or GLSL for Vulkan. It's the most delicate part of the renderer: most GPU-specific bugs end up here.
@@ -54,7 +54,7 @@ The game draws through NVN, the Switch's GPU API, with shaders compiled for the 
    list of variant records ships (`shader_variants.txt`), never shader code.
 6. **Output** (`output_scale.c`, `pace.c`): resolution and dynamic resolution, the upscalers (MetalFX on Mac,
    AMD FSR 1 on Windows and Linux), SMAA, and frame pacing, including the game's own drop to 30 fps when frames
-   don't fit 60.
+   don't fit 60. Frame Generation (`interp.c`, off by default) adds images between the game's frames.
 
 Per-GPU defaults in the Vulkan backend are listed in [vulkan-gpu-defaults.md](vulkan-gpu-defaults.md).
 
