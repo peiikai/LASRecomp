@@ -34,8 +34,9 @@ void slow_frame_present(uint64_t now, uint64_t gcpu) { (void)now, (void)gcpu; }
 
 // ---- cases
 // cpu: the game thread's CPU time; wait: its waits that count as busy (for the render thread, the GPU's previous
-// frame: the play log's machine was ~13 ms busy a frame with 3-6 ms of CPU); stall: a one-off busy stall (ms)
-typedef struct { double cpu, gpu, stall, wait; } Frame;
+// frame: the play log's machine was ~13 ms busy a frame with 3-6 ms of CPU); stall: a one-off busy stall (ms);
+// fence: a wait for a GPU behind by more than a frame (busy, in the game's own 30 fps mode too; not while held)
+typedef struct { double cpu, gpu, stall, wait, fence; } Frame;
 typedef struct {
     const char *name;
     double secs;
@@ -97,7 +98,8 @@ static void edge(double t, int n, Frame *f) {
 // backing off, the 10 ms GPU limit). user_res_change: at 25 s the user lowers the resolution (the setting, and the
 // render scale change it makes), GPU 11.5 ms after: back at 60 within a few seconds (it stayed at 30 outdoors: 11.5 ms
 // is over the backoff's 10 ms). dynres_steps: Dynamic's own steps instead (a render scale change every 2 s, GPU 18 /
-// 16 ms), then 11.5 ms from 25 s: the backoff stays, and so does the hold.
+// 16 ms), then 11.5 ms from 25 s: the backoff stays - no return within a few seconds as after the user's change, only
+// the enough way back's 10 s at 30 (2x) later.
 static void backoff_phases(double t, Frame *f) {
     f->cpu = 4.5 + noise(1), f->stall = 0, f->wait = 8;
     f->gpu = (t < 4 ? 20 : t < 10 ? 9 : 20) + noise(1);
@@ -120,6 +122,35 @@ static void dynres_steps(double t, int n, Frame *f) {
     if (t >= 25) f->gpu = 11.5 + noise(1);
 }
 
+// An iPad Pro M4 at a fixed full resolution (its log): CPU ~7.5 ms, GPU 11.3 ms, a steady 60 - then two bursts of
+// frames shown late a few seconds apart (a heavy field area loading, frame generation's present latency on top): a
+// late-frame hold, back on headroom, held again within 20 s (backing off), and GPU 11.3 ms from then on. It stayed at
+// 30 for minutes (the backoff's 10 ms GPU limit, which a fixed resolution never reaches): it must get back and stay.
+static void ipad_fixed(double t, int n, Frame *f) {
+    f->cpu = 5 + noise(1), f->gpu = 11.3 + noise(1), f->stall = 0, f->wait = 8.5;
+    bool burst = (t > 3 && t < 4.5) || (t > 14 && t < 15.5);
+    if (burst) f->gpu = 20 + noise(2);
+}
+static int ipad_back(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 2 && backs == 2 && !end && lc < 35;  // (back within the backed-off wait, then 60 for the rest)
+}
+// The same iPad, later in its log: at 60 the GPU takes 11 ms a frame for a few seconds, then 15-16 (the game thread
+// waiting for its frames: busy), held by busy time; held at 30 it takes 11.8 ms, under the 15 ms limit, so the clear
+// way back - 2 s times a backoff capped at 4x - ended every hold: 60 / 30 every 18 s for 8 minutes. The returns must
+// back off (the enough way back: up to 80 s between tries).
+static void ipad_busy(double t, int n, Frame *f) {
+    static double at_60_since;
+    bool held = pace_is_slow();
+    if (held) at_60_since = t;
+    bool heavy = !held && t - at_60_since > 4;
+    f->cpu = 4.5 + noise(1), f->wait = 6, f->stall = 0;
+    f->gpu = held ? 11.8 + noise(0.5) : heavy ? 16.5 + noise(1.5) : 11 + noise(1);
+    f->fence = heavy ? 13 + noise(3) : 0;
+}
+static int ipad_backs_off(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return backs <= 4 && end && secs - lc > 30;  // (fewer tries each longer apart; the last hold lasting)
+}
+
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
 
@@ -138,7 +169,7 @@ static int res_released(int holds, int backs, double held_s, double lc, bool end
     return holds == 2 && backs == 2 && !end && lc >= 25 && lc < 28;  // (back at 60 within a few seconds of the change)
 }
 static int backoff_kept(int holds, int backs, double held_s, double lc, bool end, double secs) {
-    return holds == 2 && backs == 1 && end && lc < 25;  // (held again, and still held after the steps and the light part)
+    return holds == 2 && backs == 2 && !end && lc >= 33 && lc < 40;  // (held again; back only after the backed-off wait)
 }
 
 static const Case cases[] = {
@@ -154,6 +185,10 @@ static const Case cases[] = {
      res_released},
     {"Dynamic's own steps: held backing off, scale steps at GPU 16-18 ms, then GPU 11.5 ms (backoff kept)", 45,
      dynres_steps, backoff_kept},
+    {"iPad at a fixed resolution: late-frame hold, a failed return (backing off), then GPU 11.3 ms for good", 60,
+     ipad_fixed, ipad_back},
+    {"iPad at a fixed resolution, busy-frame holds: GPU 11.8 ms held, 15-16 ms at 60 after a few seconds (must back off)",
+     150, ipad_busy, ipad_backs_off},
 };
 
 static int run(const Case *c) {
@@ -177,6 +212,7 @@ static int run(const Case *c) {
         uint64_t t0 = t_ns;
         cpu_ns += (uint64_t)(cpu * 1e6);
         if (!held && !game30) cpu += f.wait;  // (at 30 the GPU's last frame is long done: logged held, 3-6 ms busy)
+        if (!held) cpu += f.fence;
         t_ns += (uint64_t)(cpu * 1e6);
         uint64_t ready = t0 + (uint64_t)((f.gpu > cpu ? f.gpu : cpu) * 1e6);
         gpu_total_ns += (uint64_t)(f.gpu * 1e6);
