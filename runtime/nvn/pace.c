@@ -72,6 +72,9 @@
 // time above never comes under 13 ms - the way back was Dynamic's look for 60 at its floor, which only lowered the
 // resolution and left the game in its 30 fps mode: it failed every time and waited up to a minute between tries. That
 // look now ends this hold too (pace_try_60), with a hitch's grace; frames that don't fit hold again as on a first try.
+// A paced GPU (a phone, a tablet: its clock drops the longer it idles at 30, so the GPU time above only grows while
+// held - an iPhone 15 Pro read 12 ms just held and 23 ms 15 s later) gets the same look from Dynamic at the factor it
+// has, once this hold has lasted Dynamic's probe wait (output_scale.c g_pace_hold_at); Dynamic sits still until then.
 // A user setting that changes the GPU's load (the resolution, the upscaler, anti-aliasing: pace_settings_changed) starts
 // the hold and the backoff over: they were learned under the old load (after 4x, where 60 was out of reach, a lower
 // resolution stayed at 30 outdoors, backing off: up to 16x the wait). The hold ends and 60 gets a
@@ -308,7 +311,7 @@ void pace_frame(void) {
         memset(recent, 0, sizeof recent);
     }
     if (__atomic_exchange_n(&try_60, 0, __ATOMIC_ACQ_REL) && on && pace_slow) {  // (see above)
-        LOG("[pace] dynamic resolution looks for 60 at its floor: trying 60\n");
+        LOG("[pace] dynamic resolution looks for 60: trying 60\n");
         pace_slow = late_hold = false, back_at = now, try_back = true, gpu_back = gpu_avg;
         clear = calm = cpu_clear = 0, gpu_said = 0;
         nover = nbusy = 0;
