@@ -1797,7 +1797,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         widescreen_frame_end(frame);
         extern void widescreen_set_factor(float f);
         extern bool widescreen_allowed(void);
-        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution");
+        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Resolution");
         // GPU time since the last frame (exec.c's GPU timer; -1 without one: dynamic resolution goes by frame times):
         // the game's submissions and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before)
         static int count_present = -1;
