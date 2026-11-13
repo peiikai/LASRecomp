@@ -197,7 +197,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         if (desc && *desc) desc_h = ImGui::GetFont()->CalcTextSizeA(ImGui::GetFontSize() * dscale, FLT_MAX, desc_w, desc).y;
         h = ImGui::GetFontSize() * 1.3f + desc_h + 26 * g_scale + (value_below ? cfs * 1.4f : 0);
     }
-    if (g_child_depth) g_rail_end = p.y + h * 0.5f;  // (opt_child_begin's line: down to this row's middle)
+    if (g_child_depth) g_rail_end = p.y + h * 0.5f - 1 * g_scale;  // (opt_child_begin's line: down to this row's middle)
     ImGui::PushStyleColor(ImGuiCol_NavCursor, ImVec4(0, 0, 0, 0));  // (the row's own border shows the selection)
     bool clicked = ImGui::InvisibleButton("##row", ImVec2(w, h), ImGuiButtonFlags_EnableNav);
     ImGui::PopStyleColor();
@@ -347,8 +347,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
 void opt_child_begin(bool parent_on) {
     if (g_collect || g_child_depth++) return;  // (a run inside a run: the outer one's line covers it)
     // from the parent row's middle (its pill: 1 px below the item's top to 3 px above its foot), in the margin left of
-    // the rows (a pill starts 3 px into its item: the line sits 4 px out, in the well's rim), with a stub across toward
-    // the parent that stops just short of it (user 2026-11-12)
+    // the rows (a pill starts 3 px into its item: the line sits 4 px out, in the well's rim)
     ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
     g_rail_top = (a.y + b.y) * 0.5f - 1 * g_scale;
     g_rail_x = a.x - 4 * g_scale, g_rail_stub = a.x + 1.5f * g_scale;
@@ -368,8 +367,11 @@ void opt_child_end(void) {
     float w = fmaxf(2 * g_scale, 1.0f), x = floorf(g_rail_x) + (fmodf(roundf(w), 2) ? 0.5f : 0);  // (on whole pixels)
     ImU32 c = ImGui::ColorConvertFloat4ToU32(col);
     float y = floorf(g_rail_top) + (fmodf(roundf(w), 2) ? 0.5f : 0);
-    dl->AddLine(ImVec2(x, y), ImVec2(x, g_rail_end), c, w);
-    dl->AddLine(ImVec2(x - w * 0.5f, y), ImVec2(g_rail_stub, y), c, w);  // (the stub)
+    float y1 = floorf(g_rail_end) + (fmodf(roundf(w), 2) ? 0.5f : 0);
+    dl->AddLine(ImVec2(x, y), ImVec2(x, y1), c, w);
+    // the stubs: to the parent at the top, to the last child at the foot (user 2026-11-12)
+    dl->AddLine(ImVec2(x - w * 0.5f, y), ImVec2(g_rail_stub, y), c, w);
+    dl->AddLine(ImVec2(x - w * 0.5f, y1), ImVec2(g_rail_stub, y1), c, w);
     dl->PopClipRect();
 }
 
