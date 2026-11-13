@@ -758,18 +758,21 @@ static const char *g_cloud_name;           // the service's name (the English te
 #if PLAT_IOS
 static const char *const KEEP_DOWNLOADED = LN("In the Files app, touch and hold the data folder and choose Keep "
                                               "Downloaded, so its files stay on this iPhone.");
-static const char *const NOT_HERE = LN("Some of LAS Recomp's files aren't on this iPhone. They download as the "
-                                       "game reads them, so it may be very slow or close.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %s, not on this iPhone. They "
+                                       "download as the game reads them, so it may be very slow or close.");
+static const char *const CLOUD_OWN = "iCloud Drive";  // (the platform's own drive: the test notice names it)
 #elif defined(__APPLE__)
 static const char *const KEEP_DOWNLOADED = LN("In Finder, Control-click the data folder and choose Keep Downloaded, "
                                               "so its files stay on this Mac.");
-static const char *const NOT_HERE = LN("Some of LAS Recomp's files aren't on this Mac. They download as the "
-                                       "game reads them, so it may be very slow or close.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %s, not on this Mac. They "
+                                       "download as the game reads them, so it may be very slow or close.");
+static const char *const CLOUD_OWN = "iCloud Drive";
 #else  // (OneDrive)
 static const char *const KEEP_DOWNLOADED = LN("In File Explorer, right-click the data folder and choose Always keep on "
                                               "this device, so its files stay on this PC.");
-static const char *const NOT_HERE = LN("Some of LAS Recomp's files aren't on this PC. They download as the "
-                                       "game reads them, so it may be very slow or close.");
+static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %s, not on this PC. They "
+                                       "download as the game reads them, so it may be very slow or close.");
+static const char *const CLOUD_OWN = "OneDrive";
 #endif
 static int g_cloud = -1;                   // -1: not checked yet
 static std::atomic<double> g_cloud_gb{-1}; // the estimate (-1: not known yet)
@@ -2290,7 +2293,11 @@ extern "C" void launcher_run(const char *root) {
         if (pg && !strcmp(pg + 1, "tip")) g_settings.menu_tip_seen = false, g_tip_test = true;
         if (pg && !strcmp(pg + 1, "recompiling")) page = SETUP, g_build_frac = 0.42f, set_job(LN("Recompiling the game"));
         if (pg && !strcmp(pg + 1, "notice"))  // (the cloud notice, anywhere)
-            g_notice = std::string(L(NOT_HERE)) + "\n\n" + L(KEEP_DOWNLOADED);
+        {
+            char here[400];
+            snprintf(here, sizeof here, L(NOT_HERE), CLOUD_OWN);
+            g_notice = std::string(here) + "\n\n" + L(KEEP_DOWNLOADED);
+        }
         if (pg && !strcmp(pg + 1, "aspect")) g_settings.aspect_asked = g_settings.menu_tip_seen = false, g_tip_test = true;
     }
 
@@ -2365,7 +2372,9 @@ extern "C" void launcher_run(const char *root) {
                              g_settings.cloud_kept ? " (kept there)" : "", rt_data_root());
         if (g_cloud && plat_cloud_offloaded(rt_data_root())) {
             char msg[700];
-            snprintf(msg, sizeof msg, "%s\n\n%s", L(NOT_HERE), L(KEEP_DOWNLOADED));
+            char here[400];  // (the service by name, as the "synced by" warning says it)
+            snprintf(here, sizeof here, L(NOT_HERE), g_cloud_name);
+            snprintf(msg, sizeof msg, "%s\n\n%s", here, L(KEEP_DOWNLOADED));
             g_notice = msg;  // (notice_popup: in the menus' look)
         }
     }
