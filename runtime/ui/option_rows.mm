@@ -117,7 +117,8 @@ void opt_begin(const char *id, float scale, bool split) {
     g_hov_set = g_foc_set = g_left_hov_set = g_left_foc_set = false;
     g_row_h = 1.9f, g_listed = false;
     g_desc_max_last = g_desc_max, g_desc_max = 0;
-    if (g_page != id) g_page = id, g_desc_shown.clear(), g_desc_max_last = 0, g_desc_w = 0;
+    bool fresh = g_page != id;  // (another page was drawn last: a tab switch, or this page just opened)
+    if (fresh) g_page = id, g_desc_shown.clear(), g_desc_max_last = 0, g_desc_w = 0;
     g_cards = PLAT_TOUCH && !split;
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float pane_w = g_cards ? avail.x : avail.x * 0.48f;
@@ -128,6 +129,9 @@ void opt_begin(const char *id, float scale, bool split) {
     }
     ImGui::PushID(id);
     ImGui::BeginChild("##rows", ImVec2(pane_w, avail.y), ImGuiChildFlags_None, ImGuiWindowFlags_NavFlattened);
+    // back on a page after another one (Video's bottom, Audio, Video again): from its top, not where it was left
+    // (user 2026-11-13; the cursor's first Down lands on the first row already, opt_focus_first)
+    if (fresh) ImGui::SetScrollY(0);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ImGui::GetStyle().ItemSpacing.x, (g_cards ? 10 : 4) * scale));  // (rows close)
     g_desc_first.clear();
     g_ids.clear();
