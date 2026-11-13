@@ -53,6 +53,9 @@ typedef struct {
                         // 33.3 ms frames); it goes back to 60 when the GPU's time (G + W, as measured: a lowered clock
                         // counts) is under 13 ms for 60 frames in a row, or at once when Dynamic asks (pace_try_60) -
                         // either way with a second's grace before frames count again
+    int miss_every;     // > 0: one frame in this many misses a vsync (a CPU-side hitch: 35 ms, 59.5 fps windows)
+    double jitter;      // > 0: about once a second a frame's period is this much longer and the next's that much shorter
+                        // (Android: present times jitter, frames of 20-23 ms with no vsync missed - max 22 ms every 2 s)
 } Case;
 
 typedef struct {
@@ -162,6 +165,13 @@ static Result run(const Case *c) {
         }
         if (c->stall_at > 0 && now > c->stall_at && now < c->stall_until) p += c->stall_ms;
         if (p < 16.667) p = 16.667;
+        if (c->jitter > 0) {
+            static double owe;
+            static int jn;
+            if (owe > 0) p = fmax(1.0, p - owe), owe = 0;
+            else if (++jn % 60 == 0) p += c->jitter, owe = c->jitter;
+            if (c->miss_every > 0 && jn % c->miss_every == 7) p += 16.667;
+        }
         if (c->resize_at > 0 && now > c->resize_at - 3 && now <= c->resize_at) p_before = fmax(p_before, p);
         if (resized && now < c->resize_at + 5 && p > p_before + 1) slow_after++;
         g_prev = g, w_prev = w;
@@ -298,6 +308,12 @@ int main(int argc, char **argv) {
         // Dynamic stepped 1.00 -> 0.55 behind the menu; it must stay at 1.00, with the menu open and after it closes
         {.name = "iPad M4, clock follows the load, the menu open 40-60 s (W 5 ms, fifo)", .a = 2.5, .b = 4.5, .w = 1.6,
          .w1 = 0.8, .fifo = 1, .secs = 120, .lines = 1668, .paced = 2.5, .wmenu_at = 40, .wmenu_until = 60, .wmenu = 5},
+        // Retroid Pocket 5 at target 60 (Turnip R6, 1080p, FSR 1 + SMAA: W 3.9 ms): the Adreno's clock follows the load like
+        // the iPad's (G + W 14.3-15.6 ms at 0.50 ... 0.33, steps saving nothing), and present times jitter (a 20-23 ms frame
+        // every second or two, no vsync missed). Paced, it raised only after a second of frames averaging under 16.9 ms:
+        // the jittered frames broke that every time and it sat at 0.45 (486p) for minutes with 60 fps throughout
+        {.name = "RP5, clock follows the load, frame times jitter (fifo)", .a = 3, .b = 9, .w = 3.9, .fifo = 1, .secs = 150,
+         .lines = 1080, .paced = 2.0, .jitter = 5, .miss_every = 150},
         // Retroid Pocket 5 (Turnip R6, 1080p, FSR 1 + SMAA: W 3.3 ms; G 3.8 at 0.50 in a light scene), target 60, with the
         // frame pacer: a heavy stretch 30-60 s (x3.5: the floor misses 60) holds the game at 30. Held, the Adreno clocks
         // down (times x1.6) and the hold climbs, so the pacer's own way back (the GPU under 13 ms) never comes; Dynamic's
@@ -356,7 +372,8 @@ int main(int argc, char **argv) {
                    "iPad M4, clock follows the load: stays at 1.00"); break;
     case 34: check(r.f_end == 1.0 && r.changes_settled == 0 && r.fps_end > 58, "iPad M4, menu open and closed: stays at 1.00"); break;
     case 33: check(r.f_end == 1.0 && r.fps_end > 58, "iPad M4, heavy stretch: back to 1.00 after it"); break;
-    case 35: check(r.fps_end > 58 && r.f_end >= 0.7, "RP5, pacer held at 30: back to 60 after the heavy stretch"); break;
+    case 35: check(r.f_end >= 0.95 && r.fps_end > 58, "RP5, clock follows the load, jitter: back up to full size"); break;
+    case 36: check(r.fps_end > 58 && r.f_end >= 0.7, "RP5, pacer held at 30: back to 60 after the heavy stretch"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }

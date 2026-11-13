@@ -266,8 +266,8 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     memcpy(sorted, g_dyn_dt, N * sizeof *sorted);
     qsort(sorted, N, sizeof *sorted, cmp_double);
     double med = N % 2 ? sorted[N / 2] : (sorted[N / 2 - 1] + sorted[N / 2]) / 2;
-    int nkept = 0;
-    for (int i = 0; i < N; i++) if (sorted[i] <= 3 * med) { kept += sorted[i]; nkept++; }
+    int nkept = 0, nlate = 0;  // (nlate: frames shown a vsync late or more, 25 ms+, spikes aside)
+    for (int i = 0; i < N; i++) if (sorted[i] <= 3 * med) { kept += sorted[i]; nkept++; nlate += sorted[i] >= 25.0; }
     bool gpu = g_dyn_gpu_n >= N / 2;
     double avg_dt = kept / nkept, G = gpu ? g_dyn_gpu_sum / g_dyn_gpu_n : -1, W = gpu ? g_dyn_win_sum / g_dyn_gpu_n : 0;
     double avg_gpu = gpu ? G + W : -1;
@@ -455,14 +455,19 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0;
             memset(g_down_gw, 0, sizeof g_down_gw);
             g_dyn_last_lower = -100, g_dyn_raise_wait = DYN_RAISE_WAIT, g_dyn_raise_at = now + DYN_RAISE_WAIT;
+            g_dyn_last_raise = now;  // (late frames right after: back one step, not straight down - a raise)
             goto decided;
         }
         g_chk_from = -1;
     }
     bool slow = gpu ? avg_gpu > budget : avg_dt > 17.4;
-    // paced (see g_paced): the GPU's time is near the budget at any factor; late frames with the GPU busy are what count
+    // paced (see g_paced): the GPU's time is near the budget at any factor; late frames with the GPU busy are what count.
+    // Late frames a run of them, not one: a GPU too slow for the factor makes many frames late, a hitch (the CPU's, a
+    // stream-in) one now and then - and with the GPU always ~90% busy here each of those read as the GPU's. On a Retroid
+    // Pocket 5 (Turnip at 60 fps: a 35 ms frame every few seconds) every one stepped it down, each raise was undone
+    // within 3 s (the raise wait doubling to 16 s), and it sank to its floor at 60 fps throughout - 486p for minutes.
     bool paced = gpu && g_paced && g_hold_dt == 0;
-    if (paced) slow = avg_dt > 17.4 && avg_gpu > 0.8 * budget;
+    if (paced) slow = nlate >= 2 && nlate * 6 >= N && avg_gpu > 0.8 * budget;
     // held, but the frames came slower than the hold's (the display waits one more refresh): over budget too
     if (gpu && g_hold_dt > 0 && avg_dt > 1.2 * g_hold_dt && avg_gpu > 0.8 * budget) slow = true;
     bool hold_wait = hold_up;  // held and over its budget, not yet long enough to act on it (or the hold just stepped up)
@@ -532,7 +537,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         // next step is predicted to fit with room (G scales with the area); without: frames at 60
         double up = dyn_grid(g_dyn + DYN_STEP);
         double g_up = G * (up / g_dyn) * (up / g_dyn);
-        bool fits = !gpu || paced ? avg_dt < 16.9 : g_hold_dt > 0 ? g_up + W <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + W <= budget;
+        bool fits = !gpu ? avg_dt < 16.9 : paced ? nlate <= 1 && med < 17.2 : g_hold_dt > 0 ? g_up + W <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + W <= budget;
         // (a decision with spikes - a level loading, a fade, a cutscene starting - says little about the scene ahead:
         // it starts the count over, so a raise doesn't come from a light loading screen)
         g_dyn_good = fits && !spikes ? g_dyn_good + 1 : 0;
