@@ -293,6 +293,57 @@ def _items_page(gen, a):
 PATCHES[ITEMS_PAGE_SITE] = _items_page
 
 
+# Touch controls (runtime/ui/mobile/touch_controls.mm): main+0xee6f80 is the pause menu's update, once per frame on
+# every page and between them (the Items / Map / System pages' own updates are called from it; found by profiling
+# the System and Map pages against play). Its prologue reports that the pause menu is up.
+PAUSE_MENU_SITE = A.PAUSE_MENU_SITE
+
+
+def _pause_menu(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xd10383ff, hex(w)  # sub sp, sp, #0xe0
+    return ('{ extern void rt_pause_menu_tick(void); rt_pause_menu_tick(); c->sp -= 0xe0; }'
+            f'  /* {a:#x}: sub sp, sp, #0xe0 (pause menu shown) */')
+
+
+PATCHES[PAUSE_MENU_SITE] = _pause_menu
+
+
+# The Items page's cursor move: main+0xeb7fdc loads the cell the pressed direction leads to (the page's neighbour
+# table; 0x27 none). A tap on a cell (touch screens) asks for that cell there, so one press moves the cursor straight to
+# it through the game's own move (the old cell let go, the new one picked, its sound): rt_items_nav_pick.
+ITEMS_NAV_SITE = A.ITEMS_NAV_SITE
+
+
+def _items_nav(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xb9400116, hex(w)  # ldr w22, [x8]
+    return ('{ extern uint32_t rt_items_nav_pick(uint32_t); c->x[22] = rt_items_nav_pick(LD32(c->x[8])); }'
+            f'  /* {a:#x}: ldr w22, [x8] (items page: the next cell) */')
+
+
+PATCHES[ITEMS_NAV_SITE] = _items_nav
+
+
+# The file select's cursor (main+0xe61040, each frame while it is shown): a list helper (main+0xe6b160) moves the cursor
+# byte (+0x159b0, the one before it at +0x159b1) up or down among the four files and says whether it moved; on a move
+# the game lets the old file go, picks the new one and plays its sound. A tap on a file (touch screens) puts the cursor
+# there right after the helper, so one press goes straight to it: rt_file_nav_pick.
+FILE_SELECT_NAV_SITE = A.FILE_SELECT_NAV_SITE
+
+
+def _file_select_nav(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x370003c0, hex(w)  # tbnz w0, #0, <moved>
+    t = a + ((w >> 5) & 0x3FFF) * 4
+    return (f'{{ extern int rt_file_nav_pick(uint64_t cursor, int moved); '
+            f'if (rt_file_nav_pick(c->x[19], (int)(c->x[0] & 1))) goto L_{t:x}; }}'
+            f'  /* {a:#x}: tbnz w0, #0 (file select: the cursor moved) */')
+
+
+PATCHES[FILE_SELECT_NAV_SITE] = _file_select_nav
+
+
 # Check tracker (runtime/ui/tracker_overlay.mm): main+0xe93800 runs once per frame only while the pause menu's
 # Map page is shown (fnprof diff of Map vs Items/System/closed). Its prologue reports that.
 MAP_PAGE_SITE = A.MAP_PAGE_SITE
@@ -306,6 +357,21 @@ def _map_page(gen, a):
 
 
 PATCHES[MAP_PAGE_SITE] = _map_page
+
+
+# HUD hearts refresh (runtime/hle/hud_hearts.c): main+0xeaa800 is the HUD's normal state update (x0 = the HUD). Its
+# prologue reruns the HUD's own set-up when a menu changed Link's hearts.
+HUD_HEARTS_SITE = A.HUD_HEARTS_SITE
+
+
+def _hud_hearts(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xd102c3ff, hex(w)  # sub sp, sp, #0xb0
+    return ('{ extern void rt_hud_hearts_tick(Cpu *); rt_hud_hearts_tick(c); c->sp -= 0xb0; }'
+            f'  /* {a:#x}: sub sp, sp, #0xb0 (HUD update: hearts refresh) */')
+
+
+PATCHES[HUD_HEARTS_SITE] = _hud_hearts
 
 
 # ... and its epilogue (the page's layout was updated this frame): the check tracker hides the game's own cursor and
@@ -475,6 +541,53 @@ def _bottle1_use(gen, a):
 PATCHES[BOTTLE1_USE_SITE] = _bottle1_use
 
 
+# D-pad items (runtime/hle/dpad_items.c): the d-pad as a third set of item buttons, in the game's own "use it now?"
+# checks. The 12 Items page items each have one (main+0xd50e60 .. 0xd52fb0; Roc's Feather the last): the buttons newly
+# pressed (`bic w8, w8, w9`), then `tbnz w8, #3` (Y) -> `ldrb wN, [x8, #0xa2]` (the item on Y) `cmp wN, #<its slot>`,
+# and the same for X with #2 / +0xa3. The Y test also passes for a newly pressed d-pad direction, and the read then
+# answers the item itself when a direction just pressed holds it - else the item on Y (Y pressed) or none. A direction
+# and Y (or X) pressed together use both items, as Y and X do (bomb arrows); the button slots never change.
+EQUIP_Y_TEST_SITES = (
+    A.EQUIP_Y_TEST_SITES_0, A.EQUIP_Y_TEST_SITES_1, A.EQUIP_Y_TEST_SITES_2, A.EQUIP_Y_TEST_SITES_3,
+    A.EQUIP_Y_TEST_SITES_4, A.EQUIP_Y_TEST_SITES_5, A.EQUIP_Y_TEST_SITES_6, A.EQUIP_Y_TEST_SITES_7,
+    A.EQUIP_Y_TEST_SITES_8, A.EQUIP_Y_TEST_SITES_9, A.EQUIP_Y_TEST_SITES_10, A.EQUIP_Y_TEST_SITES_11,
+)
+EQUIP_Y_READ_SITES = (
+    A.EQUIP_Y_READ_SITES_0, A.EQUIP_Y_READ_SITES_1, A.EQUIP_Y_READ_SITES_2, A.EQUIP_Y_READ_SITES_3,
+    A.EQUIP_Y_READ_SITES_4, A.EQUIP_Y_READ_SITES_5, A.EQUIP_Y_READ_SITES_6, A.EQUIP_Y_READ_SITES_7,
+    A.EQUIP_Y_READ_SITES_8, A.EQUIP_Y_READ_SITES_9, A.EQUIP_Y_READ_SITES_10, A.EQUIP_Y_READ_SITES_11,
+)
+
+
+def _equip_y_test(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w & 0xFFF8001F == 0x37180008, hex(w)  # tbnz w8, #3, <read>
+    t = a + ((((w >> 5) & 0x3FFF) ^ 0x2000) - 0x2000) * 4
+    return (f'{{ extern int rt_equip_y_test(uint32_t pressed); if (rt_equip_y_test((uint32_t)c->x[8])) goto L_{t:x}; }}'
+            f'  /* {a:#x}: tbnz w8, #3 (Y newly pressed, or a d-pad direction) */')
+
+
+EQUIP_Y_READ_SLOTS = (0xf, 0xe, 0xd, 0x6, 0x5, 0x4, 0x3, 0x2, 0x7, 0xc, 0x8, 0x9)  # (each check's item, its `cmp`)
+
+
+def _equip_y_read(gen, a):
+    at = a - gen.base
+    w = struct.unpack_from('<I', gen.nso.image, at)[0]
+    assert w & 0xFFFFFFE0 == 0x39428900 and w & 31 < 30, hex(w)  # ldrb wN, [x8, #0xa2]
+    slot = EQUIP_Y_READ_SLOTS[EQUIP_Y_READ_SITES.index(a)]
+    if at + 8 <= len(gen.nso.image):
+        n = struct.unpack_from('<I', gen.nso.image, at + 4)[0]
+        assert n == 0x7100001F | slot << 10 | (w & 31) << 5, hex(n)  # cmp wN, #<slot>
+    return (f'{{ extern uint32_t rt_equip_y_read(uint64_t ps, int slot); c->x[{w & 31}] = rt_equip_y_read(c->x[8], {slot}); }}'
+            f'  /* {a:#x}: ldrb w{w & 31}, [x8, #0xa2] (item on Y; item {slot:#x} on a d-pad direction) */')
+
+
+for _a in EQUIP_Y_TEST_SITES:
+    PATCHES[_a] = _equip_y_test
+for _a in EQUIP_Y_READ_SITES:
+    PATCHES[_a] = _equip_y_read
+
+
 # Boss souls (runtime/hle/souls.c): the actor factory f_70008f5ea0 (x2 = spawn info, type u16 at +8) takes the type's
 # create function from the actor table (main+0x1bcc898, 0x58 bytes per type, +0 create fn, +0x50 name); a null fn is
 # its "no such actor" path (the caller gets an empty handle). A dungeon boss whose soul isn't found yet gets that path.
@@ -516,6 +629,22 @@ def _hookshot_attr(gen, a):
 PATCHES[HOOKSHOT_ATTR_SITE] = _hookshot_attr
 
 
+# Hookshot 8-way aim (runtime/hle/hookshot.c, setting hookshot_8way): Link's hookshot action, on entering its Start state
+# (main+0xdbb760), computes his flat forward vector and stores it here (q0) as the direction it gives the hook
+# (main+0xd82a80, its only caller). The runtime can round q0 to the nearest of 8 directions first.
+HOOKSHOT_DIR_SITE = A.HOOKSHOT_DIR_SITE
+
+
+def _hookshot_dir(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x3d80be60, hex(w)  # str q0, [x19, #0x2f0]
+    return ('{ extern void rt_hookshot_dir(Cpu *); rt_hookshot_dir(c); memcpy((void *)(uintptr_t)(c->x[19] + 0x2f0), &c->v[0], 16); }'
+            f'  /* {a:#x}: str q0, [x19, #0x2f0] (hookshot firing direction) */')
+
+
+PATCHES[HOOKSHOT_DIR_SITE] = _hookshot_dir
+
+
 # 360-degree movement (runtime/hle/qol.c, setting move_360): main+0xded9f0 snaps Link's stick vector (s1 = x, s2 = y)
 # to one of 8 directions and returns it as a 32-bit angle (full turn = 2^32, 0 = down). With the setting on, the
 # runtime returns the stick's own angle instead (as the community "360 Controls" mod does).
@@ -554,6 +683,23 @@ def _walk_speed(gen, a):
 
 for _a in WALK_SPEED_SITES:
     PATCHES[_a] = _walk_speed
+
+
+# Wind push (runtime/nvn/weather.c rt_wind_push: a blizzard's wind, for a randomizer option; off by default): Link's
+# move (main+0xd57260, every state's) has just summed the frame's displacement - knockback, walking, a pit's pull, a
+# platform's carry - at [x29-0x80] (world units, this frame; x19 = Link, s1 = the frame's dt) and hands it to the
+# collision move next, so a push added there is stopped by walls and ledges like his walking.
+WIND_PUSH_SITE = A.WIND_PUSH_SITE
+
+
+def _wind_push(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x38686a68, hex(w)  # ldrb w8, [x19, x8]
+    return ('{ extern void rt_wind_push(Cpu *); rt_wind_push(c); c->x[8] = LD8(c->x[19] + c->x[8]); }'
+            f'  /* {a:#x}: ldrb w8, [x19, x8] (Link move: the wind push) */')
+
+
+PATCHES[WIND_PUSH_SITE] = _wind_push
 
 
 # Walk animation rate: main+0xdce320 (walk state) has the walk animation's play rate in s8 (1, 0.75 on slow ground,
@@ -785,6 +931,33 @@ def _font_box_glyph(gen, a):
 PATCHES[FONT_BOX_GLYPH_SITE] = _font_box_glyph
 
 
+# Issue #452: a character the font has no glyph for is drawn and measured as that same "□" (the font's [+0x34]): its
+# width (main+0x111e1c0, at main+0x111e260), its widths (main+0x111e270, at main+0x111e31c) and its glyph
+# (main+0x111e350, at main+0x111e4a0 / main+0x111e4a4) read the box's glyph without checking for none. With a font
+# whose "□" the game can't use (#45) that read crashed at 0x4c - the German text of the Pothole Field owl statue has
+# "ẞ" (U+1E9E), which neither the console's font nor Yu Gothic has. Now no box glyph reads as an empty one (no width,
+# nothing drawn).
+FONT_FALLBACK_SITES = [A.FONT_FALLBACK_SITES_0, A.FONT_FALLBACK_SITES_1, A.FONT_FALLBACK_SITES_2,
+                       A.FONT_FALLBACK_SITES_3]
+_FONT_FALLBACK_OPS = {0x79409800: ('ldrh w0, [x0, #0x4c]', 'c->x[0] = LD16(c->x[0] + 0x4c);'),
+                      0xaa0003e9: ('mov x9, x0', 'c->x[9] = c->x[0];'),
+                      0x79409816: ('ldrh w22, [x0, #0x4c]', 'c->x[22] = LD16(c->x[0] + 0x4c);'),
+                      0x79409c08: ('ldrh w8, [x0, #0x4e]', 'c->x[8] = LD16(c->x[0] + 0x4e);')}
+
+
+def _font_fallback(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w in _FONT_FALLBACK_OPS, hex(w)
+    asm, op = _FONT_FALLBACK_OPS[w]
+    return ('{ static uint8_t empty_glyph_[0x60] __attribute__((aligned(16))); '
+            'if (c->x[0] == 0) c->x[0] = (uint64_t)(uintptr_t)empty_glyph_; } ' + op +
+            f'  /* {a:#x}: {asm} (font fallback glyph: none reads as an empty one) */')
+
+
+for _a in FONT_FALLBACK_SITES:
+    PATCHES[_a] = _font_fallback
+
+
 # Issue #19: [this+0x10] is the delegate of a recycled "action" object (the class whose vtable is 0x7001c51358, and
 # the ~100 siblings sharing these forwarders). Its slot +0x28 (main+0x10cce50) and +0x30 (main+0x10cce30) forward to
 # that delegate without checking it, while the class's own slot +0x38 (main+0x10cce80) checks *its* delegate (+0x18)
@@ -881,12 +1054,33 @@ SHAPE_SIM_SITES = [A.SHAPE_SIM_SITES_0, A.SHAPE_SIM_SITES_1]
 # so the effect plays where the item is.
 EFFECT_BONE_SITE = A.EFFECT_BONE_SITE
 
+# Text speed (issue #681, runtime/hle/text_speed.c). A message pane's text shows by playing a layout animation: its
+# frame is how much of the text is drawn. Each window opening (main+0xf53c80) sets the pane's step to 2 (pane+0x284;
+# times pane+0x280, frames per character unit). The pane's update (main+0xf534e0, every message layout's) plays the
+# animation at that step while its frame is short of the page's end and sets the frame to the end once it is there.
+# B mid-page sets the frame to the end too (main+0xf53b60). Fast scales the step; Instant takes the "at the end"
+# branch at once. The window's states (Reading, KeyWaiting, Selecting, TimerWaiting) still wait for the button or
+# timer as before.
+TEXT_RATE_SITE = A.TEXT_RATE_SITE  # str w8, [x0, #0x284]
+TEXT_SNAP_SITE = A.TEXT_SNAP_SITE  # b.lt: the frame is short of the page's end
+
 # ---- hook sites: the instruction stays as it is; just before it the runtime's rt_hook (runtime/hle/hooks.c) is asked
 # what to do - 0 run it, 1 the hook did it all, 2.. jump to the site's first.. target (each a label in its function).
 # The game code they generate never changes when a hook's behaviour does: only a new site needs the game code
 # rebuilt. New game-code changes go here, as a hook, unless they can't.
 # site -> (the instruction word, (jump targets...), what it's for)
+# Power-up music (powerup_music.c): the pickup starts BGM_NUTS directly. Four music paths independently check
+# Link's sound-disable bit at +0x1b8c; set it only in their local copies so normal music isn't muted or replaced.
+BUFF_MUSIC_PICKUP_SITE = A.BUFF_MUSIC_PICKUP_SITE
+BUFF_MUSIC_FLAGS_SITES = [A.BUFF_MUSIC_FLAGS_SITES_0, A.BUFF_MUSIC_FLAGS_SITES_1,
+                        A.BUFF_MUSIC_FLAGS_SITES_2, A.BUFF_MUSIC_FLAGS_SITES_3]
+
 HOOKS = {
+    BUFF_MUSIC_PICKUP_SITE: (0x97ccd77b, (), 'bl main+0xaf560: Guardian Acorn / Piece of Power music'),
+    BUFF_MUSIC_FLAGS_SITES[0]: (0xb95b8d15, (), 'ldr w21, [x8, #0x1b8c]: music update, power-up sound flag'),
+    BUFF_MUSIC_FLAGS_SITES[1]: (0xb95b8d14, (), 'ldr w20, [x8, #0x1b8c]: zone music, power-up sound flag'),
+    BUFF_MUSIC_FLAGS_SITES[2]: (0xb95b8d15, (), 'ldr w21, [x8, #0x1b8c]: event music, power-up sound flag'),
+    BUFF_MUSIC_FLAGS_SITES[3]: (0xb95b8d15, (), 'ldr w21, [x8, #0x1b8c]: power-up presentation, sound flag'),
     MB_SEEN_SITE: (0xf94002a8, (), 'ldr x8, [x21]: an actor seen - field mini-bosses (miniboss.c)'),
     CRASHOUT_SITE: (0xb900b81f, (A.CRASHOUT_SKIP,), 'str wzr, [x0, #0xb8]: Blaino knock-out, no crash-out on the Field'),
     GOHMA_HEADING_SITES[0]: (0xb915ee68, (), 'str w8, [x19, #0x15ec]: Gohma heading at Link on the Field'),
@@ -912,4 +1106,6 @@ HOOKS = {
     SHAPE_SIM_SITES[0]: (0xaa0003f4, (A.SHAPE_SIM_SKIP_0,), 'mov x20, x0: a PhysX shape change, no update without its simulation object (#314)'),
     SHAPE_SIM_SITES[1]: (0xaa0003e1, (A.SHAPE_SIM_SKIP_1,), 'mov x1, x0: a PhysX shape change, no update without its simulation object (#314)'),
     EFFECT_BONE_SITE: (0xf9402ac0, (A.EFFECT_BONE_SKIP,), 'ldr x0, [x22, #0x50]: a bone-following effect without its bone, at the actor instead (#349)'),
+    TEXT_RATE_SITE: (0xb9028408, (), 'str w8, [x0, #0x284]: a message pane\'s text step, set as a window opens (#681)'),
+    TEXT_SNAP_SITE: (0x540002cb, (), 'b.lt: message text short of the page\'s end, Instant shows it all (#681)'),
 }

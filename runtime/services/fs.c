@@ -21,6 +21,7 @@
 #include "../platform.h"
 #include "../game_addresses.h"
 #include "../romfs_build.h"
+#include "../ui/menu.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
 #define FS_PATH_EXISTS MAKE_RESULT(2, 2)
@@ -430,8 +431,8 @@ static void rom_index(void) {
     }
     if (ov_n) LOG("[fs] randomizer: %d romfs files replaced\n", ov_n);
     if (ov_meta) { patches[npatches++] = (Patch){ov_meta_off, ov_meta_size, ov_meta}; }
-    // The game's own files (before a seed's added files; the crash dialog checks them), their sizes summed, and the
-    // files that aren't the game's named. Copies of the game code at the root (game_romfs_exefs_copy) are left out.
+    // The game's own files (before a seed's added files; the crash dialog checks them), their sizes summed (the files
+    // that aren't the game's left out: issue #553), and the files that aren't the game's named. Copies of the game code at the root (game_romfs_exefs_copy) are left out.
     char game_dir[1100] = "";
     size_t dl = g_romfs_dir ? strlen(g_romfs_dir) : 0;
     if (dl > 6 && dl - 6 < sizeof game_dir && !strcmp(g_romfs_dir + dl - 6, "/romfs"))
@@ -441,8 +442,8 @@ static void rom_index(void) {
     rt_romfs_bytes = 0;
     for (int i = 0; i < rom_nfiles; i++) {
         if (game_dir[0] && game_romfs_exefs_copy(game_dir, rom_files[i].path, rom_files[i].size)) { copies++; continue; }
-        rt_romfs_bytes += rom_files[i].size;  // (the game's sizes, not a seed's)
-        if (!game_romfs_check_file(check, rom_files[i].path, rom_files[i].size) && odd++ < 20)
+        // (the game's sizes, not a seed's)
+        if (!game_romfs_check_file(check, rom_files[i].path, rom_files[i].size, &rt_romfs_bytes) && odd++ < 20)
             LOG("[fs] romfs: not one of the game's files: %s (%llu bytes)\n", rom_files[i].path,
                 (unsigned long long)rom_files[i].size);
     }
@@ -618,10 +619,7 @@ static void save_failed(HostFs *fs, const char *what, const char *path, int erro
     static bool told;
     if (told) return;
     told = true;
-    char text[1400];
-    snprintf(text, sizeof text, "Your game could not be saved (the game may still say it was). Your previous save "
-             "is unchanged.\n\nMake sure this folder can be written to and the disk has free space:\n%s", fs->root);
-    plat_notice(text);
+    menu_save_failed(fs->root);  // (the menu's notice, in its look)
 }
 
 static void sync_dir_of(const char *path) {
@@ -862,6 +860,10 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             save_editor_file_read(f->path, b->addr, off, n);
             extern void flags_ext_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
             flags_ext_save_read(f->path, b->addr, off, n);
+            extern void dpad_items_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
+            dpad_items_save_read(f->path, b->addr, off, n);  // (runtime/hle/dpad_items.c)
+            extern void weather_cycle_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
+            weather_cycle_save_read(f->path, b->addr, off, n);  // (runtime/nvn/weather_cycle.c)
         }
         OUT(int64_t, 0) = n < 0 ? 0 : n;
         resp_size(resp, 8);
@@ -884,6 +886,10 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             extern bool flags_ext_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
             errno = 0;
             if (!flags_ext_save_written(f->path, a->addr, off, size)) error = errno ? errno : EIO;
+            extern void weather_cycle_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
+            if (!error) weather_cycle_save_written(f->path, a->addr, off, size);  // (runtime/nvn/weather_cycle.c)
+            extern void dpad_items_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
+            if (!error) dpad_items_save_written(f->path, a->addr, off, size);  // (runtime/hle/dpad_items.c)
         }
         if (error && f->fs) file_failed(f, "write", error);
         else if (error) { errno = error; resp->result = errno_result(); }

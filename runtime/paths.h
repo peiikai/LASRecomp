@@ -27,6 +27,7 @@ extern "C" {
 
 void rt_paths_init(void);         // first thing in main(), after plat_init
 const char *rt_data_root(void);   // absolute
+const char *rt_data_home(void);   // the platform's own data folder (where a data folder elsewhere is named)
 bool rt_dev_mode(void);           // dev / portable mode (rule 2 above): e.g. a source checkout
 // Before rt_paths_init (the session log): the data root by the rules above; false in dev mode
 bool rt_data_root_early(char *out, size_t n);
@@ -47,6 +48,9 @@ void rt_data_target(const char *picked, RtDataTarget *t);
 // folder and removes the unfinished copy (or, after the switch, finishes removing the old one). progress: step 0
 // copying, 1 checking, 2 removing the old copy. false: err says why; the data stays where it was.
 bool rt_data_move(const char *to, void (*progress)(int step, double frac), char *err, size_t n);
+// From another thread while rt_data_move copies or checks: it stops and fails ("Move cancelled."), the copy removed.
+// Too late once the switch is made (step 2).
+void rt_data_move_cancel(void);
 // Only the switch: from the next start the data folder is `to` (created if needed), as it is. The old one is kept.
 bool rt_data_use(const char *to, char *err, size_t n);
 // Start again (the same command line, from the starting folder): after a switch. Returns only on failure.

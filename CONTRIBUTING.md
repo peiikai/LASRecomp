@@ -8,6 +8,8 @@ contributions are all welcome.
 > anything in between are equally welcome - what matters is that a change works, is tested, and follows the rules
 > below.
 
+If you work with a coding agent, point it at [AGENTS.md](AGENTS.md) too.
+
 ## The one hard rule: no Nintendo files
 
 Nothing owned by Nintendo may ever be committed or attached to an issue or pull request:
@@ -25,7 +27,7 @@ Report bugs as a [GitHub issue](https://github.com/peiikai/LASRecomp/issues). Pl
 
 - your platform (macOS / Windows / Linux), hardware (CPU, GPU) and window size / aspect ratio
 - what you did, what happened, and what you expected
-- for randomizer problems: the **seed ID** (Randomizer tab, Copy button), the settings, and where you got stuck
+- for randomizer problems: the **seed ID** (Randomizer, the seed's Copy seed ID), the settings, and where you got stuck
   (area / room, which items you had). A seed ID reproduces the exact seed on the same LAS Recomp version.
 - a screenshot or short clip if it's visual
 - the log: `lasrecomp.log` in the data folder (see "Where files live" in the README), always the latest run - or if
@@ -51,11 +53,19 @@ In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start scr
 them, then `make -j10`. The randomizer needs its Python environment in
 `third_party/LAS-Randomizer/venv`.
 
+## More documentation
+
+- [docs/architecture.md](docs/architecture.md): how the parts fit together, from the game files to the renderer
+- [docs/debug-hooks.md](docs/debug-hooks.md): the `LARECOMP_*` environment variables for testing and debugging
+- [docs/vulkan-gpu-defaults.md](docs/vulkan-gpu-defaults.md): Vulkan settings that differ per GPU, and their switches
+- [docs/save-format.md](docs/save-format.md): the save file layout and checksums
+
 ## Project layout
 
 - `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
   `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
-  word, so a wrong address fails loudly instead of silently.
+  word, so a wrong address fails loudly instead of silently. `tools/chunk_bounds.py` holds where the C is split into
+  files (made with `gen.py --new-chunk-bounds`; new cuts make every file compile once).
 - `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
   by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
   patch generator (read by `tools/game_addresses.py`, part of the game-library identity) and `runtime_<version>.h`
@@ -101,7 +111,17 @@ The comparison checks every generated C file byte-for-byte.
 
 ## Tests
 
+New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
+untranslated text shows in English.
+
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
+
+`python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
+
+`third_party/LAS-Randomizer/venv/bin/python tools/test_keysanity_text.py [<romfs>]` checks that keysanity dungeon
+items picked up anywhere, floor key spots included, get a message naming their dungeon.
+
+`python tools/test_text_speed.py` checks the Text speed hooks (Normal, Fast, Instant) without game data.
 
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.

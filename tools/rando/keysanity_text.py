@@ -8,7 +8,11 @@ index has to be known in the flow:
   - flows with constant gives (NPCs, standing items, pots, ...: item_get.insertItemGetAnimation): the get event's
     messageEntry becomes Ks<Item><index>;
   - flows that give their arguments (TreasureBox: itemKey / itemIndex from the chest): a CompareString / CompareInt
-    chain in front of the get event picks the Ks entry (LAS patches CompareInt to test equality).
+    chain in front of the get event picks the Ks entry (LAS patches CompareInt to test equality);
+  - flows that give a dungeon item with no get event at all (LAS small_keys.writeKeyEvent, rupees.makeEventChanges:
+    the floor keys of SmallKey.bfevfl, golden leaves, Color Dungeon rupees add keys / maps / ... silently): a get
+    event with the Ks entry goes in front of the add, or a key for another dungeon picked up from a dungeon floor said
+    nothing (#686).
 Item.bfevfl gets the Ks entries (Dialog.Show System:Ks<Item><index>), every language's System.msbt the messages,
 built from that file's own get-item text and Place.msbt's dungeon name (nothing of the game's text lives here).
 English: the item sentence + " for <dungeon>!"; other languages keep their text and add a page with the dungeon name.
@@ -26,7 +30,6 @@ sys.path.insert(0, os.path.join(ROOT, 'third_party', 'LAS-Randomizer'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from msbt import Msbt  # noqa: E402
-import key_rings  # noqa: E402
 
 # LAS item name prefix -> (Items.gsheet key, System.msbt get message)
 ITEMS = {'key-': ('SmallKey', 'GetSmallKey'), 'nightmare-key-': ('NightmareKey', 'GetBossKey'),
@@ -49,9 +52,6 @@ def used(placements):
     out = set()
     for loc, idx in placements.get('indexes', {}).items():
         item = placements.get(loc)
-        if isinstance(item, str) and item.startswith(key_rings.RING) and idx == key_rings.index_of(item):
-            out.add(('SmallKey', idx))  # (a key ring: its own message)
-            continue
         if not isinstance(item, str) or idx not in INDEXES:
             continue
         for prefix in sorted(ITEMS, key=len, reverse=True):  # (nightmare-key- before key-)
@@ -111,7 +111,6 @@ def _read(out_dir, romfs, rel):
 
 
 def write_messages(out_dir, romfs, combos):
-    import loc_text  # (it imports this module)
     n = 0
     for sysp in sorted(glob.glob(os.path.join(romfs, 'region*', '*', 'message', 'System.msbt'))):
         rel = os.path.relpath(sysp, romfs)
@@ -119,15 +118,11 @@ def write_messages(out_dir, romfs, combos):
         sysm = Msbt(_read(out_dir, romfs, rel))
         place = Msbt(_read(out_dir, romfs, rel.replace('System.msbt', 'Place.msbt'))).texts
         for key, idx in sorted(combos):
-            ring = idx >= key_rings.RING_INDEX
-            get, name = sysm.texts.get(GET_MSG[key]), place.get(place_label(idx - key_rings.RING_INDEX if ring else idx))
+            get = sysm.texts.get(GET_MSG[key])
+            name = place.get(place_label(idx))
             if get is None or name is None:
                 continue
-            if ring:
-                wait = next((r for k, g, r in reversed(_tokens(get)) if g == WAIT), b'')
-                sysm.set(entry(key, idx), key_rings.message(loc_text.lang_of(rel), name, wait))
-            else:
-                sysm.set(entry(key, idx), compose(get, name, lang.endswith('en')))
+            sysm.set(entry(key, idx), compose(get, name, lang.endswith('en')))
             n += 1
         out = os.path.join(out_dir, 'romfs', rel)
         os.makedirs(os.path.dirname(out), exist_ok=True)
@@ -170,8 +165,24 @@ def patch_flow(flow, combos, event_tools):
     fc = flow.flowchart
     keys = {k for k, i in combos}
     n = 0
+    # silent constant gives (no get event in front): add one, so they show their message like any other
+    added = set()
+    after_get = {id(e.data.nxt.v) for e in fc.events if _is(e, 'Link', 'GenericItemGetSequenceByKey')}
     for ev in list(fc.events):
-        if not _is(ev, 'Link', 'GenericItemGetSequenceByKey'):
+        if not _is(ev, 'Inventory', 'AddItemByKey') or id(ev) in after_get:
+            continue
+        q = ev.data.params.data
+        key, idx = q.get('itemKey'), q.get('index')
+        if isinstance(key, evfl.common.Argument) or isinstance(idx, evfl.common.Argument) or (key, idx) not in combos:
+            continue
+        get = event_tools.findEvent(fc, event_tools.createActionEvent(
+            fc, 'Link', 'GenericItemGetSequenceByKey', {'itemKey': key, 'keepCarry': False,
+                                                        'messageEntry': entry(key, idx)}, ev.name))
+        _retarget(fc, ev, get, {get})
+        added.add(id(get))
+        n += 1
+    for ev in list(fc.events):
+        if not _is(ev, 'Link', 'GenericItemGetSequenceByKey') or id(ev) in added:
             continue
         nxt = ev.data.nxt.v
         if nxt is None or not _is(nxt, 'Inventory', 'AddItemByKey'):

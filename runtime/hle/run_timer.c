@@ -1,4 +1,4 @@
-// Run timer (Gameplay tab "Timer", drawn by runtime/ui/race_overlay.mm) and LiveSplit auto-splitting (runtime/livesplit.c).
+// Run timer (General tab "Timer", drawn by runtime/ui/race_overlay.mm) and LiveSplit auto-splitting (runtime/livesplit.c).
 //
 // One run per attempt: it starts from 0:00 every time gameplay starts from the title's file select (a new file or a
 // loaded one) and lasts until the next such start, or a quit to the start screen / desktop (a reboot: RT_ON_RESET).

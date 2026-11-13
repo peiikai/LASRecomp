@@ -1,4 +1,5 @@
 // Data root and shipped resources (runtime/paths.h).
+#include "i18n_mark.h"
 #include <SDL3/SDL.h>
 #include <dirent.h>
 #include <errno.h>
@@ -128,11 +129,17 @@ static void default_home(char *root, size_t n) {
     if (t && *t) { snprintf(root, n, "%s", t); return; }
 #ifdef _WIN32
     exe_dir(root, n);
+#elif defined(__ANDROID__)
+    // the app's external files folder (Android/data/<package>/files): reachable over USB and from file managers
+    const char *ext = SDL_GetAndroidExternalStoragePath();
+    snprintf(root, n, "%s", ext ? ext : SDL_GetAndroidInternalStoragePath());
 #elif defined(__linux__)
     // (the AppImage is read-only): $XDG_DATA_HOME/lasrecomp, ~/.local/share/lasrecomp by default
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     if (xdg && *xdg == '/') snprintf(root, n, "%s/lasrecomp", xdg);
     else snprintf(root, n, "%s/.local/share/lasrecomp", home && *home ? home : "/tmp");
+#elif PLAT_IOS
+    snprintf(root, n, "%s", plat_ios_documents());  // (the app's folder in Files; the pointer file lives there too)
 #else
     const char *home = getenv("HOME");
     snprintf(root, n, "%s/Library/Application Support/" RT_BUNDLE_ID, home && *home ? home : "/tmp");
@@ -165,6 +172,25 @@ static bool write_line(const char *path, const char *line) {
 #endif
     if (!ok) remove(tmp);
     return ok;
+}
+
+// A move's note naming the other folder. iOS: its bookmark - a path outside the sandbox grants nothing next launch
+static bool write_note(const char *note, const char *dir) {
+#if PLAT_IOS
+    char b64[8192];
+    if (plat_ios_bookmark_make(dir, b64, sizeof b64)) return write_line(note, b64);
+#endif
+    return write_line(note, dir);
+}
+static bool read_note(const char *note, char *out, size_t n) {
+#if PLAT_IOS
+    char line[8192];
+    if (!read_line(note, line, sizeof line)) return false;
+    if (line[0] == '/') return (size_t)snprintf(out, n, "%s", line) < n;  // (a path: the folder had no bookmark)
+    return plat_ios_bookmark_resolve(line, out, n) != 0;
+#else
+    return read_line(note, out, n);
+#endif
 }
 
 static void join(char *out, size_t n, const char *dir, const char *name) { snprintf(out, n, "%s" SEP "%s", dir, name); }
@@ -205,11 +231,21 @@ static bool in_app(const char *p) {
 #endif
 }
 
-// The data folder a pointer file names (false: none, or it points into the app)
+// The data folder a pointer file names (false: none, or it points into the app). iOS: a path outside the sandbox
+// grants nothing on the next launch; the pointer file holds the folder's bookmark (plat_ios_bookmark_*), base64 on
+// its one line.
 static bool pointer_root(const char *home, char *out, size_t n) {
     char p[1100];
     join(p, sizeof p, home, POINTER_FILE);
+#if PLAT_IOS
+    char b64[8192];  // (a bookmark runs to a few thousand characters: far more than a path)
+    if (!read_line(p, b64, sizeof b64)) return false;
+    int r = plat_ios_bookmark_resolve(b64, out, n);
+    if (r == 0) { fprintf(stderr, "[paths] %s: the data folder's bookmark doesn't resolve\n", p); out[0] = 0; return true; }
+    if (r < 0 && plat_ios_bookmark_make(out, b64, sizeof b64)) write_line(p, b64);  // (stale: the system asks for a rewrite)
+#else
     if (!read_line(p, out, n)) return false;
+#endif
     if (in_app(out)) {
         fprintf(stderr, "[paths] %s points into the app (%s): ignored\n", p, out);
         return false;
@@ -260,16 +296,16 @@ static void remove_partial(const char *dir) {
 static void finish_moves(const char *root, void (*progress)(int, double)) {
     char note[1100], other[1024], p[1100], back[1024];
     join(note, sizeof note, root, NOTE_TO);
-    if (read_line(note, other, sizeof other)) {
+    if (read_note(note, other, sizeof other)) {
         join(p, sizeof p, other, MARK_PARTIAL);
         bool partial = exists(p);
         join(p, sizeof p, other, NOTE_FROM);
-        bool ours = partial || (read_line(p, back, sizeof back) && same_dir(back, root));
+        bool ours = partial || (read_note(p, back, sizeof back) && same_dir(back, root));
         if (ours && !overlap(root, other)) remove_partial(other);
         remove(note);
     }
     join(note, sizeof note, root, NOTE_FROM);
-    if (read_line(note, other, sizeof other)) {
+    if (read_note(note, other, sizeof other)) {
         if (!overlap(root, other) && is_dir(other)) {
             fprintf(stderr, "[paths] removing the old copy of the data in %s\n", other);
             join(p, sizeof p, other, NOTE_TO);
@@ -281,6 +317,12 @@ static void finish_moves(const char *root, void (*progress)(int, double)) {
                 else remove(e);
                 if (progress) progress(2, (double)(i + 1) / N_ENTRIES);
             }
+            // Windows never removes a process's working folder: a move from the start screen still runs in the old
+            // one (rt_paths_init's chdir), which stayed behind empty (#736's test). The restart leaves it anyway.
+            char cwd[1024], rc[1100], ro[1100];
+            if (getcwd(cwd, sizeof cwd) && resolve(cwd, rc, sizeof rc) && resolve(other, ro, sizeof ro) &&
+                within(rc, ro) && chdir(root) != 0)
+                fprintf(stderr, "[paths] can't leave %s\n", other);
             if (!same_dir(other, g_home)) rmdir(other);  // (only if empty)
         }
         remove(note);
@@ -294,15 +336,19 @@ void rt_paths_init(void) {
     char root[1024];
     const char *env = getenv("LARECOMP_DATA_ROOT");
     if (env && *env) snprintf(root, sizeof root, "%s", env);
+#if !PLAT_IOS
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
+#endif
     else {
         snprintf(root, sizeof root, "%s", g_home);
         char ptr[1024];
         while (pointer_root(g_home, ptr, sizeof ptr)) {  // another folder chosen on the start screen
-            if (is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
+            if (ptr[0] && is_dir(ptr) && writable(ptr)) { snprintf(root, sizeof root, "%s", ptr); break; }
             char msg[1400];
-            snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
-                     "connected, connect it and try again.", ptr);
+            if (!ptr[0]) snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available any more.\n\nIf it's on a "
+                                  "drive that isn't connected, connect it and try again.");  // (iOS: no path to show)
+            else snprintf(msg, sizeof msg, "LAS Recomp's data folder isn't available:\n%s\n\nIf it's on a drive that isn't "
+                          "connected, connect it and try again.", ptr);
             const SDL_MessageBoxButtonData b[] = {{SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 0, "Try again"},
                                                   {0, 1, "Use the default folder"},
                                                   {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 2, "Quit"}};
@@ -335,11 +381,12 @@ void rt_paths_init(void) {
 }
 
 const char *rt_data_root(void) { return g_root; }
+const char *rt_data_home(void) { return g_home; }
 
 bool rt_resource(const char *name, const char *dev_rel, char *out, size_t n) {
     char c[4][1100] = {{0}};
     if (name) {
-        snprintf(c[0], sizeof c[0], "%s" SEP "%s", g_exe_dir, name);
+        snprintf(c[0], sizeof c[0], "%s" SEP "%s", g_exe_dir, name);  // (iOS: the .app is flat, this is the bundle)
         snprintf(c[1], sizeof c[1], "%s" SEP ".." SEP "Resources" SEP "%s", g_exe_dir, name);  // .app/Contents/Resources
     }
     if (dev_rel) {
@@ -463,8 +510,8 @@ unsigned long long rt_game_files_size(const char *game_dir) {
 // ---- choosing another data folder, moving the data there (the start screen: runtime/ui/launcher.mm)
 const char *rt_data_root_fixed(void) {
     const char *env = getenv("LARECOMP_DATA_ROOT");
-    if (env && *env) return "Set by LARECOMP_DATA_ROOT.";
-    if (g_dev) return "A source checkout uses its own folder.";
+    if (env && *env) return LN("Set by LARECOMP_DATA_ROOT.");
+    if (g_dev) return LN("A source checkout uses its own folder.");
     return NULL;
 }
 
@@ -477,6 +524,26 @@ static bool has_entries(const char *dir) {
     return false;
 }
 
+// LAS Recomp's own data: its settings (written by every PLAY since Beta 3), a move's note, or saves with seeds or game
+// files beside them. One of DATA_ENTRIES alone is not (#736): another program's cache/, fonts/ or save/ was taken as
+// ours, used as the data folder with no Move offered, and taken along by a later move.
+static bool has_own_data(const char *dir) {
+    static const char *const own[] = {"larecomp.ini", NOTE_TO, NOTE_FROM};
+    char p[1100];
+    for (size_t i = 0; i < sizeof own / sizeof *own; i++) {
+        join(p, sizeof p, dir, own[i]);
+        if (exists(p)) return true;
+    }
+    static const char *const beside_save[] = {"rando", "extracted"};
+    join(p, sizeof p, dir, "save");
+    if (!is_dir(p)) return false;
+    for (size_t i = 0; i < sizeof beside_save / sizeof *beside_save; i++) {
+        join(p, sizeof p, dir, beside_save[i]);
+        if (is_dir(p)) return true;
+    }
+    return false;
+}
+
 // nothing in it but what file managers leave behind
 static bool empty_dir(const char *dir) {
     DIR *d = opendir(dir);
@@ -485,8 +552,11 @@ static bool empty_dir(const char *dir) {
     bool empty = true;
     while (empty && (e = readdir(d))) {
         const char *n = e->d_name;
+        size_t k = strlen(n);  // (LAS Recomp's own logs too - a start there before: logs stay where they are, and an
+                               //  SD card's app folder on Android held one, so the data went into "LAS Recomp" in it)
         empty = !strcmp(n, ".") || !strcmp(n, "..") || !strcmp(n, ".DS_Store") || !strcmp(n, ".localized") ||
-                !strcmp(n, "desktop.ini") || !strcmp(n, "Thumbs.db");
+                !strcmp(n, "desktop.ini") || !strcmp(n, "Thumbs.db") ||
+                (!strncmp(n, "lasrecomp", 9) && k > 4 && !strcmp(n + k - 4, ".log"));
     }
     closedir(d);
     return empty;
@@ -516,7 +586,7 @@ static unsigned long long entries_size(const char *dir) {
 static bool usable_dir(const char *dir) {
     char p[1100];
     join(p, sizeof p, dir, MARK_PARTIAL);
-    return !is_dir(dir) || has_entries(dir) || exists(p) || empty_dir(dir);
+    return !is_dir(dir) || has_own_data(dir) || exists(p) || empty_dir(dir);
 }
 
 void rt_data_target(const char *picked, RtDataTarget *t) {
@@ -524,7 +594,7 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
     char r[1100], root[1100], p[1100];
     snprintf(t->path, sizeof t->path, "%s", picked);
     if (!resolve(picked, r, sizeof r) || !is_dir(r) || !resolve(g_root, root, sizeof root)) {
-        snprintf(t->refuse, sizeof t->refuse, "That folder can't be opened.");
+        snprintf(t->refuse, sizeof t->refuse, LN("That folder can't be opened."));
         return;
     }
     // the folder itself when it's empty, LAS Recomp's data, or the platform's folder; otherwise a "LAS Recomp"
@@ -532,19 +602,20 @@ void rt_data_target(const char *picked, RtDataTarget *t) {
     if (same_dir(r, g_home) || usable_dir(r)) snprintf(t->path, sizeof t->path, "%s", r);
     else join(t->path, sizeof t->path, r, "LAS Recomp");
     join(p, sizeof p, t->path, MARK_PARTIAL);
-    t->has_data = has_entries(t->path) && !exists(p);
+    // (the platform's folder is LAS Recomp's own: anything of ours in it is data)
+    t->has_data = (same_dir(t->path, g_home) ? has_entries(t->path) : has_own_data(t->path)) && !exists(p);
     t->bytes = entries_size(g_root);
     t->free = free_space(r);
     struct stat a, b;
     bool same_fs = stat(root, &a) == 0 && stat(r, &b) == 0 && a.st_dev == b.st_dev;  // (hard links: no second copy)
     t->need = (same_fs ? 0 : t->bytes) + (64ull << 20);
-    if (path_eq(t->path, root)) snprintf(t->refuse, sizeof t->refuse, "That's the data folder already.");
-    else if (within(t->path, root)) snprintf(t->refuse, sizeof t->refuse, "That folder is inside the data folder.");
-    else if (within(root, t->path)) snprintf(t->refuse, sizeof t->refuse, "That folder holds the data folder.");
-    else if (in_app(r)) snprintf(t->refuse, sizeof t->refuse, "That folder is inside the app.");
-    else if (!writable(r)) snprintf(t->refuse, sizeof t->refuse, "LAS Recomp can't write to that folder.");
+    if (path_eq(t->path, root)) snprintf(t->refuse, sizeof t->refuse, LN("That's the data folder already."));
+    else if (within(t->path, root)) snprintf(t->refuse, sizeof t->refuse, LN("That folder is inside the data folder."));
+    else if (within(root, t->path)) snprintf(t->refuse, sizeof t->refuse, LN("That folder holds the data folder."));
+    else if (in_app(r)) snprintf(t->refuse, sizeof t->refuse, LN("That folder is inside the app."));
+    else if (!writable(r)) snprintf(t->refuse, sizeof t->refuse, LN("LAS Recomp can't write to that folder."));
     else if (!same_dir(t->path, g_home) && !usable_dir(t->path))
-        snprintf(t->refuse, sizeof t->refuse, "Choose an empty folder.");
+        snprintf(t->refuse, sizeof t->refuse, LN("Choose an empty folder."));
 }
 
 // ---- the move: copy, check the copy, switch over, then empty the old folder
@@ -565,6 +636,16 @@ static void moved(Move *m, unsigned long long n) {
 static bool move_fail(Move *m, const char *what, const char *p) {
     if (!m->err[0]) snprintf(m->err, m->errn, "%s %s (%s)", what, p, errno ? strerror(errno) : "differs");
     return false;
+}
+
+// Cancel pressed (rt_data_move_cancel, from the start screen's thread): the copy or its check stops at the next file
+// or block, and the move fails as any failed move does - the copy removed, the data where it was
+static SDL_AtomicInt g_move_cancel;
+void rt_data_move_cancel(void) { SDL_SetAtomicInt(&g_move_cancel, 1); }
+static bool move_cancelled(Move *m) {
+    if (!SDL_GetAtomicInt(&g_move_cancel)) return false;
+    if (!m->err[0]) snprintf(m->err, m->errn, "%s", LN("Move cancelled."));
+    return true;
 }
 
 #ifdef _WIN32
@@ -593,6 +674,7 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
     bool ok = in && out;
     errno = 0;
     while (ok) {
+        if (move_cancelled(m)) { ok = false; break; }
         size_t k = fread(m->buf, 1, MOVE_BUF, in);
         if (!k) { ok = !ferror(in); break; }
         ok = fwrite(m->buf, 1, k, out) == k;
@@ -627,7 +709,7 @@ static bool copy_tree(Move *m, const char *s, const char *d) {
     if (!dir) return move_fail(m, "Couldn't read", s);
     bool ok = true;
     struct dirent *e;
-    while (ok && (e = readdir(dir))) {
+    while (ok && !move_cancelled(m) && (e = readdir(dir))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strncmp(e->d_name, "._", 2)) continue;  // (._: macOS
         char cs[4096], cd[4096];                                                                         //  metadata)
         join(cs, sizeof cs, s, e->d_name);
@@ -641,7 +723,7 @@ static bool copy_tree(Move *m, const char *s, const char *d) {
 static bool same_bytes(Move *m, const char *a, const char *b) {
     FILE *fa = fopen(a, "rb"), *fb = fopen(b, "rb");
     bool ok = fa && fb;
-    while (ok) {
+    while (ok && !move_cancelled(m)) {
         size_t k = fread(m->buf, 1, MOVE_BUF, fa), j = fread(m->buf2, 1, MOVE_BUF, fb);
         ok = k == j && !memcmp(m->buf, m->buf2, k) && !ferror(fa) && !ferror(fb);
         moved(m, k);
@@ -649,7 +731,7 @@ static bool same_bytes(Move *m, const char *a, const char *b) {
     }
     if (fa) fclose(fa);
     if (fb) fclose(fb);
-    return ok;
+    return ok && !move_cancelled(m);
 }
 
 static bool check_tree(Move *m, const char *s, const char *d) {
@@ -678,7 +760,7 @@ static bool check_tree(Move *m, const char *s, const char *d) {
     if (!dir) return move_fail(m, "Couldn't read", s);
     bool ok = true;
     struct dirent *e;
-    while (ok && (e = readdir(dir))) {
+    while (ok && !move_cancelled(m) && (e = readdir(dir))) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || !strncmp(e->d_name, "._", 2)) continue;  // (._: macOS
         char cs[4096], cd[4096];                                                                         //  metadata)
         join(cs, sizeof cs, s, e->d_name);
@@ -696,7 +778,13 @@ static bool point_to(const char *to) {
     if (same_dir(to, g_home)) return remove(p) == 0 || !exists(p);
     if (!resolve(to, r, sizeof r)) return false;
     mkdirs(g_home);
+#if PLAT_IOS
+    char b64[8192];
+    if (!plat_ios_bookmark_make(r, b64, sizeof b64)) return false;
+    return write_line(p, b64);
+#else
     return write_line(p, r);
+#endif
 }
 
 // A folder to use: created if needed, writable, with no unfinished copy or old move notes in it
@@ -704,7 +792,7 @@ static bool prepare_target(const char *to, char *err, size_t n) {
     char p[1100];
     mkdirs(to);
     if (!is_dir(to) || !writable(to)) {
-        snprintf(err, n, "LAS Recomp can't write to %s.", to);
+        snprintf(err, n, LN("LAS Recomp can't write to %s."), to);
         return false;
     }
     join(p, sizeof p, to, MARK_PARTIAL);
@@ -718,7 +806,7 @@ bool rt_data_use(const char *to, char *err, size_t n) {
     err[0] = 0;
     if (!prepare_target(to, err, n)) return false;
     if (!point_to(to)) {
-        snprintf(err, n, "Couldn't save the data folder's location in %s.", g_home);
+        snprintf(err, n, LN("Couldn't save the data folder's location in %s."), g_home);
         return false;
     }
     fprintf(stderr, "[paths] data folder: %s from the next start\n", to);
@@ -731,17 +819,19 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
     snprintf(from, sizeof from, "%s", g_root);
     if (!prepare_target(to, err, n)) return false;
     if (!resolve(to, abs_to, sizeof abs_to) || overlap(abs_to, from)) {
-        snprintf(err, n, "That folder is inside the data folder.");
+        snprintf(err, n, LN("That folder is inside the data folder."));
         return false;
     }
-    if (has_entries(abs_to)) {
-        snprintf(err, n, "That folder already has LAS Recomp data.");
+    if (has_entries(abs_to)) {  // (never merged into what's there: another program's cache/ either)
+        bool ours = same_dir(abs_to, g_home) || has_own_data(abs_to);
+        snprintf(err, n, "%s", ours ? LN("That folder already has LAS Recomp data.") : LN("Choose an empty folder."));
         return false;
     }
+    SDL_SetAtomicInt(&g_move_cancel, 0);
     Move m = {progress, 0, entries_size(from), 0, err, n, malloc(MOVE_BUF), malloc(MOVE_BUF)};
     join(p, sizeof p, abs_to, MARK_PARTIAL);
     join(q, sizeof q, from, NOTE_TO);
-    bool ok = m.buf && m.buf2 && write_line(p, from) && write_line(q, abs_to);
+    bool ok = m.buf && m.buf2 && write_line(p, from) && write_note(q, abs_to);
     if (!ok) move_fail(&m, "Couldn't write to", abs_to);
     fprintf(stderr, "[paths] moving the data (%.2f GB) from %s to %s\n", m.total / 1e9, from, abs_to);
     for (int step = 0; step < 2 && ok; step++) {  // copy, then check every file of the copy
@@ -752,18 +842,19 @@ bool rt_data_move(const char *to, void (*progress)(int step, double frac), char 
             join(s, sizeof s, from, DATA_ENTRIES[i]);
             join(d, sizeof d, abs_to, DATA_ENTRIES[i]);
             if (!exists(s) && !is_link(s)) continue;
-            ok = step ? check_tree(&m, s, d) : copy_tree(&m, s, d);
+            ok = (step ? check_tree(&m, s, d) : copy_tree(&m, s, d)) && !move_cancelled(&m);
         }
     }
     free(m.buf), free(m.buf2);
     // checked: the copy names its source (emptied once it's in use), stops being unfinished, and becomes the data
     // folder. Until the switch the old folder is the one in use, and its note undoes the copy at the next start.
+    if (ok && move_cancelled(&m)) ok = false;  // (the last chance: after this the switch is made)
     if (ok) {
         join(q, sizeof q, abs_to, NOTE_FROM);
-        ok = write_line(q, from) && remove(p) == 0;
+        ok = write_note(q, from) && remove(p) == 0;
         if (!ok) move_fail(&m, "Couldn't write to", abs_to);
     }
-    if (ok && !point_to(abs_to)) ok = false, snprintf(err, n, "Couldn't save the data folder's location in %s.", g_home);
+    if (ok && !point_to(abs_to)) ok = false, snprintf(err, n, LN("Couldn't save the data folder's location in %s."), g_home);
     if (!ok) {
         fprintf(stderr, "[paths] move failed: %s\n", err);
         remove_partial(abs_to);

@@ -110,6 +110,9 @@ struct ImGui_ImplVulkan_InitInfo
 // Follow "Getting Started" link and check examples/ folder to learn about using backends!
 IMGUI_IMPL_API bool             ImGui_ImplVulkan_Init(ImGui_ImplVulkan_InitInfo* info);
 IMGUI_IMPL_API void             ImGui_ImplVulkan_Shutdown();
+// LAS Recomp (imgui_glue.cpp): Android pre-rotation - quarter turns, and the vertex shader that applies them (before Init)
+IMGUI_IMPL_API void         ImGui_ImplVulkan_SetPreRotation(int quarter);
+IMGUI_IMPL_API void         ImGui_ImplVulkan_SetVertexShader(const uint32_t* spv, size_t size);
 IMGUI_IMPL_API void             ImGui_ImplVulkan_NewFrame();
 IMGUI_IMPL_API void             ImGui_ImplVulkan_RenderDrawData(ImDrawData* draw_data, VkCommandBuffer command_buffer, VkPipeline pipeline = VK_NULL_HANDLE);
 IMGUI_IMPL_API bool             ImGui_ImplVulkan_CreateFontsTexture();

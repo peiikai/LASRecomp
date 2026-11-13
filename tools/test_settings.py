@@ -11,11 +11,13 @@ with tempfile.TemporaryDirectory() as directory:
     directory = Path(directory)
     exe = directory / ('settings-test.exe' if os.name == 'nt' else 'settings-test')
     subprocess.run(shlex.split(os.environ.get('CC', 'clang')) +
-                   ['-std=gnu11', '-Iruntime', 'runtime/settings.c', 'runtime/cosmetic_colour.c', 'tools/test_settings.c', '-o', str(exe), '-lm'],
+                   ['-std=gnu11', '-Iruntime', 'runtime/settings.c', 'runtime/cosmetic_colour.c', 'tools/test_settings.c', '-o', str(exe), '-lm'] +
+                   (['-framework', 'CoreFoundation'] if sys.platform == 'darwin' else []),
                    cwd=ROOT, check=True)
     cases = [(setting, {}, code) for setting, code in
              [('zh-CN', 'zh-Hans'), ('zh-TW', 'zh-Hant'), ('zh-Hans', 'zh-Hans'),
-              ('zh-Hant', 'zh-Hant'), ('en-US', 'en-US'), ('ja', 'ja'), ('unknown', 'en-US')]]
+              ('zh-Hant', 'zh-Hant'), ('en-US', 'en-US'), ('ja', 'ja'), ('unknown', 'en-US'),
+              ('pt-BR', 'en-US')]]
     if sys.platform.startswith('linux'):
         for locale in ['zh_CN.UTF-8', 'zh_SG.UTF-8', 'zh-Hans', 'zh-Hans-HK', 'zh_Hans_CN', 'zh']:
             cases.append(('auto', {'LC_ALL': locale}, 'zh-Hans'))
@@ -25,7 +27,8 @@ with tempfile.TemporaryDirectory() as directory:
         cases += [('auto', {'LC_MESSAGES': 'zh_HK.UTF-8', 'LANG': 'zh_CN.UTF-8'}, 'zh-Hant'),
                   ('auto', {'LANG': 'zh_MO.UTF-8'}, 'zh-Hant'),
                   ('auto', {'LC_ALL': 'zh_CN.UTF-8', 'LC_MESSAGES': 'zh_HK.UTF-8'}, 'zh-Hans'),
-                  ('auto', {'LC_ALL': 'ja_JP.UTF-8'}, 'ja'), ('auto', {'LC_ALL': 'C'}, 'en-US')]
+                  ('auto', {'LC_ALL': 'ja_JP.UTF-8'}, 'ja'), ('auto', {'LC_ALL': 'C'}, 'en-US'),
+                  ('auto', {'LC_ALL': 'pt_BR.UTF-8'}, 'en-US')]
     count = 0
     for newline in ['\n', '\r\n']:
         for setting, locale, code in cases:
@@ -38,7 +41,7 @@ with tempfile.TemporaryDirectory() as directory:
                 env.update(locale)
                 subprocess.run([str(exe), code, seed], env=env, check=True, capture_output=True)
                 saved = ini.read_text()
-                expected = 'auto' if setting in ['auto', 'unknown'] else code
+                expected = 'auto' if setting in ['auto', 'unknown'] else setting if setting == 'pt-BR' else code  # (the menus' only)
                 assert f'language = {expected}\n' in saved
                 assert f'rando_seed = {seed}\n' in saved
                 count += 1
@@ -62,12 +65,40 @@ with tempfile.TemporaryDirectory() as directory:
         subprocess.run([str(exe), mode], env=env, check=True, capture_output=True)
         assert f'resolution = {saved}\n' in ini.read_text(), (lines, ini.read_text())
         count += 1
+    # Shadows (issue #602): Default unless the file says 0.5x, 2x, 3x, 4x or off ("high" from earlier test builds is 2x)
+    for lines, saved in [([], 'default'), (['shadows = default'], 'default'), (['shadows = 2x'], '2x'), (['shadows = 3x'], '3x'),
+                         (['shadows = 4x'], '4x'), (['shadows = off'], 'off'), (['shadows = 0.5x'], '0.5x'), (['shadows = high'], '2x'), (['shadows = ultra'], 'default')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(['resolution = 1x'] + lines) + '\n')
+        subprocess.run([str(exe), 'res-chosen'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
+        assert f'shadows = {saved}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
+    # Power-up music stays vanilla in old files; either explicit choice survives a roundtrip.
+    for lines, value in [([], 1), (['powerup_music = 0'], 0), (['powerup_music = 1'], 1)]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'powerup_music = {value}\n' in ini.read_text()
+        count += 1
+    # Text speed (#681): Normal in old files and for an unknown value; Fast and Instant survive a roundtrip.
+    for lines, value in [([], 'normal'), (['text_speed = fast'], 'fast'), (['text_speed = instant'], 'instant'),
+                         (['text_speed = normal'], 'normal'), (['text_speed = turbo'], 'normal')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'text_speed = {value}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'
-    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\n')
+    # (grass and walls have no Black: an older Black there loads as Gray; other rows keep it)
+    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\ngrass = Black\n'
+                   'walls = Black\nsand = Black\n')
     subprocess.run([str(exe), 'colours'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
     saved = ini.read_text()
-    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random']:
+    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random', 'grass = Gray',
+                 'walls = Gray', 'sand = Black']:
         assert line + '\n' in saved, (line, saved)
     count += 1
     # the Randomizer tab's New seed options: an older file without the key stays without it (the defaults)

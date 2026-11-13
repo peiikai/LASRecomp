@@ -1,8 +1,13 @@
 // LAS Recomp entry: load modules, set up the kernel, run nn::init::Start on the main thread.
 #include <SDL3/SDL.h>
+#include "platform.h"
+#if defined(__ANDROID__) || PLAT_IOS
+#include <SDL3/SDL_main.h>  // (main() becomes SDL_main: SDL's activity runs it on Android, its UIApplication delegate on iOS)
+#endif
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -40,12 +45,67 @@ static void rtld_init_main(Cpu *c) { module_init(c, &g_modules[0]); }
 // LARECOMP_REEXEC_FORCE=1 (test): the first process skips the reservation once and starts again, as when the range is
 // taken (the new process has LARECOMP_REEXEC set and reserves normally).
 #define REEXEC_FORCED "forced by LARECOMP_REEXEC_FORCE"
+#ifdef LARECOMP_DYN_BASE
+uint64_t g_guest_lo = GUEST_CANON;
+// The window's start (rt.h). LARECOMP_GUEST_BASE=<hex> (test) asks for one; otherwise a start other than GUEST_CANON
+// first, so a desktop DYN_BASE build always runs the game away from its own addresses. The game was made for a 39-bit
+// address space, so the window ends below 2^39; 4 GB aligned keeps ADRP's page offsets the same as the game's.
+#ifdef __linux__
+// The lowest 4 GB-aligned start above 4 GB whose window fits below 2^39 in a gap of /proc/self/maps (0: none). On
+// Android the process is forked from the zygote with its libraries already mapped, and can't re-exec for another
+// layout. From LASRecompAndroid by mamcjr (MIT), android/common/guest_window.c.
+static uint64_t free_window(uint64_t size) {
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) return 0;
+    uint64_t prev_end = 0x100000000ull, found = 0;
+    char line[512];
+    for (bool more = true; more && !found;) {
+        unsigned long long lo = 1ull << 39, hi = 0;
+        more = fgets(line, sizeof line, f) && sscanf(line, "%llx-%llx", &lo, &hi) == 2;
+        uint64_t start = (prev_end + 0xFFFFFFFFull) & ~0xFFFFFFFFull;
+        if (start + size <= (more ? lo : 1ull << 39) && start + size <= (1ull << 39)) found = start;
+        if (more && hi > prev_end) prev_end = hi;
+    }
+    fclose(f);
+    return found;
+}
+#endif
+static bool reserve_dyn_window(void) {
+#if PLAT_IOS
+    // (the kernel's reserves leave a few gaps that move with every launch: the smallest one the packed window fits,
+    //  read off the map - runtime/platform/ios.c. 1 GB aligned rather than 4: the gaps are a few GB, and the game's
+    //  own address arithmetic only sees its regions' 1 GB alignment; ADRP's 4 KB page offsets hold at any base)
+    uint64_t lo = plat_place_guest(GUEST_SIZE);
+    if (lo) g_guest_lo = lo;
+    return lo != 0;
+#else
+    uint64_t want[4] = {0, 0, GUEST_CANON + 0x100000000ull, GUEST_CANON};  // (macOS: room up to ~0x77_2000_0000)
+    const char *e = getenv("LARECOMP_GUEST_BASE");
+    if (e && *e) want[0] = strtoull(e, NULL, 16);
+#ifdef __linux__
+    want[1] = free_window(GUEST_SIZE);
+#endif
+    for (int i = 0; i < 4; i++) {
+        uint64_t lo = want[i];
+        if (!lo || (lo & 0xFFFFFFFFull) || lo + GUEST_SIZE > (1ull << 39)) continue;
+        if (plat_reserve_guest(lo, lo + GUEST_SIZE)) { g_guest_lo = lo; return true; }
+    }
+    return false;
+#endif
+}
+#endif
+static bool g_guest_reserved;  // (iOS: a failure is final, but only the game needs the window - boot() reports it)
 __attribute__((constructor(101))) static void reserve_guest_space(void) {
     const char *force = getenv("LARECOMP_REEXEC_FORCE");
     bool forced = force && *force && strcmp(force, "0") && !getenv("LARECOMP_REEXEC");
     if (forced) setenv("LARECOMP_REEXEC_WHY", REEXEC_FORCED, 1);
-    else if (plat_reserve_guest(GUEST_LO, GUEST_HI)) return;
+#ifdef LARECOMP_DYN_BASE
+    else if (reserve_dyn_window()) { g_guest_reserved = true; return; }
+#else
+    else if (plat_reserve_guest(GUEST_LO, GUEST_HI)) { g_guest_reserved = true; return; }
+#endif
     else setenv("LARECOMP_REEXEC_WHY", "", 0);  // (the platform may have said what holds the range; else nothing more)
+    if (PLAT_IOS) return;  // (no re-exec there: the start screen and the seed generator still run; the game can't)
     const char *tries = getenv("LARECOMP_REEXEC");
     int n = tries ? atoi(tries) : 0;
     if (n >= 20) {
@@ -117,6 +177,9 @@ static void reboot_idle(void) {  // (main thread, while guest threads stop) keep
 static void teardown(void) {
     uint64_t t0 = plat_now_ns();
     kernel_stop_threads(reboot_idle);
+#ifdef __ANDROID__
+    { extern void audio_stop_all(void); audio_stop_all(); }  // (before backend_reset unmaps a placed heap: audio.c)
+#endif
     backend_clear_window();
     backend_reset();
     const ResetFn *start = __start_resets, *stop = __stop_resets;
@@ -133,6 +196,9 @@ static void teardown(void) {
 }
 
 static void boot(const char *root) {
+    if (!g_guest_reserved)
+        FATAL("guest address range %llx-%llx is not free: this device lays its address space out differently (the [vm] lines above)\n",
+              GUEST_LO, GUEST_HI);
     char exefs[1024], romfs[1024], npdm_path[1024];
     snprintf(exefs, sizeof exefs, "%s/exefs", root);
     snprintf(romfs, sizeof romfs, "%s/romfs", root);
@@ -201,8 +267,47 @@ static void log_startup_info(void) {
             si.cpu[0] ? si.cpu : "unknown CPU", cores, ram, si.package ? ", " : "", si.package ? si.package : "");
 }
 
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+// The Metal HUD setting (Video tab): Apple's HUD library loads only when MTL_HUD_ENABLED=1 is set as the process starts
+// (macOS 27: setting it later in the process, or the layer's developerHUDProperties alone, do nothing), so with the
+// setting on the app starts itself again with it, before the session log opens. From then on the setting shows and
+// hides the HUD at once (runtime/nvn/metal.m ui_metal_hud_apply); with it off at launch, turning it on needs a restart.
+static void metal_hud_relaunch(void) {
+    if (getenv("MTL_HUD_ENABLED")) return;  // (set: by us, or by hand)
+    char path[1100], dir[900];
+    const char *e = getenv("LARECOMP_SETTINGS");
+    if (e && *e) snprintf(path, sizeof path, "%s", e);
+    else if (rt_data_root_early(dir, sizeof dir)) snprintf(path, sizeof path, "%s/larecomp.ini", dir);
+    else snprintf(path, sizeof path, "larecomp.ini");  // (dev mode: the starting directory)
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    char line[256];
+    bool on = false;
+    while (fgets(line, sizeof line, f)) {
+        int v;
+        if (sscanf(line, " metal_hud = %d", &v) == 1) on = v != 0;
+    }
+    fclose(f);
+    if (!on) return;
+    setenv("MTL_HUD_ENABLED", "1", 1);
+    setenv("LARECOMP_METAL_HUD", "1", 1);  // (ui_metal_hud_apply: the HUD was loaded for the setting)
+#if TARGET_OS_IPHONE
+    return;  // (no restart to do: Metal reads it when SDL_main creates the device, later than this)
+#endif
+    plat_exec(NULL);
+    perror("metal hud re-exec");  // (failed: the game starts without the HUD)
+}
+#endif
+
 int main(int argc, char **argv) {
+#ifdef __APPLE__
+    metal_hud_relaunch();
+#endif
     plat_init();
+#ifdef LARECOMP_DYN_BASE
+    LOG("[boot] guest window %llx-%llx (moving: rt.h)\n", (unsigned long long)GUEST_LO, (unsigned long long)GUEST_HI);
+#endif
     log_startup_info();
     if (getenv("LARECOMP_REEXEC")) {  // (reserve_guest_space started this process again)
         const char *why = getenv("LARECOMP_REEXEC_WHY"), *n = getenv("LARECOMP_REEXEC");
@@ -223,9 +328,14 @@ int main(int argc, char **argv) {
     bool no_launcher = nl && *nl && strcmp(nl, "0");
     bool skip_launcher = no_launcher || getenv("LARECOMP_INPUT");  // tests boot straight in
     if (getenv("LARECOMP_FORCE_LAUNCHER")) skip_launcher = false;  // (test: the start screen, then the scripted input)
-    static char arg_root[1024];
+    static char arg_root[4096], arg_kit[4096];  // (>= PATH_MAX: Bionic's fortified realpath checks it)
+    bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--build-ios") && i + 1 < argc) {  // <kit.laskit> [game files]: the iOS app, then exit
+            build_ios = true;
+            if (!realpath(argv[++i], arg_kit)) snprintf(arg_kit, sizeof arg_kit, "%s", argv[i]);
+        }
         else if (argv[i][0] != '-' && !realpath(argv[i], arg_root)) root = argv[i];  // (relative to where we started)
         else if (argv[i][0] != '-') root = arg_root;
     }
@@ -236,6 +346,14 @@ int main(int argc, char **argv) {
         menu_sfx_set_game_dir(root);
         menu_sfx_load_now();
     }
+#if LARECOMP_IOSEXPORT
+    if (build_ios) {  // (the iOS export without the start screen: runtime/iosexport.c)
+        extern bool iosexport_run_cli(const char *kit, const char *game_dir);
+        return iosexport_run_cli(arg_kit, root) ? 0 : 1;
+    }
+#else
+    if (build_ios) { fprintf(stderr, "the iOS export isn't in this build of LAS Recomp\n"); return 1; }
+#endif
     for (bool title = !skip_launcher;;) {
         if (title && no_launcher) {
             fprintf(stderr, "[main] LARECOMP_NO_LAUNCHER is set: not showing the start screen - exiting\n");

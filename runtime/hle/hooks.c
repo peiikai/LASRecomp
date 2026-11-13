@@ -11,6 +11,7 @@
 
 #include "../cpu.h"
 #include "../rt.h"
+#include "../settings.h"
 
 void rt_mb_seen(uint64_t o);  // miniboss.c
 int rt_shadow_link_appear(uint64_t o);
@@ -23,12 +24,20 @@ uint64_t rt_hole_cap(void);
 void rt_frame_job_kickoff(uint64_t owner);  // delegate_null.c
 void rt_frame_job_finish(uint64_t job);
 void rt_owner_call_notify(Cpu *c, uint64_t obj);
+uint32_t rt_powerup_music_flags(Cpu *c, uint32_t flags, bool update);
+uint32_t rt_text_rate(uint32_t game_bits);  // text_speed.c
+int rt_text_snap(void);
 
 // The hook sites (game_addresses.h): which one a site is, by the selected game version's table
 #define HOOK_SITES(X) \
     X(MB_SEEN_SITE) \
     X(SHADOW_LINK_APPEAR_SITE) \
     X(SHADOW_LINK_BGM_SITE) \
+    X(BUFF_MUSIC_PICKUP_SITE) \
+    X(BUFF_MUSIC_FLAGS_SITES_0) \
+    X(BUFF_MUSIC_FLAGS_SITES_1) \
+    X(BUFF_MUSIC_FLAGS_SITES_2) \
+    X(BUFF_MUSIC_FLAGS_SITES_3) \
     X(ACTOR_EVENT_SITE) \
     X(CRASHOUT_SITE) \
     X(GOHMA_HEADING_SITES_0) \
@@ -50,7 +59,9 @@ void rt_owner_call_notify(Cpu *c, uint64_t obj);
     X(FRAME_JOB_FINISH_SITE) \
     X(SHAPE_SIM_SITES_0) \
     X(SHAPE_SIM_SITES_1) \
-    X(EFFECT_BONE_SITE)
+    X(EFFECT_BONE_SITE) \
+    X(TEXT_RATE_SITE) \
+    X(TEXT_SNAP_SITE)
 enum {
 #define X(name) H_##name,
     HOOK_SITES(X)
@@ -77,6 +88,17 @@ int rt_hook(Cpu *c, uint64_t site) {
         return rt_shadow_link_appear(c->x[0]) ? 2 : 0;
     case H_SHADOW_LINK_BGM_SITE:  // SHADOW_LINK_BGM_SITE - bl main+0xce8ce0: his chamber music, only in the chamber
         return rt_shadow_link_bgm();
+    case H_BUFF_MUSIC_PICKUP_SITE:
+        return !g_settings.powerup_music;
+    case H_BUFF_MUSIC_FLAGS_SITES_0:
+    case H_BUFF_MUSIC_FLAGS_SITES_1:
+    case H_BUFF_MUSIC_FLAGS_SITES_2:
+    case H_BUFF_MUSIC_FLAGS_SITES_3: {
+        int reg = site == GA(BUFF_MUSIC_FLAGS_SITES_1) ? 20 : 21;
+        uint32_t flags = LD32(c->x[8] + 0x1b8c);
+        c->x[reg] = rt_powerup_music_flags(c, flags, site == GA(BUFF_MUSIC_FLAGS_SITES_0));
+        return 1;
+    }
     case H_ACTOR_EVENT_SITE: {  // ACTOR_EVENT_SITE - bl main+0x80c290: an actor's event request (quick pickups)
         extern int rt_actor_event(Cpu *c);
         return rt_actor_event(c);
@@ -121,6 +143,11 @@ int rt_hook(Cpu *c, uint64_t site) {
         if (c->x[0]) return 0;
         LOG("[event] empty handler skipped (issue #41)\n");
         return 2;  // (the dispatcher's catch: returns 0)
+    case H_TEXT_RATE_SITE:  // TEXT_RATE_SITE - str w8, [x0, #0x284]: a message pane's text step (Text speed, #681)
+        ST32(c->x[0] + 0x284, rt_text_rate((uint32_t)c->x[8]));
+        return 1;
+    case H_TEXT_SNAP_SITE:  // TEXT_SNAP_SITE - b.lt: text short of the page's end; Instant takes the "at the end" path
+        return rt_text_snap();
     case H_CHOICE_COUNT_SITE: {  // CHOICE_COUNT_SITE - str w8, [x19, #0x1cc4]: a question's answer count (issue #183)
         int32_t n = (int32_t)c->x[8];
         if (n >= 2 && n <= 4) return 0;

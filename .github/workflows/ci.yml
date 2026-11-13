@@ -1,9 +1,12 @@
 # LAS Recomp's checks: the app (build/lasrecomp: everything but the game code, which the start screen builds on the
-# player's machine) builds on Linux, macOS and Windows, and the tests that need no game files or GPU run: the FP/SIMD
+# player's machine) builds on Linux, Linux aarch64, macOS, Windows and Windows on ARM, and the tests that need no game files or GPU run: the FP/SIMD
 # lowering against a CPU emulator (tools/test_simd.py, x86-64 Linux), the shader translator's GLSL against shaderc +
-# SPIRV-Tools (tools/test_translate.sh, Windows), its instruction semantics on the CPU (tools/test_translate_ops.sh,
-# Linux / macOS) and the same programs' Vulkan GLSL through spirv-val (tools/test_spirv_val.sh, Linux). Nothing is published. Feature tests that need no game files go in as steps here, not as workflows of
-# their own.
+# SPIRV-Tools (tools/test_translate.sh, Windows), its instruction semantics and control flow on the CPU
+# (tools/test_translate_ops.sh, tools/test_translate_flow.sh, Linux / macOS), the same programs' Vulkan GLSL through
+# spirv-val (tools/test_spirv_val.sh, Linux), the iOS game-code build each desktop can do
+# (tools/test_gamebuild_ios.py: the player's zig and the iOS kit's lld on a fixture) and, its own job on a Mac, the
+# iOS app and its skeleton (make ios-skeleton). Nothing is published.
+# Feature tests that need no game files go in as steps here, not as workflows of their own.
 name: CI
 on:
   pull_request:
@@ -17,7 +20,39 @@ concurrency:  # (a newer push to the same branch / PR replaces a run still going
   cancel-in-progress: true
 
 jobs:
+  # Docs-only changes (Markdown anywhere, the docs/ screenshots; not docs/icon/, which the builds use) need no build:
+  # every job below is skipped then, and a skipped job passes the beta_* ruleset's required checks. Anything else, a
+  # manual run or a new branch runs them all.
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          case "$EVENT" in
+            pull_request) range="$PR_BASE...$PR_HEAD" ;;
+            push) [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] && range="$BEFORE..$AFTER" ;;
+          esac
+          code=true
+          if [ -n "${range:-}" ] && files=$(git diff --name-only "$range") && [ -n "$files" ]; then
+            echo "$files"
+            echo "$files" | grep -qvE '(\.md$|^docs/[^/]+\.(jpg|png)$)' || code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   linux:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -57,6 +92,8 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Power-up music regression tests
+        run: python3 tools/test_powerup_music.py
       - name: Movie extractor lifecycle regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale) -pthread -o build/test-movie-extractor
@@ -80,6 +117,14 @@ jobs:
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
           build/test-led
+      - name: Hookshot 8-way aim
+        run: |
+          clang -std=gnu11 -O1 tools/test_hookshot_snap.c -lm -o build/test-hookshot-snap
+          build/test-hookshot-snap
+      - name: Crash dialog (which crashes are the graphics driver's)
+        run: |
+          clang -std=gnu11 -O1 tools/test_crash_explain.c -o build/test-crash-explain
+          build/test-crash-explain
       - name: Update check tags (order and labels)
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
@@ -88,6 +133,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_rumble.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-rumble
           build/test-rumble
+      - name: Controller in use (two virtual gamepads, #455)
+        run: |
+          clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_active_pad.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-active-pad
+          build/test-active-pad
       - name: Vulkan fence sequence regression
         run: python3 tools/test_fence_sequence.py
       - name: Guest heap import on low-memory machines
@@ -102,12 +151,18 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: iOS extension frameworks layout
+        run: python3 tools/test_ios_frameworks.py
       - name: Randomizer Field region table
         run: python3 tools/test_field_regions.py
+      - name: Randomizer room shuffle ledges
+        run: python3 tools/test_room_ledges.py
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
+      - name: Shader translator control flow (MSL, GLSL, structured GLSL)
+        run: tools/test_translate_flow.sh
       # (the same programs as vertex / fragment / compute GLSL -> glslc -> spirv-val, Vulkan 1.3; the shipped shader
       # list is only hashes of the game's shaders, so these synthetic programs stand in for it)
       - name: Shader translator SPIR-V validation (Vulkan 1.3)
@@ -118,9 +173,131 @@ jobs:
         run: |
           python3 -m venv tools/venv && tools/venv/bin/pip install -q unicorn capstone lz4
           tools/venv/bin/python tools/test_simd.py --encodings 3000 --cases 4 --jobs "$(nproc)"
+      # (the moving guest window the Android port needs, runtime/rt.h: the generator's --dyn-base output, and the app
+      # built with it, so the desktop build stays as it was and the other one keeps compiling)
+      - name: Generator --dyn-base (moving guest window)
+        run: tools/venv/bin/python tools/test_dyn_base.py
+      - name: App builds with DYN_BASE=1
+        run: make -j"$(nproc)" build/dyn/lasrecomp B=build/dyn DYN_BASE=1 DEPS="$HOME/sdl3"
+      - name: iOS game-code build from this desktop
+        uses: ./.github/actions/ios-gamebuild-test
 
+
+  # Linux aarch64 (experimental builds): the same app build and tests natively on an arm64 runner. Left out: the
+  # x86 SIMD rounding test (-mfma), the FP/SIMD lowering check (x86 lowers to C, aarch64 keeps the inline asm) and
+  # the shader translator checks (the same on every platform; the x86-64 job runs them).
+  linux-aarch64:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages (docs/linux.md)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld make pkg-config cmake ninja-build \
+            libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev \
+            libvulkan-memory-allocator-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxss-dev libxfixes-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev libegl-dev libgl-dev libdrm-dev libgbm-dev \
+            libpulse-dev libasound2-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+          # (SDL's video / audio / input backends: the same -dev packages as tools/linux/Containerfile)
+      # SDL3 3.4 or newer (PNG load / save); Ubuntu ships an older one: the AppImage's pinned version
+      # (tools/linux/build_deps.sh), built once and cached
+      - name: SDL3 cache
+        id: sdl
+        uses: actions/cache@v4
+        with:
+          path: ~/sdl3
+          key: sdl3-3.4.16-ubuntu-24.04-arm
+      - name: SDL3 3.4.16 from source
+        if: steps.sdl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o sdl.tar.gz https://github.com/libsdl-org/SDL/releases/download/release-3.4.16/SDL3-3.4.16.tar.gz
+          echo "7322236cd12090c3eb40b9728be4d49c76f66ad17d04369584d4ecad5cf77c68  sdl.tar.gz" | sha256sum -c
+          tar xf sdl.tar.gz
+          cmake -S SDL3-3.4.16 -B sdl-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/sdl3" \
+                -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
+          cmake --build sdl-build
+          cmake --install sdl-build
+      - name: App builds
+        run: make -j"$(nproc)" build/lasrecomp DEPS="$HOME/sdl3"
+      - name: Build cache and resume tests
+        run: |
+          python3 tools/test_build_cache.py
+          python3 tools/test_gamebuild_resume.py
+      - name: Save I/O regression tests
+        run: python3 tools/test_save.py
+      - name: Power-up music regression tests
+        run: python3 tools/test_powerup_music.py
+      - name: Movie extractor lifecycle regression
+        run: |
+          clang -std=gnu11 -O1 tools/test_movie_extractor.c $(pkg-config --cflags --libs libavformat libavcodec libavutil libswscale) -pthread -o build/test-movie-extractor
+          mkdir -p build/movie-test
+          build/test-movie-extractor build/movie-test
+      - name: Kernel condition-variable regression
+        run: |
+          clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
+          build/test-condvar
+      - name: Settings regression tests
+        run: python3 tools/test_settings.py
+      - name: Game-files delete guard (links, outside the data folder)
+        run: DEPS="$HOME/sdl3" python3 tools/test_delete_guard.py
+      - name: Data folder move (cut off at every step)
+        run: DEPS="$HOME/sdl3" python3 tools/test_data_move.py
+      - name: Dynamic resolution controller (simulated GPU)
+        run: python3 tools/test_dynres.py
+      - name: Frame pacing (simulated frames, hitches and slow machines)
+        run: python3 tools/test_pace.py
+      - name: Controller light colours
+        run: |
+          clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
+          build/test-led
+      - name: Hookshot 8-way aim
+        run: |
+          clang -std=gnu11 -O1 tools/test_hookshot_snap.c -lm -o build/test-hookshot-snap
+          build/test-hookshot-snap
+      - name: Crash dialog (which crashes are the graphics driver's)
+        run: |
+          clang -std=gnu11 -O1 tools/test_crash_explain.c -o build/test-crash-explain
+          build/test-crash-explain
+      - name: Update check tags (order and labels)
+        run: |
+          clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
+          build/test-update-tags
+      - name: Controller rumble (HID bridge to SDL, fake gamepad)
+        run: |
+          clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_rumble.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-rumble
+          build/test-rumble
+      - name: Controller in use (two virtual gamepads, #455)
+        run: |
+          clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_active_pad.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-active-pad
+          build/test-active-pad
+      - name: Vulkan fence sequence regression
+        run: python3 tools/test_fence_sequence.py
+      - name: Guest heap import on low-memory machines
+        run: python3 tools/test_gmem_lowmem.py
+      - name: Vulkan validation failure regression
+        run: python3 tools/test_vulkan_validation.py
+      - name: Vulkan overlay command buffer (recorder thread)
+        run: python3 tools/test_vulkan_overlay.py
+      - name: Game address table tests
+        run: python3 tools/test_game_addresses.py
+      - name: iOS extension frameworks layout
+        run: python3 tools/test_ios_frameworks.py
+      - name: Randomizer Field region table
+        run: python3 tools/test_field_regions.py
+      - name: Randomizer room shuffle ledges
+        run: python3 tools/test_room_ledges.py
+      - name: Vulkan synchronization failure regression
+        run: python3 tools/test_vulkan_sync_errors.py
+      - name: iOS game-code build from this desktop
+        uses: ./.github/actions/ios-gamebuild-test
   macos:
-    runs-on: macos-15
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    # (a fresh Tart VM per job on the maintainer's Mac, deleted after; forks have none: GitHub's macOS 15)
+    runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
     steps:
       - uses: actions/checkout@v4
       - name: Packages
@@ -137,6 +314,8 @@ jobs:
           python3 tools/test_gamebuild_resume.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Power-up music regression tests
+        run: python3 tools/test_powerup_music.py
       - name: Movie extractor lifecycle regression
         run: |
           clang -std=gnu11 -O1 -I"$(brew --prefix ffmpeg)/include" -L"$(brew --prefix ffmpeg)/lib" tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -pthread -o build/test-movie-extractor
@@ -160,6 +339,14 @@ jobs:
         run: |
           clang -std=gnu11 -O1 tools/test_led.c -lm -o build/test-led
           build/test-led
+      - name: Hookshot 8-way aim
+        run: |
+          clang -std=gnu11 -O1 tools/test_hookshot_snap.c -lm -o build/test-hookshot-snap
+          build/test-hookshot-snap
+      - name: Crash dialog (which crashes are the graphics driver's)
+        run: |
+          clang -std=gnu11 -O1 tools/test_crash_explain.c -o build/test-crash-explain
+          build/test-crash-explain
       - name: Update check tags (order and labels)
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
@@ -168,13 +355,20 @@ jobs:
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_rumble.c -lSDL3 -o build/test-rumble
           build/test-rumble
+      - name: Controller in use (two virtual gamepads, #455)
+        run: |
+          clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_active_pad.c -lSDL3 -o build/test-active-pad
+          build/test-active-pad
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
         run: tools/test_translate_ops.sh
-
+      - name: Shader translator control flow (MSL, GLSL, structured GLSL)
+        run: tools/test_translate_flow.sh
+      - name: iOS game-code build from this desktop
+        uses: ./.github/actions/ios-gamebuild-test
       - name: macOS launch smoke-test regressions
         run: python3 tools/test_macos_app_smoke.py
       # Exercise make app's pinned libraries and rewritten load paths, not the Homebrew-linked build above.
@@ -185,6 +379,13 @@ jobs:
             build/deps
             !build/deps/src
           key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/build_deps_macos.sh') }}
+      # (zig's release archive, pinned and hash-checked by tools/fetch_zig.sh: fetched from ziglang.org once per
+      # version, not on every job)
+      - name: zig download cache
+        uses: actions/cache@v4
+        with:
+          path: build/zig-dl
+          key: zig-dl-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/fetch_zig.sh') }}
       - name: Finished macOS app
         run: |
           brew install ninja
@@ -195,7 +396,79 @@ jobs:
       - name: Finished macOS app launches (dynamic-library loading)
         run: python3 tools/smoke_macos_app.py "build/LAS Recomp.app"
 
+  # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
+  # the iOS kit holds (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
+  # SDL3 / FFmpeg / CPython and the generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that
+  # script's hash. Then the same app for the iOS Simulator (make ios-sim: the simulator SDK's deps, cached alike)
+  # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
+  # exercised in a real iOS process. The game is not run in the simulator (no game files; the macOS job runs it).
+  ios:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ github.repository == 'peiikai/LASRecomp' && fromJSON('["self-hosted", "macos-vm"]') || 'macos-15' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Packages
+        run: brew install ninja python@3.13
+      - name: A script as a process in the embedded Python (runtime/platform/ios_pyproc.py, on this Mac's Python)
+        run: python3.13 tools/test_ios_pyproc.py
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+        run: make deps-ios
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: App and skeleton build
+        run: make -j"$(sysctl -n hw.ncpu)" ios-skeleton
+      - name: Skeleton holds no game code and no symlinks; keystone's framework is there
+        run: |
+          A="build/ios-skeleton/LAS Recomp.app"
+          [ ! -e "$A/Frameworks/LASGame.framework/LASGame" ] || { echo "::error::game library in the skeleton"; exit 1; }
+          if nm "$A/lasrecomp" | grep ' _f_70' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
+          links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the app (an iOS install drops them): $links"; exit 1; }
+          [ -f "$A/Frameworks/keystone.libkeystone.framework/keystone.libkeystone" ] || { echo "::error::keystone's framework missing"; exit 1; }
+          codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
+          du -sh "$A"
+      - name: Simulator deps cache
+        id: deps-sim
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios-sim
+            !build/deps-ios-sim/pyvenv
+          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+      - name: Simulator deps
+        run: make deps-ios-sim
+      - uses: actions/cache/save@v4
+        if: steps.deps-sim.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios-sim
+            !build/deps-ios-sim/pyvenv
+          key: ${{ steps.deps-sim.outputs.cache-primary-key }}
+      - name: Simulator app, the embedded Python's self-test in it
+        run: make -j"$(sysctl -n hw.ncpu)" ios-sim-test
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-simulator-start-screen
+          path: build/ios-sim/start-screen.png
+          if-no-files-found: ignore
+
   windows:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-2022
     defaults:
       run:
@@ -205,13 +478,24 @@ jobs:
         shell: pwsh
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
+      # (Windows PowerShell 5.1, what the setup instructions run: a parse error stops the whole script)
+      - name: PowerShell scripts parse
+        shell: powershell
+        run: |
+          $bad = 0
+          foreach ($f in Get-ChildItem tools\*.ps1) {
+            $err = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$err)
+            foreach ($e in $err) { Write-Host "::error file=tools/$($f.Name),line=$($e.Extent.StartLineNumber)::$($e.Message)"; $bad = 1 }
+          }
+          exit $bad
       # MSYS2 UCRT64 with the packages tools/setup_windows.ps1 installs (minus the debugger / validation layers),
       # binutils for windres (the exe's icon), git for tools/test_translate.sh
       - uses: msys2/setup-msys2@v2
         with:
           msystem: UCRT64
           update: true
-          install: make git python
+          install: make git python curl tar xz unzip
           pacboy: clang:p lld:p binutils:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
             vulkan-memory-allocator:p
       - name: App builds
@@ -223,6 +507,8 @@ jobs:
           python3 tools/test_windows_processes.py
       - name: Save I/O regression tests
         run: python3 tools/test_save.py
+      - name: Power-up music regression tests
+        run: python3 tools/test_powerup_music.py
       - name: Game-files delete guard (junctions, outside the data folder)
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
@@ -240,6 +526,10 @@ jobs:
         run: |
           clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_rumble.c $(pkg-config --libs sdl3) -o build/test-rumble.exe
           build/test-rumble.exe
+      - name: Controller in use (two virtual gamepads, #455)
+        run: |
+          clang -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_active_pad.c $(pkg-config --libs sdl3) -o build/test-active-pad.exe
+          build/test-active-pad.exe
       - name: Vulkan fence sequence regression
         run: python tools/test_fence_sequence.py
       - name: Guest heap import on low-memory machines
@@ -267,6 +557,12 @@ jobs:
       # just satisfies it. The GLSL half - every fuzzed translation compiles and validates - is the check)
       - name: Shader translator fuzz (GLSL)
         run: REF=HEAD tools/test_translate.sh 4000 "$(nproc)" glsl
+      # (the branch stacks as arrays: the runtime's default on every GPU but Intel - shader.h maxwell_glsl_stack_vars)
+      - name: Shader translator fuzz (GLSL, branch stacks as arrays)
+        run: TT_STACK_ARRAYS=1 REF=HEAD tools/test_translate.sh 2000 "$(nproc)" glsl
+      # (no heap import: every stage through the address table, over copies - shader.h maxwell_gmem_mirror, #483)
+      - name: Shader translator fuzz (GLSL, guest memory through copies)
+        run: TT_GMEM_MIRROR=1 REF=HEAD tools/test_translate.sh 2000 "$(nproc)" glsl
       # (the heap in chunks: lazily imported on AMD APUs and Intel, windows where that isn't possible - shader.h maxwell_gmem_chunk_shift)
       - name: Shader translator fuzz (GLSL, guest heap in chunks)
         run: TT_GMEM_CHUNK_SHIFT=24 REF=HEAD tools/test_translate.sh 2000 "$(nproc)" glsl
@@ -276,3 +572,122 @@ jobs:
         run: TT_GMEM_CHUNK_SHIFT=24 TT_GMEM_LAZY=1 TT_GMEM_FS_MISS=1 REF=HEAD tools/test_translate.sh 500 "$(nproc)" glsl
       - name: Vulkan synchronization failure regression
         run: python tools/test_vulkan_sync_errors.py
+      - name: iOS game-code build from this desktop
+        uses: ./.github/actions/ios-gamebuild-test
+        with:
+          shell: msys2 {0}
+
+  # Windows on ARM (experimental builds): the same app build and Windows tests natively on an ARM64 runner, MSYS2
+  # CLANGARM64 as tools/setup_windows.ps1 sets it up there. Left out: the x86 SIMD rounding test (-mfma) and the shader
+  # translator fuzz (the same on every platform; the x64 job runs it). -pthread on every test (CC for the Python ones):
+  # CLANGARM64's libraries don't pull winpthreads in for us, as the Makefile's -lpthread there.
+  windows-arm64:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: windows-11-arm
+    env:
+      CC: clang -pthread  # (the Python tests' compiler)
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings, as tools/setup_windows.ps1 sets for clones
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: make git curl unzip
+          pacboy: clang:p lld:p python:p sdl3:p ffmpeg:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+            vulkan-memory-allocator:p
+      - name: App builds
+        run: make -j"$(nproc)" build/lasrecomp.exe
+      - name: Build cache and resume tests
+        run: |
+          python3 tools/test_build_cache.py
+          python3 tools/test_gamebuild_resume.py
+          python3 tools/test_windows_processes.py
+      - name: Save I/O regression tests
+        run: python3 tools/test_save.py
+      - name: Power-up music regression tests
+        run: python3 tools/test_powerup_music.py
+      - name: Game-files delete guard (junctions, outside the data folder)
+        run: python3 tools/test_delete_guard.py
+      - name: Data folder move (cut off at every step)
+        run: python3 tools/test_data_move.py
+      - name: Movie extractor lifecycle regression
+        run: |
+          clang -pthread -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe
+          mkdir -p build/movie-test
+          build/test-movie-extractor.exe build/movie-test
+      - name: Kernel condition-variable regression
+        run: |
+          clang -O2 -pthread tools/test_condvar.c -o build/test-condvar.exe
+          build/test-condvar.exe
+      - name: Controller rumble (HID bridge to SDL, fake gamepad)
+        run: |
+          clang -pthread -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_rumble.c $(pkg-config --libs sdl3) -o build/test-rumble.exe
+          build/test-rumble.exe
+      - name: Controller in use (two virtual gamepads, #455)
+        run: |
+          clang -pthread -std=gnu11 -O2 $(pkg-config --cflags sdl3) tools/test_active_pad.c $(pkg-config --libs sdl3) -o build/test-active-pad.exe
+          build/test-active-pad.exe
+      - name: Vulkan fence sequence regression
+        run: python tools/test_fence_sequence.py
+      - name: Guest heap import on low-memory machines
+        run: python tools/test_gmem_lowmem.py
+      - name: Vulkan validation failure regression
+        run: python tools/test_vulkan_validation.py
+      - name: Vulkan overlay command buffer (recorder thread)
+        run: python tools/test_vulkan_overlay.py
+      - name: Windows guest thread stack regression
+        run: |
+          clang -pthread -std=gnu11 -O1 tools/test_windows_thread_stack.c -lpsapi -o build/test-thread-stack.exe
+          build/test-thread-stack.exe
+      - name: Windows lazy guest-memory commit race regression
+        run: |
+          clang -pthread -std=gnu11 -O1 -D_FILE_OFFSET_BITS=64 -D_POSIX_THREAD_SAFE_FUNCTIONS -DWIN32_LEAN_AND_MEAN -DNOMINMAX \
+            tools/test_windows_lazy_commit.c -lwinmm -lole32 -lshell32 -o build/test-lazy-commit.exe
+          build/test-lazy-commit.exe
+      - name: Windows session log regression
+        run: python tools/test_windows_logs.py
+      - name: Vulkan synchronization failure regression
+        run: python tools/test_vulkan_sync_errors.py
+      - name: iOS game-code build from this desktop
+        uses: ./.github/actions/ios-gamebuild-test
+        with:
+          shell: msys2 {0}
+
+  # Android (arm64): the app (android/, libmain.so with the moving guest window) builds with the NDK, and the APK holds
+  # only the runtime, SDL, shaderc and the shipped fonts and icon - nothing of the game, whose code is built on the
+  # device from the player's own extracted files.
+  android:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: NDK and CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;30.0.16248370" "cmake;3.30.4" "platforms;android-36" > /dev/null
+      - name: Dependencies cache
+        id: deps
+        uses: actions/cache@v4
+        with:
+          path: android/deps/out
+          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh', 'android/gen/**') }}
+      - name: Dependencies (SDL3, shaderc, volk, Vulkan headers; the game code builder)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          bash android/deps/build_deps.sh
+          bash android/deps/build_gen_deps.sh
+      - name: App builds
+        run: cd android && ./gradlew assembleDebug --console=plain
+      - name: The APK holds no game files
+        run: |
+          tools/check_apk.sh android/app/build/outputs/apk/debug/app-debug.apk
