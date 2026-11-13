@@ -825,11 +825,6 @@ static void rows_world(float scale) {
             if (!dungeons && !houses) last = true;
             else g_opts.shuffle_dungeons = dungeons;
         }
-        opt_indent(1);  // (mix-dungeon-entrances: needs both kinds on)
-        if (!(dungeons && houses)) opt_disable_next();
-        opt_toggle("Mix with houses & caves", &g_opts.mix_dungeons, false,
-                   "Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.");
-        opt_indent(-1);
         if (!on) opt_disable_next();
         if (opt_toggle("Houses & caves", &houses, false,
                        "Shuffles houses, caves and the caves that link two areas. Marin & Tarin's house and water "
@@ -837,6 +832,9 @@ static void rows_world(float scale) {
             if (!houses && !dungeons) last = true;
             else g_opts.entrances = houses ? 2 : 0;
         }
+        if (!(dungeons && houses)) opt_disable_next();  // (mix-dungeon-entrances: needs both kinds on)
+        opt_toggle("Mix with houses & caves", &g_opts.mix_dungeons, false,
+                   "Dungeon doors are shuffled together with house and cave doors. Needs Houses & caves.");
         if (!houses) opt_disable_next();
         opt_toggle("Decoupled entrances", &g_opts.decoupled, false,
                    "Leaving a house drops you outside a different door than the one you came in.");
