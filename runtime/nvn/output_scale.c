@@ -228,9 +228,9 @@ static double g_chain_from = -1, g_chain_at;  // the factor before this run of s
 // are back.
 #define DYN_HEAT_RAISE_WAIT 4.0
 #define DYN_HEAT_CUT_S 20.0
-#define DYN_HEAT_WAIT 60.0
-#define DYN_HEAT_WAIT_MAX 240.0
-#define DYN_HEAT_STEADY_S 10.0
+#define DYN_HEAT_WAIT 120.0      // (60 with a 240 cap and 10 s proof retested more: 13% of 15 min under 57 fps in the sim, 7% now)
+#define DYN_HEAT_WAIT_MAX 480.0
+#define DYN_HEAT_STEADY_S 15.0
 #define DYN_HEAT_COOL_S 30.0
 static int g_thermal;  // (0 nominal, 1 fair, 2 serious, 3 critical)
 static const char *const THERMAL_NAME[] = {"nominal", "fair", "serious", "critical"};
