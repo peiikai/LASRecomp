@@ -274,6 +274,13 @@ static double g_h_step_at = -1e9;  // ... when the hold last stepped down: late 
                                    // clock's response to the late frames, or a cut's tail: every factor reads late for a
                                    // few seconds), not the step under's load - it holds there, as the 60 rule does
 static int g_h_late_hist[4];  // frames late at the hold's cadence, the last 4 decisions
+// The factor Dynamic had at 60 when the FPS target 30's hold began (-1: none - the session began at the target). The
+// target back at 60 goes straight to it (under the 60 side's ceilings and heat waits, which are the 60 cadence's own):
+// the hold climbs to 1.00 on a paced GPU (30 fits there), and 1.00 at 60 was 10 s of the pacer's hold - it saw the hold
+// still on as the target changed, Dynamic deciding again only after the menu's second - then a probe and a slide
+// 1.00 -> 0.85 -> ... -> 0.50 (at heat straight to 0.45). Without a 60 factor the factor stays: a fresh start's 1.00,
+// the 60 rules take it from there (a paced step down is two or three steps at once when frames miss 60 outright).
+static double g_f60 = -1;
 static double g_ok_since = -1;      // (paced) since when the frames have been on time at g_dyn (-1: they aren't)
 static double g_up_at = -100, g_up_f = -1;  // the last step up or return to 60 (a raise, a probe, the pacer's release): when, to what
 // the wait after a paced raise (or a return to 60: a probe, the pacer's release) to `up` before the next step (see
@@ -426,6 +433,38 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         start = 0;
         if (getenv("LARECOMP_DYN_START")) g_dyn = dyn_grid(fmin(1.0, atof(getenv("LARECOMP_DYN_START"))));
     }
+    // FPS target 30 (pace_target_30: the setting, or outdoors with "30 outdoors, 60 indoors"): held at 30 from
+    // the start - the factor only goes down when even 30 doesn't fit, and 60 is never looked for (the hold starts at
+    // the next decision, below). When the target goes back to 60 (indoors, or the setting changed) that hold ends at
+    // once - here, before the menu and the settle, so the frame pacer sees it ended as it decides (it held 30 for "dynamic
+    // resolution at its floor" otherwise: output_scale_dynamic_state) - and a paced GPU goes back to the factor it had
+    // at 60 (g_f60); a GPU that isn't paced keeps its factor and aims for 60 again, as it would have.
+    extern bool pace_target_30(void);
+    static bool was_t30;
+    bool t30 = pace_target_30();
+    if (was_t30 && !t30 && g_hold_dt > 0) {
+        double to = g_dyn;
+        if (g_paced) {
+            if (g_f60 > 0) to = g_f60;
+            if (now < g_pc_until && to >= g_pc_ceil - 1e-6) to = dyn_grid(g_pc_ceil - DYN_STEP);  // (the 60 ceiling's wait)
+            if (g_hot) {  // (the heat ceiling, and no factor whose clock was cut at 60 while its wait runs)
+                if (to > g_heat_ceil + 1e-6) to = g_heat_ceil;
+                while (to > g_dyn_floor + 1e-6 && now < g_heat_until[heat_i(to)]) to = dyn_grid(to - DYN_STEP);
+            }
+        }
+        LOG("[dynres] FPS target 60 here: hold at %.0f fps ended%s%.2f%s\n", 1000 / g_hold_dt, to != g_dyn ? ", back to " : " at ",
+            to, to != g_dyn ? (g_f60 > 0 && to == g_f60 ? " (the factor at 60 before)" : " (under the 60 ceilings)") : "");
+        g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
+        g_dyn = to;
+        dyn_went_up(now, g_dyn);  // (a return to 60 at this factor: late soon at 60 is 60's, not a cut carried from 30)
+        g_dyn_n = g_dyn_gpu_n = 0, g_dyn_gpu_sum = g_dyn_win_sum = 0, g_sum_ms = 0, g_sum_n = 0;  // (the hold's frames: not 60's)
+        g_down_hist = 0, g_down_fast_votes = 0, g_dyn_good = 0, g_prev_G = -1;
+        memset(g_down_gw, 0, sizeof g_down_gw);
+        // (the first second at 60: the clock comes back up from the hold's cadence over the first frames - the pacer's
+        // probe gives it the same second - and the frames at the new factor settle)
+        g_dyn_cool_until = fmax(g_dyn_cool_until, now + 1.0);
+    }
+    was_t30 = t30;
     // The menu open: no measures, no decisions, and none for DYN_MENU_SETTLE s after it closes - the factor stays where it
     // was. The menu is drawn in the window step (W), and the game keeps running behind it: on an iPad Pro M4 at 2420x1668
     // W went 0.9 -> 5 ms with it open, G + W 17.5 ms, frames a millisecond late, and Dynamic stepped 1.00 -> 0.55 behind
@@ -500,24 +539,15 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     } else if (g_hot) g_cool_since = -1;
     double budget = DYN_BUDGET;
     bool hold_up = false;  // (20 -> 30 fps this time: the factor was set to fit it already)
-    // FPS target 30 (pace_target_30: the setting, or outdoors with "30 outdoors, 60 indoors"): held at 30 from
-    // the start - the factor only goes down when even 30 doesn't fit, and 60 is never looked for. When the target goes
-    // back to 60 (indoors, or the setting changed) that hold ends and Dynamic aims for 60 again, as it would have.
-    extern bool pace_target_30(void);
-    static bool was_t30;
-    bool t30 = pace_target_30();
+    // FPS target 30 (see the top of this function): the hold starts at the first decision at the target
     if (gpu && t30 && hold_vsyncs() < 2) {
         LOG("[dynres] FPS target 30: holding 30 fps (game %.1f + window %.1f ms at %.2f)\n", G, W, g_dyn);
+        if (g_hold_dt == 0) g_f60 = g_dyn;  // (the factor at 60: the target back at 60 goes to it - g_f60)
         g_hold_dt = 2 * 1000 / 60.0, g_hold_w = W;
         g_floor_g = g_ref_g = G, g_ref_pending = false;
         g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
         g_t30_cap = 0, g_t30_at = now, g_t30_late = 0, g_t30_wait = 4, g_t30_off_at = -1e9, g_t30_limits = false;
-    } else if (was_t30 && !t30 && g_hold_dt > 0) {
-        LOG("[dynres] FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
-        g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
-        dyn_went_up(now, g_dyn);  // (a return to 60 at this factor: late soon at 60 is 60's, not a cut carried from 30)
     }
-    was_t30 = t30;
     // a paced GPU in a hold at 30 (see g_h_ceil): by lateness at the hold's cadence, not G + W
     bool paced_hold = gpu && g_paced && g_hold_dt > 0 && hold_vsyncs() == 2;
     extern bool pace_is_slow(void);

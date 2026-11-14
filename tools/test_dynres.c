@@ -45,6 +45,8 @@ typedef struct {
                                // and W follow the window's area
     int min_lines;      // Minimum resolution (0: 540, the default; 360 or 720)
     int t30;            // Internal FPS target 30: frames paced to whole 33.3 ms
+    double t30_from, t30_until;  // > 0: the target is 30 from t30_from (s) until t30_until (0: the end), 60 otherwise - the
+                                 // user switching the setting (the frame pacer starts over at a switch: pace_settings_changed)
     double cpu;         // > 0: CPU time per frame that doesn't overlap the GPU's (ms; the frame takes cpu + G + W)
     double stall_at, stall_until, stall_ms;  // > 0: frames that long later from stall_at to stall_until (s): shaders
                                              // compiling after a warp, the GPU idle
@@ -119,6 +121,9 @@ typedef struct {
     int pace_holds;       // (pacer) holds of 30 the frame pacer took
     double f_max_early;   // the highest factor between 5 s in and 40 s in (a climb's overshoot)
     double f_cool;        // (cool_at) the factor 60 s after the state became fair
+    double f_before30, f_back;  // (t30_from / t30_until) the factor just before the target went to 30 / 1.5 s after it went
+                                // back to 60; and the lowest factor in the 10 s after that
+    double f_back_min;
     double f_mean;        // the factor over the whole run, weighted by time
     double f_mean_late, f_min_late, f_max_late;  // the same from 120 s in, and the lowest / highest factor from then
     int jumps_past_cut;   // (power) steps up at serious / critical from a factor the clock was cut at, under 10 s there and
@@ -130,7 +135,8 @@ typedef struct {
 static int near30(double h) { return fabs(h - 30) < 0.5; }
 static Result run(const Case *c) {
     g_rng = 7;
-    g_t30 = c->t30;
+    g_t30 = c->t30 || (c->t30_from > 0 && 1.0 >= c->t30_from);
+    double f_before30 = -1, f_back = -1, f_back_min = 2;
     g_settings.dyn_min = c->min_lines ? c->min_lines : 540;
     g_settings.upscaler = c->w1 > 0 ? UPSCALE_SHARP : UPSCALE_BILINEAR;  // (the window step's jump at 1.00: a sharp upscaler's)
     double now = 1.0, f = output_scale_dynamic_factor(), g_prev = -1, w_prev = -1;
@@ -196,6 +202,14 @@ static Result run(const Case *c) {
         if (c->heavy_until > 0 && f_after_heavy < 0 && now > c->heavy_until + 20) f_after_heavy = f;
         if (c->light_at > 0 && f_light < 0 && now > c->light_at + 15) f_light = f;
         if (first_t >= 0 && now < first_t + 10) f_min_first = fmin(f_min_first, f);
+        if (c->t30_from > 0) {  // the FPS target setting switched: the pacer starts over (pace_settings_changed), a second's grace
+            int t30_now = now >= c->t30_from && (c->t30_until <= 0 || now < c->t30_until);
+            if (t30_now != g_t30) pace_held = 0, pace_grace = now + 1, pace_over = pace_fit = 0, memset(pace_ring, 0, sizeof pace_ring);
+            if (!g_t30 && t30_now) f_before30 = f;
+            g_t30 = t30_now;
+            if (c->t30_until > 0 && now > c->t30_until + 1.5 && f_back < 0) f_back = f;
+            if (c->t30_until > 0 && now > c->t30_until && now < c->t30_until + 10) f_back_min = fmin(f_back_min, f);
+        }
         double hold = output_scale_dynamic_hold_fps();
         if (hold != last_hold) {
             printf(" | %.0fs hold %.0f", now, hold);
@@ -222,9 +236,11 @@ static Result run(const Case *c) {
         double nz = c->noise > 0 ? c->noise : 0.04;
         double g = (c->a + c->b * f * f * area) * scene * (1 - nz / 2 + nz * rnd()) * clk, w = w_base * area * (0.99 + 0.02 * rnd()) * clk;
         if (c->paced > 0) {  // the clock eases (over ~0.3 s) to where G + W takes 90% of a 60 Hz frame, never above full
-            double frame = c->fill_frame && (c->t30 || pace_held) ? 33.333 : 16.667;
+            double frame = c->fill_frame && (g_t30 || pace_held) ? 33.333 : 16.667;
             double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * frame / full));
-            clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
+            // (fill_frame: the clock comes back up within a few frames once the GPU runs back to back again - the iPhone's
+            // try at 60 after a hold had 5 late frames of 55)
+            clk += (want - clk) * (c->fill_frame && want < clk ? 0.15 : c->ease > 0 ? c->ease : 0.05);
         }
         if (c->hold_clock > 0) {  // (see Case: held, the clock eases down over ~10 s; released, it is back within ~0.3 s)
             double want = pace_held ? c->hold_clock : 1.0;
@@ -250,7 +266,7 @@ static Result run(const Case *c) {
             clk += (target - clk) * fmin(1.0, p / 1000.0);
         }
         if (c->cpu > 0 && (c->cpu_until <= 0 || now < c->cpu_until)) p = c->fifo ? ceil((c->cpu + gw) / 16.667 - 1e-9) * 16.667 : c->cpu + gw;
-        if (c->t30 && p < 33.333) p = 33.333;
+        if (g_t30 && p < 33.333) p = 33.333;
         if (c->pacer) {
             if (pace_held && g_pace_try) {
                 pace_held = 0, pace_grace = now + 1, pace_over = pace_fit = 0, memset(pace_ring, 0, sizeof pace_ring);
@@ -280,7 +296,8 @@ static Result run(const Case *c) {
                 // as a resize moves it - or holding a frame rate itself; the CPU's at any factor)
                 double fl = c->resize_at > 0 && now > c->resize_at ? fmin(1.0, (c->min_lines ? c->min_lines : 540) / c->lines2) : floor_f;
                 if (pace_over >= 12 && quarters == 4 && (cpu_bound || f <= fl + 1e-6 || output_scale_dynamic_hold_fps() > 0)) {
-                    pace_held = 1, pace_fit = 0, pace_holds++;
+                    pace_held = 1, pace_fit = 0;
+                    if (!g_t30) pace_holds++;  // (at the FPS target 30 the hold is the target's: pace.c hold_30)
                     printf(" | %.0fs pacer: 30", now);
                     if (++col % 8 == 0) printf("\n ");
                 }
@@ -332,6 +349,7 @@ static Result run(const Case *c) {
                 .low_win = low_win, .n_win = n_win, .f_heavy_min = f_heavy_min, .f_after_heavy = f_after_heavy, .f_light = f_light,
                 .f_min_first = f_min_first, .pace_s = pace_s, .pace_longest = pace_longest, .f_min = f_min_run,
                 .pace_holds = pace_holds, .f_max_early = f_max_early, .f_cool = f_cool, .f_mean = f_sum / (now - 1.0),
+                .f_before30 = f_before30, .f_back = f_back, .f_back_min = f_back_min,
                 .f_mean_late = t_late > 0 ? f_sum_late / t_late : -1, .f_min_late = f_min_late, .f_max_late = f_max_late,
                 .jumps_past_cut = jumps_past_cut, .down_t = down_t};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
@@ -340,6 +358,9 @@ static Result run(const Case *c) {
         printf("  the frame pacer held 30 fps for %.0f s in all (%d hold%s), %.0f s at most; the lowest factor %.2f, the highest 5-40 s in %.2f\n",
                pace_s, pace_holds, pace_holds == 1 ? "" : "s", pace_longest, f_min_run, f_max_early);
     if (c->cool_at > 0) printf("  thermal fair from %.0f s: factor %.2f 60 s later\n", c->cool_at, f_cool);
+    if (c->t30_from > 0)
+        printf("  target 30 from %.0f s%s: factor %.2f before it, %.2f 1.5 s after the target went back to 60, %.2f at the lowest in 10 s\n",
+               c->t30_from, c->t30_until > 0 ? "" : " (to the end)", f_before30, f_back, f_back_min);
     if (c->power > 0)
         printf("  the factor over the run %.2f on average; from 120 s in %.2f on average, %.2f-%.2f; %d step%s up past a cut factor under 10 s at it\n",
                r.f_mean, r.f_mean_late, f_min_late, f_max_late, jumps_past_cut, jumps_past_cut == 1 ? "" : "s");
@@ -692,6 +713,25 @@ int main(int argc, char **argv) {
         {.name = "target 30, iPhone at serious: the power budget sustains 0.85 at 30, not 0.95", .a = 2.5, .b = 10.9, .w = 2.4,
          .w1 = 0.9, .fifo = 1, .secs = 400, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .t30 = 1, .start = 0.5,
          .thermal = 2, .power = 0.42},
+        // The target switched 60 -> 30 -> 60 (2026-11-14 log 4: five times). The 30 stretch climbs to 1.00; back at 60 the
+        // factor must be the one it had at 60 (0.80 here: 0.85 is late at 60), not 1.00 - which was 10 s of the pacer's hold
+        // and a slide 1.00 -> 0.50 in the log - and the pacer must not hold (Dynamic ends the hold as the target changes)
+        {.name = "target 60 -> 30 at 40 s -> 60 at 80 s, iPhone: back to the factor it had at 60", .a = 2.5, .b = 14, .w = 4, .w1 = 2,
+         .fifo = 1, .secs = 140, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .sag = 2.0, .pacer = 1,
+         .pace_fit_ms = 10, .t30_from = 40, .t30_until = 80},
+        // ... the session began at the target (no factor at 60 yet): back at 60 the factor stays (1.00, as a fresh start) and
+        // the 60 rules take it down - two or three steps at once when frames miss 60 outright - with no pacer hold
+        {.name = "target 30 from the start -> 60 at 40 s, iPhone: no 60 factor yet, the 60 rules step it down", .a = 2.5, .b = 14, .w = 4,
+         .w1 = 2, .fifo = 1, .secs = 100, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .sag = 2.0, .pacer = 1,
+         .pace_fit_ms = 10, .t30_from = 0.5, .t30_until = 40},
+        // ... at thermal serious (the power budget sustains 0.70 at 60, 1.00 at 30): the heat ceiling learned at 60 before the
+        // 30 stretch governs the return - back to 0.70, not 1.00 and not a step under 1.00 into a slide
+        {.name = "target 60 -> 30 at 60 s -> 60 at 120 s, iPhone at serious: back under the 60 heat ceiling", .a = 2, .b = 12, .w = 3.2,
+         .w1 = 1.6, .fifo = 1, .secs = 200, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .sag = 2.0, .pacer = 1,
+         .pace_fit_ms = 10, .thermal = 2, .power = 0.70, .t30_from = 60, .t30_until = 120},
+        // a desktop GPU (not paced) through the same switches: the hold's G + W rule at 30, its factor kept at the switch back
+        {.name = "target 60 -> 30 at 40 s -> 60 at 80 s, desktop (not paced): the factor is kept", .a = 2.5, .b = 10.5, .w = 1.5,
+         .fifo = 1, .secs = 120, .lines = 1440, .pacer = 1, .t30_from = 40, .t30_until = 80},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -816,6 +856,14 @@ int main(int argc, char **argv) {
                    "target 30 paced, native fits: climbs to 1.00 and stays"); break;
     case 81: check(r.f_end >= 0.8 && r.f_end <= 0.9 + 1e-6 && r.fps_end > 29 && r.f_min_last60 >= 0.8 && r.changes_last60 <= 4,
                    "target 30 paced, native misses 30: steps down to the fit, steady"); break;
+    case 83: check(r.f_back >= 0 && fabs(r.f_back - r.f_before30) < 1e-6 && r.f_back_min >= r.f_before30 - 0.05 - 1e-6 && r.pace_holds == 0 &&
+                   r.fps_end > 58, "target 30 -> 60: back to the factor it had at 60, no hold, no slide"); break;
+    case 84: check(r.f_back >= 0.75 && r.f_back_min >= 0.65 && r.pace_holds == 0 && r.fps_end > 58 && r.f_end >= 0.7,
+                   "target 30 from the start -> 60: no slide to the floor, no hold"); break;
+    case 85: check(r.f_back >= 0 && r.f_back <= 0.75 + 1e-6 && r.f_back >= 0.65 - 1e-6 && r.f_back_min >= 0.6 && r.pace_holds <= 1 && r.fps_end > 58,
+                   "target 30 -> 60 at serious: back under the 60 heat ceiling, no slide"); break;
+    case 86: check(r.f_back >= 0 && fabs(r.f_back - r.f_before30) < 1e-6 && r.pace_holds == 0 && r.fps_end > 58,
+                   "desktop target 30 -> 60: the factor is kept"); break;
     // (0.95 and 1.00 are cut, 0.90 holds: 0.90 steady, a probe of 0.95 every heat wait - 120 s - and back)
     case 82: check(r.fps_end > 29 && r.f_end >= 0.85 && r.f_end <= 0.9 + 1e-6 && r.jumps_past_cut == 0 && r.f_min_late >= 0.85 && r.f_max_late <= 0.95 + 1e-6 &&
                    r.changes_settled <= 12, "target 30 paced at serious: settles under the cut factor at 30"); break;
