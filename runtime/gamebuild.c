@@ -75,14 +75,16 @@ static PlatProc spawn_proc(char **argv, const char *log, bool generator) {
     PlatProc p = 0;
     if (!g_quitting) {
 #ifdef _WIN32
-        // The generator runs with Control Flow Guard off even when Windows forces it on for every program (#337)
+        // The generator runs with Control Flow Guard and shadow stacks off even when Windows forces them on for every
+        // program (#337; tools/win_longjmp.py, #779)
         if (generator) {
-            unsigned long error = 0;
-            p = plat_spawn_no_cfg((const char *const *)argv, log, false, &error);
+            unsigned long error = 0, ss_error = 0;
+            p = plat_spawn_no_cfg((const char *const *)argv, log, false, &error, &ss_error);
             static bool told;
             if (p && !told) {
                 told = true;
-                if (!error) LOG("[gamebuild] generator started with Control Flow Guard off\n");
+                if (!error && !ss_error) LOG("[gamebuild] generator started with Control Flow Guard and shadow stacks off\n");
+                else if (!error) LOG("[gamebuild] generator started with Control Flow Guard off: shadow stacks could not be turned off for it (error %lu)\n", ss_error);
                 else LOG("[gamebuild] generator started normally: Control Flow Guard could not be turned off for it (error %lu)\n", error);
             }
         } else
