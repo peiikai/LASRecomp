@@ -772,8 +772,8 @@ typedef struct { HANDLE process, job; } WinProcess;
 // does not. unicorn (the generator's jump tables) leaves the code it generated with longjmp from a setjmp that saved
 // no frame, and VCRUNTIME140's longjmp stops the process (0xC0000409) for that when CFG is on (#337); with a shadow
 // stack it would unwind instead (RtlUnwindEx), through generated code that has no unwind data. Under x64 emulation
-// on ARM that check runs even with CFG off, so the generator replaces unicorn's longjmp (tools/win_longjmp.py, #779):
-// a plain register restore, which needs the shadow stacks off.
+// on ARM (Windows 11 26H1) the generator still ended there with both off, so it now replaces unicorn's setjmp and
+// longjmp with its own (tools/win_longjmp.py, #779).
 #ifndef PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY
 #define PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY 0x00020007
 #endif

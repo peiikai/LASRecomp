@@ -161,7 +161,7 @@ int plat_proc_wait(PlatProc p, bool block);  // exit code, or -1 while still run
 #define PLAT_PROC_FAST_FAIL 512              // Windows: ended by a security check (0xC0000409, e.g. Control Flow Guard)
 #ifdef _WIN32
 // plat_spawn with Control Flow Guard and shadow stacks off for the child (the generator: unicorn's longjmp fails
-// CFG's check, #337, and its own longjmp on Windows on ARM, tools/win_longjmp.py, needs no shadow stack, #779).
+// CFG's check, #337, and can't unwind with a shadow stack; tools/win_longjmp.py, #779).
 // *error: 0 = started with CFG off; else why not (then it was started normally, or not at all if that failed too).
 // *shadow_stack_error: the same for shadow stacks (when only that is refused, it was started with CFG off alone).
 PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,

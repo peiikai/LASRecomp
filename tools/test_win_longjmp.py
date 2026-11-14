@@ -20,7 +20,7 @@ def child(fixed):
     print('own' if fixed else 'VCRUNTIME140', 'longjmp:', win_longjmp.describe(), flush=True)
     if fixed:
         r = win_longjmp.apply()
-        assert r == 'own longjmp', r
+        assert r == 'own setjmp/longjmp', r
     base = 0x7004000000
     mu = uc.Uc(uc.UC_ARCH_ARM64, uc.UC_MODE_ARM)
     mu.mem_map(base, 0x1000)
