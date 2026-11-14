@@ -220,7 +220,7 @@
 {"Switch", "Switch"},
 {"Xbox / PlayStation", "Xbox / PlayStation"},
 {"Button layout", "Disposición de botones"},
-{"Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation makes A, B, X and Y on those controllers work as printed, so the bottom button confirms. Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected.", "Switch mantiene la posición de los botones de Switch, así que el botón derecho confirma. Xbox / PlayStation hace que A, B, X e Y funcionen como indica el mando en esos mandos, así que el botón inferior confirma. Se aplica al juego y a los menús de LAS Recomp. No afecta a los mandos de Nintendo."},
+{"Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected.", "Switch mantiene la posición de los botones de Switch, así que el botón derecho confirma. Xbox / PlayStation intercambia los botones inferior y derecho, así que el botón inferior confirma, como en esos mandos. Se aplica al juego y a los menús de LAS Recomp. No afecta a los mandos de Nintendo."},
 {"Display", "Pantalla"},
 {"Appearance", "Aspecto"},
 {"Layout", "Disposición"},
