@@ -1714,23 +1714,10 @@ static int ip_mids(TexBackend *b, uint64_t frame) {  // (the in-betweens shown)
     if (mids < 1) { ip_not_made[IP_CAPPED] += hz_cap > 0; mids_last = 0; ip_hz = 0; return 0; }
     if (mids != mids_last) settle = slow_checks = 0;
     mids_last = mids;
-    // The GPU's time goes to the game's frames first (as on Metal, metal.m): in-betweens only in what a game frame
-    // leaves of its interval - the game's own GPU time (pace.c; the in-betweens' submissions aren't counted there,
-    // exec.c) against an in-between's, replay and window image. Fewer than the refresh rate wants: evenly spaced, each
-    // shown longer. LARECOMP_INTERP_GPU_BUDGET=0: all made (research).
-    int allowed = mids;
-    {
-        static int budget_on = -1;
-        if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
-        extern double pace_gpu_frame_ms(void);
-        double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
-        double D = fmin(fmax(interval_ns / 1e6, 16.667), 50);
-        if (budget_on && game >= 0 && img > 0) {
-            double left = 0.9 * D - game;
-            allowed = left > 0 ? (int)(left / img) : 0;
-            if (allowed > mids) allowed = mids;
-        }
-    }
+    // The GPU's time goes to the game's frames first (as on Metal): in-betweens only in what a game frame leaves of its
+    // interval (interp.c interp_gpu_allowed; the in-betweens' submissions aren't counted in the game's time, exec.c).
+    // Fewer than the refresh rate wants: evenly spaced, each shown longer.
+    int allowed = interp_gpu_allowed(mids, interval_ns / 1e6);
     for (int m = allowed; m < mids; m++) interp_note_no_gpu();
     if (allowed < 1) { ip_not_made[IP_NO_GPU]++; ip_hz = 0; return 0; }
     ip_hz = hz * (allowed + 1) / (mids + 1);  // (presents spaced for the images made)

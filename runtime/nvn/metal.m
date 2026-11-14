@@ -1370,7 +1370,10 @@ static void compose(id<MTLCommandBuffer> cb, NvnTexture *t, id<MTLTexture> dst, 
     extern uint64_t g_gpu_interp_ns;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {  // (the upscale / scaling draw and the menu: the window's part)
         uint64_t ns = renderer_gpu_busy(done, true);
-        if (!update) __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED);  // (an in-between's)
+        if (!update) {  // (an in-between's)
+            __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED);
+            interp_compose_gpu(ns / 1e6);
+        }
     }];
     if (update) {
         // Next frame's render resolution follows the window: the 1920x1080 image scaled to fit.
@@ -1719,7 +1722,6 @@ static int slot_claim(NSUInteger w, NSUInteger h, bool force) {
 static void slot_commit(id<MTLCommandBuffer> cb, int i, uint64_t at, uint64_t frame, int kind) {
     sl_at[i] = at, sl_frame[i] = frame, sl_kind[i] = kind;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
-        if (kind == K_MID) interp_compose_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3);
         if (done.error) LOG("[trace] image's command buffer error (slot %d, frame %llu): %s\n", i, (unsigned long long)frame,
                             done.error.localizedDescription.UTF8String);
         if (trace_on() && plat_now_ns() > at)
@@ -2284,24 +2286,8 @@ static bool ip_present(NvnTexture *t, uint64_t frame, bool repeat) {
     int mids = 0;
     for (int i = 0; i < n; i++) mids += sh[i].t != 1.0f;
     // The GPU's time goes to the game's frames first: in-betweens only in what a game frame leaves of its interval
-    // (the game's own GPU time, pace.c; an in-between's, replay and compose). Made anyway, they held the game at 30
-    // (5120x1440 on an M3 Max: the game 13 ms a frame, an in-between 7 + 3 ms) - three in-betweens of a 30 fps game
-    // instead of the game's own 60. Too few fit: spread evenly over the interval. LARECOMP_INTERP_GPU_BUDGET=0: all made.
-    int allowed = mids;
-    {
-        static int budget_on = -1;
-        if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
-        extern double pace_gpu_frame_ms(void);
-        double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
-        double D = s1 > s0 ? (s1 - s0) / 1e6 : 16.667;
-        if (D < 16.667) D = 16.667;
-        if (D > 50) D = 50;
-        if (budget_on && game >= 0 && img > 0) {
-            double left = 0.9 * D - game;
-            allowed = left > 0 ? (int)(left / img) : 0;
-            if (allowed > mids) allowed = mids;
-        }
-    }
+    // (interp.c interp_gpu_allowed). Too few fit: spread evenly over the interval.
+    int allowed = interp_gpu_allowed(mids, s1 > s0 ? (s1 - s0) / 1e6 : 16.667);
     if (mids && interp_replay_lock()) {
         int mid_i = 0;
         float nsx, nsy, nax = g_al_x, nay = g_al_y;

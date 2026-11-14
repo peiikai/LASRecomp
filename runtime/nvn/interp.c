@@ -531,30 +531,71 @@ static const char *const cut_name[9] = {"level/forced", "no previous frame", "fe
 
 static double img_replay_ms = -1, img_compose_ms = -1;  // (moving averages: an in-between's GPU time)
 static double img_game_ms = -1;  // (the game's own GPU time a frame when those were measured)
-void interp_replay_gpu(double ms) {  // (completion handlers)
-    atomic_fetch_add(&s_gpu_n, 1);
-    s_replay_gpu += ms;
-    img_replay_ms = img_replay_ms < 0 ? ms : img_replay_ms + (ms - img_replay_ms) * 0.1;
-    extern double pace_gpu_frame_ms(void);
-    double g = pace_gpu_frame_ms();
-    if (g > 0) img_game_ms = img_game_ms < 0 ? g : img_game_ms + (g - img_game_ms) * 0.1;
+static double img_replay_acc;    // (this in-between's replay so far: it can be several submissions)
+static pthread_mutex_t img_lock = PTHREAD_MUTEX_INITIALIZER;
+// Both take the GPU's busy time, not a command buffer's start to end: that span also holds the time it sat behind the
+// work queued before it. Metal measured spans: an M3 Max at 1280x720 had the in-between's present pass at 0.9 ms, then
+// 5 ms while the game's own frame was heavier, and the budget stopped making in-betweens.
+void interp_replay_gpu(double ms) {  // (completion handlers, in submission order: an in-between's replay, then its compose)
+    pthread_mutex_lock(&img_lock);
+    img_replay_acc += ms;
+    pthread_mutex_unlock(&img_lock);
 }
 void interp_compose_gpu(double ms) {
+    pthread_mutex_lock(&img_lock);
+    double r = img_replay_acc;
+    img_replay_acc = 0;
     atomic_fetch_add(&s_compose_n, 1);
     s_compose_gpu += ms;
     img_compose_ms = img_compose_ms < 0 ? ms : img_compose_ms + (ms - img_compose_ms) * 0.1;
+    if (r > 0) {
+        atomic_fetch_add(&s_gpu_n, 1);
+        s_replay_gpu += r;
+        img_replay_ms = img_replay_ms < 0 ? r : img_replay_ms + (r - img_replay_ms) * 0.1;
+        extern double pace_gpu_frame_ms(void);
+        double g = pace_gpu_frame_ms();
+        if (g > 0) img_game_ms = img_game_ms < 0 ? g : img_game_ms + (g - img_game_ms) * 0.1;
+    }
+    pthread_mutex_unlock(&img_lock);
 }
 // An in-between's replay draws what the game's frame draws, so its cost follows the game's: scaled by how the game's
 // GPU time changed since it was measured. Measured only when one is made, it stuck: a high cost (full resolution on an
 // iPad M4, game 10 ms + in-between 7.5 ms) kept the budget at none after the resolution went down to 25% (game 4.5 ms,
 // GPU busy about a quarter of the time) - none made, so none measured again. The compose pass is at the window's size.
 double interp_image_gpu_ms(void) {
-    if (img_replay_ms < 0) return -1;
-    double r = img_replay_ms;
+    pthread_mutex_lock(&img_lock);
+    double r = img_replay_ms, c = img_compose_ms, ig = img_game_ms;
+    pthread_mutex_unlock(&img_lock);
+    if (r < 0) return -1;
     extern double pace_gpu_frame_ms(void);
     double g = pace_gpu_frame_ms();
-    if (g > 0 && img_game_ms > 0) r *= fmin(fmax(g / img_game_ms, 0.25), 4.0);
-    return r + (img_compose_ms > 0 ? img_compose_ms : 0);
+    if (g > 0 && ig > 0) r *= fmin(fmax(g / ig, 0.25), 4.0);
+    return r + (c > 0 ? c : 0);
+}
+
+// How many of a game frame's mids in-betweens fit in the GPU time its interval leaves (interval_ms: the game's frame
+// time). The game's own frames come first: made anyway, in-betweens held it at 30 (5120x1440 on an M3 Max: the game
+// 13 ms a frame, an in-between 7 + 3 ms). While none fit, one is made now and then all the same, so its cost is
+// measured again: the estimate stuck high otherwise (an M3 Max at 5120x1440, game down to 3 ms a frame after the
+// resolution went down, kept at none for minutes - the screen at 120 Hz showed each game frame twice). Every second
+// at first, then less often while that one still doesn't fit (up to every 16 s). LARECOMP_INTERP_GPU_BUDGET=0: all made.
+int interp_gpu_allowed(int mids, double interval_ms) {
+    static int budget_on = -1;
+    if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
+    if (mids <= 0 || !budget_on) return mids;
+    extern double pace_gpu_frame_ms(void);
+    double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
+    double D = fmin(fmax(interval_ms, 16.667), 50);
+    if (game < 0 || img <= 0) return mids;
+    double left = 0.9 * D - game;
+    int allowed = left > 0 ? (int)(left / img) : 0;
+    if (allowed > mids) allowed = mids;
+    static int starved, probe_every = 60;  // (game frames)
+    if (allowed > 0) { starved = 0, probe_every = 60; return allowed; }
+    if (++starved < probe_every) return 0;
+    starved = 0;
+    if (probe_every < 960) probe_every *= 2;
+    return 1;
 }
 
 

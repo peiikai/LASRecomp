@@ -73,6 +73,7 @@ int interp_schedule(uint64_t s0, uint64_t s1, uint64_t now, uint64_t phase, uint
 void interp_replay_gpu(double ms);
 void interp_compose_gpu(double ms);
 double interp_image_gpu_ms(void);  // an in-between's GPU time, replay and compose (moving average; -1: none yet)
+int interp_gpu_allowed(int mids, double interval_ms);  // (render thread, once a game frame) of mids in-betweens, how many fit
 uint64_t interp_replay_ns(uint64_t now);
 void interp_log_stats(void);  // (render thread, per game frame) a line every LARECOMP_INTERP_LOG seconds (default 2)
 void interp_note_skipped(void);  // (stats) an in-between not made: no free image slot
