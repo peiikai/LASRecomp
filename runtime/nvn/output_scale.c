@@ -246,10 +246,34 @@ static double g_heat_wait[DYN_HEAT_NF];    // ... its wait: DYN_HEAT_WAIT, doubl
 static double g_heat_cut_at[DYN_HEAT_NF];  // ... when its clock was last cut at this heat (-1e9: not yet)
 static double g_heat_ok_f = -1;     // the last factor that ran 60 steady at this heat (-1: none yet)
 static int heat_i(double f) { int i = (int)lround(f / DYN_STEP); return i < 0 ? 0 : i >= DYN_HEAT_NF ? DYN_HEAT_NF - 1 : i; }
+static double g_h_heat_until[DYN_HEAT_NF], g_h_heat_wait[DYN_HEAT_NF], g_h_heat_cut_at[DYN_HEAT_NF], g_h_heat_ceil = 2.0;  // (the hold's: g_h_ceil)
 static void heat_reset(void) {
-    g_heat_ceil = 2.0, g_heat_ok_f = -1;
-    for (int i = 0; i < DYN_HEAT_NF; i++) g_heat_until[i] = g_heat_cut_at[i] = -1e9, g_heat_wait[i] = DYN_HEAT_WAIT;
+    g_heat_ceil = g_h_heat_ceil = 2.0, g_heat_ok_f = -1;
+    for (int i = 0; i < DYN_HEAT_NF; i++) {
+        g_heat_until[i] = g_heat_cut_at[i] = -1e9, g_heat_wait[i] = DYN_HEAT_WAIT;
+        g_h_heat_until[i] = g_h_heat_cut_at[i] = -1e9, g_h_heat_wait[i] = DYN_HEAT_WAIT;
+    }
 }
+// A paced GPU in a hold at 30 (FPS target 30, or Dynamic's own hold: g_hold_dt > 0, two vsyncs a frame) is judged by
+// lateness against the hold's cadence, as it is at 60 against 16.7 ms: its clock fills the 33 ms frame as it filled the
+// 16.7 ms one (an iPhone 15 Pro at the 30 target, 2556x1179: game 7-11 ms at 0.50-0.75, then 24.4 + 5.6 at 0.80 with
+// every frame on time at 33.4 ms, and 23.7 + 6.8 at 0.65 later - it stepped 0.80 -> 0.70 and 0.70 -> 0.60 on G + W over
+// the hold's budget of 29 ms, and never read under it again to raise, where a fixed native resolution held a steady
+// 30.0). A step down wants frames a vsync late at the cadence (50 ms: DYN_HOLD_LATE of the hold's frame) in the hold's
+// own votes; a raise wants them on time; the ceilings are the hold's own (g_h_ceil: a factor late at 30, raises stay
+// under it for a wait that doubles as the 60 ceiling's) - a factor late at 60 says nothing at 30, where the GPU does
+// half the work a second and the budget is twice as long, so the 60 ceilings and heat waits don't cap the hold, nor the
+// hold's them. At heat (g_hot) a factor late within DYN_HEAT_CUT_S of stepping up to it in the hold is its clock cut
+// at 30: the hold's heat ceiling for a per-factor wait (DYN_HEAT_WAIT, doubling as at 60), and a steady
+// DYN_HEAT_STEADY_S at that ceiling moves it a step up. A GPU that isn't paced keeps the hold's G + W rule: its time
+// measures the load.
+#define DYN_HOLD_LATE 1.25  // a held frame this many times the hold's frame or more missed the hold's vsync (41.7 ms at 30)
+static double g_h_ceil = 2.0, g_h_until = -1e9, g_h_wait = 10.0, g_h_hit_at = -1e9;  // the hold's ceiling (see above)
+static double g_h_ok_since = -1;  // ... since when the frames have been on time at the hold's cadence at g_dyn
+static double g_h_step_at = -1e9;  // ... when the hold last stepped down: late again within DYN_PC_FALLOUT is the fallout (the
+                                   // clock's response to the late frames, or a cut's tail: every factor reads late for a
+                                   // few seconds), not the step under's load - it holds there, as the 60 rule does
+static int g_h_late_hist[4];  // frames late at the hold's cadence, the last 4 decisions
 static double g_ok_since = -1;      // (paced) since when the frames have been on time at g_dyn (-1: they aren't)
 static double g_up_at = -100, g_up_f = -1;  // the last step up or return to 60 (a raise, a probe, the pacer's release): when, to what
 // the wait after a paced raise (or a return to 60: a probe, the pacer's release) to `up` before the next step (see
@@ -440,8 +464,12 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     memcpy(sorted, g_dyn_dt, N * sizeof *sorted);
     qsort(sorted, N, sizeof *sorted, cmp_double);
     double med = N % 2 ? sorted[N / 2] : (sorted[N / 2 - 1] + sorted[N / 2]) / 2;
-    int nkept = 0, nlate = 0;  // (nlate: frames shown a vsync late or more, 25 ms+, spikes aside)
-    for (int i = 0; i < N; i++) if (sorted[i] <= 3 * med) { kept += sorted[i]; nkept++; nlate += sorted[i] >= 25.0; }
+    int nkept = 0, nlate = 0, nlate_h = 0;  // (nlate: frames shown a vsync late or more, 25 ms+, spikes aside; nlate_h: a
+                                            // held frame that missed the hold's vsync - DYN_HOLD_LATE)
+    for (int i = 0; i < N; i++) if (sorted[i] <= 3 * med) {
+        kept += sorted[i]; nkept++; nlate += sorted[i] >= 25.0;
+        nlate_h += g_hold_dt > 0 && sorted[i] >= DYN_HOLD_LATE * g_hold_dt;
+    }
     bool gpu = g_dyn_gpu_n >= N / 2;
     double avg_dt = kept / nkept, G = gpu ? g_dyn_gpu_sum / g_dyn_gpu_n : -1, W = gpu ? g_dyn_win_sum / g_dyn_gpu_n : 0;
     double avg_gpu = gpu ? G + W : -1;
@@ -487,8 +515,11 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     } else if (was_t30 && !t30 && g_hold_dt > 0) {
         LOG("[dynres] FPS target 60 here: hold at %.0f fps ended\n", 1000 / g_hold_dt);
         g_hold_dt = 0, g_probing = false, g_hold_miss = g_hold_up_votes = g_hold_met_votes = 0;
+        dyn_went_up(now, g_dyn);  // (a return to 60 at this factor: late soon at 60 is 60's, not a cut carried from 30)
     }
     was_t30 = t30;
+    // a paced GPU in a hold at 30 (see g_h_ceil): by lateness at the hold's cadence, not G + W
+    bool paced_hold = gpu && g_paced && g_hold_dt > 0 && hold_vsyncs() == 2;
     extern bool pace_is_slow(void);
     bool pacer_hold = gpu && g_hold_dt == 0 && !t30 && pace_is_slow();  // (see g_pace_hold_at)
     // the CPU's late frames (pace.c "Resolution first": the game thread's or the render thread's CPU time over a frame in
@@ -574,9 +605,11 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         // (the 2 minutes only where the failed probe came near: G + W within 15% of the budget. A hold 60 can't reach -
         // SMAA + FSR 1 at 1080p - probed every 2 minutes for good, each probe a second or two of the game's 60 fps mode at
         // 30 fps: slow motion)
-        bool probe_ok = (now - g_probe_fail_at > 120.0 && g_probe_fail_gw <= 1.15 * DYN_BUDGET) || (floor_gw > 0 && floor_gw < 0.9 * g_probe_fail_gw);
+        // (paced: G + W at 30 says nothing of 60 - a probe every probe wait, which doubles at each failure to a minute)
+        bool probe_ok = paced_hold || (now - g_probe_fail_at > 120.0 && g_probe_fail_gw <= 1.15 * DYN_BUDGET) || (floor_gw > 0 && floor_gw < 0.9 * g_probe_fail_gw);
         double idle_gw = floor_gw > 0 ? floor_gw : avg_gpu;
-        if (g_hold_dt > 0 && !hold_up && !t30 && hold_vsyncs() == 2 && idle_gw < 0.7 * g_hold_dt && now >= g_probe_at && probe_ok) {
+        // (paced: its time at 30 says nothing of 60 - a probe every probe wait, as from the pacer's hold)
+        if (g_hold_dt > 0 && !hold_up && !t30 && hold_vsyncs() == 2 && (idle_gw < 0.7 * g_hold_dt || paced_hold) && now >= g_probe_at && probe_ok) {
             LOG("[dynres] held at 30 with the GPU %.0f%% busy at the floor (game %.1f + window %.1f ms at %.2f): its clock may "
                 "be down, trying 60 at %.2f\n", 100 * idle_gw / g_hold_dt, G, W, g_dyn, g_dyn_floor);
             pace_try_60();
@@ -631,7 +664,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         // half second and eased 5% every 30 s: the frames after a warp (shaders compiling, 35.5 ms with G + W 16 ms) kept
         // R6 on the Retroid at 0.60 for minutes where 1.00 holds 30.
         g_t30_limits = false;
-        if (t30 && g_hold_dt > 0 && hold_vsyncs() == 2) {
+        if (t30 && g_hold_dt > 0 && hold_vsyncs() == 2 && !paced_hold) {  // (paced: the hold's lateness rule below)
             bool late = avg_dt > 1.06 * g_hold_dt && !spikes && avg_gpu > 0.4 * g_hold_dt;
             g_t30_late = late ? g_t30_late + 1 : 0;
             if (late && g_t30_late >= 3 && now >= g_dyn_cool_until) {
@@ -733,9 +766,13 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     // (the pacer's hold: its 33 ms frames aren't late frames - see g_pace_hold_at -, nor are those of the first second of a
     // probe of it: the pacer's grace, the clock coming back up)
     bool no_late = pacer_hold || (g_pace_probe && now - g_probe_start < 1.0);
-    memmove(late_hist + 1, late_hist, 3 * sizeof *late_hist), late_hist[0] = no_late ? 0 : nlate;
+    memmove(late_hist + 1, late_hist, 3 * sizeof *late_hist), late_hist[0] = no_late || g_hold_dt > 0 ? 0 : nlate;  // (held: 33 ms frames aren't late)
     int late4 = late_hist[0] + late_hist[1] + late_hist[2] + late_hist[3];
     if (paced) slow = !no_late && ((nlate >= 2 && nlate * 6 >= N) || (nlate >= 1 && late4 >= 3)) && avg_gpu > 0.8 * budget;
+    // the hold's own: late at its cadence (see g_h_ceil), the same votes
+    memmove(g_h_late_hist + 1, g_h_late_hist, 3 * sizeof *g_h_late_hist), g_h_late_hist[0] = g_hold_dt > 0 ? nlate_h : 0;
+    int late4_h = g_h_late_hist[0] + g_h_late_hist[1] + g_h_late_hist[2] + g_h_late_hist[3];
+    if (paced_hold) slow = (nlate_h >= 2 && nlate_h * 6 >= N) || (nlate_h >= 1 && late4_h >= 3);
     if (cpu_frames) slow = false;  // (the CPU's late frames: see cpu_frames)
     // held, but the frames came slower than the hold's (the display waits one more refresh): over budget too
     if (gpu && g_hold_dt > 0 && avg_dt > 1.2 * g_hold_dt && avg_gpu > 0.8 * budget) slow = true;
@@ -796,6 +833,15 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     // ceiling - a probe of it once its wait was out - it moves the ceiling a step up: the next step is the next probe)
     if (paced && !slow && nlate == 0 && !spikes && !no_late) { if (g_ok_since < 0) g_ok_since = now; }
     else g_ok_since = -1;
+    // (the hold's: steady at its heat ceiling moves that a step up - see g_h_ceil)
+    if (paced_hold && !slow && nlate_h == 0 && !spikes) { if (g_h_ok_since < 0) g_h_ok_since = now; }
+    else g_h_ok_since = -1;
+    if (g_hot && paced_hold && g_h_ok_since >= 0 && now - g_h_ok_since >= DYN_HEAT_STEADY_S && g_dyn >= g_h_heat_ceil - 1e-6 && g_h_heat_ceil < 1.5) {
+        double to = g_h_heat_ceil >= 1.0 - 1e-6 ? 2.0 : dyn_grid(g_h_heat_ceil + DYN_STEP);
+        LOG("[dynres] thermal %s: %.0f fps steady at %.2f for %.0f s: the hold's heat ceiling %s\n", THERMAL_NAME[g_thermal],
+            1000 / g_hold_dt, g_dyn, now - g_h_ok_since, to < 1.5 ? "moves up a step" : "is lifted");
+        g_h_heat_ceil = to, g_h_ok_since = now;
+    }
     if (g_hot && g_ok_since >= 0 && now - g_ok_since >= DYN_HEAT_STEADY_S) {
         g_heat_ok_f = g_dyn;
         if (g_dyn >= g_heat_ceil - 1e-6 && g_heat_ceil < 1.5) {
@@ -825,7 +871,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             // (paced: always one step - the G it would fit is over-read, and the ceiling keeps raises under it; from
             // 1.00 by the G the frames were last on time with, scaled up to 1.00 - the late one is the fallout's, up
             // to 1.4x, and the step it gave was 0.90: as late as 1.00)
-            if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || paced) {
+            if (g_t30_limits || avg_gpu <= DYN_DOWN_SMALL * budget || paced || paced_hold) {
                 bool ok = paced && g_pc_ok_f > 0 && now - g_pc_ok_at < 4.0;
                 down = dyn_step_down(ok ? g_pc_ok_g / (g_pc_ok_f * g_pc_ok_f) : g2, w2);
                 // (paced, the frames missing 60 outright - half of them or more a vsync late - at a factor they were on
@@ -892,6 +938,25 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
                     "not a cut at it - raises stay under it for %.0f s\n", THERMAL_NAME[g_thermal], g_dyn, DYN_HEAT_CUT_S, g_pc_wait);
             else
                 LOG("[dynres] paced: frames late at %.2f, raises stay under it for %.0f s\n", g_dyn, g_pc_wait);
+        } else if (paced_hold && now - g_h_step_at < DYN_PC_FALLOUT) {  // (the fallout of the hold's last step: see g_h_step_at)
+            down = g_dyn;
+        } else if (paced_hold) {  // the factor that went late at the hold's cadence: the hold's ceiling (see g_h_ceil)
+            g_h_step_at = now;
+            if (now >= g_h_until && now < g_h_until + 30.0) g_h_wait = fmin(g_h_wait * 2, 60.0);
+            else if (now - g_h_hit_at > 120.0) g_h_wait = 10.0;
+            bool heat_cut = g_hot && now - g_up_at < DYN_HEAT_CUT_S && g_dyn >= g_up_f - 1e-6;
+            g_h_ceil = g_dyn, g_h_until = now + g_h_wait, g_h_hit_at = now;
+            if (heat_cut) {
+                int i = heat_i(g_dyn);
+                g_h_heat_wait[i] = now - g_h_heat_cut_at[i] < 2 * DYN_HEAT_WAIT_MAX ? fmin(2 * g_h_heat_wait[i], DYN_HEAT_WAIT_MAX) : DYN_HEAT_WAIT;
+                g_h_heat_until[i] = now + g_h_heat_wait[i], g_h_heat_cut_at[i] = now;
+                g_h_heat_ceil = g_dyn;
+                LOG("[dynres] thermal %s: frames late at %.2f %.1f s after going up to it at %.0f fps, its clock cut at this heat: "
+                    "raises stay under %.2f for %.0f s\n", THERMAL_NAME[g_thermal], g_dyn, now - g_up_at, 1000 / g_hold_dt, g_dyn,
+                    g_h_heat_wait[i]);
+            } else
+                LOG("[dynres] paced: frames late at %.2f at %.0f fps (%d of %d a vsync late), raises stay under it for %.0f s\n",
+                    g_dyn, 1000 / g_hold_dt, nlate_h, N, g_h_wait);
         }
         g_dyn = fmax(g_dyn_floor, down);
         g_dyn_good = 0;
@@ -913,7 +978,9 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
             if (G / (g_dyn * g_dyn) + w1 <= G * (up / g_dyn) * (up / g_dyn) + w_up) up = 1.0, w_up = w1;
         }
         double g_up = G * (up / g_dyn) * (up / g_dyn);
-        bool fits = !gpu ? avg_dt < 16.9 : paced ? late4 <= 1 && med < 17.2 : g_hold_dt > 0 ? g_up + w_up <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + w_up <= budget;
+        bool fits = !gpu ? avg_dt < 16.9 : paced ? late4 <= 1 && med < 17.2
+                  : paced_hold ? late4_h <= 1 && med < 1.03 * g_hold_dt  // (on time at the hold's cadence: see g_h_ceil)
+                  : g_hold_dt > 0 ? g_up + w_up <= budget * DYN_RAISE_FIT : g_up / DYN_UP_FIT + w_up <= budget;
         // (a decision with spikes - a level loading, a fade, a cutscene starting - says little about the scene ahead:
         // it starts the count over, so a raise doesn't come from a light loading screen)
         g_dyn_good = fits && !spikes ? g_dyn_good + 1 : 0;
@@ -934,9 +1001,12 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         // (the heat ceiling: never over it - a steady DYN_HEAT_STEADY_S at it moves it a step up -, and not onto a factor
         // whose clock was cut while its wait runs)
         if (paced && g_hot && (up > g_heat_ceil + 1e-6 || now < g_heat_until[heat_i(up)])) room = false;
+        // (the hold's ceilings, see g_h_ceil: the 60 ones above don't apply at 30)
+        if (paced_hold && up >= g_h_ceil - 1e-6 && now < g_h_until) room = false;
+        if (paced_hold && g_hot && (up > g_h_heat_ceil + 1e-6 || now < g_h_heat_until[heat_i(up)])) room = false;
         if (room) {
             g_dyn = up, g_dyn_good = 0, g_down_hist = 0, g_dyn_last_raise = now, g_dyn_raise_at = now + g_dyn_raise_wait;
-            if (paced) dyn_went_up(now, up);
+            if (paced || paced_hold) dyn_went_up(now, up);
             else g_up_at = now, g_up_f = up;
             memset(g_down_gw, 0, sizeof g_down_gw);
         }
@@ -956,7 +1026,7 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
     }
 decided:
     g_prev_G = gpu && g_dyn == prev ? G : -1, g_prev_W = W;  // (a change: the next decision measures the new factor)
-    if (g_dyn != prev) g_ok_since = -1;
+    if (g_dyn != prev) g_ok_since = g_h_ok_since = -1;
     if (gpu && g_hold_dt > 0 && g_dyn != prev && !g_ref_pending && g_ref_g > 0)  // the floor's G as of now; G's new reference next time
         g_floor_g *= G / g_ref_g, g_ref_pending = true;
     if (g_dyn != prev || log) {

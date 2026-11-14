@@ -396,7 +396,7 @@ void pace_frame(void) {
     // limits as a hiccup, and goes back to 60) - slow motion at a steady 30 fps (an M3 Max at 5120x1440: 30.0 fps,
     // the pacer at 60, 4 of 60 frames over by busy time). It counts as over, at its period (gameplay frames only: a
     // load or a menu shown late isn't slow motion).
-    bool late = !pace_slow && p >= 25000000ull && pace_scene();
+    bool late = !pace_slow && !pace_target_30() && p >= 25000000ull && pace_scene();  // (target 30: 33 ms frames are the target's)
     int b = cost > 16.2, o = b || late;
     stat_pace_over += o;
     // Over by CPU time (see "Resolution first"): the game thread's CPU time for the frame less its second world step in

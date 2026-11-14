@@ -69,6 +69,10 @@ typedef struct {
     double ease;        // > 0: paced: the share of the way the clock moves each frame (default 0.05; the RP5's settles within
                         // a decision: a step down saves nothing measurable)
     double fill;        // > 0: paced: the clock eases to where G + W is this share of a frame (default 0.9)
+    int fill_frame;     // paced: ... of the frame the game is given (33.3 ms held at 30 - the FPS target 30, the pacer's
+                        // hold), not of 16.7 ms (an iPhone 15 Pro at the 30 target: game 24.4 + window 5.6 ms at 0.80
+                        // against 9.3 + 2.2 at 0.75). A frame late at that cadence doesn't stretch it further: the GPU
+                        // is the bottleneck then, its clock at its top
     double gpu_read;    // > 0: the reported GPU times are this many times the frame's real GPU wall time (Turnip over-reads)
     double pace_fit_ms; // > 0: the pacer releases when G + W < this for 60 frames (default 13; 10 = backing off; -1 never)
     double sag;         // > 0: paced: a frame missing a vsync after on-time frames puts the clock down - its times x this at
@@ -218,7 +222,8 @@ static Result run(const Case *c) {
         double nz = c->noise > 0 ? c->noise : 0.04;
         double g = (c->a + c->b * f * f * area) * scene * (1 - nz / 2 + nz * rnd()) * clk, w = w_base * area * (0.99 + 0.02 * rnd()) * clk;
         if (c->paced > 0) {  // the clock eases (over ~0.3 s) to where G + W takes 90% of a 60 Hz frame, never above full
-            double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * 16.667 / full));
+            double frame = c->fill_frame && (c->t30 || pace_held) ? 33.333 : 16.667;
+            double full = (g + w) / clk, want = fmin(c->paced, fmax(1.0, (c->fill > 0 ? c->fill : 0.9) * frame / full));
             clk += (want - clk) * (c->ease > 0 ? c->ease : 0.05);
         }
         if (c->hold_clock > 0) {  // (see Case: held, the clock eases down over ~10 s; released, it is back within ~0.3 s)
@@ -671,6 +676,22 @@ int main(int argc, char **argv) {
         {.name = "resolution first: iPhone at 1.00 at the edge, a late moment every 20 s, the sag: no 30 hold", .a = 2.5, .b = 10.9,
          .w = 2.4, .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0, .pacer = 1,
          .pace_fit_ms = 10, .spike_every = 20, .spike_s = 0.4, .spike_x = 1.4},
+        // FPS target 30 on the iPhone (2026-11-14 log 3, thermal serious throughout): the clock fills the 33 ms frame, so G + W
+        // read 30 ms at any factor while every frame was on time, and Dynamic stepped 0.80 -> 0.70 and 0.70 -> 0.60 on the
+        // hold's budget of 29 ms - a fixed native resolution held a steady 30.0. The true load (G 13.4 + W 0.9 at 1.00) fits
+        // 30 at native: it must climb to 1.00 and stay, with frames on time
+        {.name = "target 30, iPhone: the clock fills the 33 ms frame, native fits 30: climbs to 1.00 and stays", .a = 2.5, .b = 10.9,
+         .w = 2.4, .w1 = 0.9, .fifo = 1, .secs = 180, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .t30 = 1,
+         .start = 0.5},
+        // ... a scene that misses 30 at native (G 34.5 + W at 1.00: 50 ms frames; 0.90 fits): it must step down until the
+        // frames are on time at 33 ms, and sit there
+        {.name = "target 30, iPhone: native misses 30 (G 34.5 at 1.00), 0.90 fits: steps down to it", .a = 2.5, .b = 32, .w = 2.4,
+         .w1 = 0.9, .fifo = 1, .secs = 180, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .t30 = 1},
+        // ... at thermal serious with a power budget the native work at 30 fps exceeds (cut at 0.90 and over): the hold's
+        // heat ceiling - settles under the cut, every step over a cut factor proven first, frames at 30
+        {.name = "target 30, iPhone at serious: the power budget sustains 0.85 at 30, not 0.95", .a = 2.5, .b = 10.9, .w = 2.4,
+         .w1 = 0.9, .fifo = 1, .secs = 400, .lines = 1179, .paced = 3.0, .fill_frame = 1, .start_paced = 1, .t30 = 1, .start = 0.5,
+         .thermal = 2, .power = 0.42},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -785,10 +806,19 @@ int main(int argc, char **argv) {
     case 74: check(r.f_min >= 0.95 && r.changes_settled == 0, "iPhone at 1.00, a late moment every 20 s: no step"); break;
     case 75: check(r.pace_holds == 0 && r.down_t >= 0 && r.down_t <= 4 && r.f_end >= 0.65 && r.f_end <= 0.8 && r.fps_end > 58,
                    "resolution first, GPU-bound: down within 4 s, settled near the fit, no 30 hold"); break;
-    case 76: check(r.pace_holds >= 1 && r.pace_holds <= 3 && r.f_min <= 0.46 + 1e-6 && r.f_max_last60 <= 0.7 && r.fps_end >= 29 && r.fps_end <= 31,
-                   "resolution first, beyond the floor: 30 held from the floor on"); break;
+    // (the pacer holds at the floor, Dynamic's own hold takes over and climbs while 30 fits - to 0.75-0.80 by on-time frames,
+    // 0.60 by G + W before -, probing 60 at the floor every probe wait: 10 changes in the last minute, 30 fps throughout)
+    case 76: check(r.pace_holds >= 1 && r.pace_holds <= 5 && r.f_min <= 0.46 + 1e-6 && r.f_max_last60 <= 0.8 + 1e-6 && r.changes_last60 <= 10 &&
+                   r.fps_end >= 29 && r.fps_end <= 31, "resolution first, beyond the floor: 30 held from the floor on"); break;
     case 77: case 78: check(r.pace_holds >= 1 && r.f_end >= 0.95 && r.f_min >= 0.9, "resolution first, CPU-bound: held, the factor stays"); break;
     case 79: check(r.pace_holds == 0 && r.f_min >= 0.7 && r.fps_end > 58, "the 2026-11-14 cycle: no 30 hold"); break;
+    case 80: check(r.f_end == 1.0 && r.changes_settled <= 12 && r.fps_end > 29 && r.f_min_last60 >= 0.95,
+                   "target 30 paced, native fits: climbs to 1.00 and stays"); break;
+    case 81: check(r.f_end >= 0.8 && r.f_end <= 0.9 + 1e-6 && r.fps_end > 29 && r.f_min_last60 >= 0.8 && r.changes_last60 <= 4,
+                   "target 30 paced, native misses 30: steps down to the fit, steady"); break;
+    // (0.95 and 1.00 are cut, 0.90 holds: 0.90 steady, a probe of 0.95 every heat wait - 120 s - and back)
+    case 82: check(r.fps_end > 29 && r.f_end >= 0.85 && r.f_end <= 0.9 + 1e-6 && r.jumps_past_cut == 0 && r.f_min_late >= 0.85 && r.f_max_late <= 0.95 + 1e-6 &&
+                   r.changes_settled <= 12, "target 30 paced at serious: settles under the cut factor at 30"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
