@@ -48,8 +48,8 @@ int main(int argc,char **argv) {
     if(argc>1&&!strcmp(argv[1],"--cfg")) {  // 0: Control Flow Guard and shadow stacks off in this process
         PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY p={0};
         if(!GetProcessMitigationPolicy(GetCurrentProcess(),ProcessControlFlowGuardPolicy,&p,sizeof p)) return 3;
-        DWORD ss=0;  // (ProcessUserShadowStackPolicy = 17: bit 0 EnableUserShadowStack)
-        if(!GetProcessMitigationPolicy(GetCurrentProcess(),(PROCESS_MITIGATION_POLICY)17,&ss,sizeof ss)) return 4;
+        DWORD ss=0;  // (ProcessUserShadowStackPolicy = 17: bit 0 EnableUserShadowStack; none on ARM64)
+        if(!GetProcessMitigationPolicy(GetCurrentProcess(),(PROCESS_MITIGATION_POLICY)17,&ss,sizeof ss)) ss=0;
         return p.EnableControlFlowGuard?1:(ss&1)?2:0;
     }
     assert(argc==2);
@@ -70,7 +70,10 @@ int main(int argc,char **argv) {
     assert(plat_proc_wait(plat_spawn(fastfail,NULL,false),true)==PLAT_PROC_FAST_FAIL);
     unsigned long cfg_error=1,ss_error=1;
     PlatProc nocfg=plat_spawn_no_cfg(cfg,NULL,false,&cfg_error,&ss_error);
-    assert(nocfg&&cfg_error==0&&ss_error==0&&plat_proc_wait(nocfg,true)==0);
+    assert(nocfg&&cfg_error==0&&plat_proc_wait(nocfg,true)==0);
+#ifdef __x86_64__
+    assert(ss_error==0);  // (an ARM64 child takes no shadow stack policy: started with CFG off alone)
+#endif
     reject_job=true;
     assert(plat_proc_wait(plat_spawn(code,NULL,false),true)==7);
     const char *sleeper[]={exe,"--sleep",NULL};
