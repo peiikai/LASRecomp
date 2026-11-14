@@ -387,7 +387,7 @@ int input_pad_family(void) {
     return env >= 0 ? env : pad_family;
 }
 
-// Our menus' face buttons: the family whose button names they show, and (Confirm button = Controller convention, #172)
+// Our menus' face buttons: the family whose button names they show, and (Button layout = Xbox / PlayStation, #172)
 // whose layout they use - Nintendo (0): the right button confirms, the bottom one goes back; Xbox / PlayStation
 // (1 / 2): the bottom one confirms, the right one goes back (runtime/ui/pad_nav.mm). "Button icons"
 // forced to a style wins (icons and menus agree); Auto: the controller `which` that pressed (0, or not a connected

@@ -1,7 +1,7 @@
 // Control remapping (runtime/hle/bindings.c): which controller button / key drives each Switch input. Edited from
 // the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in larecomp.ini.
 // Menus (the overlay, the start screen) never use these, so no binding can lock the player out: they follow the
-// game's layout, or the controller's own (Confirm button; runtime/ui/pad_nav.h). The controller's shortcuts that open
+// game's layout, or the controller's own (Button layout; runtime/ui/pad_nav.h). The controller's shortcuts that open
 // the overlay are bindings too (BIND_MENU_*, #591: Home also opens Steam's and other launchers' overlays); F1 and Esc
 // always open it, and the last controller shortcut can't be cleared.
 #pragma once
