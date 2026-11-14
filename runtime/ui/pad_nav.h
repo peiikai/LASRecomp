@@ -2,7 +2,7 @@
 // The menus read ImGuiKey_GamepadFaceDown as "confirm" and ImGuiKey_GamepadFaceRight as "back" (as ImGui's own
 // navigation does). Which physical button each one is: the Controls tab's "Button layout" (g_settings.face_by_label),
 // which the game's A/B follow too. Switch (default): the right button confirms and the bottom one goes back on every
-// pad, as in the game. As labeled (#172, input_menu_family in runtime/hle/input.c): Xbox / PlayStation / generic pads
+// pad, as in the game. Xbox / PlayStation (#172, input_menu_family in runtime/hle/input.c): Xbox / PlayStation / generic pads
 // confirm with the bottom button and go back with the right one, Nintendo pads the other way round. The prompts' names
 // follow the same choice. The player's game bindings never apply here.
 #pragma once

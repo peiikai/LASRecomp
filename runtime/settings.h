@@ -76,7 +76,7 @@ typedef struct {
     bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports): runtime/nvn/texpatch.c
-    // Button layout "As labeled": on Xbox / PlayStation pads the game's A/B/X/Y follow the buttons' labels, not the
+    // Button layout "Xbox / PlayStation": on Xbox / PlayStation pads the game's A/B/X/Y follow the buttons' labels, not the
     // Switch's positions, and our menus confirm with the bottom button (runtime/ui/pad_nav.mm)
     bool face_by_label;
                          // positions (bottom = A, right = B, left = X, top = Y): runtime/hle/bindings.c bind_pad_host

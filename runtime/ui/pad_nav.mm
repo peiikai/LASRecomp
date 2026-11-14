@@ -9,7 +9,7 @@
 static std::atomic<SDL_JoystickID> g_last_pad{0};
 
 // Does the bottom button confirm for a pad of layout family `fam`? Button layout "Switch" (the default): never - the
-// right one confirms, as in the game. "As labeled": Xbox / PlayStation / generic pads (#172), as the game's A then is.
+// right one confirms, as in the game. "Xbox / PlayStation": Xbox / PlayStation / generic pads (#172), as the game's A then is.
 static bool south_confirms(int fam) { return g_settings.face_by_label && fam != 0; }
 
 ImGuiKey ui_pad_key(SDL_JoystickID which, Uint8 button, bool down) {

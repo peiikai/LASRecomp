@@ -373,11 +373,11 @@ extern "C" void controls_tab_draw(float scale) {
     {
         // One choice for the game and our menus: two separate ones let the bottom button confirm in our menus while
         // it was the Switch's B in the game
-        static const char *const names[] = {LN("Switch"), LN("As labeled")};
+        static const char *const names[] = {LN("Switch"), LN("Xbox / PlayStation")};
         int i = g_settings.face_by_label;
         if (opt_choice("Button layout", &i, names, 2, 0,
-                       "Switch keeps the Switch's button positions, so the right button confirms. As labeled makes A, "
-                       "B, X and Y on Xbox and PlayStation controllers work as printed, so the bottom button confirms. "
+                       "Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation "
+                       "makes A, B, X and Y on those controllers work as printed, so the bottom button confirms. "
                        "Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected."))
             g_settings.face_by_label = i != 0;
     }
