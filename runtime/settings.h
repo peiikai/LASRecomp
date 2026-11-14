@@ -18,8 +18,6 @@ enum { SHADOW_OFF = 0, SHADOW_HALF, SHADOW_DEFAULT, SHADOW_2X, SHADOW_3X, SHADOW
 enum { FPS_TARGET_60 = 0, FPS_TARGET_30 = 1, FPS_TARGET_MIXED = 2 };  // Internal FPS target (pace.c pace_target_30)
 enum { AO_SWITCH = 0, AO_HIGH = 1, AO_OFF = 2 };  // the game's ambient occlusion: the Switch's size, up to twice it (output_scale_ao), or none
 enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTATION = 3 };
-// Which face button confirms in our own menus (runtime/ui/pad_nav.mm); the game's input is never affected
-enum { MENU_CONFIRM_GAME = 0, MENU_CONFIRM_CONTROLLER = 1 };
 enum { DPAD_NOTHING = 0, DPAD_ITEMS = 1, DPAD_MOVE = 2 };
 enum { TIMER_POS_LEFT = 0, TIMER_POS_RIGHT = 1 };  // the run timer's corner (bottom left / right)
 enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
@@ -78,8 +76,9 @@ typedef struct {
     bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports): runtime/nvn/texpatch.c
-    int menu_confirm;    // MENU_CONFIRM_*: game layout (right confirms, bottom goes back) or the controller's convention
-    bool face_by_label;  // Xbox / PlayStation pads: the game's A/B/X/Y follow the buttons' labels, not the Switch's
+    // Button layout "As labeled": on Xbox / PlayStation pads the game's A/B/X/Y follow the buttons' labels, not the
+    // Switch's positions, and our menus confirm with the bottom button (runtime/ui/pad_nav.mm)
+    bool face_by_label;
                          // positions (bottom = A, right = B, left = X, top = Y): runtime/hle/bindings.c bind_pad_host
     bool inv_keys;       // randomizer: show every dungeon's keys on the pause menu's Items page
     bool tracker;        // randomizer: check tracker on the pause menu's Map page
