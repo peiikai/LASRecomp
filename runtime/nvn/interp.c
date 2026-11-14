@@ -531,6 +531,7 @@ static const char *const cut_name[9] = {"level/forced", "no previous frame", "fe
 
 static double img_replay_ms = -1, img_compose_ms = -1;  // (moving averages: an in-between's GPU time)
 static double img_game_ms = -1;  // (the game's own GPU time a frame when those were measured)
+static double img_cpu_ms = -1;   // (moving average: an in-between's replay on the render thread, ms)
 static double img_replay_acc;    // (this in-between's replay so far: it can be several submissions)
 static pthread_mutex_t img_lock = PTHREAD_MUTEX_INITIALIZER;
 // Both take the GPU's busy time, not a command buffer's start to end: that span also holds the time it sat behind the
@@ -573,25 +574,54 @@ double interp_image_gpu_ms(void) {
     return r + (c > 0 ? c : 0);
 }
 
+// Metal's presenter (metal.m ip_tick): an image to the window at every vsync, the game's or an in-between, with the
+// overlay - GPU work of its own, on its own queue, that neither the game's GPU time nor an in-between's holds (at
+// 5120x1440 and 120 Hz two of them a game frame). Its spans overlap the game's work and only grow with it, so the
+// shortest of the last 120 is taken for an image's cost. (Vulkan presents inline: its window images are counted.)
+static double pres_min_cur = 1e9, pres_min_prev = -1;
+static int pres_seen;
+static _Atomic int pres_n;  // (images presented since the budget last looked)
+void interp_present_gpu(double ms) {
+    pthread_mutex_lock(&img_lock);
+    if (ms > 0 && ms < pres_min_cur) pres_min_cur = ms;
+    if (++pres_seen >= 120) pres_min_prev = pres_min_cur, pres_min_cur = 1e9, pres_seen = 0;
+    pthread_mutex_unlock(&img_lock);
+    atomic_fetch_add(&pres_n, 1);
+}
+
 // How many of a game frame's mids in-betweens fit in the GPU time its interval leaves (interval_ms: the game's frame
 // time). The game's own frames come first: made anyway, in-betweens held it at 30 (5120x1440 on an M3 Max: the game
-// 13 ms a frame, an in-between 7 + 3 ms).
+// 13 ms a frame, an in-between 7 + 3 ms). They're made in 85% of the interval and kept in 92%: one rule both ways sat
+// at its line (an M3 Max at 5120x1440, game 6.5 ms and an in-between 6.5, on and off every few seconds).
 // The estimate is GPU time, and that depends on the GPU's clock, which follows its load: with in-betweens off, an
 // M3 Max clocked down until the game's own frame took 13 of its 16.7 ms (GPU busy 80-90%, more time for the game
 // alone than the game and its in-betweens had taken at 35%), and the budget saw no room and stayed off. So when the
 // estimate says none fit, in-betweens are tried for real now and then: one a game frame for 2 s (a sustained load
 // the clock comes up for), kept while the game holds its own rate and one more each 2 s it does (up to all; one
-// fewer again, and no more, when the last one added was too many), off when its frames fall behind - the next try
-// later each time (1 s, doubling up to 32 s). A frame over 100 ms ends a try at once: all three in-betweens of a
-// 30 fps game at 4x on an M3 Max (31 ms each) took the game to 12 fps.
-// LARECOMP_INTERP_GPU_BUDGET=0: all made.
-#define TRY_FRAMES 120   // (game frames) a try's length
+// fewer again, and no more, when the last one added was too many), off when its frames fall behind. The next try
+// waits longer each time, 1 s doubling to 8 s (at 32 s, failed tries in a heavy place kept a lighter one at 60 for
+// half a minute), and 1 s again after a level change, a settings change or a pause of a second or more (the window
+// hidden: the clock went down). A frame over 100 ms ends a try at once: all three in-betweens of a 30 fps game at 4x
+// on an M3 Max (31 ms each) took the game to 12 fps.
+// The render thread has a budget too (the same 85% / 92% of the interval): its own time a game frame, less the
+// replays, and an in-between's replay. Without it the GPU's budget made in-betweens the render thread couldn't (an
+// M3 Max at 5120x1440, 800 draws a frame: the game thread waited for it, the frame pacer went to 30). And no more
+// in-betweens than the game's 60 gets (one at 120 Hz): at 30, three a frame kept the render thread too busy for the
+// game ever to get back to 60. LARECOMP_INTERP_GPU_BUDGET=0: all made.
+#define TRY_FRAMES 120   // (game frames) a try's length, and the window late frames are counted in
 #define TRY_LATE 4       // late game frames a try may have (the clock coming up)
-#define KEEP_LATE 6      // ... and kept in-betweens in any TRY_FRAMES
+#define KEEP_LATE 2      // ... and kept in-betweens in any TRY_FRAMES (more: a stutter that shows)
+static _Atomic bool budget_reset;
+void interp_budget_reset(void) { atomic_store(&budget_reset, true); }
 int interp_gpu_allowed(int mids, double interval_ms) {
     static int budget_on = -1;
     if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
     if (mids <= 0 || !budget_on) return mids;
+    {   // no more than the game's own 60 gets
+        int m60 = (int)lround((mids + 1) * 16.667 / fmin(fmax(interval_ms, 16.667), 50)) - 1;
+        if (m60 < 1) m60 = 1;
+        if (mids > m60) mids = m60;
+    }
     // the game's frames, timed here (both backends call this once a game frame): late is over 1.5 of its own interval
     static uint64_t last;
     uint64_t now = plat_now_ns();
@@ -601,20 +631,59 @@ int interp_gpu_allowed(int mids, double interval_ms) {
     bool slow = pace_is_slow();  // (the game held in its 30 fps mode)
     int late = gap > 100.0 ? TRY_LATE + 1 : gap > (slow ? 50.0 : 25.0);
     enum { EST, TRYING, KEPT };
-    static int state = EST, n, nlate, wait, wait_for = 60, made, cap;
+    static int state = EST, n, nlate, wait, wait_for = 60, made, cap, on;
     static bool slow_at_start;
+    static uint64_t win_t0;  // (when the current TRY_FRAMES window started)
+    {   // a new situation: the next try soon (a level change, a setting, a pause)
+        extern const char *game_level_name(void);
+        static char level[64];
+        const char *lv = game_level_name();
+        bool fresh = atomic_exchange(&budget_reset, false) || gap > 1000.0;
+        if (strncmp(lv, level, sizeof level - 1)) strlcpy(level, lv, sizeof level), fresh = true;
+        if (fresh) {
+            wait_for = 60, wait = 0;
+            if (gap > 1000.0) late = 0, n = nlate = 0, win_t0 = now;  // (the pause isn't the game falling behind)
+        }
+    }
+    double rcpu = -1;  // the render thread's time for the game's frame (ms, moving average; -1: no render thread)
+    {
+        extern uint64_t rq_render_cpu_ns(void);
+        static uint64_t last_rc, last_rp;
+        static double avg = -1;
+        uint64_t rc = rq_render_cpu_ns(), rp = interp_replay_ns(now);
+        if (rc && last_rc && rc > last_rc && gap < 100.0) {
+            double ms = (rc - last_rc) / 1e6 - (rp > last_rp ? (rp - last_rp) / 1e6 : 0);
+            if (ms < 0) ms = 0;
+            avg = avg < 0 ? ms : avg + (ms - avg) * 0.1;
+        }
+        last_rc = rc, last_rp = rp;
+        rcpu = rc ? avg : -1;
+    }
+    double pres;  // the presenter's GPU time since the last game frame
+    {
+        int np = atomic_exchange(&pres_n, 0);
+        pthread_mutex_lock(&img_lock);
+        double m = pres_min_prev > 0 ? pres_min_prev : pres_min_cur < 1e9 ? pres_min_cur : 0;
+        pthread_mutex_unlock(&img_lock);
+        pres = m * (np < 6 ? np : 6);
+    }
     if (state == TRYING || state == KEPT) {
         n++, nlate += late;
         bool fell = (state == TRYING ? nlate > TRY_LATE : nlate > KEEP_LATE) || (slow && !slow_at_start);
+        // and its rate over the window: frames all a little slow are none of them late (an RTX 3080 Ti at 4x: 18 ms
+        // frames, the game at 56 for 8 s with one in-between a frame kept)
+        double rate = n >= TRY_FRAMES && now > win_t0 ? n / ((now - win_t0) / 1e9) : 0;
+        if (n >= TRY_FRAMES && rate < 0.95 * (slow ? 30 : 60)) fell = true;
         if (fell && state == KEPT && made > 1 && !(slow && !slow_at_start)) {  // (the last one added was one too many)
-            made--, cap = made, n = nlate = 0;
+            made--, cap = made, n = nlate = 0, win_t0 = now;
         } else if (fell) {
+            wait_for = wait_for * 2 > 480 ? 480 : wait_for * 2;
             static int said;
             if (said++ < 20)
-                LOG("[interp] in-betweens %s: the game fell behind (%d late frames in %d), off - next try in %d s\n",
-                    state == TRYING ? "tried" : "kept", nlate, n, wait_for * 2 / 60);
-            wait_for = wait_for * 2 > 1920 ? 1920 : wait_for * 2;
-            state = EST, wait = 0;
+                LOG("[interp] in-betweens %s: the game fell behind (%d late frames in %d, %.1f/s), off - next try in %d "
+                    "frames\n", state == TRYING ? "tried" : "kept", nlate, n,
+                    now > win_t0 ? n / ((now - win_t0) / 1e9) : 0.0, wait_for);
+            state = EST, wait = 0, on = 0;
         } else if (n >= TRY_FRAMES) {
             if (state == TRYING) {
                 static int said;
@@ -622,7 +691,7 @@ int interp_gpu_allowed(int mids, double interval_ms) {
                 wait_for = 60;
             }
             if (made < cap) made++;
-            state = KEPT, n = nlate = 0;
+            state = KEPT, n = nlate = 0, win_t0 = now;
         }
         if (state != EST) return made < mids ? made : mids;
     }
@@ -630,12 +699,19 @@ int interp_gpu_allowed(int mids, double interval_ms) {
     double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
     double D = fmin(fmax(interval_ms, 16.667), 50);
     if (game < 0 || img <= 0) return mids;
-    double left = 0.9 * D - game;
+    double frac = on ? 0.92 : 0.85;
+    double left = frac * D - game - pres;
     int allowed = left > 0 ? (int)(left / img) : 0;
+    if (rcpu >= 0 && img_cpu_ms > 0) {  // (the render thread's)
+        double cleft = frac * D - rcpu;
+        int c = cleft > 0 ? (int)(cleft / img_cpu_ms) : 0;
+        if (c < allowed) allowed = c;
+    }
     if (allowed > mids) allowed = mids;
+    on = allowed;
     if (allowed > 0) { wait = 0; return allowed; }
     if (++wait < wait_for) return 0;
-    state = TRYING, n = nlate = 0, slow_at_start = slow, made = 1, cap = mids;
+    state = TRYING, n = nlate = 0, slow_at_start = slow, made = 1, cap = mids, win_t0 = now;
     return 1;
 }
 
@@ -1296,6 +1372,7 @@ void interp_replay_end(void) {
     atomic_store(&rp_since, 0);
     s_replays++;
     s_replay_cpu += d / 1e6;
+    img_cpu_ms = img_cpu_ms < 0 ? d / 1e6 : img_cpu_ms + (d / 1e6 - img_cpu_ms) * 0.1;
     if (d / 1e6 > s_replay_cpu_max) s_replay_cpu_max = d / 1e6;
 }
 
@@ -1462,11 +1539,12 @@ void interp_log_stats(void) {
         if (s_cuts[i]) o += snprintf(cuts + o, sizeof cuts - (size_t)o, " %s %llu", cut_name[i], (unsigned long long)s_cuts[i]);
     LOG("[interp] %s: %.1f game frames/s, draws %.0f/frame matched %.1f%% (by object %.0f/f, by content %.0f/f, by order %.1f/f, new objects %.1f/f), buffers blended %.0f/f jumps %.0f/f (+%.0f/f with their class), toggling elements %.0f/image, whole-number %.0f, wraps %.1f, discontinuities %.1f, lists switched %.1f, rotations %.0f (switched %.1f), split buffers %.1f/f, reused %.0f/image | images "
         "%.1f/s planned (in-between %.1f/s), late %llu, skipped %llu, gave way %llu, no GPU time %llu | replay cpu %.2f ms avg %.2f max, gpu %.2f ms; "
-        "present pass gpu %.2f ms; prep %.2f ms/f | latency %.1f ms | cuts:%s\n",
+        "present pass gpu %.2f ms; window image gpu %.2f ms; prep %.2f ms/f | latency %.1f ms | cuts:%s\n",
         game_level_name(), n / dt, s_draws / n, s_draws ? 100.0 * s_matched / s_draws : 0, s_id_pairs / n, s_content_pairs / n, s_order_pairs / n, s_new_objects / n, s_blended_cbs / n, s_cut_cbs / n, s_class_snaps / n, s_replays ? (double)s_toggled / s_replays : 0, s_replays ? (double)s_integral / s_replays : 0, s_replays ? (double)s_wraps / s_replays : 0, s_replays ? (double)s_discont / s_replays : 0, s_replays ? (double)s_onoff / s_replays : 0,
         s_replays ? (double)s_rot_blocks / s_replays : 0, s_replays ? (double)s_rot_switch / s_replays : 0, (double)s_split / n, s_replays ? (double)s_reused / s_replays : 0,
         s_shots / dt, s_mids / dt, (unsigned long long)s_late, (unsigned long long)s_skipped, (unsigned long long)s_gave_way, (unsigned long long)s_no_gpu,
         s_replays ? s_replay_cpu / s_replays : 0, s_replay_cpu_max, gn ? s_replay_gpu / gn : 0, cn ? s_compose_gpu / cn : 0,
+        pres_min_prev > 0 ? pres_min_prev : 0,
         s_prep / n, s_frames ? s_L / n : 0, o ? cuts : " none");
     {   extern void renderer_interp_geo_stats(uint64_t *binds, uint64_t *differed, uint64_t *missed);
         uint64_t gb, gd, gm;

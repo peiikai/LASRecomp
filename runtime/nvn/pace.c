@@ -207,6 +207,10 @@ void pace_settings_changed(const char *what) {
     pace_hitch(what[0] == 'r' ? "a resolution setting change" : what[0] == 'u' ? "an upscaler setting change"
                                                                                : "an anti-aliasing setting change");
     __atomic_store_n(&reset_what, what, __ATOMIC_RELEASE);
+#ifndef PACE_TEST
+    extern void interp_budget_reset(void);  // (frame interpolation's GPU budget: interp.c)
+    interp_budget_reset();
+#endif
 }
 
 static int try_60;
@@ -315,6 +319,16 @@ void pace_frame(void) {
     uint64_t now = plat_now_ns(), w = g_blocked_ns, tcpu = plat_thread_cpu_ns(), rcpu = rq_render_cpu_ns();
     slow_frame_present(now, tcpu);  // (slowframe.c: the "[slow]" line of a frame over LARECOMP_SLOW_FRAME_MS)
     uint64_t p = now - last, wt = w - last_wait, tc = tcpu - last_tcpu, rc = rcpu - last_rcpu;
+#ifndef PACE_TEST
+    {   // (frame interpolation's replays on the render thread: extra images, not the game's frame - counted, the 30 fps
+        // hold never let go: three in-betweens a game frame there kept the render thread too busy for 60 to look fine)
+        extern uint64_t interp_replay_ns(uint64_t now);
+        static uint64_t last_rp;
+        uint64_t rp = interp_replay_ns(now), drp = last_rp && rp > last_rp ? rp - last_rp : 0;
+        last_rp = rp;
+        rc = rc > drp ? rc - drp : 0;
+    }
+#endif
     bool first = !last;
     last = now, last_wait = w, last_tcpu = tcpu, last_rcpu = rcpu;
     // GPU time per frame (pace_gpu_ns: the backend's GPU timer, cumulative; -1 without one), moving average (~20 frames).

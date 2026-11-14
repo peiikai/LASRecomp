@@ -2010,10 +2010,10 @@ static void ip_tick(uint64_t tp) {
     }
     int b = best;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
-        (void)done;
         pthread_mutex_lock(&sl_mx);
         sl_readers[b]--;
         pthread_mutex_unlock(&sl_mx);
+        if (done.GPUEndTime > done.GPUStartTime) interp_present_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3);  // (the budget)
     }];
     if (shot) {
         id<MTLTexture> s = shot;

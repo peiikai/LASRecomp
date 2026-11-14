@@ -74,6 +74,8 @@ void interp_replay_gpu(double ms);
 void interp_compose_gpu(double ms);
 double interp_image_gpu_ms(void);  // an in-between's GPU time, replay and compose (moving average; -1: none yet)
 int interp_gpu_allowed(int mids, double interval_ms);  // (render thread, once a game frame) of mids in-betweens, how many fit
+void interp_budget_reset(void);       // (any thread) a setting changed the GPU's load: the budget's next try soon
+void interp_present_gpu(double ms);   // (Metal's presenter, completion handlers) an image to the window: its GPU span
 uint64_t interp_replay_ns(uint64_t now);
 void interp_log_stats(void);  // (render thread, per game frame) a line every LARECOMP_INTERP_LOG seconds (default 2)
 void interp_note_skipped(void);  // (stats) an in-between not made: no free image slot
