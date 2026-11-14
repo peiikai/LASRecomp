@@ -1674,6 +1674,7 @@ enum { K_GAME, K_MID, K_REPEAT };
 #define NSLOT 16
 static id<MTLTexture> sl_tex[NSLOT];
 static uint64_t sl_at[NSLOT], sl_frame[NSLOT];
+static float sl_uv[NSLOT][4];  // (the game image's place in the slot's image, for the menu: not the bars beside it)
 static int sl_state[NSLOT], sl_kind[NSLOT], sl_readers[NSLOT];
 static int ip_shown = -1;  // the slot on screen (the presenter's latest)
 // LARECOMP_INTERP_TRACE=1 (debug): a line for each image shown and anything out of the ordinary on its way to the
@@ -1721,6 +1722,8 @@ static int slot_claim(NSUInteger w, NSUInteger h, bool force) {
 
 static void slot_commit(id<MTLCommandBuffer> cb, int i, uint64_t at, uint64_t frame, int kind) {
     sl_at[i] = at, sl_frame[i] = frame, sl_kind[i] = kind;
+    double w = sl_tex[i].width, h = sl_tex[i].height;
+    sl_uv[i][0] = (float)(pl_vx / w), sl_uv[i][1] = (float)(pl_vy / h), sl_uv[i][2] = (float)(pl_vw / w), sl_uv[i][3] = (float)(pl_vh / h);
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
         if (done.error) LOG("[trace] image's command buffer error (slot %d, frame %llu): %s\n", i, (unsigned long long)frame,
                             done.error.localizedDescription.UTF8String);
@@ -1866,6 +1869,8 @@ static void ip_tick(uint64_t tp) {
     sl_readers[best]++;
     id<MTLTexture> src = sl_tex[best];
     uint64_t frame = sl_frame[best];
+    float scene_uv[4];
+    memcpy(scene_uv, sl_uv[best], sizeof scene_uv);
     pthread_mutex_unlock(&sl_mx);
 
     // the window's next image (up to 3 in flight: waits for one to come off screen at most)
@@ -1932,8 +1937,9 @@ static void ip_tick(uint64_t tp) {
         [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [enc endEncoding];
         if (!pass) {
-            static const float whole[4] = {0, 0, 1, 1};  // (the menu's copy of the game image: this slot's own image)
-            menu_set_scene(from, whole);
+            // (the menu's copy of the game image: this slot's, the game's part of it - the whole image held the black
+            // bars of a 16:9 game on a 32:9 display, and the open menu's glare guard took the scene for dark: a shade darker)
+            menu_set_scene(from, scene_uv);
             pthread_mutex_lock(&menu_mx);
             menu_render(dev, cb, dst);
             pthread_mutex_unlock(&menu_mx);
