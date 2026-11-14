@@ -4,6 +4,7 @@
 // takes gpu ms (pipelined: the frame is ready at the later of the two), then it is shown at the next vsync (60 Hz). Held,
 // pace.c's own cadence waits out the second vsync. Time is simulated (plat_now_ns / plat_sleep_until_ns), so a case
 // of minutes runs in milliseconds.
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -151,6 +152,35 @@ static int ipad_backs_off(int holds, int backs, double held_s, double lc, bool e
     return backs <= 4 && end && secs - lc > 30;  // (fewer tries each longer apart; the last hold lasting)
 }
 
+// An iPhone 15 Pro (2556x1179, MetalFX, 2026-11-14 log t=57-90): GPU 11.5-13 ms a frame at 60, the game thread ~4 ms. A
+// scene moment makes a few frames late (0.4 s at GPU 19 ms), Dynamic steps the render scale down, and the paced GPU's
+// clock drops: GPU 30-45 ms a frame for ~2.3 s (frames 50-66 ms, "game 27-39 ms against 13 on time"), then 11.5 again -
+// every 12 s here. The second of grace left the last 1.3 s of each fallout in the count (35 of 60 over, median 33) and
+// the game was held at 30 for 10 s each time, then a probe for 60 started it over. Must never hold.
+static void iphone_fallout(double t, int n, Frame *f) {
+    f->cpu = 4 + noise(1), f->gpu = 11.5 + noise(1), f->stall = 0, f->wait = 8.5;
+    double k = fmod(t, 12.0);
+    if (t > 3 && k < 0.4) f->gpu = 19 + noise(1);
+    else if (t > 3 && k < 2.7) {
+        static int last_k = -1;
+        int kk = (int)(t / 12.0);
+        if (kk != last_k) last_k = kk, pace_hitch("a render scale change");
+        f->gpu = 38 + noise(7);
+    }
+}
+// A GPU that doesn't fit 60 at any factor (25 ms a frame): Dynamic steps the render scale down every second from the
+// start to its floor (six steps), each a render scale change. The grace after a change lasts while frames are late,
+// but not for good: held within a few seconds of the last step, and for the rest.
+static void overload_steps(double t, int n, Frame *f) {
+    f->cpu = 4 + noise(1), f->gpu = 25 + noise(1), f->stall = 0, f->wait = 8.5;
+    static int last_k = -1;
+    int k = (int)t;
+    if (t < 6 && k != last_k) last_k = k, pace_hitch("a render scale change");
+}
+static int held_soon(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 1 && backs == 0 && end && lc < 12;  // (the last step at 5 s: held by 12 s, for the rest)
+}
+
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
 
@@ -189,6 +219,10 @@ static const Case cases[] = {
      ipad_fixed, ipad_back},
     {"iPad at a fixed resolution, busy-frame holds: GPU 11.8 ms held, 15-16 ms at 60 after a few seconds (must back off)",
      150, ipad_busy, ipad_backs_off},
+    {"iPhone: a late moment, Dynamic's step down, the paced GPU's fallout (GPU 30-45 ms for 2.3 s) every 12 s", 60,
+     iphone_fallout, never_held},
+    {"a GPU at 25 ms a frame, Dynamic stepping to its floor (a scale change a second for 6 s): held soon after, for good",
+     40, overload_steps, held_soon},
 };
 
 static int run(const Case *c) {

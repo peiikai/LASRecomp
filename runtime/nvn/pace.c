@@ -67,6 +67,15 @@
 //   spawned, a render scale change; or a frame over 100 ms) frames are left out of the count, late or busy;
 // - the frames over must be spread through the window (some in each quarter of it: 15 frames, 1/4 s at 60), not
 //   bunched as after a hitch nothing signalled.
+// A render scale change (Dynamic resolution's step, output_scale.c) is taken when frames are already late, and on a
+// paced GPU (a phone, a tablet: its clock follows the load) those late frames have a fallout - the game's own 30 fps
+// mode gives the GPU idle time, its clock drops, and the frames come 2-4 vsyncs apart for 1-2.5 s whatever the factor
+// (an iPhone 15 Pro at 0.90: game GPU 27-39 ms a frame against 13 on time, then 12.5 at a steady 30). The step
+// itself costs nothing (a raise with frames on time: 60.0 fps, no GPU waits) - but the fallout ran past the
+// second of grace, 35 of the next 60 frames were over, and the game was held at 30 for 10 s; then a probe for 60, a
+// late frame, a step, the fallout, 30 again. So after a render scale change the grace lasts until the frames have
+// settled - PACE_SETTLE_FRAMES in a row neither late nor busy - at least PACE_GRACE_NS and at most PACE_GRACE_MAX_NS:
+// a GPU that doesn't fit 60 at all is held once Dynamic stops stepping (at its floor, or its fit), as before.
 // Dynamic resolution's hold (output_scale.c) and this one meet: Dynamic held at 30 raises its factor while 30 fits, and a
 // GPU at half load clocks down (Turnip on a Retroid Pocket 5: G + W 17 ms at 360p held, 7 ms at 540p at 60), so the GPU
 // time above never comes under 13 ms - the way back was Dynamic's look for 60 at its floor, which only lowered the
@@ -95,6 +104,8 @@
 // under its time at that return (see above; the iPad's returns read 11.4-13.0 ms, half a ms apart).
 #define PACE_GPU_BACKOFF_UNDER_MS 2.0
 #define PACE_GRACE_NS 1000000000ull
+#define PACE_GRACE_MAX_NS 4000000000ull  // a render scale change's grace at most (see above)
+#define PACE_SETTLE_FRAMES 10            // ... ends once this many frames in a row are on time
 extern __thread uint64_t g_blocked_ns;  // kernel.c: this thread's time blocked in waits / sleeps
 static bool pace_slow;
 static uint64_t stat_pace_over;
@@ -375,18 +386,28 @@ void pace_frame(void) {
     int b = cost > 16.2, o = b || late;
     stat_pace_over += o;
     // Within PACE_GRACE_NS of a hitch: left out (the window keeps the frames before it). Logged when the grace ends.
+    // After a render scale change: until the frames have settled (see above).
     static uint64_t grace_of;  // the hitch the left-out frames below are from
-    static int ign_late, ign_busy, ign_n;
+    static int ign_late, ign_busy, ign_n, settled;  // (settled: frames on time in a row since that hitch)
     static const char *ign_why;
     uint64_t ha = __atomic_load_n(&hitch_at, __ATOMIC_ACQUIRE);
-    bool grace = ha && (int64_t)(now - ha) < (int64_t)PACE_GRACE_NS;
+    const char *hw = __atomic_load_n(&hitch_why, __ATOMIC_RELAXED);
+    if (ha && ha != grace_of) settled = 0;
+    settled = o ? 0 : settled + 1;
+    bool scale_change = hw && !strcmp(hw, "a render scale change");
+    bool grace = ha && ((int64_t)(now - ha) < (int64_t)PACE_GRACE_NS ||
+                        (scale_change && (int64_t)(now - ha) < (int64_t)PACE_GRACE_MAX_NS && settled < PACE_SETTLE_FRAMES));
     if ((ign_late || ign_busy) && (!grace || ha != grace_of)) {
-        LOG("[pace] left out %d of %d frames after %s: %d late, %d busy\n", ign_late + ign_busy, ign_n, ign_why,
+        char s[48] = "";
+        if (now - grace_of > PACE_GRACE_NS + 100000000ull)
+            snprintf(s, sizeof s, settled >= PACE_SETTLE_FRAMES ? " (%.1f s until frames settled)" : " (%.1f s, frames still late)",
+                     (now - grace_of) / 1e9);
+        LOG("[pace] left out %d of %d frames after %s%s: %d late, %d busy\n", ign_late + ign_busy, ign_n, ign_why, s,
             ign_late, ign_busy);
         ign_late = ign_busy = 0;
     }
     if (grace) {
-        if (ha != grace_of) grace_of = ha, ign_n = 0, ign_why = __atomic_load_n(&hitch_why, __ATOMIC_RELAXED);
+        if (ha != grace_of) grace_of = ha, ign_n = 0, ign_why = hw;
         ign_n++, ign_busy += b, ign_late += late && !b;
         if (!on) return;
         hold_cadence(hold_30(pace_slow));
