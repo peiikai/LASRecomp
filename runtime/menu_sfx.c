@@ -20,7 +20,7 @@ extern const char *g_romfs_dir;
 // speed through a low-pass - a deep, decaying roll; a near strike's crack a bomb's blast, lower; the crackle before a
 // strike the Buzz Blob's spark; see load_one)
 static const char *const g_names[MENU_SFX_N] = {"SE_SY_CURSOL_MOVE", "SE_SY_MENU_LR_MOVE", "SE_SY_DECIDE",
-                                                "SE_SY_BEEP", "SE_SY_CANCEL", "SE_SY_MENU_OPEN", "SE_SY_MENU_CLOSE",
+                                                "SE_SY_CANCEL", "SE_SY_MENU_OPEN", "SE_SY_MENU_CLOSE",
                                                 "SE_MAP_MATFACE_RUMBLE", "SE_MAP_BOMB_EXPLO", "SE_ENE_BUZZBLOB_SPARK"};
 
 #define RATE 48000
