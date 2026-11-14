@@ -71,7 +71,7 @@ int main(int argc,char **argv) {
     unsigned long cfg_error=1,ss_error=1;
     PlatProc nocfg=plat_spawn_no_cfg(cfg,NULL,false,&cfg_error,&ss_error);
     int nocfg_exit=nocfg?plat_proc_wait(nocfg,true):-2;
-    printf("CFG-off start: cfg error %lu, shadow stack error %lu, child %d\n",cfg_error,ss_error,nocfg_exit);
+    fprintf(stderr,"CFG-off start: cfg error %lu, shadow stack error %lu, child %d\n",cfg_error,ss_error,nocfg_exit);fflush(stderr);
     assert(nocfg&&cfg_error==0&&nocfg_exit==0);
 #ifdef __x86_64__
     assert(ss_error==0);  // (an ARM64 child takes no shadow stack policy: started with CFG off alone)
