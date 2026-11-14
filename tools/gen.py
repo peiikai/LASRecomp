@@ -23,6 +23,7 @@ import chunk_bounds
 import lifter
 from lifter import CANON, Insn, Lifter, Unsupported, bits, emit_asm_batch, gaddr, hx, sext
 from nso import Nso, R_AARCH64_RELATIVE
+import win_longjmp  # (Windows: unicorn's longjmp, #779)
 
 SCRATCH_MEM = 0x7300000000
 
@@ -535,35 +536,6 @@ def write_if_changed(path, text):
         f.write(text)
 
 
-def windows_mitigations():
-    """Windows: the CPU this runs on and whether Control Flow Guard and shadow stacks are on in this process, for the
-    log (unicorn's longjmp fails with either: runtime/platform/windows.c spawn_child, #337, #779). '' elsewhere."""
-    if os.name != 'nt':
-        return ''
-    try:
-        import ctypes
-        from ctypes import wintypes
-        k = ctypes.WinDLL('kernel32', use_last_error=True)
-        k.GetCurrentProcess.restype = wintypes.HANDLE
-        me = k.GetCurrentProcess()
-        machine = {0x8664: 'x64', 0xAA64: 'arm64'}
-        proc, native = wintypes.USHORT(), wintypes.USHORT()
-        host = 'x64'
-        if hasattr(k, 'IsWow64Process2') and k.IsWow64Process2(me, ctypes.byref(proc), ctypes.byref(native)):
-            host = machine.get(native.value, hex(native.value))
-        this = machine.get(0x8664 if platform.machine().lower() in ('amd64', 'x86_64') else 0xAA64)
-        out = [f'{this} on {host}' + (' (emulated)' if this != host else '')]
-        for name, policy, on in (('Control Flow Guard', 7, 1), ('shadow stacks', 17, 1), ('strict shadow stacks', 17, 0x10)):
-            flags = wintypes.DWORD()
-            if k.GetProcessMitigationPolicy(me, policy, ctypes.byref(flags), ctypes.sizeof(flags)):
-                out.append(f'{name} {"on" if flags.value & on else "off"}')
-            else:
-                out.append(f'{name} unknown (error {ctypes.get_last_error()})')
-        return ', '.join(out)
-    except Exception as e:  # (only for the log)
-        return f'mitigations unknown ({e})'
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('name')
@@ -585,7 +557,7 @@ def main():
     args = ap.parse_args()
     lifter.DYN_BASE = args.dyn_base
     # (first: a generator that ends early still shows it started, and where it ran)
-    where = windows_mitigations()
+    where = ', '.join(x for x in (win_longjmp.describe(), win_longjmp.apply()) if x)
     print(f'{args.name}: started' + (f' ({where})' if where else ''), file=sys.stderr, flush=True)
 
     t0 = time.time()

@@ -570,6 +570,18 @@ jobs:
         uses: ./.github/actions/ios-gamebuild-test
         with:
           shell: msys2 {0}
+      # (the game code generator's unicorn, as lasgen is built: an x64 python.org Python; last, so its PATH
+      # change touches no step above)
+      - uses: actions/setup-python@v5
+        id: uc-py
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: unicorn's longjmp in the generator (#779)
+        shell: pwsh
+        run: |
+          & '${{ steps.uc-py.outputs.python-path }}' -m pip install -q unicorn==2.1.4
+          & '${{ steps.uc-py.outputs.python-path }}' tools/test_win_longjmp.py
 
   # Windows on ARM (experimental builds): the same app build and Windows tests natively on an ARM64 runner, MSYS2
   # CLANGARM64 as tools/setup_windows.ps1 sets it up there. Left out: the x86 SIMD rounding test (-mfma) and the shader
@@ -653,6 +665,18 @@ jobs:
         uses: ./.github/actions/ios-gamebuild-test
         with:
           shell: msys2 {0}
+      # (the game code generator's unicorn, as lasgen is built: an x64 python.org Python, under x64 emulation here; last, so its PATH
+      # change touches no step above)
+      - uses: actions/setup-python@v5
+        id: uc-py
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: unicorn's longjmp in the generator (#779)
+        shell: pwsh
+        run: |
+          & '${{ steps.uc-py.outputs.python-path }}' -m pip install -q unicorn==2.1.4
+          & '${{ steps.uc-py.outputs.python-path }}' tools/test_win_longjmp.py
 
   # Android (arm64): the app (android/, libmain.so with the moving guest window) builds with the NDK, and the APK holds
   # only the runtime, SDL, shaderc and the shipped fonts and icon - nothing of the game, whose code is built on the

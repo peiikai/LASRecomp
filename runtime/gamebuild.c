@@ -76,7 +76,7 @@ static PlatProc spawn_proc(char **argv, const char *log, bool generator) {
     if (!g_quitting) {
 #ifdef _WIN32
         // The generator runs with Control Flow Guard and shadow stacks off even when Windows forces them on for every
-        // program (#337, #779)
+        // program (#337; tools/win_longjmp.py, #779)
         if (generator) {
             unsigned long error = 0, ss_error = 0;
             p = plat_spawn_no_cfg((const char *const *)argv, log, false, &error, &ss_error);

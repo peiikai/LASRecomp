@@ -771,7 +771,9 @@ typedef struct { HANDLE process, job; } WinProcess;
 // policies: they win over the system-wide Exploit protection settings, which the exe's header (tools/pe_no_cfg.py)
 // does not. unicorn (the generator's jump tables) leaves the code it generated with longjmp from a setjmp that saved
 // no frame, and VCRUNTIME140's longjmp stops the process (0xC0000409) for that when CFG is on (#337); with a shadow
-// stack it unwinds instead (RtlUnwindEx), through generated code that has no unwind data (#779).
+// stack it would unwind instead (RtlUnwindEx), through generated code that has no unwind data. Under x64 emulation
+// on ARM that check runs even with CFG off, so the generator replaces unicorn's longjmp (tools/win_longjmp.py, #779):
+// a plain register restore, which needs the shadow stacks off.
 #ifndef PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY
 #define PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY 0x00020007
 #endif
