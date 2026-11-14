@@ -776,8 +776,12 @@ static void dyn_update(double now, double game_ms, double win_ms, double lines) 
         double mean4 = (g_down_gw[0] + g_down_gw[1] + g_down_gw[2] + g_down_gw[3]) / 4;
         bool missing = gpu ? avg_gpu > budget / 0.87 : avg_dt > 20.0;
         g_down_fast_votes = missing ? g_down_fast_votes + 1 : 0;
+        // (the mean of the last four: not paced - a paced GPU's G + W reads near the budget at any factor with the frames
+        // on time (an iPhone 15 Pro at 1.00: 14.4-14.8 against 14.5), so there one late quarter second stepped it down by
+        // that mean: a 100 ms hitch and a late frame or two, 1.00 -> 0.90 with the median frame on time, into the window
+        // step's jump. A paced step down wants its late frames in 2 of the last 4 decisions, or missing 60 outright twice)
         must = __builtin_popcount(g_down_hist) >= DYN_DOWN_VOTES || g_down_fast_votes >= DYN_DOWN_FAST ||
-               (slow && g_down_gw[3] > 0 && mean4 > 0.95 * budget);
+               (slow && !paced && g_down_gw[3] > 0 && mean4 > 0.95 * budget);
     }
     // paced: the factor the frames were on time at (the fallout rule below; at 1.00 too - it was only noted under 1.00, so
     // the first late moment at 1.00 after a long time there had no on-time measure, and the fallout slid it 1.00 -> 0.70)

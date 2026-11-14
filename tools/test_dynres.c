@@ -623,6 +623,13 @@ int main(int argc, char **argv) {
         {.name = "iPhone at serious, the scene lighter at 200 s: climbs back a proven step at a time", .a = 2, .b = 12, .w = 3.2,
          .w1 = 1.6, .fifo = 1, .secs = 420, .lines = 1179, .start_paced = 1, .sag = 2.0, .pacer = 1, .pace_fit_ms = 10,
          .hold_clock = 1.9, .thermal = 2, .power = 0.70, .light_at = 200, .light = 0.75},
+        // the iPhone at 1.00 (2026-11-14 log, t=12: G 13.4 + W 0.9 at 1.00 fits, the clock at its top) with a scene moment
+        // every 20 s that makes a fifth of a second's frames late (a 100 ms hitch and a late frame or two, the median on
+        // time): it stepped 1.00 -> 0.90 on that one decision - the mean of the last four G + W read over 95% of the
+        // budget, as a paced GPU's always does near its fit - into the window step's jump. Must stay at 1.00
+        {.name = "iPhone 15 Pro at 1.00 fitting, a late moment every 20 s: no step on one", .a = 2.5, .b = 10.5, .w = 2.4,
+         .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 1.0, .start_paced = 1, .spike_every = 20,
+         .spike_s = 0.2, .spike_x = 1.3},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -734,6 +741,7 @@ int main(int argc, char **argv) {
     // slide to 0.70; now 0.75 / 0.80 / 0.85 / 0.90 10 s apart, each proven, the cut at 0.90, 0.85 from there)
     case 73: check(r.jumps_past_cut == 0 && r.f_end >= 0.80 && r.f_max_late <= 0.90 && r.fps_end > 58 && r.pace_holds <= 7,
                    "iPhone at serious, the scene lighter: climbs back a proven step at a time"); break;
+    case 74: check(r.f_min >= 0.95 && r.changes_settled == 0, "iPhone at 1.00, a late moment every 20 s: no step"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
