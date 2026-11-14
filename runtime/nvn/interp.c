@@ -575,14 +575,57 @@ double interp_image_gpu_ms(void) {
 
 // How many of a game frame's mids in-betweens fit in the GPU time its interval leaves (interval_ms: the game's frame
 // time). The game's own frames come first: made anyway, in-betweens held it at 30 (5120x1440 on an M3 Max: the game
-// 13 ms a frame, an in-between 7 + 3 ms). While none fit, one is made now and then all the same, so its cost is
-// measured again: the estimate stuck high otherwise (an M3 Max at 5120x1440, game down to 3 ms a frame after the
-// resolution went down, kept at none for minutes - the screen at 120 Hz showed each game frame twice). Every second
-// at first, then less often while that one still doesn't fit (up to every 16 s). LARECOMP_INTERP_GPU_BUDGET=0: all made.
+// 13 ms a frame, an in-between 7 + 3 ms).
+// The estimate is GPU time, and that depends on the GPU's clock, which follows its load: with in-betweens off, an
+// M3 Max clocked down until the game's own frame took 13 of its 16.7 ms (GPU busy 80-90%, more time for the game
+// alone than the game and its in-betweens had taken at 35%), and the budget saw no room and stayed off. So when the
+// estimate says none fit, in-betweens are tried for real now and then: one a game frame for 2 s (a sustained load
+// the clock comes up for), kept while the game holds its own rate and one more each 2 s it does (up to all; one
+// fewer again, and no more, when the last one added was too many), off when its frames fall behind - the next try
+// later each time (1 s, doubling up to 32 s). A frame over 100 ms ends a try at once: all three in-betweens of a
+// 30 fps game at 4x on an M3 Max (31 ms each) took the game to 12 fps.
+// LARECOMP_INTERP_GPU_BUDGET=0: all made.
+#define TRY_FRAMES 120   // (game frames) a try's length
+#define TRY_LATE 4       // late game frames a try may have (the clock coming up)
+#define KEEP_LATE 6      // ... and kept in-betweens in any TRY_FRAMES
 int interp_gpu_allowed(int mids, double interval_ms) {
     static int budget_on = -1;
     if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
     if (mids <= 0 || !budget_on) return mids;
+    // the game's frames, timed here (both backends call this once a game frame): late is over 1.5 of its own interval
+    static uint64_t last;
+    uint64_t now = plat_now_ns();
+    double gap = last ? (now - last) / 1e6 : 0;
+    last = now;
+    extern bool pace_is_slow(void);
+    bool slow = pace_is_slow();  // (the game held in its 30 fps mode)
+    int late = gap > 100.0 ? TRY_LATE + 1 : gap > (slow ? 50.0 : 25.0);
+    enum { EST, TRYING, KEPT };
+    static int state = EST, n, nlate, wait, wait_for = 60, made, cap;
+    static bool slow_at_start;
+    if (state == TRYING || state == KEPT) {
+        n++, nlate += late;
+        bool fell = (state == TRYING ? nlate > TRY_LATE : nlate > KEEP_LATE) || (slow && !slow_at_start);
+        if (fell && state == KEPT && made > 1 && !(slow && !slow_at_start)) {  // (the last one added was one too many)
+            made--, cap = made, n = nlate = 0;
+        } else if (fell) {
+            static int said;
+            if (said++ < 20)
+                LOG("[interp] in-betweens %s: the game fell behind (%d late frames in %d), off - next try in %d s\n",
+                    state == TRYING ? "tried" : "kept", nlate, n, wait_for * 2 / 60);
+            wait_for = wait_for * 2 > 1920 ? 1920 : wait_for * 2;
+            state = EST, wait = 0;
+        } else if (n >= TRY_FRAMES) {
+            if (state == TRYING) {
+                static int said;
+                if (said++ < 20) LOG("[interp] in-betweens tried with the GPU budget at none: the game held its rate, kept\n");
+                wait_for = 60;
+            }
+            if (made < cap) made++;
+            state = KEPT, n = nlate = 0;
+        }
+        if (state != EST) return made < mids ? made : mids;
+    }
     extern double pace_gpu_frame_ms(void);
     double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
     double D = fmin(fmax(interval_ms, 16.667), 50);
@@ -590,11 +633,9 @@ int interp_gpu_allowed(int mids, double interval_ms) {
     double left = 0.9 * D - game;
     int allowed = left > 0 ? (int)(left / img) : 0;
     if (allowed > mids) allowed = mids;
-    static int starved, probe_every = 60;  // (game frames)
-    if (allowed > 0) { starved = 0, probe_every = 60; return allowed; }
-    if (++starved < probe_every) return 0;
-    starved = 0;
-    if (probe_every < 960) probe_every *= 2;
+    if (allowed > 0) { wait = 0; return allowed; }
+    if (++wait < wait_for) return 0;
+    state = TRYING, n = nlate = 0, slow_at_start = slow, made = 1, cap = mids;
     return 1;
 }
 
