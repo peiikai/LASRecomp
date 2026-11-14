@@ -76,6 +76,15 @@
 // late frame, a step, the fallout, 30 again. So after a render scale change the grace lasts until the frames have
 // settled - PACE_SETTLE_FRAMES in a row neither late nor busy - at least PACE_GRACE_NS and at most PACE_GRACE_MAX_NS:
 // a GPU that doesn't fit 60 at all is held once Dynamic stops stepping (at its floor, or its fit), as before.
+// Resolution first (with Dynamic resolution on): while Dynamic can still lower the render scale (it is above its floor,
+// the Minimum resolution setting), frames the GPU makes late or slow don't hold the game at 30 - a lower resolution
+// fixes those, a hold doesn't (output_scale_dynamic_state; Dynamic steps down, several steps at once when frames
+// miss 60 outright). The hold comes once Dynamic is at its floor and frames still don't fit, or when the CPU is the
+// limit at any factor: the game thread's or the render thread's CPU time for a frame (tc, rc: real CPU time, not this
+// thread's busy time - 25 of the 35 "busy" frames of an iPhone's hold were the game thread waiting on the GPU) over
+// 16.2 ms in 12 of the window's 60 frames, which no resolution helps. With Dynamic off, or at a fixed resolution, the
+// hold is as before. Dynamic reads the CPU's count too (pace_cpu_frames): the CPU's late frames are no reason for a
+// step down, nor a hold of the CPU's a reason to probe for 60 at a lower resolution.
 // Dynamic resolution's hold (output_scale.c) and this one meet: Dynamic held at 30 raises its factor while 30 fits, and a
 // GPU at half load clocks down (Turnip on a Retroid Pocket 5: G + W 17 ms at 360p held, 7 ms at 540p at 60), so the GPU
 // time above never comes under 13 ms - the way back was Dynamic's look for 60 at its floor, which only lowered the
@@ -106,9 +115,12 @@
 #define PACE_GRACE_NS 1000000000ull
 #define PACE_GRACE_MAX_NS 4000000000ull  // a render scale change's grace at most (see above)
 #define PACE_SETTLE_FRAMES 10            // ... ends once this many frames in a row are on time
+#define PACE_CPU_MS 16.2                 // a frame the CPU alone made slow: the game thread's or the render thread's time over this
 extern __thread uint64_t g_blocked_ns;  // kernel.c: this thread's time blocked in waits / sleeps
 static bool pace_slow;
 static uint64_t stat_pace_over;
+static int ncpu;  // frames of the last 60 over by CPU time (see "Resolution first")
+int pace_cpu_frames(void) { return ncpu; }
 
 // Holds the game in its 30 fps mode (see above): the least number of extra vsyncs its frame controller may choose
 // (game manager +0x4e2, normally 0) is 1 while slow, the game's own value again after. Re-asserted every frame while held.
@@ -288,9 +300,11 @@ void pace_frame(void) {
     static int on = -1;
     if (on < 0) { const char *e = getenv("LARECOMP_PACE"); on = !e || atoi(e) != 0; }
     static uint64_t last, last_wait;
-    static uint8_t over[60];  // (bit 0: over - busy or late; bit 1: over by busy time)
+    static uint8_t over[60];  // (bit 0: over - busy or late; bit 1: over by busy time; bit 2: over by CPU time)
     static float recent[60];  // the last 60 frames' cost (ms at 60 fps)
     static int idx, nover, nbusy, calm, clear, backoff = 1;
+    static double rc_avg;     // the render thread's CPU time per frame, moving average (~20 frames; a period holds more or
+                              // less than one frame of its work)
     static bool late_hold;  // (the hold was started by frames shown late more than by busy ones)
     static uint64_t back_at;  // when frame pacing last went back to 60 (0: not yet)
     static bool try_back;     // (that was Dynamic's look for 60: a hold right after it keeps the backoff)
@@ -318,7 +332,7 @@ void pace_frame(void) {
         LOG("[pace] %s setting changed: back-off cleared, trying 60\n", reset);
         pace_slow = late_hold = false, backoff = 1, back_at = 0;
         clear = calm = cpu_clear = 0, scene = 0, gpu_said = 0;
-        nover = nbusy = 0;
+        nover = nbusy = ncpu = 0;
         memset(over, 0, sizeof over);
         memset(recent, 0, sizeof recent);
     }
@@ -326,7 +340,7 @@ void pace_frame(void) {
         LOG("[pace] dynamic resolution looks for 60: trying 60\n");
         pace_slow = late_hold = false, back_at = now, try_back = true, gpu_back = gpu_avg;
         clear = calm = cpu_clear = 0, gpu_said = 0;
-        nover = nbusy = 0;
+        nover = nbusy = ncpu = 0;
         memset(over, 0, sizeof over);
         memset(recent, 0, sizeof recent);
         pace_hitch("a try at 60");
@@ -385,6 +399,11 @@ void pace_frame(void) {
     bool late = !pace_slow && p >= 25000000ull && pace_scene();
     int b = cost > 16.2, o = b || late;
     stat_pace_over += o;
+    // Over by CPU time (see "Resolution first"): the game thread's CPU time for the frame less its second world step in
+    // the game's 30 fps mode (as `cost`), or the render thread's per frame
+    rc_avg = rc_avg ? rc_avg + (rc / 1e6 - rc_avg) * 0.05 : rc / 1e6;
+    double tcpu_ms = tc / 1e6 - (p > 25000000ull ? step2 : 0);
+    int c = tcpu_ms > PACE_CPU_MS || (rcpu && rc_avg > PACE_CPU_MS);
     // Within PACE_GRACE_NS of a hitch: left out (the window keeps the frames before it). Logged when the grace ends.
     // After a render scale change: until the frames have settled (see above).
     static uint64_t grace_of;  // the hitch the left-out frames below are from
@@ -414,8 +433,9 @@ void pace_frame(void) {
         return;
     }
     nover += o - (over[idx] & 1);
-    nbusy += b - (over[idx] >> 1);
-    over[idx] = (uint8_t)(o | b << 1);
+    nbusy += b - (over[idx] >> 1 & 1);
+    ncpu += c - (over[idx] >> 2);
+    over[idx] = (uint8_t)(o | b << 1 | c << 2);
     recent[idx] = (float)(late && p / 1e6 > cost ? p / 1e6 : cost);
     idx = (idx + 1) % 60;
     if (!on) return;  // (measured and counted all the same: LARECOMP_LOG_PACE, the stats)
@@ -431,20 +451,30 @@ void pace_frame(void) {
         for (int i = 0; i < 15 && !any; i++) any = over[(idx + q * 15 + i) % 60] & 1;
         quarters += any;
     }
-    static bool bunch_said;
-    if (nover < 12) bunch_said = false;
+    static bool bunch_said, dyn_said;
+    if (nover < 12) bunch_said = dyn_said = false;
     if (!pace_slow && nover >= 12 && med >= 13.0f && quarters < 4 && !bunch_said) {
         bunch_said = true;
         LOG("[pace] %d of the last 60 frames over 16.2 ms busy or shown late (%d by busy time), but bunched in %d of 4 "
             "quarters: not holding (yet)\n", nover, nbusy, quarters);
     }
-    if (!pace_slow && nover >= 12 && med >= 13.0f && quarters == 4) {
+    // Resolution first (see above): Dynamic above its floor takes the GPU's frames; the CPU's hold here at any factor
+    extern int output_scale_dynamic_state(void);  // output_scale.c: 0 off, 1 at its floor, 2 above it (tools/test_pace.c: the case's)
+    int dyn = output_scale_dynamic_state();
+    bool dyn_first = dyn == 2 && ncpu < 12;
+    if (!pace_slow && nover >= 12 && med >= 13.0f && quarters == 4 && dyn_first && !dyn_said) {
+        dyn_said = true;
+        LOG("[pace] %d of the last 60 frames over 16.2 ms busy or shown late (%d by busy time, %d by CPU time): the GPU's, "
+            "left to dynamic resolution (above its floor)\n", nover, nbusy, ncpu);
+    }
+    if (!pace_slow && nover >= 12 && med >= 13.0f && quarters == 4 && !dyn_first) {
         pace_slow = true, calm = clear = cpu_clear = 0, gpu_said = 0;
         late_hold = nbusy < 12;
         if (back_at && now - back_at < 20000000000ull && backoff < 16 && !try_back) backoff *= 2;  // (flickering: wait longer)
         try_back = false;
-        LOG("[pace] frames don't fit 60 fps (%d of the last 60 over 16.2 ms busy or shown late, %d by busy time, median %.1f): "
-            "holding the game's 30 fps mode%s\n", nover, nbusy, med, backoff > 1 ? " (backing off)" : "");
+        LOG("[pace] frames don't fit 60 fps (%d of the last 60 over 16.2 ms busy or shown late, %d by busy time, %d by CPU time, "
+            "median %.1f): holding the game's 30 fps mode%s%s\n", nover, nbusy, ncpu, med,
+            ncpu >= 12 ? " - the CPU's" : dyn == 1 ? " - dynamic resolution at its floor" : "", backoff > 1 ? " (backing off)" : "");
     } else if (pace_slow) {
         float peak = 0;
         for (int i = 0; i < 60; i++) peak = recent[i] > peak ? recent[i] : peak;
@@ -477,7 +507,7 @@ void pace_frame(void) {
             LOG("[pace] %d frames with %s headroom on gameplay frames (%.1f ms a frame at 60 on average, median %.1f, at most "
                 "%.1f%s): back to the game's own choice\n", clear >= clear_n ? clear : calm, clear >= clear_n ? "clear" : "enough",
                 avg, med, peak, g);
-            pace_slow = false, nover = nbusy = 0, back_at = now, try_back = false, gpu_back = gpu_avg;
+            pace_slow = false, nover = nbusy = ncpu = 0, back_at = now, try_back = false, gpu_back = gpu_avg;
             memset(over, 0, sizeof over);
             memset(recent, 0, sizeof recent);
         }

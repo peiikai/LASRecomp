@@ -25,13 +25,18 @@ static void vsyncs(void) { g_vsync_count = t_ns / VSYNC_NS, g_vsync_ns = g_vsync
 uint64_t plat_now_ns(void) { return t_ns; }
 void plat_sleep_until_ns(uint64_t t) { if (t > t_ns) t_ns = t; vsyncs(); }
 uint64_t plat_thread_cpu_ns(void) { return cpu_ns; }
-uint64_t rq_render_cpu_ns(void) { return 0; }
+static uint64_t render_cpu_ns;  // (render20_dyn: the render thread's CPU time; 0: no render thread)
+uint64_t rq_render_cpu_ns(void) { return render_cpu_ns; }
 int64_t pace_gpu_ns(void) { return (int64_t)gpu_total_ns; }
 int game_in_play(void) { return 1; }
 bool world_on_screen(void) { return true; }
 const char *game_level_name(void) { return "Field"; }
 uint64_t game_camera_zone(void) { return zone; }
 void slow_frame_present(uint64_t now, uint64_t gcpu) { (void)now, (void)gcpu; }
+// Dynamic resolution's state for pace.c "Resolution first" (output_scale.c): 0 off, 1 at its floor, 2 above it. The
+// case sets it (0 unless it says: a fixed resolution)
+static int dyn_state;
+int output_scale_dynamic_state(void) { return dyn_state; }
 
 // ---- cases
 // cpu: the game thread's CPU time; wait: its waits that count as busy (for the render thread, the GPU's previous
@@ -181,6 +186,32 @@ static int held_soon(int holds, int backs, double held_s, double lc, bool end, d
     return holds == 1 && backs == 0 && end && lc < 12;  // (the last step at 5 s: held by 12 s, for the rest)
 }
 
+// Resolution first (pace.c): with Dynamic resolution on and above its floor, the GPU's late frames are Dynamic's to fix -
+// never held, however late (Dynamic steps down meanwhile; here the GPU stays at 20 ms to show the pacer leaves it alone)
+static void gpu20_dyn(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = 2; }
+// ... at its floor (the Minimum resolution: nothing lower) and still 20 ms: held, as with Dynamic off
+static void gpu20_dyn_floor(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = 1; }
+// ... reaching its floor 5 s in (its steps took the factor down meanwhile): held within a second or two of that
+static void gpu20_dyn_reaches_floor(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = t < 5 ? 2 : 1; }
+static int held_at_floor(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 1 && backs == 0 && end && lc >= 5 && lc < 8;
+}
+// The CPU the limit (the game thread 20 ms a frame) with Dynamic above its floor: held at any factor - no resolution
+// helps the CPU. By CPU time, not busy time:
+static void cpu20_dyn(double t, int n, Frame *f) { cpu20(t, n, f), dyn_state = 2; }
+// ... the game thread busy because it waits on a GPU a frame behind (the iPad's busy frames: fence 13 ms, CPU 4.5):
+// the GPU's, left to Dynamic
+static void gpu_fence_dyn(double t, int n, Frame *f) {
+    f->cpu = 4.5 + noise(1), f->wait = 6, f->stall = 0, f->gpu = 16.5 + noise(1.5), f->fence = 13 + noise(3);
+    dyn_state = 2;
+}
+// The render thread the limit (its CPU 20 ms a frame, the game thread 4): held at any factor
+static void render20_dyn(double t, int n, Frame *f) {
+    f->cpu = 4 + noise(1), f->gpu = 8 + noise(1), f->stall = 0, f->wait = 16;  // (waiting for the render thread: busy)
+    render_cpu_ns += (uint64_t)((20 + noise(1)) * 1e6);
+    dyn_state = 2;
+}
+
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
 
@@ -223,6 +254,13 @@ static const Case cases[] = {
      iphone_fallout, never_held},
     {"a GPU at 25 ms a frame, Dynamic stepping to its floor (a scale change a second for 6 s): held soon after, for good",
      40, overload_steps, held_soon},
+    {"resolution first: GPU 20 ms, Dynamic above its floor: left to Dynamic, never held", 60, gpu20_dyn, never_held},
+    {"resolution first: GPU 20 ms, Dynamic at its floor: held", 60, gpu20_dyn_floor, held_after},
+    {"resolution first: GPU 20 ms, Dynamic reaches its floor at 5 s: held then", 60, gpu20_dyn_reaches_floor, held_at_floor},
+    {"resolution first: the game thread 20 ms of CPU, Dynamic above its floor: held (the CPU's)", 60, cpu20_dyn, held_after},
+    {"resolution first: the game thread busy waiting on the GPU (fence 13 ms, CPU 4.5), Dynamic above its floor: never held",
+     60, gpu_fence_dyn, never_held},
+    {"resolution first: the render thread 20 ms of CPU, Dynamic above its floor: held (the CPU's)", 60, render20_dyn, held_after},
 };
 
 static int run(const Case *c) {

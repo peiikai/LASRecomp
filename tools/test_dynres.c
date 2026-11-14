@@ -24,6 +24,8 @@ static int g_pace_slow;  // (pacer cases: the pacer holds the game at 30 - nvn/p
 bool pace_is_slow(void) { return g_pace_slow; }
 static int g_pace_try;  // (pacer cases: Dynamic asked the frame pacer to try 60 - nvn/pace.c pace_try_60)
 void pace_try_60(void) { g_pace_try = 1; }
+static int g_pace_cpu;  // (pacer cases: the case's CPU time over a frame - nvn/pace.c pace_cpu_frames, all 60 or none)
+int pace_cpu_frames(void) { return g_pace_cpu; }
 
 static unsigned g_rng = 1;
 static double rnd(void) { g_rng = g_rng * 1103515245u + 12345u; return ((g_rng >> 8) & 0xffff) / 65535.0; }
@@ -56,7 +58,8 @@ typedef struct {
                         // them (its spread rule: not one burst), hold the game at 30 (whole
                         // 33.3 ms frames); it goes back to 60 when the GPU's time (G + W, as measured: a lowered clock
                         // counts) is under 13 ms for 60 frames in a row, or at once when Dynamic asks (pace_try_60) -
-                        // either way with a second's grace before frames count again
+                        // either way with a second's grace before frames count again. Resolution first (pace.c): the
+                        // GPU's late frames hold only with Dynamic at its floor; the CPU's (`cpu` over 16.2 ms) at any factor
     int miss_every;     // > 0: one frame in this many misses a vsync (a CPU-side hitch: 35 ms, 59.5 fps windows)
     double jitter;      // > 0: about once a second a frame's period is this much longer and the next's that much shorter
                         // (Android: present times jitter, frames of 20-23 ms with no vsync missed - max 22 ms every 2 s)
@@ -116,6 +119,8 @@ typedef struct {
     double f_mean_late, f_min_late, f_max_late;  // the same from 120 s in, and the lowest / highest factor from then
     int jumps_past_cut;   // (power) steps up at serious / critical from a factor the clock was cut at, under 10 s there and
                           // never 10 s steady at 60 before: a climb back past a known cut without proving the factor first
+    double down_t;        // (heavy_at) seconds from heavy_at until the factor first came within a step of the lowest it
+                          // reached in the heavy stretch (how fast it got down; -1: never)
 } Result;
 
 static int near30(double h) { return fabs(h - 30) < 0.5; }
@@ -144,6 +149,11 @@ static Result run(const Case *c) {
     double pace_s = 0, pace_cur = 0, pace_longest = 0, f_min_run = 2, f_max_early = 0, f_cool = -1;
     double power_acc = 0, cut_at = 0; int power_cut = 0, thermal = c->thermal;  // (power: the budget's excess summed, s; the clock cut now, since)
     double f_sum = 0, f_sum_late = 0, t_late = 0, f_min_late = 2, f_max_late = 0, last_change_t = 1.0;
+    double down_t = -1, step_t[64], step_f[64];  // (down_t: see Result; the factor changes after heavy_at, when and to what)
+    int nstep = 0;
+    double floor_f = fmin(1.0, (c->min_lines ? c->min_lines : 540) / (double)(c->lines > 0 ? c->lines : 2160));
+    bool cpu_bound = c->cpu > 16.2;  // (pacer: the CPU's frames hold at any factor, and its way back wants CPU headroom)
+    g_pace_cpu = c->pacer && cpu_bound ? 60 : 0;
     unsigned cut_mask = 0, proven_mask = 0; int jumps_past_cut = 0;  // (power) the factors the clock was cut at / that ran 10 s
                                                                      // steady at 60 since the last cut, bit round(f * 20)
     output_scale_thermal(thermal);
@@ -165,6 +175,7 @@ static Result run(const Case *c) {
         if (resized && f_after < 0 && now > c->resize_at + 1.5) f_after = f;
         if (c->resize_at > 0 && !resized) f_before = f;
         if (f != last_f) {
+            if (c->heavy_at > 0 && now > c->heavy_at && nstep < 64) step_t[nstep] = now, step_f[nstep++] = f;
             printf(" | %.0fs %.2f", now, f);
             if (first_t < 0) first_t = now;
             if (++col % 8 == 0) printf("\n ");
@@ -245,7 +256,7 @@ static Result run(const Case *c) {
             if (pace_held) {
                 if (p < 33.333) p = 33.333;
                 double fit_ms = c->pace_fit_ms > 0 ? c->pace_fit_ms : c->pace_fit_ms < 0 ? -1 : 13;
-                pace_fit = fit_ms > 0 && gw < fit_ms ? pace_fit + 1 : 0;
+                pace_fit = fit_ms > 0 && gw < fit_ms && !cpu_bound ? pace_fit + 1 : 0;
                 if (pace_fit >= 60) {
                     pace_held = 0, pace_grace = now + 1, pace_over = 0, memset(pace_ring, 0, sizeof pace_ring);
                     printf(" | %.0fs pacer: 60 (gpu)", now);
@@ -260,7 +271,10 @@ static Result run(const Case *c) {
                     for (int i = 0; i < 15 && !any; i++) any = pace_ring[(pace_i + q * 15 + i) % 60];
                     quarters += any;
                 }
-                if (pace_over >= 12 && quarters == 4) {
+                // (resolution first: the GPU's late frames hold only with Dynamic at its floor - the floor at this window's size,
+                // as a resize moves it - or holding a frame rate itself; the CPU's at any factor)
+                double fl = c->resize_at > 0 && now > c->resize_at ? fmin(1.0, (c->min_lines ? c->min_lines : 540) / c->lines2) : floor_f;
+                if (pace_over >= 12 && quarters == 4 && (cpu_bound || f <= fl + 1e-6 || output_scale_dynamic_hold_fps() > 0)) {
                     pace_held = 1, pace_fit = 0, pace_holds++;
                     printf(" | %.0fs pacer: 30", now);
                     if (++col % 8 == 0) printf("\n ");
@@ -300,6 +314,11 @@ static Result run(const Case *c) {
         win_n++; if (now - win_t0 >= 2.0) { n_win++; if (win_n / (now - win_t0) < 57) low_win++; win_t0 = now, win_n = 0; }
         if (now > c->secs - 10) frames_end++, t_end += p / 1000;
     }
+    if (c->heavy_at > 0) {  // (down_t: the first change after heavy_at within a step of the lowest the stretch reached)
+        double low = 2;
+        for (int i = 0; i < nstep; i++) if (c->heavy_until <= 0 || step_t[i] < c->heavy_until) low = fmin(low, step_f[i]);
+        for (int i = 0; i < nstep && down_t < 0; i++) if (step_f[i] <= low + 0.05 + 1e-6) down_t = step_t[i] - c->heavy_at;
+    }
     // (by name: the fields' order once differed from this list, so f_min_last60 got hold_t, changes_settled f_min, ...)
     Result r = {.f_end = f, .fps_end = frames_end / t_end, .hold_end = last_hold, .changes_last60 = changes,
                 .hold_changes = hold_changes, .changes_settled = settled, .back30_t = back30, .f_min_last60 = f_min,
@@ -309,7 +328,7 @@ static Result run(const Case *c) {
                 .f_min_first = f_min_first, .pace_s = pace_s, .pace_longest = pace_longest, .f_min = f_min_run,
                 .pace_holds = pace_holds, .f_max_early = f_max_early, .f_cool = f_cool, .f_mean = f_sum / (now - 1.0),
                 .f_mean_late = t_late > 0 ? f_sum_late / t_late : -1, .f_min_late = f_min_late, .f_max_late = f_max_late,
-                .jumps_past_cut = jumps_past_cut};
+                .jumps_past_cut = jumps_past_cut, .down_t = down_t};
     printf("\n  end: factor %.2f, %.1f fps over the last 10 s (holding %.0f), %d change%s in the last 60 s (%.2f-%.2f), %d after 20 s; %d of %d 2-s windows under 57 fps\n",
            r.f_end, r.fps_end, r.hold_end, changes, changes == 1 ? "" : "s", f_min, f_max, settled, low_win, n_win);
     if (c->pacer)
@@ -630,6 +649,28 @@ int main(int argc, char **argv) {
         {.name = "iPhone 15 Pro at 1.00 fitting, a late moment every 20 s: no step on one", .a = 2.5, .b = 10.5, .w = 2.4,
          .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 1.0, .start_paced = 1, .spike_every = 20,
          .spike_s = 0.2, .spike_x = 1.3},
+        // Resolution first (pace.c): the pacer holds the GPU's late frames only with Dynamic at its floor. The iPhone (case
+        // 61's shape) at 1.00 fitting, the scene x1.6 heavier from 30 s (fits near 0.75): Dynamic must get down fast -
+        // within a few seconds, several steps at once - and the pacer never hold
+        {.name = "resolution first: iPhone, the scene x1.6 heavier from 30 s (fits near 0.75): down fast, no 30 hold", .a = 2.5,
+         .b = 10.5, .w = 2.4, .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0,
+         .pacer = 1, .pace_fit_ms = 10, .heavy_at = 30, .heavy = 1.6},
+        // ... x3.5 heavier: 60 is out of reach even at the floor (0.46 of 1179 lines): held at 30 there, not above it
+        {.name = "resolution first: iPhone, the scene x3.5 heavier from 30 s (beyond the floor): held at 30 at the floor", .a = 2.5,
+         .b = 10.5, .w = 2.4, .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0,
+         .pacer = 1, .pace_fit_ms = 10, .heavy_at = 30, .heavy = 3.5},
+        // the CPU the limit (20 ms a frame that doesn't overlap the GPU's): the pacer holds at any factor - a paced GPU
+        // reads inflated through it (its clock drops) and must sit still, not slide to the floor
+        {.name = "resolution first: iPhone, CPU 20 ms a frame: the pacer holds, the factor stays", .a = 2.5, .b = 10.5, .w = 2.4,
+         .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 2.0, .start_paced = 1, .sag = 2.0, .pacer = 1,
+         .pace_fit_ms = 10, .cpu = 20},
+        // ... a desktop GPU (not paced: G + W measures the load, and reads low here): no step either
+        {.name = "resolution first: desktop, CPU 20 ms a frame: the pacer holds, the factor stays", .a = 2.5, .b = 10.5, .w = 2.4,
+         .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1440, .pacer = 1, .cpu = 20},
+        // the 2026-11-14 log's cycle with the pacer: 1.00 at the edge, a late moment, a step, the sag - no hold
+        {.name = "resolution first: iPhone at 1.00 at the edge, a late moment every 20 s, the sag: no 30 hold", .a = 2.5, .b = 10.9,
+         .w = 2.4, .w1 = 0.9, .fifo = 1, .secs = 120, .lines = 1179, .paced = 1.0, .start_paced = 1, .sag = 2.0, .pacer = 1,
+         .pace_fit_ms = 10, .spike_every = 20, .spike_s = 0.4, .spike_x = 1.4},
     };
     int n = sizeof cases / sizeof *cases;
     if (argc < 2) { printf("%d\n", n); return 0; }
@@ -742,6 +783,12 @@ int main(int argc, char **argv) {
     case 73: check(r.jumps_past_cut == 0 && r.f_end >= 0.80 && r.f_max_late <= 0.90 && r.fps_end > 58 && r.pace_holds <= 7,
                    "iPhone at serious, the scene lighter: climbs back a proven step at a time"); break;
     case 74: check(r.f_min >= 0.95 && r.changes_settled == 0, "iPhone at 1.00, a late moment every 20 s: no step"); break;
+    case 75: check(r.pace_holds == 0 && r.down_t >= 0 && r.down_t <= 4 && r.f_end >= 0.65 && r.f_end <= 0.8 && r.fps_end > 58,
+                   "resolution first, GPU-bound: down within 4 s, settled near the fit, no 30 hold"); break;
+    case 76: check(r.pace_holds >= 1 && r.pace_holds <= 3 && r.f_min <= 0.46 + 1e-6 && r.f_max_last60 <= 0.7 && r.fps_end >= 29 && r.fps_end <= 31,
+                   "resolution first, beyond the floor: 30 held from the floor on"); break;
+    case 77: case 78: check(r.pace_holds >= 1 && r.f_end >= 0.95 && r.f_min >= 0.9, "resolution first, CPU-bound: held, the factor stays"); break;
+    case 79: check(r.pace_holds == 0 && r.f_min >= 0.7 && r.fps_end > 58, "the 2026-11-14 cycle: no 30 hold"); break;
     case 31: check(near(r.hold_end, 30) && r.f_max_last60 <= 0.45 && r.hold_changes <= 2 && r.fps_end > 26,
                    "target 30, slow GPU: at the floor, held at 30 - never 20 and climbing"); break;
     }
