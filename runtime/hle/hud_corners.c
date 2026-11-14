@@ -1,4 +1,5 @@
-// Every platform: how shown the game's own X / Y item buttons are (hud_xy_alpha, for the D-pad items' cross).
+// Every platform: how shown the game's own X / Y item buttons are (hud_xy_alpha, for the D-pad items' cross), and with
+// D-pad = Items the rupee count moved left, out from under that cross (rupee_dx).
 //
 // Phones and tablets: with Aspect ratio = Unlocked and a window wider or taller than 16:9, the game's HUD goes to the real
 // screen corners instead of the centred 16:9 box, in every room so it never jumps at a door; and optionally its X / Y item
@@ -52,7 +53,8 @@ static const struct { const char *name; int side; bool xy, kids_y; } kPanes[] = 
     {"N_ShellRadar_00", RIGHT, false},
 };
 #define NPANES (sizeof kPanes / sizeof kPanes[0])
-enum { SETITEM = 4 };  // (kPanes: N_SetItem_00, the X / Y buttons in play; N_Item_00 / 01 are the Items page's)
+enum { SETITEM = 4, RUPEE = 5 };  // (kPanes: N_SetItem_00, the X / Y buttons in play; N_Item_00 / 01 are the Items page's)
+#define RUPEE_DX 100.0f
 static uint64_t g_hud, g_pane[NPANES], g_retry;
 static int g_tries;
 static float g_authored[NPANES], g_authored_y[NPANES];
@@ -155,6 +157,10 @@ int hud_xy_alpha(void) {
     return a;
 }
 
+// The rupee count sits under the X button, where D-pad = Items draws its cross (runtime/ui/dpad_overlay.mm): it moves
+// left (layout units) to under the X / Y buttons' left edge, clear of the cross's left arm
+static float rupee_dx(void) { return g_settings.dpad_mode == DPAD_ITEMS ? -RUPEE_DX : 0; }
+
 void rt_hud_corners_tick(uint64_t hud) {
     extern uint64_t renderer_present_count(void);
     extern int kernel_data_regions(uint64_t *a, uint64_t *s, int max);
@@ -170,6 +176,7 @@ void rt_hud_corners_tick(uint64_t hud) {
         g_hud = hud, g_retry = renderer_present_count() + 60, g_moved = false, g_tries++;
         find_panes(hud);
     }
+    if (g_pane[RUPEE]) set_xy(RUPEE, g_authored[RUPEE] + rupee_dx(), *(const float *)(uintptr_t)(g_pane[RUPEE] + 0x34));
 #if PLAT_TOUCH
     float f = widescreen_factor();
     bool in = game_in_play() && world_on_screen();
@@ -199,7 +206,7 @@ void rt_hud_corners_tick(uint64_t hud) {
             move_kids(sy > 0.01f ? up / sy : up);
             y = *(const float *)(uintptr_t)(g_pane[i] + 0x34);
         }
-        set_xy(i, g_authored[i] + (kPanes[i].side == LEFT ? -l : kPanes[i].side == RIGHT ? r : 0), y);
+        set_xy(i, g_authored[i] + (kPanes[i].side == LEFT ? -l : kPanes[i].side == RIGHT ? r : 0) + (i == RUPEE ? rupee_dx() : 0), y);
         if (!kPanes[i].xy) continue;
         uint8_t *fl = (uint8_t *)(uintptr_t)(g_pane[i] + 0x58);
         if (hide && (*fl & 1)) *fl &= ~1, g_hid[i] = true;  // (bit 0: visible; the game may set it again)
