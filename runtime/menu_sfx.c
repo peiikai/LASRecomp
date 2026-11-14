@@ -470,8 +470,8 @@ void menu_sfx_play_ex(int id, float vgain, float rate, float lowpass, float from
             g_voice[old] = g_voice[--g_nvoice];
         }
         if (!(rate > 0.05f && rate < 8)) rate = 1;
-        // The select sound stood out over the cursor and tab sounds on every click / A press: 20% quieter
-        if (id == MENU_SFX_DECIDE) vgain *= 0.8f;
+        // The select sound stood out over the cursor and tab sounds on every click / A press: 30% quieter
+        if (id == MENU_SFX_DECIDE) vgain *= 0.7f;
         Voice vo = {id, from * RATE - delay * RATE * rate, rate, len > 0 ? (from + len) * RATE : 0,
                     len > 0 ? (from + len * 0.75) * RATE : 0, now, vgain};
         if (lowpass > 0) vo.k = 1 - expf(-2 * 3.14159265f * lowpass / RATE);
