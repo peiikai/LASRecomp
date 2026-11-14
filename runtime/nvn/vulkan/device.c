@@ -1851,7 +1851,9 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
             g_window_shot_request[0] = 0;
         }
         ip_space();
-        vk_frame_end(shot ? "build/window.png" : req[0] ? req : NULL);
+        // LARECOMP_SHOT_PATH: where (tools/shot.sh: each SHOT_ID run its own, as metal.m; default build/window.png)
+        const char *win_path = getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/window.png";
+        vk_frame_end(shot ? win_path : req[0] ? req : NULL);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) exit_after_shot();
     } else {
         renderer_submit();
