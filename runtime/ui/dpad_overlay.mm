@@ -34,6 +34,9 @@ int game_in_play(void);
 uint64_t renderer_present_count(void);
 bool world_on_screen(void);
 bool inventory_items_page_shown(void);
+bool pause_menu_shown(void);  // runtime/ui/inventory_overlay.mm
+int hud_xy_alpha(void);  // runtime/hle/hud_corners.c
+int mirror_fill_alpha(void);  // runtime/hle/mirror.c
 }
 
 // item slot -> its icon (the Items page's: a bottle holding a fairy has its own)
@@ -115,10 +118,28 @@ static bool any_item(void) {
     return false;
 }
 
-// on the Items page always (where the directions are set), in play once a direction has an item
+// How shown the cross is, 0..255: in play as the game's own X / Y buttons are - the HUD fades them out for talk and
+// cutscenes and the cross goes with them, and a fill the game draws over the screen (the white after an instrument
+// is taken, fades, Game Over) hides them while they're still shown under it; on the Items page always
+static int cross_alpha(void) {
+    if (inventory_items_page_shown()) return 255;
+    if (pause_menu_shown()) return hud_xy_alpha();  // (its backdrop counts as a fill: see dpad_overlay_wanted)
+    int a = hud_xy_alpha(), cover = 255 - mirror_fill_alpha();
+    return a < cover ? a : cover;
+}
+
+// on the Items page always (where the directions are set), in play once a direction has an item. The pause menu's
+// backdrop covers the world for ~12 frames before the Items page counts as up (3 after it closes): the cross stays up
+// through that, so it flies straight to the page and back instead of going and coming back first.
 extern "C" bool dpad_overlay_wanted(void) {
+    static uint64_t shown;  // (the frame the cross was last up in play or on the Items page)
     if (g_settings.dpad_mode != DPAD_ITEMS || !game_in_play()) return false;
-    return inventory_items_page_shown() || (world_on_screen() && any_item());
+    uint64_t f = renderer_present_count();
+    if (inventory_items_page_shown() || (world_on_screen() && any_item() && cross_alpha() > 0)) {
+        shown = f;
+        return true;
+    }
+    return pause_menu_shown() && any_item() && f - shown <= 20 && cross_alpha() > 0;
 }
 
 // (menu.mm's overlay reuse) what dpad_overlay_draw draws now, as text
@@ -129,7 +150,8 @@ extern "C" void dpad_overlay_key(char *out, size_t cap) {
     uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     static unsigned frame;  // (on the way, or the Items page opened / closed since the last drawing: draw it again)
     bool page = inventory_items_page_shown();
-    int n = g_flying || page != g_page_was ? snprintf(out, cap, "fly %u ", ++frame) : snprintf(out, cap, "%d ", page);
+    int n = g_flying || page != g_page_was ? snprintf(out, cap, "fly %u ", ++frame)
+                                           : snprintf(out, cap, "%d %d ", page, cross_alpha());  // (and while it fades)
     for (int d = 0; d < 4 && ps; d++) {
         int s = dpad_items_slot(d);
         n += snprintf(out + n, cap > (size_t)n ? cap - n : 0, "%s.%d ", s >= 0 ? icon_name(s, ps) : "-", s >= 0 ? item_count(s, ps) : 0);
@@ -143,6 +165,8 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
     uint64_t ps = LD64(GA(PLAYER_STATUS_PTR));
     if (!ps) return;
     ImDrawList *dl = ImGui::GetBackgroundDrawList();
+    const float fade = cross_alpha() / 255.0f;
+    auto col = [fade](int r, int g, int b, int a) { return IM_COL32(r, g, b, (int)(a * fade + 0.5f)); };
     // the game's HUD sits in a 16:9 box centred in the window; its 1280x720 layout has X / Y top right (Y at 476, 296
     // from the centre, y up; runtime/hle/escape.c). The D-pad goes under X. LARECOMP_DPAD_POS=x,y (layout): elsewhere.
     float bw = fminf(display.x, display.y * 16 / 9), bh = bw * 9 / 16;
@@ -177,17 +201,18 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
     ImVec2 a(c.x - pad * 0.5f, c.y - pad * 0.5f), z(c.x + pad * 0.5f, c.y + pad * 0.5f);
     if (ImTextureID t = dpad_tex(0)) {
         dl->AddImage(t, ImVec2(a.x + 1.5f * u, a.y + 2 * u), ImVec2(z.x + 1.5f * u, z.y + 2 * u), ImVec2(0, 0), ImVec2(1, 1),
-                     IM_COL32(0, 0, 0, 90));  // (a soft shadow)
-        dl->AddImage(t, a, z, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0x2C, 0x34, 0x40, 235));
+                     col(0, 0, 0, 90));  // (a soft shadow)
+        dl->AddImage(t, a, z, ImVec2(0, 0), ImVec2(1, 1), col(0x2C, 0x34, 0x40, 235));
     }
-    if (ImTextureID t = dpad_tex(1)) dl->AddImage(t, a, z, ImVec2(0, 0), ImVec2(1, 1), IM_COL32(0xF4, 0xEE, 0xDC, 240));
+    if (ImTextureID t = dpad_tex(1)) dl->AddImage(t, a, z, ImVec2(0, 0), ImVec2(1, 1), col(0xF4, 0xEE, 0xDC, 240));
     for (int d = 0; d < 4; d++) {
         int s = dpad_items_slot(d);
         const char *nm = s >= 0 ? icon_name(s, ps) : NULL;
         if (!nm) continue;
         ImVec2 p(c.x + dir[d].x * arm, c.y + dir[d].y * arm);
         const Icon *ic = icon(nm);
-        if (ic && ic->state == 1) dl->AddImage(ic->id, ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h));
+        if (ic && ic->state == 1)
+            dl->AddImage(ic->id, ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), ImVec2(0, 0), ImVec2(1, 1), col(255, 255, 255, 255));
         float r = h * 0.8f;
         int n = item_count(s, ps);
         if (n >= 0) {  // (a yellow tag with the number, as the game's)
@@ -197,9 +222,9 @@ extern "C" void dpad_overlay_draw(ImVec2 display, ImFont *font, float scale) {
             ImVec2 ts = font->CalcTextSizeA(size, FLT_MAX, 0, txt);
             float w = fmaxf(ts.x + 8 * sz * u, 22 * sz * u), th = 15 * sz * u;
             ImVec2 ta(p.x + r * 0.95f - w * 0.5f, p.y + r * 0.62f), tz(ta.x + w, ta.y + th);
-            dl->AddRectFilled(ta, tz, IM_COL32(0xF4, 0xD6, 0x2A, 255), th * 0.5f);
+            dl->AddRectFilled(ta, tz, col(0xF4, 0xD6, 0x2A, 255), th * 0.5f);
             dl->AddText(font, size, ImVec2(roundf((ta.x + tz.x - ts.x) * 0.5f), roundf((ta.y + tz.y - ts.y) * 0.5f)),
-                        IM_COL32(0x3B, 0x2A, 0x14, 255), txt);
+                        col(0x3B, 0x2A, 0x14, 255), txt);
         }
     }
 }
