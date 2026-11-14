@@ -1856,8 +1856,15 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
+        // test hooks (runtime/hle/hookshot.c: LARECOMP_SHOTS, tours, ...): the window image with the overlay, as metal.m
+        extern char g_window_shot_request[256];
+        char req[256] = "";
+        if (!shot && g_window_shot_request[0]) {
+            snprintf(req, sizeof req, "%s", g_window_shot_request);
+            g_window_shot_request[0] = 0;
+        }
         ip_space();
-        vk_frame_end(shot ? "build/window.png" : NULL);
+        vk_frame_end(shot ? "build/window.png" : req[0] ? req : NULL);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) exit_after_shot();
     } else {
         renderer_submit();
