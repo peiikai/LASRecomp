@@ -411,15 +411,19 @@ void pace_frame(void) {
     static const char *ign_why;
     uint64_t ha = __atomic_load_n(&hitch_at, __ATOMIC_ACQUIRE);
     const char *hw = __atomic_load_n(&hitch_why, __ATOMIC_RELAXED);
+    // (settled_of: the scale change whose frames have settled. Its grace stays over: a late frame after that, within
+    // PACE_GRACE_MAX_NS, reopened it - an iPhone log showed one change "left out" eight times, 1.3 s to 4.0 s)
+    static uint64_t settled_of;
     if (ha && ha != grace_of) settled = 0;
     settled = o ? 0 : settled + 1;
     bool scale_change = hw && !strcmp(hw, "a render scale change");
+    if (scale_change && settled >= PACE_SETTLE_FRAMES) settled_of = ha;
     bool grace = ha && ((int64_t)(now - ha) < (int64_t)PACE_GRACE_NS ||
-                        (scale_change && (int64_t)(now - ha) < (int64_t)PACE_GRACE_MAX_NS && settled < PACE_SETTLE_FRAMES));
+                        (scale_change && ha != settled_of && (int64_t)(now - ha) < (int64_t)PACE_GRACE_MAX_NS));
     if ((ign_late || ign_busy) && (!grace || ha != grace_of)) {
         char s[48] = "";
         if (now - grace_of > PACE_GRACE_NS + 100000000ull)
-            snprintf(s, sizeof s, settled >= PACE_SETTLE_FRAMES ? " (%.1f s until frames settled)" : " (%.1f s, frames still late)",
+            snprintf(s, sizeof s, settled_of == grace_of ? " (%.1f s until frames settled)" : " (%.1f s, frames still late)",
                      (now - grace_of) / 1e9);
         LOG("[pace] left out %d of %d frames after %s%s: %d late, %d busy\n", ign_late + ign_busy, ign_n, ign_why, s,
             ign_late, ign_busy);

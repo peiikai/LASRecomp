@@ -186,6 +186,19 @@ static int held_soon(int holds, int backs, double held_s, double lc, bool end, d
     return holds == 1 && backs == 0 && end && lc < 12;  // (the last step at 5 s: held by 12 s, for the rest)
 }
 
+// A render scale change every 4.5 s at Dynamic's floor: frames on time for 1.5 s after it (settled), then GPU 20 ms to
+// the next. The settled grace stayed open to 4 s for any late frame after it (the iPhone log: one change "left out"
+// eight times), so 2.5 s of each heavy stretch were left out and the rest too bunched to hold. Settled is over: held.
+static void settle_then_heavy(double t, int n, Frame *f) {
+    static int last_k = -1;
+    int k = (int)(t / 4.5);
+    double in = t - k * 4.5;
+    if (k != last_k) last_k = k, pace_hitch("a render scale change");
+    f->cpu = 4 + noise(1), f->stall = 0, f->wait = 8.5, f->gpu = in < 1.5 ? 11 + noise(1) : 20 + noise(1);
+    dyn_state = 1;
+}
+static int held_any(int holds, int backs, double held_s, double lc, bool end, double secs) { return holds >= 1 && end; }
+
 // Resolution first (pace.c): with Dynamic resolution on and above its floor, the GPU's late frames are Dynamic's to fix -
 // never held, however late (Dynamic steps down meanwhile; here the GPU stays at 20 ms to show the pacer leaves it alone)
 static void gpu20_dyn(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = 2; }
@@ -254,6 +267,8 @@ static const Case cases[] = {
      iphone_fallout, never_held},
     {"a GPU at 25 ms a frame, Dynamic stepping to its floor (a scale change a second for 6 s): held soon after, for good",
      40, overload_steps, held_soon},
+    {"a scale change every 4.5 s, settled for 1.5 s then GPU 20 ms (at the floor): the settled grace stays over, held",
+     40, settle_then_heavy, held_any},
     {"resolution first: GPU 20 ms, Dynamic above its floor: left to Dynamic, never held", 60, gpu20_dyn, never_held},
     {"resolution first: GPU 20 ms, Dynamic at its floor: held", 60, gpu20_dyn_floor, held_after},
     {"resolution first: GPU 20 ms, Dynamic reaches its floor at 5 s: held then", 60, gpu20_dyn_reaches_floor, held_at_floor},
