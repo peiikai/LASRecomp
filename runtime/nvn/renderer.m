@@ -676,7 +676,7 @@ void renderer_submit(void) {
             // (frame interpolation's replays count as the game's work: Dynamic budgets the frame and its in-betweens)
             uint64_t ns = renderer_gpu_busy(done, false);
             stat_gpu_s += ns / 1e9;
-            if (replay) { interp_replay_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
+            if (replay) { interp_replay_gpu(ns / 1e6); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
             if (done.error) LOG("[metal] command buffer error: %s\n", done.error.localizedDescription.UTF8String);
         }];
         [c commit];
