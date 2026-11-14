@@ -119,7 +119,7 @@ uint64_t dpad_items_input(uint64_t b) {
     int item = obj ? LD8(obj + (uint64_t)cur * 0x280 + 0x598) : NONE;
     for (int d = 0; d < 4; d++) {
         if (!(press >> (BTN_LEFT + d) & 1)) continue;
-        if (!owned(ps, item)) { menu_sfx_play(MENU_SFX_BEEP); break; }  // (an empty cell)
+        if (!owned(ps, item)) break;  // (an empty cell: nothing to put there, so no sound, as greyed-out menu rows)
         if (g_d.slot[d] == item) {
             g_d.slot[d] = NONE;
             menu_sfx_play(MENU_SFX_CANCEL);

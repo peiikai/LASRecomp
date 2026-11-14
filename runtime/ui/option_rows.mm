@@ -103,6 +103,7 @@ bool opt_nav_step(int dir) {
 static std::unordered_map<ImGuiID, int> g_ids;  // this page's rows so far, by id (two rows with one label)
 static bool g_held;  // the last row's left / right has been held a while (steppers go faster)
 static bool g_click_silent;  // this frame's click did nothing (a finger on a ◀ value ▶ row's body): no decide sound
+static bool g_off_press;     // this frame's click / A / Enter was on a greyed-out row: it does nothing, so no sound
 void opt_indent(int step) { g_indent = g_indent + step < 0 ? 0 : g_indent + step; }
 
 void opt_begin(const char *id, float scale, bool split) {
@@ -250,8 +251,9 @@ static int row(const char *label, const std::string &value_en, bool changed, con
     if (!tap_steps && !arrow_under) hov = false;  // (the finger on the body: not a highlight)
     // (nor a press: no sound - menu_sfx_frame plays on the press frame, before the button reports the click)
     if (!tap_steps && !arrow_under && ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) g_click_silent = true;
+    if (off && ((ImGui::IsItemHovered() && ImGui::IsMouseClicked(0)) || GImGui->NavActivatePressedId == ImGui::GetItemID()))
+        g_off_press = true;
     int step = clicked && !off && tap_steps ? 2 : 0;
-    if (clicked && off) menu_sfx_play(MENU_SFX_BEEP);  // (greyed out: can't change)
     g_held = false;
     if (foc && !off) {
         if (ImGui::IsKeyPressed(ImGuiKey_GamepadDpadLeft) || ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft) ||
@@ -780,8 +782,8 @@ static bool on_scrollbar(ImGuiContext &g) {
 
 extern "C" void menu_sfx_frame(bool back_ok) {
     ImGuiContext &g = *ImGui::GetCurrentContext();
-    bool silent = g_click_silent;
-    g_click_silent = false;
+    bool silent = g_click_silent, off_press = g_off_press;
+    g_click_silent = g_off_press = false;
     static ImGuiContext *ctx;  // (the start screen's and the game's overlay are two)
     static ImGuiID last;
     if (ctx != &g) ctx = &g, last = 0;
@@ -790,7 +792,7 @@ extern "C" void menu_sfx_frame(bool back_ok) {
     if (!ui_text_busy() && cap < 0) {
         if (back_ok && (ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)))
             menu_sfx_play(MENU_SFX_CANCEL);
-        else if (g.NavActivatePressedId || (ImGui::IsMouseClicked(0) && g.HoveredId && !on_scrollbar(g) && !silent))
+        else if (!off_press && (g.NavActivatePressedId || (ImGui::IsMouseClicked(0) && g.HoveredId && !on_scrollbar(g) && !silent)))
             menu_sfx_play(is_tab(g.NavActivatePressedId ? g.NavActivatePressedId : g.HoveredId) ? MENU_SFX_TAB
                                                                                                 : MENU_SFX_DECIDE);
         else if (g.NavCursorVisible && g.NavId && last && g.NavId != last)

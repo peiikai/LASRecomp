@@ -135,7 +135,7 @@ bool preview_draw(float scale, ImFont *font, ImFont *font_big, void (*page)(void
         if (!P.off && (left || right)) {
             P.step = left ? -1 : 1;
             menu_sfx_play(MENU_SFX_CURSOR);
-        } else if ((left || right) && P.off) menu_sfx_play(MENU_SFX_BEEP);
+        }
         if (clicked == 3 && !P.off && P.cur != P.def) P.set = P.def, menu_sfx_play(MENU_SFX_DECIDE);
         if (a || clicked == 6) close = true, menu_sfx_play(MENU_SFX_DECIDE);  // (A / Apply keeps it)
         else if (b || clicked == 2) {

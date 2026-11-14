@@ -9,8 +9,8 @@ extern "C" {
 #endif
 
 // (in rising importance: a sound drops a less important one started just before it, and is dropped after a more
-// important one - one press, one sound)
-enum { MENU_SFX_CURSOR, MENU_SFX_TAB, MENU_SFX_DECIDE, MENU_SFX_BEEP, MENU_SFX_CANCEL, MENU_SFX_OPEN, MENU_SFX_CLOSE,
+// important one - one press, one sound). No "can't do that" beep (SE_SY_BEEP): a press that does nothing is silent.
+enum { MENU_SFX_CURSOR, MENU_SFX_TAB, MENU_SFX_DECIDE, MENU_SFX_CANCEL, MENU_SFX_OPEN, MENU_SFX_CLOSE,
        // (not menu sounds - the Storm weather's, runtime/nvn/weather.c; they never drop or are dropped): the thunder's
        // roll, a near strike's crack, the crackle on the ground before a strike
        MENU_SFX_THUNDER, MENU_SFX_THUNDER_CRACK, MENU_SFX_SPARK,
