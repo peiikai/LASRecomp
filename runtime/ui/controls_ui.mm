@@ -223,6 +223,8 @@ static void configure_inputs(float scale) {
     }
     // (the cursor or the mouse on a row with a description: it shows on the right instead of the bindings)
     bool desc_right = !PLAT_TOUCH && (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;  // (phones: in its card)
+    // B / Esc go back too, but a mouse has neither: without this row it could only leave by another tab
+    bool back = opt_action("Back", "", NULL);
     opt_split();
     if (desc_right) {
         opt_desc_text();
@@ -293,6 +295,7 @@ static void configure_inputs(float scale) {
         else if (g_cat == CAT_MENU) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
     }
     opt_split_end();
+    if (back) bind_capture_cancel(), g_sub = false, g_focus = FOCUS_CONFIGURE, g_in_right = false, msg[0] = 0;
 }
 
 // ------------------------------------------------------------------ the tab
