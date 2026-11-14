@@ -34,6 +34,7 @@ int game_in_play(void);
 uint64_t renderer_present_count(void);
 bool world_on_screen(void);
 bool inventory_items_page_shown(void);
+bool pause_menu_shown(void);  // runtime/ui/inventory_overlay.mm
 int hud_xy_alpha(void);  // runtime/hle/hud_corners.c
 int mirror_fill_alpha(void);  // runtime/hle/mirror.c
 }
@@ -122,14 +123,23 @@ static bool any_item(void) {
 // is taken, fades, Game Over) hides them while they're still shown under it; on the Items page always
 static int cross_alpha(void) {
     if (inventory_items_page_shown()) return 255;
+    if (pause_menu_shown()) return hud_xy_alpha();  // (its backdrop counts as a fill: see dpad_overlay_wanted)
     int a = hud_xy_alpha(), cover = 255 - mirror_fill_alpha();
     return a < cover ? a : cover;
 }
 
-// on the Items page always (where the directions are set), in play once a direction has an item
+// on the Items page always (where the directions are set), in play once a direction has an item. The pause menu's
+// backdrop covers the world for ~12 frames before the Items page counts as up (3 after it closes): the cross stays up
+// through that, so it flies straight to the page and back instead of going and coming back first.
 extern "C" bool dpad_overlay_wanted(void) {
+    static uint64_t shown;  // (the frame the cross was last up in play or on the Items page)
     if (g_settings.dpad_mode != DPAD_ITEMS || !game_in_play()) return false;
-    return inventory_items_page_shown() || (world_on_screen() && any_item() && cross_alpha() > 0);
+    uint64_t f = renderer_present_count();
+    if (inventory_items_page_shown() || (world_on_screen() && any_item() && cross_alpha() > 0)) {
+        shown = f;
+        return true;
+    }
+    return pause_menu_shown() && any_item() && f - shown <= 20 && cross_alpha() > 0;
 }
 
 // (menu.mm's overlay reuse) what dpad_overlay_draw draws now, as text
