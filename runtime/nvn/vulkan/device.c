@@ -724,6 +724,7 @@ static void create_device(void) {
         if (pbin_ext) pbp.pNext = pr.pNext, pr.pNext = &pbp;
 #endif
         vkGetPhysicalDeviceProperties2(g_vk.phys, &pr);
+        g_vk.driver_id = drv.driverID;
         // the heap as driver memory (exec.c guest_heap_dmabuf) by default: RADV, and PanVK (Mali-G610, Mesa 27.0-devel,
         // issue #483: an 81-minute run without faults, the Field 15 -> 21 fps, ~85% fewer uploads). PanVK's device name
         // is the GPU's ("Mali-G610 MC4"), hence the driver ID.
@@ -1714,23 +1715,10 @@ static int ip_mids(TexBackend *b, uint64_t frame) {  // (the in-betweens shown)
     if (mids < 1) { ip_not_made[IP_CAPPED] += hz_cap > 0; mids_last = 0; ip_hz = 0; return 0; }
     if (mids != mids_last) settle = slow_checks = 0;
     mids_last = mids;
-    // The GPU's time goes to the game's frames first (as on Metal, metal.m): in-betweens only in what a game frame
-    // leaves of its interval - the game's own GPU time (pace.c; the in-betweens' submissions aren't counted there,
-    // exec.c) against an in-between's, replay and window image. Fewer than the refresh rate wants: evenly spaced, each
-    // shown longer. LARECOMP_INTERP_GPU_BUDGET=0: all made (research).
-    int allowed = mids;
-    {
-        static int budget_on = -1;
-        if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
-        extern double pace_gpu_frame_ms(void);
-        double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
-        double D = fmin(fmax(interval_ns / 1e6, 16.667), 50);
-        if (budget_on && game >= 0 && img > 0) {
-            double left = 0.9 * D - game;
-            allowed = left > 0 ? (int)(left / img) : 0;
-            if (allowed > mids) allowed = mids;
-        }
-    }
+    // The GPU's time goes to the game's frames first (as on Metal): in-betweens only in what a game frame leaves of its
+    // interval (interp.c interp_gpu_allowed; the in-betweens' submissions aren't counted in the game's time, exec.c).
+    // Fewer than the refresh rate wants: evenly spaced, each shown longer.
+    int allowed = interp_gpu_allowed(mids, interval_ns / 1e6);
     for (int m = allowed; m < mids; m++) interp_note_no_gpu();
     if (allowed < 1) { ip_not_made[IP_NO_GPU]++; ip_hz = 0; return 0; }
     ip_hz = hz * (allowed + 1) / (mids + 1);  // (presents spaced for the images made)
@@ -1856,8 +1844,17 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
+        // test hooks (runtime/hle/hookshot.c: LARECOMP_SHOTS, tours, ...): the window image with the overlay, as metal.m
+        extern char g_window_shot_request[256];
+        char req[256] = "";
+        if (!shot && g_window_shot_request[0]) {
+            snprintf(req, sizeof req, "%s", g_window_shot_request);
+            g_window_shot_request[0] = 0;
+        }
         ip_space();
-        vk_frame_end(shot ? "build/window.png" : NULL);
+        // LARECOMP_SHOT_PATH: where (tools/shot.sh: each SHOT_ID run its own, as metal.m; default build/window.png)
+        const char *win_path = getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/window.png";
+        vk_frame_end(shot ? win_path : req[0] ? req : NULL);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) exit_after_shot();
     } else {
         renderer_submit();

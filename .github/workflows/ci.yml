@@ -11,7 +11,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: ['main', 'beta_*']
+    branches: ['main', 'develop', 'release/**', 'beta_*']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,7 +21,7 @@ concurrency:  # (a newer push to the same branch / PR replaces a run still going
 
 jobs:
   # Docs-only changes (Markdown anywhere, the docs/ screenshots; not docs/icon/, which the builds use) need no build:
-  # every job below is skipped then, and a skipped job passes the beta_* ruleset's required checks. Anything else, a
+  # every job below is skipped then, and a skipped job passes the protected branches' required checks. Anything else, a
   # manual run or a new branch runs them all.
   changes:
     runs-on: ubuntu-24.04

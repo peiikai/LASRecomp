@@ -117,15 +117,15 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "beta_6"
-#define LARECOMP_TEST_OF "beta_6"
+#define LARECOMP_VERSION "v0.6.0"
+#define LARECOMP_TEST_OF "v0.6.0"
 // Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
 // An experimental platform that joins the normal releases: from this release on, its experimental builds offer it
 // (and any later one) ahead of a newer experimental build. Android ships in Beta 6.
 #ifdef __ANDROID__
-#define LARECOMP_EXPERIMENTAL_UNTIL "beta_6"
+#define LARECOMP_EXPERIMENTAL_UNTIL "v0.6.0"
 #else
 #define LARECOMP_EXPERIMENTAL_UNTIL ""
 #endif
@@ -2626,6 +2626,7 @@ extern "C" void launcher_run(const char *root) {
                 if (g_refocus == RANDO) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;
                 int arrow = 0;
                 bool rando_pressed;
+                const int choice0 = choice;  // (a step plays the tab sound, as a ◀ value ▶ row's: below)
 #if PLAT_TOUCH
                 rando_pressed = phone_pick_row(L("RANDOMIZER"), pick, choice, n, status.empty(),
                                                status.empty() && !waiting && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId),
@@ -2662,6 +2663,8 @@ extern "C" void launcher_run(const char *root) {
                                           name_end);  // (the choice keeps its colour when hovered: a seed white, "New
                                                       //  Seed" vanilla cream; the arrows stay white)
                 ImGui::SetWindowFontScale(1.0f);
+                // (the press on an arrow: no decide sound, the step plays its own)
+                if (arrow && hov && ImGui::IsMouseClicked(0)) menu_sfx_click_silent();
                 if (rando_pressed && arrow && ImGui::IsMouseReleased(0)) {  // (a mouse click on an arrow: a step, to the ends)
                     choice = std::max(0, std::min(choice + arrow, n - 1));
                     rando_pressed = false;
@@ -2678,6 +2681,7 @@ extern "C" void launcher_run(const char *root) {
                     for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
                         ImGui::SetKeyOwner(k, own);
                 }
+                if (choice != choice0) menu_sfx_play(MENU_SFX_TAB);
                 static int logged = -1;
                 if (choice != logged)
                     logged = choice, fprintf(stderr, "[launcher] randomizer row: %s\n", choice ? seeds[choice - 1].c_str() : "New Seed");

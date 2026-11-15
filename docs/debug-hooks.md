@@ -5,7 +5,7 @@ scripted test runs, screenshots, warps, logging, and A/B switches for renderer a
 startup or at first use, so set them before launching. Hooks that take a frame number act at that presented frame
 (the count starts at 0 when the app starts and goes on across in-game reboots).
 
-This page follows the current development branch (`beta_<n>`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
+This page follows the current development branch (`develop`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
 (`grep -rn 'getenv("LARECOMP_\|ENV("LARECOMP_' runtime/`), and the comment next to each read explains it.
 
 Unless a row says otherwise, "1" means any value turns the hook on, and "0 / 1" means the value is read as a number
@@ -257,6 +257,7 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_VK_NO_SPIRV_CACHE` | 1 | Don't use the SPIR-V disk cache. |
 | `LARECOMP_VK_SHADER_STATS` | 0 / 1 | Log each pipeline's driver statistics (registers, spills). |
 | `LARECOMP_VK_D24` | 0 | Use D32S8 instead of D24S8 depth. |
+| `LARECOMP_VK_DEPTH_NEAREST` | 0 / 1 | Sample depth images with nearest filtering (1), or always as the game's sampler says (0). Default nearest only where the driver can't filter that depth format (issue #779). |
 | `LARECOMP_VK_LEAN_USAGE` | 0 / 1 | Fewer image usage flags. Default on for integrated GPUs. |
 | `LARECOMP_VK_SMAA_STENCIL` | 0 / 1 | Stencil-masked SMAA. Default on for integrated GPUs. |
 | `LARECOMP_VK_RING_SYSMEM` | 1 | Put the upload ring in system memory (tests a GPU without resizable BAR). |

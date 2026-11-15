@@ -46,6 +46,7 @@ typedef struct {
     uint32_t ts_bits;          // the queue's timestampValidBits (0: no timestamps)
     VmaAllocator vma;
     VkPhysicalDeviceProperties props;
+    VkDriverId driver_id;  // (device.c; 0 when the driver doesn't say)
     bool cpu_astc;  // ASTC decoded on the CPU although the driver lists it (device.c)
     VkPipelineCache pcache;
     VkSemaphore timeline;      // value = last completed submission number
@@ -157,9 +158,11 @@ VkImageView vk_view(NvnTexture *t, const NvnTextureView *v, bool has_view, bool 
 VkImageView vk_image_view(TexBackend *b, VkImageViewType type, VkFormat fmt, uint32_t lv0, uint32_t nlv, uint32_t ly0,
                           uint32_t nly, VkComponentMapping sw, VkImageAspectFlags aspect);
 VkImageView vk_dummy_view(int textype);
+VkFormat vk_dummy_depth_format(void);  // its format (once it has been made)
 VkImageView vk_dummy_depth_view(int textype);  // shadow (depth compare) slots: 1x1 depth, cleared to 1.0
 bool vk_format_depth_compare(VkFormat f);  // SAMPLED_IMAGE_DEPTH_COMPARISON
 bool vk_tex_depth_compare(NvnTexture *t);  // t's image can be sampled with a depth compare
+VkSampler vk_depth_sampler(NvnSamplerDesc *d, VkFormat f);  // d for a depth image of format f (nearest if f can't be filtered)
 VkFormat vk_view_format(TexBackend *b, VkFormat want);  // want, or the image's own format where want isn't allowed
 void vk_convert_nv12(TexBackend *b, const void *nv12, uint32_t w, uint32_t h, uint32_t stride, uint32_t uv_off);  // exec.c
 VkImageView vk_dummy_color_view(uint32_t w, uint32_t h, uint32_t samples);

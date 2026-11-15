@@ -1382,10 +1382,14 @@ void vk_exec_init(void) {
     // constant buffers from memory every time. Turnip loads them into its constant file in a per-draw preamble, which
     // push constants shorten (the field's main lit pass on an Adreno 643: 7.52 -> 6.66 ms, preamble 386 -> 304
     // instructions). LARECOMP_VK_INLINE_C1 / LARECOMP_VK_PUSH_CB =1 / =0 override.
+    // The push constants, not on Qualcomm's own driver (#779: Adreno X2-90, Windows driver E17.52.12.00). With words in
+    // both stages most of the picture was black; with fragment words alone (LARECOMP_VK_PUSH_VS=0) the world drew but
+    // the file select's text didn't. Without them everything drew. c1 inlined stays on: those runs had it.
     maxwell_glsl_push = g_vk.props.vendorID == 0x13B5 || g_vk.props.vendorID == 0x5143;  // (Arm, Qualcomm)
+    maxwell_glsl_push_cb = g_vk.driver_id != VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
     const char *pe = getenv("LARECOMP_VK_PUSH_CB");
-    LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push) ? "on" : "off",
-        pe ? "LARECOMP_VK_PUSH_CB" : "default for this GPU");
+    LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push && maxwell_glsl_push_cb) ? "on" : "off",
+        pe ? "LARECOMP_VK_PUSH_CB" : maxwell_glsl_push_cb ? "default for this GPU" : "Qualcomm's driver");
     {   // fragment quad xor shuffles through derivatives (shader.h maxwell_glsl_quad_deriv) where the driver has no subgroup
         // operations in fragment shaders: Turnip on Adreno 6xx lists compute only, and the shaders' subgroupShuffleXor
         // hung the GPU in Marin and Tarin's house (the lit pass behind the depth prepass; Retroid Pocket 5, Adreno 650).
@@ -5816,9 +5820,14 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             nvn_dead_slot_sampled(e, tic);
         }
     }
-    if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+    NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+    if (sd) smp = vk_sampler(sd);
     if (st_->shadow)
         shadow_slot_check(stage, st_, i, h, tic, ent, ent && ent->tex ? (naliases ? alias_read(ent->tex) : ent->tex) : NULL, &view);
+    // depth formats a driver can't filter linearly: textures.c vk_depth_sampler (an alias has its source's format)
+    TexBackend *db = ent && ent->tex ? (TexBackend *)ent->tex->backend : NULL;
+    if (sd && st_->shadow && vk_dummy_depth_format() && view == vk_dummy_depth_view(st_->type)) smp = vk_depth_sampler(sd, vk_dummy_depth_format());
+    else if (sd && view && db && (db->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) smp = vk_depth_sampler(sd, db->format);
     if (!view) view = vk_dummy_view(st_->type);
     if (!smp) smp = vk_default_sampler(true);
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};
@@ -6906,6 +6915,24 @@ static void draw_(CmdRec *r, bool indexed) {
             if (composite) wx_scene_w = t0->width, wx_scene_h = t0->height;  // (the snow cover: the scene pass's size)
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
+        }
+        // the pause screen's backdrop (its blurred 192x108 copy of the scene, over the whole window): a composite drawn
+        // before it this frame is under it - the save screen draws the world behind it (runtime/hle/mirror.c)
+        if (!composite && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) && r->x[2] <= 6 &&
+            pr->fi->ntex == 1 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height) {
+            extern void mirror_scene_covered(void);
+            NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
+            if (t0 && t0->width == 192 && t0->height == 108) mirror_scene_covered();
+        }
+        // a fill over the whole screen (blended, untextured or a copy of the screen - a 16:9 render target): how much of
+        // the world and HUD it hides (runtime/hle/mirror.c)
+        if (!composite && (st.color_state[0] & 1) && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) &&
+            r->x[2] <= 6) {
+            extern void mirror_layout_fill(const float *u, uint64_t size);
+            NvnTexture *t0 = pr->fi->ntex ? shader_texture_object(1, &pr->fi->tex[0]) : NULL;
+            if (!pr->fi->ntex || (t0 && (t0->flags & 8) && t0->width * 9 == t0->height * 16))
+                mirror_layout_fill((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         }
         wx_composite = composite;
         if (mirror_draw(composite)) {
