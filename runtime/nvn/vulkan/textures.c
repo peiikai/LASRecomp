@@ -23,19 +23,24 @@ typedef struct { VkFormat vf; uint8_t expand_rgb, alpha_one; } VkFmt;
 
 // DEPTH24_STENCIL8 as itself where the GPU has it for everything the game does with depth (NVIDIA, Intel): half the
 // bytes of D32_SFLOAT_S8_UINT (4 instead of 8 per pixel) for every depth test, clear and copy - the game copies its
-// full-size depth twice a frame. AMD has no D24S8 attachments: D32S8 there (and on Metal). LARECOMP_VK_D24=0: D32S8.
+// full-size depth twice a frame. AMD has no D24S8 attachments: D32S8 there (and on Metal). LARECOMP_VK_D24=0: D32S8;
+// =1: D24S8 wherever it can be drawn to, sampled and copied, without blits (scaled depth copies then go through a colour
+// image, exec.c depth_blit_ok). Qualcomm's own driver has no D24S8 blits (#779: Adreno X2-90 drew no sun or shadows
+// with D32S8; =1 there tells a D32S8 compare apart from the shadow map's contents).
 static VkFormat depth24_stencil8(void) {
     static VkFormat f;
     if (!f) {
         const char *e = getenv("LARECOMP_VK_D24");
+        int force = e ? atoi(e) != 0 : -1;
         VkFormatProperties p;
         vkGetPhysicalDeviceFormatProperties(g_vk.phys, VK_FORMAT_D24_UNORM_S8_UINT, &p);
-        VkFormatFeatureFlags want = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                                    VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
-                                    VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
-        bool ok = (p.optimalTilingFeatures & want) == want && !(e && !atoi(e));
+        VkFormatFeatureFlags must = VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+                                    VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        VkFormatFeatureFlags want = must | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_BLIT_DST_BIT;
+        bool ok = (p.optimalTilingFeatures & (force == 1 ? must : want)) == (force == 1 ? must : want) && force != 0;
         f = ok ? VK_FORMAT_D24_UNORM_S8_UINT : VK_FORMAT_D32_SFLOAT_S8_UINT;
-        LOG("[vk] depth24 stencil8: %s\n", ok ? "D24_UNORM_S8_UINT" : "D32_SFLOAT_S8_UINT");
+        LOG("[vk] depth24 stencil8: %s (D24S8 features %#x%s)\n", ok ? "D24_UNORM_S8_UINT" : "D32_SFLOAT_S8_UINT",
+            p.optimalTilingFeatures, e ? ", LARECOMP_VK_D24" : "");
     }
     return f;
 }
