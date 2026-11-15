@@ -14,6 +14,7 @@ Vendor IDs: 0x13B5 Arm (Mali), 0x5143 Qualcomm (Adreno), 0x8086 Intel, 0x1002 AM
 |---|---|---|---|---|
 | Structured shaders (static branch stacks, no jump loop) | Mali, Adreno | PanVK (RK3588), Turnip | #562 | `LARECOMP_VK_STRUCTURE` |
 | c1 inlined, hot constant buffer words as push constants | Mali, Adreno | PanVK; Turnip (Adreno 643) | #563, #579 | `LARECOMP_VK_PUSH_CB`, `LARECOMP_VK_INLINE_C1` |
+| No push constants in vertex shaders (the fragment shader's start at offset 0) | Qualcomm's own driver | Adreno X2-90, Windows driver E17.52.12.00: most of the picture black without it | #779 | `LARECOMP_VK_PUSH_VS` |
 | Fragment quad shuffles through derivatives (no subgroup operations in fragment shaders) | drivers that list subgroups for compute only (Turnip on Adreno 6xx) | Turnip 26.0 / 26.2, Adreno 650 (Retroid Pocket 5): a GPU hang in Marin and Tarin's house without it | | `LARECOMP_VK_QUAD_DERIV` |
 | One submission per command list (no 8-pass chunks) | Adreno | Turnip 26.0, Adreno 650: a GPU hang at 720p in the opening's bloom passes with chunks; house at 720p 19.5 -> 17.0 ms | | `LARECOMP_CHUNK_PASSES` |
 | HSV recolour in pipeline variants (a specialization constant; draws with a Cosmetics colour use the variant) | Adreno, Mali | Turnip 26.2, Adreno 650: house lit pass at 720p 8.3 -> 5.1 ms with default Cosmetics | | `LARECOMP_VK_TINT_BRANCH` |

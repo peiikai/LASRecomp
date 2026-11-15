@@ -1386,6 +1386,16 @@ void vk_exec_init(void) {
     const char *pe = getenv("LARECOMP_VK_PUSH_CB");
     LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push) ? "on" : "off",
         pe ? "LARECOMP_VK_PUSH_CB" : "default for this GPU");
+    // ...in vertex shaders too, except on Qualcomm's own driver: with words in both stages (the fragment shader's in a
+    // push constant block at a nonzero offset, after the vertex shader's) most of the picture was black (#779: Adreno
+    // X2-90, Windows driver E17.52.12.00). Fragment words alone, from offset 0, drew right there. Which of the two the
+    // driver gets wrong isn't known. LARECOMP_VK_PUSH_VS=1 / =0 overrides.
+    maxwell_glsl_push_vs = g_vk.driver_id != VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
+    {
+        const char *ve = getenv("LARECOMP_VK_PUSH_VS");
+        LOG("[vk] vertex shader push constants %s (%s)\n", (ve ? atoi(ve) != 0 : maxwell_glsl_push_vs) ? "on" : "off",
+            ve ? "LARECOMP_VK_PUSH_VS" : maxwell_glsl_push_vs ? "default for this GPU" : "Qualcomm's driver");
+    }
     {   // fragment quad xor shuffles through derivatives (shader.h maxwell_glsl_quad_deriv) where the driver has no subgroup
         // operations in fragment shaders: Turnip on Adreno 6xx lists compute only, and the shaders' subgroupShuffleXor
         // hung the GPU in Marin and Tarin's house (the lit pass behind the depth prepass; Retroid Pocket 5, Adreno 650).
