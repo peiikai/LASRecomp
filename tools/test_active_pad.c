@@ -31,7 +31,7 @@ int game_in_play(void) { abort(); }
 int cheats_link_health(int *max) { abort(); }
 int bind_label_family(void) { abort(); }
 int16_t g_bind_pad[BIND_PAD_COUNT], g_bind_key[BIND_KEY_COUNT];  // (A on the bottom button, as by default)
-int bind_pad_host(int slot) { return g_bind_pad[slot]; }  // (by position: "Buttons match labels" off)
+int bind_pad_host(int slot) { return g_bind_pad[slot]; }  // (by position: Button layout "Switch")
 
 static SDL_JoystickID attach(const char *name) {
     SDL_VirtualJoystickDesc d;

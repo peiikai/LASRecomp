@@ -131,6 +131,9 @@ extern bool maxwell_gmem_fs_miss;
 extern bool maxwell_glsl_stack_vars;
 extern bool maxwell_glsl_structured;  // (the backend's default for this GPU: LARECOMP_VK_STATIC_STACKS / _STRUCTURE override)
 extern bool maxwell_glsl_push;  // (the backend's default: c1 inlined + push constants; LARECOMP_VK_INLINE_C1 / _PUSH_CB override)
+// With them: vertex shaders' words too (the fragment shader's then start after them). The backend's default (exec.c:
+// not on Qualcomm's own driver); LARECOMP_VK_PUSH_VS overrides.
+extern bool maxwell_glsl_push_vs;
 // (GLSL) fmin / fmax / saturate as the GPU's own min / max / clamp instead of the helpers that test for NaN: for GPUs
 // whose min / max return the operand that isn't NaN and whose clamp to [0, 1] saturates NaN to 0 (Adreno, as D3D
 // requires). The backend's default (exec.c: Android); LARECOMP_VK_FAST_MINMAX=1 / =0 overrides.

@@ -20,7 +20,7 @@ extern const char *g_romfs_dir;
 // speed through a low-pass - a deep, decaying roll; a near strike's crack a bomb's blast, lower; the crackle before a
 // strike the Buzz Blob's spark; see load_one)
 static const char *const g_names[MENU_SFX_N] = {"SE_SY_CURSOL_MOVE", "SE_SY_MENU_LR_MOVE", "SE_SY_DECIDE",
-                                                "SE_SY_BEEP", "SE_SY_CANCEL", "SE_SY_MENU_OPEN", "SE_SY_MENU_CLOSE",
+                                                "SE_SY_CANCEL", "SE_SY_MENU_OPEN", "SE_SY_MENU_CLOSE",
                                                 "SE_MAP_MATFACE_RUMBLE", "SE_MAP_BOMB_EXPLO", "SE_ENE_BUZZBLOB_SPARK"};
 
 #define RATE 48000
@@ -470,6 +470,8 @@ void menu_sfx_play_ex(int id, float vgain, float rate, float lowpass, float from
             g_voice[old] = g_voice[--g_nvoice];
         }
         if (!(rate > 0.05f && rate < 8)) rate = 1;
+        // The select sound stood out over the cursor and tab sounds on every click / A press: 30% quieter
+        if (id == MENU_SFX_DECIDE) vgain *= 0.7f;
         Voice vo = {id, from * RATE - delay * RATE * rate, rate, len > 0 ? (from + len) * RATE : 0,
                     len > 0 ? (from + len * 0.75) * RATE : 0, now, vgain};
         if (lowpass > 0) vo.k = 1 - expf(-2 * 3.14159265f * lowpass / RATE);

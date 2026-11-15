@@ -1,3 +1,6 @@
+// Every platform: how shown the game's own X / Y item buttons are (hud_xy_alpha, for the D-pad items' cross), and with
+// D-pad = Items the rupee count moved left, out from under that cross (rupee_dx).
+//
 // Phones and tablets: with Aspect ratio = Unlocked and a window wider or taller than 16:9, the game's HUD goes to the real
 // screen corners instead of the centred 16:9 box, in every room so it never jumps at a door; and optionally its X / Y item
 // buttons are hidden while the on-screen controls (which show those items) are up.
@@ -35,9 +38,9 @@ bool pause_fill_frame(uint64_t frame);  // runtime/hle/pause_fill.c: the pause s
 extern uint64_t renderer_exec_frame(void);
 
 #if PLAT_TOUCH
-
 bool touch_visible(void);
 void menu_safe_insets(float *l, float *r);  // share of the window's width
+#endif
 
 // (direct children of N_HUD_00 only: sub-layouts reuse these names)
 // N_Key_00 (keys, boss key, golden leaves) has its y set by the game's animations every frame (Cm_HUD_KeyUpDown:
@@ -50,6 +53,8 @@ static const struct { const char *name; int side; bool xy, kids_y; } kPanes[] = 
     {"N_ShellRadar_00", RIGHT, false},
 };
 #define NPANES (sizeof kPanes / sizeof kPanes[0])
+enum { SETITEM = 4, RUPEE = 5 };  // (kPanes: N_SetItem_00, the X / Y buttons in play; N_Item_00 / 01 are the Items page's)
+#define RUPEE_DX 100.0f
 static uint64_t g_hud, g_pane[NPANES], g_retry;
 static int g_tries;
 static float g_authored[NPANES], g_authored_y[NPANES];
@@ -133,16 +138,30 @@ static void set_xy(unsigned i, float x, float y) {
     *(uint8_t *)(uintptr_t)(p + 0x58) |= 0x10;
 }
 
-void rt_hud_corners_tick(uint64_t hud) {
-    float f = widescreen_factor();
-    bool in = game_in_play() && world_on_screen();
-    bool want = in && g_settings.aspect == ASPECT_UNLOCKED && (f > 1.01f || f < 0.99f) && !ENV("LARECOMP_NO_HUD_CORNERS");
-    bool hide = in && (g_settings.touch_hide_xy_hud || ENV("LARECOMP_HIDE_XY_HUD")) && touch_visible();
-    if (!want && !hide && !g_moved) {
-        bool any = false;
-        for (unsigned i = 0; i < NPANES; i++) any |= g_hid[i];
-        if (!any) { g_active = false, g_left = g_right = 0; return; }
+// The game's X / Y item buttons in play (N_SetItem_00) as shown now, 0..255. The HUD fades their pane out (its alpha,
+// over 12 frames) whenever it puts them away - talking to the Trendy Game's owner, cutscenes - and in again after; the
+// D-pad items' cross follows (runtime/ui/dpad_overlay.mm). Its parents' alpha counts too, and a hidden one makes 0;
+// hidden here for the on-screen controls (touch_hide_xy_hud) is still shown as far as the game goes. 255 until the
+// HUD's panes are found. Any thread: the HUD's normal update (rt_hud_corners_tick, where they're found) doesn't run
+// while they're put away, but the fade does.
+int hud_xy_alpha(void) {
+    uint64_t p = g_pane[SETITEM], up;
+    if (!p || !name_is(p, "N_SetItem_00") || !name_is(up = LD64(p + 0x18), "N_HUD_00")) return 255;
+    uint64_t root = LD64(up + 0x18);
+    uint64_t chain[3] = {p, up, root && name_is(root, "RootPane") ? root : 0};
+    int a = 255;
+    for (int i = 0; i < 3 && chain[i]; i++) {
+        if (!(LD8(chain[i] + 0x58) & 1) && !(i == 0 && g_hid[SETITEM])) return 0;  // (+0x58 bit 0: visible)
+        a = a * LD8(chain[i] + 0x59) / 255;                                          // (+0x59: the pane's own alpha)
     }
+    return a;
+}
+
+// The rupee count sits under the X button, where D-pad = Items draws its cross (runtime/ui/dpad_overlay.mm): it moves
+// left (layout units) to under the X / Y buttons' left edge, clear of the cross's left arm
+static float rupee_dx(void) { return g_settings.dpad_mode == DPAD_ITEMS ? -RUPEE_DX : 0; }
+
+void rt_hud_corners_tick(uint64_t hud) {
     extern uint64_t renderer_present_count(void);
     extern int kernel_data_regions(uint64_t *a, uint64_t *s, int max);
     g_nr = kernel_data_regions(g_ra, g_rs, 256);
@@ -156,6 +175,17 @@ void rt_hud_corners_tick(uint64_t hud) {
         if (renderer_present_count() < g_retry) return;
         g_hud = hud, g_retry = renderer_present_count() + 60, g_moved = false, g_tries++;
         find_panes(hud);
+    }
+    if (g_pane[RUPEE]) set_xy(RUPEE, g_authored[RUPEE] + rupee_dx(), *(const float *)(uintptr_t)(g_pane[RUPEE] + 0x34));
+#if PLAT_TOUCH
+    float f = widescreen_factor();
+    bool in = game_in_play() && world_on_screen();
+    bool want = in && g_settings.aspect == ASPECT_UNLOCKED && (f > 1.01f || f < 0.99f) && !ENV("LARECOMP_NO_HUD_CORNERS");
+    bool hide = in && (g_settings.touch_hide_xy_hud || ENV("LARECOMP_HIDE_XY_HUD")) && touch_visible();
+    if (!want && !hide && !g_moved) {
+        bool any = false;
+        for (unsigned i = 0; i < NPANES; i++) any |= g_hid[i];
+        if (!any) { g_active = false, g_left = g_right = 0; return; }
     }
     float l = 0, r = 0, up = 0;
     if (want && f < 1) up = 360 * (1 / f - 1);  // (a tablet: the band's spare height above it)
@@ -176,20 +206,15 @@ void rt_hud_corners_tick(uint64_t hud) {
             move_kids(sy > 0.01f ? up / sy : up);
             y = *(const float *)(uintptr_t)(g_pane[i] + 0x34);
         }
-        set_xy(i, g_authored[i] + (kPanes[i].side == LEFT ? -l : kPanes[i].side == RIGHT ? r : 0), y);
+        set_xy(i, g_authored[i] + (kPanes[i].side == LEFT ? -l : kPanes[i].side == RIGHT ? r : 0) + (i == RUPEE ? rupee_dx() : 0), y);
         if (!kPanes[i].xy) continue;
         uint8_t *fl = (uint8_t *)(uintptr_t)(g_pane[i] + 0x58);
         if (hide && (*fl & 1)) *fl &= ~1, g_hid[i] = true;  // (bit 0: visible; the game may set it again)
         else if (!hide && g_hid[i]) *fl |= 1, g_hid[i] = false;
     }
     g_moved = want, g_active = want, g_left = l, g_right = r, g_up = up;
-}
-
-#else
-
-void rt_hud_corners_tick(uint64_t hud) { (void)hud; }
-
 #endif
+}
 
 // ---- render thread
 static uint64_t g_bars_frame = ~0ull, g_crop_frame = ~0ull;

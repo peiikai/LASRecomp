@@ -57,7 +57,6 @@ Settings g_settings = {
     .rumble = true,
     .rumble_strength = 100,
     .controller_light = true,
-    .menu_confirm = MENU_CONFIRM_CONTROLLER,
     .show_fps = FPS_OFF,
     .fps_corner = FPS_TOP_LEFT,
     .touch_opacity = 0.6f,
@@ -318,8 +317,6 @@ void settings_load(void) {
         else if (!strcmp(key, "mirror_mode")) g_settings.mirror_mode = atoi(val) != 0;
         else if (!strcmp(key, "prompts")) g_settings.prompts = !strcmp(val, "nintendo") ? PROMPTS_NINTENDO : !strcmp(val, "xbox") ?
                                                               PROMPTS_XBOX : !strcmp(val, "playstation") ? PROMPTS_PLAYSTATION : PROMPTS_AUTO;
-        else if (!strcmp(key, "menu_confirm")) g_settings.menu_confirm = !strcmp(val, "game") ? MENU_CONFIRM_GAME
-                                                                                                  : MENU_CONFIRM_CONTROLLER;
         else if (!strcmp(key, "face_buttons_by_label")) g_settings.face_by_label = atoi(val) != 0;
         else if (!strcmp(key, "language")) {  // ("auto" or one of the game's codes; anything else: auto)
             // (zh-CN / zh-TW: what a settings file from before this wrote; the game reads zh-Hans / zh-Hant)
@@ -469,7 +466,6 @@ void settings_save(void) {
         fprintf(f, "window_size = %dx%d\n", g_settings.window_w, g_settings.window_h);
     static const char *const prompts[] = {"auto", "nintendo", "xbox", "playstation"};
     fprintf(f, "prompts = %s\n", prompts[g_settings.prompts & 3]);
-    fprintf(f, "menu_confirm = %s\n", g_settings.menu_confirm == MENU_CONFIRM_CONTROLLER ? "controller" : "game");
     fprintf(f, "face_buttons_by_label = %d\n", g_settings.face_by_label);
     fprintf(f, "mirror_mode = %d\n", g_settings.mirror_mode);
     fprintf(f, "language = %s\n", g_language_codes[g_settings.language > LANG_AUTO && g_settings.language < N_LANGUAGES

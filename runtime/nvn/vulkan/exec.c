@@ -1386,6 +1386,16 @@ void vk_exec_init(void) {
     const char *pe = getenv("LARECOMP_VK_PUSH_CB");
     LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push) ? "on" : "off",
         pe ? "LARECOMP_VK_PUSH_CB" : "default for this GPU");
+    // ...in vertex shaders too, except on Qualcomm's own driver: with words in both stages (the fragment shader's in a
+    // push constant block at a nonzero offset, after the vertex shader's) most of the picture was black (#779: Adreno
+    // X2-90, Windows driver E17.52.12.00). Fragment words alone, from offset 0, drew right there. Which of the two the
+    // driver gets wrong isn't known. LARECOMP_VK_PUSH_VS=1 / =0 overrides.
+    maxwell_glsl_push_vs = g_vk.driver_id != VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
+    {
+        const char *ve = getenv("LARECOMP_VK_PUSH_VS");
+        LOG("[vk] vertex shader push constants %s (%s)\n", (ve ? atoi(ve) != 0 : maxwell_glsl_push_vs) ? "on" : "off",
+            ve ? "LARECOMP_VK_PUSH_VS" : maxwell_glsl_push_vs ? "default for this GPU" : "Qualcomm's driver");
+    }
     {   // fragment quad xor shuffles through derivatives (shader.h maxwell_glsl_quad_deriv) where the driver has no subgroup
         // operations in fragment shaders: Turnip on Adreno 6xx lists compute only, and the shaders' subgroupShuffleXor
         // hung the GPU in Marin and Tarin's house (the lit pass behind the depth prepass; Retroid Pocket 5, Adreno 650).
@@ -6906,6 +6916,24 @@ static void draw_(CmdRec *r, bool indexed) {
             if (composite) wx_scene_w = t0->width, wx_scene_h = t0->height;  // (the snow cover: the scene pass's size)
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
+        }
+        // the pause screen's backdrop (its blurred 192x108 copy of the scene, over the whole window): a composite drawn
+        // before it this frame is under it - the save screen draws the world behind it (runtime/hle/mirror.c)
+        if (!composite && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) && r->x[2] <= 6 &&
+            pr->fi->ntex == 1 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height) {
+            extern void mirror_scene_covered(void);
+            NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
+            if (t0 && t0->width == 192 && t0->height == 108) mirror_scene_covered();
+        }
+        // a fill over the whole screen (blended, untextured or a copy of the screen - a 16:9 render target): how much of
+        // the world and HUD it hides (runtime/hle/mirror.c)
+        if (!composite && (st.color_state[0] & 1) && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) &&
+            r->x[2] <= 6) {
+            extern void mirror_layout_fill(const float *u, uint64_t size);
+            NvnTexture *t0 = pr->fi->ntex ? shader_texture_object(1, &pr->fi->tex[0]) : NULL;
+            if (!pr->fi->ntex || (t0 && (t0->flags & 8) && t0->width * 9 == t0->height * 16))
+                mirror_layout_fill((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         }
         wx_composite = composite;
         if (mirror_draw(composite)) {
