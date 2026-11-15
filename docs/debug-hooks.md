@@ -5,7 +5,7 @@ scripted test runs, screenshots, warps, logging, and A/B switches for renderer a
 startup or at first use, so set them before launching. Hooks that take a frame number act at that presented frame
 (the count starts at 0 when the app starts and goes on across in-game reboots).
 
-This page follows the current development branch (`beta_<n>`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
+This page follows the current development branch (`develop`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
 (`grep -rn 'getenv("LARECOMP_\|ENV("LARECOMP_' runtime/`), and the comment next to each read explains it.
 
 Unless a row says otherwise, "1" means any value turns the hook on, and "0 / 1" means the value is read as a number
