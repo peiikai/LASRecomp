@@ -1408,6 +1408,11 @@ void vk_exec_init(void) {
         maxwell_glsl_tint_branch = te ? atoi(te) != 0 : g_vk.props.vendorID == 0x5143 || g_vk.props.vendorID == 0x13B5;
         LOG("[vk] recolour variants %s (%s)\n", maxwell_glsl_tint_branch ? "on" : "off", te ? "LARECOMP_VK_TINT_BRANCH" : "default for this GPU");
     }
+    {   // (debug, #779) shadow lookups compared in the shader instead of by the sampler: translate.c glsl_sample
+        const char *e = getenv("LARECOMP_VK_SOFT_SHADOW");
+        maxwell_glsl_soft_shadow = e && atoi(e) != 0;
+        if (maxwell_glsl_soft_shadow) LOG("[vk] shadow lookups compared in the shader (LARECOMP_VK_SOFT_SHADOW)\n");
+    }
     // fmin / fmax / saturate as the GPU's min / max / clamp (shader.h maxwell_glsl_fast_minmax) by default on Android,
     // where the fork it comes from measured it on Adreno (Turnip and Qualcomm's driver: the lit pass 1717 -> 1637
     // instructions). LARECOMP_VK_FAST_MINMAX=1 turns it on elsewhere, =0 off anywhere.
@@ -5880,8 +5885,9 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
         shadow_slot_check(stage, st_, i, h, tic, ent, ent && ent->tex ? (naliases ? alias_read(ent->tex) : ent->tex) : NULL, &view);
     // depth formats a driver can't filter linearly: textures.c vk_depth_sampler (an alias has its source's format)
     TexBackend *db = ent && ent->tex ? (TexBackend *)ent->tex->backend : NULL;
-    if (sd && st_->shadow && vk_dummy_depth_format() && view == vk_dummy_depth_view(st_->type)) smp = vk_depth_sampler(sd, vk_dummy_depth_format());
-    else if (sd && view && db && (db->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) smp = vk_depth_sampler(sd, db->format);
+    bool plain = st_->shadow && maxwell_glsl_soft_shadow;  // (the shader compares: translate.c glsl_sample)
+    if (sd && st_->shadow && vk_dummy_depth_format() && view == vk_dummy_depth_view(st_->type)) smp = vk_depth_sampler(sd, vk_dummy_depth_format(), plain);
+    else if (sd && view && db && (db->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) smp = vk_depth_sampler(sd, db->format, plain);
     if (!view) view = vk_dummy_view(st_->type);
     if (!smp) smp = vk_default_sampler(true);
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};

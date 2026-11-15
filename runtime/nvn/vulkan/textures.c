@@ -1112,26 +1112,31 @@ bool vk_format_depth_compare(VkFormat f) {
 // driver (#779, Adreno X2-90) every shadow compare read as shadowed, and the scene lost its sun and shadows; with the
 // compare off (LARECOMP_NO_SHADOW=1) it drew lit. Such a depth image is sampled through a nearest twin of the game's
 // sampler instead (exec.c texture_info): shadow edges get harder, but they are there. LARECOMP_VK_DEPTH_NEAREST=1: every depth sample nearest; =0: never (the sampler as the game set it).
-static VkSampler nearest_twin(NvnSamplerDesc *d) {
-    static struct { VkSampler from, to; } map[64];
+// (plain: without the compare, for LARECOMP_VK_SOFT_SHADOW's shadow lookups, which compare in the shader)
+static VkSampler twin(NvnSamplerDesc *d, bool nearest, bool plain) {
+    static struct { VkSampler from, to; uint8_t kind; } map[64];
     static int n;
     VkSampler from = vk_sampler(d);
-    for (int i = 0; i < n; i++) if (map[i].from == from) return map[i].to;
+    uint8_t kind = (uint8_t)(nearest | plain << 1);
+    for (int i = 0; i < n; i++) if (map[i].from == from && map[i].kind == kind) return map[i].to;
     NvnSamplerDesc c = *d;
     c.backend = NULL;
-    c.mag_filter = 0;
-    c.min_filter = c.min_filter == 1 ? 0 : c.min_filter >= 2 ? 2 : c.min_filter;  // nearest, nearest mip nearest
-    c.max_aniso = 1;
+    if (nearest) {
+        c.mag_filter = 0;
+        c.min_filter = c.min_filter == 1 ? 0 : c.min_filter >= 2 ? 2 : c.min_filter;  // nearest, nearest mip nearest
+        c.max_aniso = 1;
+    }
+    if (plain) c.compare_mode = 0;
     VkSampler to = vk_sampler(&c);  // (samplers are never destroyed: the handles stay valid as keys)
-    if (n < 64) { map[n].from = from; map[n++].to = to; }
+    if (n < 64) { map[n].from = from; map[n].kind = kind; map[n++].to = to; }
     return to;
 }
 
-VkSampler vk_depth_sampler(NvnSamplerDesc *d, VkFormat f) {
+VkSampler vk_depth_sampler(NvnSamplerDesc *d, VkFormat f, bool plain) {
     static int force = -2;
     if (force == -2) { const char *e = getenv("LARECOMP_VK_DEPTH_NEAREST"); force = e ? atoi(e) != 0 : -1; }
     bool linear = d->mag_filter == 1 || d->min_filter == 1 || d->min_filter >= 3;
-    if (!linear || force == 0) return vk_sampler(d);
+    if (!linear || force == 0) return plain ? twin(d, false, true) : vk_sampler(d);
     bool can = (optimal_features(f) & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
     static VkFormat logged[8];
     static int nlogged;
@@ -1142,7 +1147,8 @@ VkSampler vk_depth_sampler(NvnSamplerDesc *d, VkFormat f) {
         LOG("[vk] depth format %d sampled with a linear filter: the driver %s it%s\n", f, can ? "filters" : "can't filter",
             force == 1 ? ", nearest anyway (LARECOMP_VK_DEPTH_NEAREST)" : can ? "" : ", nearest instead");
     }
-    return can && force != 1 ? vk_sampler(d) : nearest_twin(d);
+    if (can && force != 1) return plain ? twin(d, false, true) : vk_sampler(d);
+    return twin(d, true, plain);
 }
 
 // t's sampled image can be read with a depth compare (a depth image of a comparable format)

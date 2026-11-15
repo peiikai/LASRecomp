@@ -31,6 +31,7 @@ bool maxwell_glsl_structured;  // static stacks + structured control flow by def
 bool maxwell_glsl_fast_minmax;  // the GPU's min / max / clamp for fmin / fmax / saturate (exec.c: Android)
 bool maxwell_glsl_push;  // c1 inlined + push constants by default (exec.c: Mali, Adreno)
 bool maxwell_glsl_tint_branch;  // the recolour code behind a specialization constant (exec.c: Adreno, Mali)
+bool maxwell_glsl_soft_shadow;  // (debug, exec.c LARECOMP_VK_SOFT_SHADOW) shadow lookups compared in the shader: see glsl_sample
 bool maxwell_glsl_quad_deriv;  // fragment quad xor shuffles through derivatives (exec.c: no subgroups in fragment shaders)
 const uint8_t *maxwell_const_data;
 uint32_t maxwell_const_size;
@@ -685,7 +686,14 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
         else snprintf(xs, sizeof xs, "vec3(%s, %s, %s)", co[0], co[1], co[2]);  // cube lookups take no offset
     }
     const char *extra = NULL;  // separate compare argument (cube array shadow)
-    if (!t->shadow) {
+    // (debug) LARECOMP_VK_SOFT_SHADOW=1: a shadow lookup reads the depth through a plain sampler (exec.c binds one
+    // without the compare) and compares it here, as LESS (reference < depth: lit), the game's function for its
+    // shadow maps (#779: sampler compare func 2 on both GPUs probed). On Qualcomm's own driver every hardware compare
+    // of the field's 2D-array shadow map read as shadowed, although the map held the same depths as on NVIDIA; this
+    // tells the driver's compare apart from everything before it. One tap, no filtering: harder shadow edges.
+    bool soft = t->shadow && maxwell_glsl_soft_shadow && dref;
+    if (soft && type == TEXTYPE_CUBE_ARRAY && !layer) layer = "0u";
+    if (!t->shadow || soft) {
         if (layer) snprintf(P, sizeof P, "vec%d(%s, float(%s))", n + 1, xs, layer);
         else snprintf(P, sizeof P, "%s", xs);
     } else if (type == TEXTYPE_CUBE_ARRAY) {
@@ -703,7 +711,8 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     if (lod_kind == 0) snprintf(e, sizeof e, "texture(t%d, %s%s)", slot, P, ex);
     else if (lod_kind == 1) snprintf(e, sizeof e, "textureLod(t%d, %s%s, %s)", slot, P, ex, lod);
     else snprintf(e, sizeof e, "texture(t%d, %s%s, %s)", slot, P, ex, lod);
-    if (t->shadow) sprintf(out, "vec4(%s)", e);
+    if (soft) sprintf(out, "vec4(float((%s) < (%s).x))", dref, e);
+    else if (t->shadow) sprintf(out, "vec4(%s)", e);
     else strcpy(out, e);
 }
 
@@ -2082,7 +2091,7 @@ static const char *glsl_sampler_type(const ShaderTexture *t) {
         {"samplerCube", "samplerCubeShadow"}, {"sampler2DArray", "sampler2DArrayShadow"},
         {"samplerCubeArray", "samplerCubeArrayShadow"}, {"sampler1DArray", "sampler1DArrayShadow"}};
     int ty = t->type <= TEXTYPE_1D_ARRAY ? t->type : TEXTYPE_2D;
-    return names[ty][t->shadow ? 1 : 0];
+    return names[ty][t->shadow && !maxwell_glsl_soft_shadow ? 1 : 0];
 }
 
 // (GLSL fragment, lazy heap chunks) Early depth / stencil tests for a shader that counts chunk misses (GMiss atomics):
