@@ -788,6 +788,8 @@ static bool on_scrollbar(ImGuiContext &g) {
                  g.HoveredId == ImGui::GetWindowScrollbarID(w, ImGuiAxis_X));
 }
 
+extern "C" void menu_sfx_click_silent(void) { g_click_silent = true; }
+
 extern "C" void menu_sfx_frame(bool back_ok) {
     ImGuiContext &g = *ImGui::GetCurrentContext();
     bool silent = g_click_silent, off_press = g_off_press;
