@@ -79,7 +79,7 @@ NAMES = {
     'woods-north-cave-loose': 'Forest north cave, item', 'woods-north-chest': 'Mysterious Forest, north chest',
     'woods-south-chest': 'Mysterious Forest, south chest', 'woods-west-dig': 'Mysterious Forest, west (dig)',
 }
-KIND_WORD = {'bush': 'Bush', 'dig': 'Dig spot', 'pot': 'Pot'}
+KIND_WORD = {'bush': 'Bush', 'dig': 'Dig spot', 'pot': 'Pot', 'apple': 'Apple tree', 'rock': 'Rock'}
 # interiors holding pots (potsanity), by level
 HOUSES = {'MarinTarinHouse': "Marin and Tarin's house", 'DrWrightHouse': "Mr. Write's house",
           'MadamHouse': "Madam MeowMeow's house", 'QuadupletHouse': "the quadruplets' house",
@@ -109,15 +109,18 @@ def direction(fx, fz):
 
 
 def display_name(name, kind=None, area=None, where=None):
-    """name: the LAS location; kind: bush / dig / pot for the randomizer's numbered checks; area: the place name it
+    """name: the LAS location; kind: bush / dig / pot / apple for the randomizer's numbered checks; area: the place name it
     is in; where: a compass word inside that area (or a room / house name)."""
     if name in NAMES:
         return NAMES[name]
     m = re.match(r'trendy-prize-(\d+)$', name)
     if m:
         return f'Trendy Game: prize {m.group(1)}'
+    m = re.match(r'shop-slot(\d)-(2nd|3rd)$', name)  # (a shelf's next item once the first is bought)
+    if m:
+        return f"Town Tool Shop: shelf {m.group(1)}, {'second' if m.group(2) == '2nd' else 'third'} item"
     m = re.match(r'(D\d)-(.*)$', name)
-    if m and not m.group(2).startswith('pot-'):
+    if m and not re.match(r'pot-\d\d[A-P]-', m.group(2)):  # (potsanity's numbered pots: their own wording)
         return spelled(m.group(2))
     if kind in KIND_WORD:
         parts = [KIND_WORD[kind]]

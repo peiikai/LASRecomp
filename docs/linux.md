@@ -1,9 +1,10 @@
 # LAS Recomp on Linux (x86-64, aarch64)
 
 Status: builds and runs the game on Vulkan (with your own game files) on x86-64, checked before
-each release by `make smoketest`. aarch64 is **experimental**: cross-compiled, its start screen checked under emulation,
-the game itself untested on real hardware - community reports decide (see the end). `make appimage` / `make appimages`
-package the release AppImages.
+each release by `make smoketest`. aarch64 is **experimental**: tested on a few ARM boards; reports welcome (see the end). `make appimage` / `make appimages`
+package the AppImages. The latest aarch64 one is on the rolling
+[Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) pre-release
+(`.github/workflows/experimental.yml`); releases from 1.0.0 on carry only the x86-64 one.
 
 ## Running the AppImage
     chmod +x LAS.Recomp-<version>-linux-x86_64.AppImage
@@ -40,6 +41,9 @@ Ubuntu / Debian packages (other distributions: the same libraries under their na
 
     sudo apt install clang lld make pkg-config python3-venv libsdl3-dev libavformat-dev libavcodec-dev \
         libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev libvulkan-memory-allocator-dev glslc vulkan-tools
+
+For Chinese or Korean menus, also install a font for them (`fonts-noto-cjk`). LAS Recomp bundles fonts for Russian
+and Japanese only; without one, Chinese and Korean menu text shows as boxes.
 
 shaderc is linked the way its pkg-config file says (`libshaderc_shared` on Arch, Fedora, AOSC...); to choose
 yourself: `make SHADERC=-lshaderc_shared` (or `-lshaderc`).
@@ -108,8 +112,9 @@ files or fonts.
 - Pages: 4K and 16K kernels (Asahi) work; 64K-page kernels (some ARM servers) are not supported.
 
 ## Testing on ARM (aarch64): what to report
-The aarch64 AppImage is experimental: built on x86-64, only its start screen has run (emulated): reports from real hardware
-(Asahi Linux, Snapdragon laptops, Raspberry Pi 5 and other boards) are what tells whether it works. Please include:
+The aarch64 AppImage is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental)
+page. It has been tested on a few ARM boards (RK3588 with a Mali GPU), so reports from other hardware
+(Asahi Linux, Snapdragon laptops, Raspberry Pi 5 and other boards) are welcome. Please include:
 
 1. **Distribution and kernel**: `cat /etc/os-release | head -3; uname -r; getconf PAGESIZE`
 2. **GPU and Vulkan driver**: `vulkaninfo --summary` (package `vulkan-tools`); at least the devices section with

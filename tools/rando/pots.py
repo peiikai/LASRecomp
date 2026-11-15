@@ -112,7 +112,8 @@ REFILLS = ('pot-arrows', 'pot-bombs', 'pot-powder')
 # Their pots aren't checks at all (vanilla contents, no gold): a check there could be lost for good (user 2026-10-18)
 MISSABLE_ROOMS = ('Lv07EagleTower_02E', 'Lv07EagleTower_06E')
 REFILL_INDEX = 80
-QUICK = ('pot-heart',) + REFILLS  # picked up like rupees: no item-get animation
+QUICK = ('pot-heart', 'apple', 'green-apple') + REFILLS  # picked up like rupees: no item-get animation (apples:
+# Applesanity's filler, apple_trees.py)
 # traps among the pot filler, by LAS's trap setting (fraction of the pot count; never the Zol trap - it needs a chest)
 POT_TRAPS = {'none': 0.0, 'few': 0.02, 'several': 0.06, 'many': 0.12, 'trapsanity': 0.25}
 FLAG_BASE = 1240  # first GlobalFlags index we may use (vanilla <= 1118, LAS adds ~100 after it)
@@ -124,15 +125,16 @@ def _and(*conds):
     return ' & '.join(f'({c})' for c in parts) if parts else None
 
 
-def scan(romfs, leb):
-    """All randomizable pots: list of dicts with level, room, key, pos."""
+def scan(romfs, leb, missable=MISSABLE_ROOMS):
+    """All randomizable pots: list of dicts with level, room, key, pos. missable: rooms whose pots stay vanilla
+    (room shuffle seeds: eagle_tower.MISSABLE_ROOMS_COLLAPSED - the tower starts collapsed)."""
     pots = []
     for f in sorted(glob.glob(os.path.join(romfs, 'region_common', 'level', '*', '*.leb'))):
         level = os.path.basename(os.path.dirname(f))
         if level.startswith(SKIP_LEVEL_PREFIX) or level in SKIP_LEVELS:
             continue
         room_name = os.path.basename(f)[:-4]
-        if room_name in MISSABLE_ROOMS:
+        if room_name in missable:
             continue
         with open(f, 'rb') as fh:
             room = leb.Room(fh.read())
@@ -240,13 +242,14 @@ def mark_refills(placements):
 
 
 def apply(locs, mods, out_dir, romfs, leb, event_tools, oead_tools, item_get, data, flag_prefix='LARPot',
-          flag_base=FLAG_BASE, flag_limit=2048, key_tag=0x7A, hide_scale=HIDE_SCALE, cut_flag=False):
+          flag_base=FLAG_BASE, flag_limit=2048, key_tag=0x7A, hide_scale=HIDE_SCALE, cut_flag=False, drop_param=1):
     """Writes the item actors, event entry points and flags for every pot location (after LAS's ModsProcess).
     Also used for bushes (bushes.py): their own flag names / range (2048+: runtime/hle/flags_ext.c) and actor keys.
     cut_flag (bushes): a second flag per location, <prefix>Cut<n>, as the bush's switch 0: the game sets it when the
     bush is cut (and keeps a bush with it set cut), so the runtime knows to show the item full size (write_tsv;
     runtime/hle/pot_glow.c clears it again once Link has left, and the bush grows back). The bush drops nothing else
-    (a random rupee beside the small item was what players picked up)."""
+    (a random rupee beside the small item was what players picked up). drop_param: the host's ItemDrop parameter
+    (rocks: 0)."""
     common_out = os.path.join(out_dir, 'romfs', 'region_common')
     common_in = os.path.join(romfs, 'region_common')
 
@@ -337,7 +340,7 @@ def apply(locs, mods, out_dir, romfs, leb, event_tools, oead_tools, item_get, da
             it.switches = [(4, 0), (4, 0), (4, 0), (4, 0)]
             if cut is not None:
                 pot.switches[0] = (1, cut)
-                pot.parameters[1] = b'None'  # (ItemDrop key: no random drop beside the check)
+                pot.parameters[drop_param] = b'None'  # (ItemDrop key: no random drop beside the check)
             s = data.MODEL_SIZES.get(model_name, 1.0) * hide_scale
             it.scaleX = it.scaleY = it.scaleZ = s
             if model_name in data.MODEL_ROTATIONS:

@@ -469,11 +469,14 @@ void ImGui_ImplMetal_DestroyDeviceObjects()
         // Purge old buffers that haven't been useful for a while
         if (now - self.lastBufferCachePurge > 1.0)
         {
-            NSMutableArray* survivors = [NSMutableArray array];
-            for (MetalBuffer* candidate in self.bufferCache)
-                if (candidate.lastReuseTime > self.lastBufferCachePurge)
-                    [survivors addObject:candidate];
-            self.bufferCache = [survivors mutableCopy];
+            // LAS Recomp: purged in place. Replacing the array swapped the object everyone locks on: the main queue's
+            // completion block could read the property mid-swap (nonatomic) or add to the new array without its lock
+            // while this thread walked it - a crash in objc_msgSend here after about an hour on an iPad.
+            double purge_before = self.lastBufferCachePurge;
+            NSIndexSet* old = [self.bufferCache indexesOfObjectsPassingTest:^BOOL(MetalBuffer* candidate, NSUInteger, BOOL*) {
+                return candidate.lastReuseTime <= purge_before;
+            }];
+            [self.bufferCache removeObjectsAtIndexes:old];
             self.lastBufferCachePurge = now;
         }
 

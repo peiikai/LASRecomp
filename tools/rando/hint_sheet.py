@@ -21,7 +21,7 @@ check's event flag from tracker.tsv; for items the save shows directly, owning i
 once all are.
 
     steps(logic_defs, placements, settings, check, sph, out_dir) -> number of steps (writes hint_steps.json)
-    apply(out_dir, romfs, settings) -> summary (flows, messages, item row, hints.tsv)
+    apply(out_dir, romfs, settings, ent, logic_defs) -> summary (flows, messages, item row, hints.tsv)
 """
 import glob
 import json
@@ -44,7 +44,7 @@ _RED = b'\x0e\x00\x00\x03\x00\x04\x00\xd9\x45\x6d\xff'  # colour tags: the game'
 _WHITE = b'\x0e\x00\x00\x03\x00\x04\x00\xed\xed\xed\xff'
 _PAGE = b'\x0e\x00\x00\x04\x00\x00\x00'
 
-JUNK = re.compile(r'^((pot-|dig-)?rupee-\d+|pot-heart|pot-arrows|pot-bombs|pot-powder|.*-trap|arrows?(-\d+)?|'
+JUNK = re.compile(r'^((pot-|dig-)?rupee-\d+|pot-heart|pot-arrows|pot-bombs|pot-powder|.*-trap|arrows?(-\d+)?|apple|green-apple|'
                   r'bombs?-\d+|powder-\d+|heart|fairy)$')
 
 
@@ -401,9 +401,7 @@ def landmarks(romfs, leb):
     out = []
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'entrance_data.yml')) as f:
         for d in yaml.safe_load(f)['doors']:
-            lv = d.get('dest_level') or ''
-            name = DOOR_NAME.get(lv) or DOOR_NAME.get(re.sub(r'\d+(_.*)?$', '', lv)) or 'a cave'
-            out.append((name, d['pos_xz'][0], d['pos_xz'][1]))
+            out.append((door_name(d), d['pos_xz'][0], d['pos_xz'][1]))
     for f in sorted(glob.glob(os.path.join(romfs, 'region_common', 'level', 'Field', 'Field_*.leb'))):
         with open(f, 'rb') as fh:
             room = leb.Room(fh.read())
@@ -412,6 +410,73 @@ def landmarks(romfs, leb):
                 if a.name.startswith(k):
                     out.append((name, a.posX, a.posZ))
     return out
+
+
+def door_name(door):
+    """What a door looks like from outside: the building it was in vanilla ('the Trendy Game')."""
+    lv = door.get('dest_level') or ''
+    return DOOR_NAME.get(lv) or DOOR_NAME.get(re.sub(r'\d+(_.*)?$', '', lv)) or 'a cave'
+
+
+def door_of(loc, logic_defs, ent):
+    """Entrance rando (ent = las_headless's (doors, entry, exit)): the door the player walks through to reach a check
+    in a shuffled interior or connector cave (entrance_data door dict), else None. Interiors and caves keep their
+    vanilla area in the logic's spoiler-region; their door is what says where they are now."""
+    if not ent:
+        return None
+    doors, entry, _ = ent
+    region = (logic_defs.get(loc) or {}).get('region') or ''
+    if region.startswith('inside-'):
+        targets = {region[7:]}
+    elif region.startswith('conn-'):
+        targets = {d['id'] for d in doors if d.get('connector') and f"conn-{d['connector']}-{d['node']}" == region}
+    else:
+        return None
+    by_id = {d['id']: d for d in doors}
+    ways = sorted(d for d, t in entry.items() if t in targets)
+    if not ways or ways[0] in targets:  # (its own door: where it always was)
+        return None
+    return by_id[ways[0]]
+
+
+def via_doors(entered_via, romfs):
+    """mix-dungeon-entrances: entered_via values that are house / cave doors (entrance_data ids, not LAS dungeon keys)
+    -> {'name': door_name, 'area': door_area}"""
+    import entrance_logic as el
+    by_id = {d['id']: d for d in el.load()['doors']}
+    return {k: {'name': door_name(by_id[v]), 'area': door_area(by_id[v], romfs)} if v in by_id else v
+            for k, v in entered_via.items()}
+
+
+def via_phrase(via):
+    """'the door of the Trendy Game in Mabe Village' / 'a cave in Tal Tal Heights' (via_doors)"""
+    where = AREA.get(via['area'], '')
+    name = via['name'] if via['name'] == 'a cave' else f"the door of {via['name']}"
+    return f'{name} in {where}' if where else name
+
+
+def via_segments(via, names, lang):
+    """other languages: ' (entrance: <area>)' for via_doors' doors (the game's area name), else nothing"""
+    import loc_text as lt
+    label = lt.AREA_LABEL.get(via['area'])
+    area = names.place(label) if label and names else None
+    if not area:
+        return []
+    cjk = lang in ('ja', 'zh_cn', 'zh_tw')
+    return [(('（' if cjk else ' (') + lt.tr(lt.DETAIL['entrance'], lang) + lt.T['colon'].get(lang, ': '), False),
+            (area if isinstance(area, bytes) else area.encode(), False), ('）' if cjk else ')', False)]
+
+
+def door_area(door, romfs):
+    """The area (AREA key) a door stands in: its spot's place on the Field, else its region's."""
+    import field_regions
+    room = door['field_room']
+    x, z = door['pos_xz']
+    col, row = ord(room[-1]) - 65, int(room[-3:-1])
+    tx = min(9, max(0, int((x - col * 15) / 1.5)))
+    tz = min(7, max(0, int((z - (row - 1) * 12) / 1.5)))
+    zones = field_regions.tile_zones(romfs).get(room)
+    return field_regions.area_of(door.get('outer_region'), zones[tz * 10 + tx] if zones else None)
 
 
 def tile_xz(room, tile):
@@ -437,8 +502,24 @@ def nearest(marks, x, z):
 
 
 def place_phrase(step, dungeon_of, entered_via):
-    """Where the check physically is, in words: entrance shuffles change the way in, never the place."""
+    """Where the check physically is, in words: entrance shuffles change the way in, never the place. A shuffled house
+    or cave is named by the door the player uses (door-name / door-area: apply())."""
     loc, region = step['loc'], step.get('region', '')
+    if step.get('door-name'):
+        where = AREA.get(step['door-area'], '')
+        where = f' in {where}' if where else ''
+        if step['door-name'] == 'a cave':
+            where = 'in a cave' + where
+        else:
+            where = f"behind the door of {step['door-name']}" + where
+        if loc.startswith('pot-'):
+            return 'in a pot, ' + where
+        who = re.sub(r' (in|on|of|at) .*$', '', PLACE[loc]) if loc in PLACE else ''
+        if not who.startswith('with '):  # (shops and games keep their name)
+            who = next((w for p, w in (('shop-', 'in the shop'), ('trendy-prize', 'at the Trendy Game'),
+                                       ('fishing-', 'at the fishing pond'), ('dampe-', "with Dampe's chambers"))
+                        if loc.startswith(p)), '')
+        return f'{who}, {where}' if who else where
     area = AREA.get(region, '')
 
     def dungeon(dn, detail=''):
@@ -446,7 +527,9 @@ def place_phrase(step, dungeon_of, entered_via):
         text = f'in {dungeon_name(dn)}' + (f' ({detail})' if detail else '')
         key = next((k for k, v in DUNGEON_KEY.items() if v == dn), None)
         via = entered_via.get(key)
-        if via and via != key:
+        if isinstance(via, dict):  # (mix-dungeon-entrances: a house or cave door: via_doors())
+            text += f', through {via_phrase(via)}'
+        elif via and via != key:
             text += f", through {DUNGEON[DUNGEON_KEY[via]].removeprefix('the ')}'s entrance"
         return text
     if loc in PLACE:
@@ -457,12 +540,17 @@ def place_phrase(step, dungeon_of, entered_via):
         if lv in LEVEL_DUNGEON:
             return 'in a pot ' + dungeon(dungeon_of.get(loc, LEVEL_DUNGEON[lv]))
         return f'in a pot in {_words(lv)}' + (f' ({area})' if area else '')
-    if loc.startswith(('bush-', 'dig-')):
+    rock = re.match(r'rock-\d\d[A-P]-', loc)  # (rocksanity; not LAS's rock-maze)
+    if loc.startswith(('bush-', 'dig-', 'apple-tree-')) or rock:
         lm = step.get('landmark')
         if lm and lm.startswith(GENERIC) and area:
             lm += f' in {area}'
         if loc.startswith('bush-'):
             return f'under a bush by {lm}' if lm else f'under a bush in {area or "the wilds"}'
+        if loc.startswith('apple-tree-'):  # (Applesanity, tools/rando/apple_trees.py)
+            return f'in an apple tree by {lm}' if lm else f'in an apple tree in {area or "the wilds"}'
+        if rock:
+            return f'under a rock by {lm}' if lm else f'under a rock in {area or "the wilds"}'
         return f'buried near {lm}' if lm else f'buried in {area or "the ground"}'
     if loc.endswith('-dig'):
         return f'buried in {area or "the ground"}'
@@ -509,7 +597,7 @@ BOSSES = {'moldorm', 'genie', 'slime-eye', 'angler', 'slime-eel', 'facade', 'eag
 def place_parts(step, dungeon_of, names, lang):
     """Other languages: where the check is - (the game's place name or None, our detail or None)."""
     import loc_text as lt
-    loc, region = step['loc'], step.get('region', '')
+    loc, region = step['loc'], step.get('door-area') or step.get('region', '')  # (a shuffled house: its door's area)
     area = names.place(lt.AREA_LABEL[region]) if region in lt.AREA_LABEL else None
 
     def det(key, **kw):
@@ -523,6 +611,10 @@ def place_parts(step, dungeon_of, names, lang):
         return area, det('pot')
     if loc.startswith('bush-'):
         return area, det('bush')
+    if loc.startswith('apple-tree-'):
+        return area, det('apple')
+    if re.match(r'rock-\d\d[A-P]-', loc):
+        return area, det('rock')
     if loc.startswith('dig-') or loc.endswith('-dig'):
         return area, det('buried')
     for prefix, label in (('shop-', 'ToolShop'), ('trendy-prize', 'GameShop'), ('fishing-', 'FishingPond'),
@@ -602,7 +694,9 @@ def hint_segments(step, dungeon_of, names, lang, entered_via=None):
     dn = check_dungeon(step, dungeon_of)
     key = next((k for k, v in DUNGEON_KEY.items() if v == dn), None)
     via = (entered_via or {}).get(key)
-    if via and via != key:
+    if isinstance(via, dict):  # (mix-dungeon-entrances: a house or cave door, named by its area)
+        seg += via_segments(via, names, lang)
+    elif via and via != key:
         cjk = lang in ('ja', 'zh_cn', 'zh_tw')
         seg += [(('（' if cjk else ' (') + lt.tr(lt.DETAIL['entrance'], lang) + lt.T['colon'].get(lang, ': '), False),
                 (dungeon_name(DUNGEON_KEY[via], lang, names), False), ('）' if cjk else ')', False)]
@@ -695,7 +789,7 @@ def _item_row(out_dir, romfs, oead_tools):
     oead_tools.writeSheet(p, sheet)
 
 
-def apply(out_dir, romfs, settings):
+def apply(out_dir, romfs, settings, ent=None, logic_defs=None):
     """After escape_bottle.apply (Tarin's flow): the hand-over, the hint messages and hints.tsv."""
     from RandomizerCore.Tools import event_tools, oead_tools
     import keysanity_text as kt
@@ -706,7 +800,7 @@ def apply(out_dir, romfs, settings):
         data = json.load(f)
     steps_ = data['steps']
     # dungeon-entrances: entrance -> the dungeon it leads into; the hints need dungeon -> its way in
-    entered_via = {inside: door for door, inside in (data.get('dungeon-entrances') or {}).items()}
+    entered_via = via_doors({inside: door for door, inside in (data.get('dungeon-entrances') or {}).items()}, romfs)
     dungeon_of = settings.get('dungeon-of', {}) or {}
     ev_dir = os.path.join(out_dir, 'romfs', 'region_common', 'event')
     # Tarin: after the Escape Bottle's AddItem (escape_bottle.py), before the starting items and his own item
@@ -753,16 +847,27 @@ def apply(out_dir, romfs, settings):
             event_tools.addEntryPoint(flow.flowchart, n)
             event_tools.createActionChain(flow.flowchart, n, [('Dialog', 'Show', {'message': f'System:{n}'})])
     event_tools.writeFlow(cp, flow)
-    if any(s['loc'].startswith(('bush-', 'dig-')) for s in steps_):  # (their nearest landmark)
+    if any(re.match(r'bush-|dig-|apple-tree-|rock-\d\d[A-P]-', s['loc']) for s in steps_):  # (their nearest landmark)
         from RandomizerCore.Tools import leb
         import bushes
+        import rocks
         marks = landmarks(romfs, leb)
         bush_tile = {bushes.location_name(b): (b['room'], b['tile']) for b in bushes.scan(romfs, leb, pits=True)}
+        if any(re.match(r'rock-\d\d[A-P]-', s['loc']) for s in steps_):
+            bush_tile.update({rocks.location_name(r): (r['room'], r['tile']) for r in rocks.scan(romfs, leb)})
         for st in steps_:
             m = re.match(r'^dig-(\d\d[A-P])-(\d+)$', st['loc'])
             spot = (m.group(1), int(m.group(2))) if m else bush_tile.get(st['loc'])
+            t = re.match(r'^apple-tree-(\d\d[A-P])-\d$', st['loc'])
+            if t:  # (the tile Link dashes into the tree from: apple_trees.py)
+                import apple_trees
+                spot = (t.group(1), apple_trees.STAND['Field_' + t.group(1)])
             if spot and spot[1] is not None:
                 st['landmark'] = nearest(marks, *tile_xz(*spot))
+    for st in steps_:  # (entrance rando: a shuffled house or cave is where its door is)
+        door = door_of(st['loc'], logic_defs or {}, ent)
+        if door:
+            st['door-area'], st['door-name'] = door_area(door, romfs), door_name(door)
     step_names = names[:len(steps_)]
     texts = {n: hint_text(s, dungeon_of, entered_via) for n, s in zip(names, steps_)}
     texts[DONE] = DONE_TEXT

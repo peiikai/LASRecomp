@@ -5,7 +5,7 @@ scripted test runs, screenshots, warps, logging, and A/B switches for renderer a
 startup or at first use, so set them before launching. Hooks that take a frame number act at that presented frame
 (the count starts at 0 when the app starts and goes on across in-game reboots).
 
-This page follows the current development branch (`beta_<n>`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
+This page follows the current development branch (`develop`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
 (`grep -rn 'getenv("LARECOMP_\|ENV("LARECOMP_' runtime/`), and the comment next to each read explains it.
 
 Unless a row says otherwise, "1" means any value turns the hook on, and "0 / 1" means the value is read as a number
@@ -31,6 +31,7 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_FORCE_LAUNCHER` | 1 | Show the start screen even when `LARECOMP_INPUT` is set (which normally skips it). |
 | `LARECOMP_LAUNCHER_AUTOPLAY` | 1, `once` | Press PLAY on the start screen at once. `once`: only the first time, so a "Title screen" reboot stays on the start screen. |
 | `LARECOMP_LAUNCHER_PLAY_AT` | seconds | Press PLAY on the start screen that many seconds in. |
+| `LARECOMP_LAUNCHER_KEYS` | `frame:key,...` | Press keys on the start screen at those frames (`left right up down enter esc`, controller `pl pr pu pd pa pb`). The log names the RANDOMIZER row's choice when it changes. |
 | `LARECOMP_NO_UPDATE_CHECK` | 1 | Skip the update check on the start screen. |
 | `LARECOMP_INPUT` | script (see below) | Scripted controller input for player 1. Also skips the start screen and blocks your own input. |
 | `LARECOMP_NO_USER_INPUT` | 0 / 1 | Ignore keyboard, mouse and controllers. On by default when a scripted input hook is set; `0` lets your input through during a scripted run. |
@@ -91,6 +92,7 @@ Comma-separated entries, each starting with a frame:
 - `frame:mouse:<dx>/<dy>`, `frame:mouse:click`: move or click the mouse.
 - `frame:shot:<name>`: save the window to `build/<name>.png`.
 - `frame:resize:<W>x<H>`: resize the window.
+- `frame:move:<x>/<y>`: move the window to that position (another display, in points).
 
 ## Warps, saves and seeds
 
@@ -127,23 +129,31 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal` (0 / 1), `dpad_mode` (0-2), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
+| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal`, `frame_interp`, `powerup_music` (0 / 1), `dpad_mode` (0-2), `text_speed` (0-2), `shadows` (0-5: Off, 0.5x, Default, 2x, 3x, 4x), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
 | `LARECOMP_COSMETICS` | `frame:tunic:hearts,...` | Set the tunic and heart colours (palette name or `#RRGGBB`) at that frame. |
 | `LARECOMP_DAMAGE` | multiplier, or `ohko` | Override the damage taken setting. |
 | `LARECOMP_WALK_SPEED` | multiplier | Override the walk speed setting. |
 | `LARECOMP_MOVE_360` | 0 / 1 | Override the 360-degree movement setting. |
+| `LARECOMP_HOOKSHOT_8WAY` | 0 / 1 | Override the hookshot 8-direction aim setting. |
+| `LARECOMP_HOOKSHOT_LOG` | 1 | Log hookshot hits and each shot's direction before and after the 8-direction aim. |
 | `LARECOMP_BLUR_REMOVAL` | 0 / 1 | Override the blur removal setting. |
 | `LARECOMP_PROMPTS` | `xbox`, `playstation`, `nintendo`, other = auto | Force the button icon style. |
 | `LARECOMP_NO_BUFF` | 0 / 1 | Force the "no buff drops" option on or off. |
 | `LARECOMP_ESCAPE` | 0 / 1 | Force the Escape Bottle on or off (also in vanilla). |
 | `LARECOMP_HINT_SHEET` | 0 / 1 | Force the Hint Sheet on or off. |
 | `LARECOMP_ENEMY_RANDOM` | 0 | Turn a seed's enemy randomizer off. |
+| `LARECOMP_NICE_BOMBS` | 0 | Keep the game's one bomb at a time in a randomizer seed. |
 | `LARECOMP_WEATHER` | `off`, `rain`, `snow`, `storm`, `blizzard`, `random` | Override the weather setting. |
 | `LARECOMP_WEATHER_CYCLE` | 0 / 1 | Turn the weather cycle on. |
-| `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
-| `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link, as the randomizer option will. |
+| `LARECOMP_WEATHER_CYCLE_START` | `rain`, `snow`, `storm`, `blizzard` | A new weather cycle starts with this weather, 20 seconds before the next change. |
+| `LARECOMP_WEATHER_CYCLE_SPEED` | multiplier | Run the weather cycle's clock this many times faster. |
+| `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link outside a Weather Cycle seed too. |
+| `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link outside a Weather Cycle seed too. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |
-| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on. |
+| `LARECOMP_MENU_TAB` | page number | The page the overlay menu opens on: `2` Save Editor, `3` Randomizer, `4` Warp, `5` Cheats, `7` Cosmetics, `9` Quit, `10` Reset. Other numbers open Settings on that tab (`0` Video, `1` Audio, `6` Gameplay, `8` Controls, `11` General). |
+| `LARECOMP_MENU_BAR` | entry number | Open the menu bar alone, its cursor on that entry: `0` Settings, `1` Cosmetics, `2` Randomizer, `3` Warp, `4` Save Editor, `5` Cheats, `6` Reset, `7` Quit, `8` the close button. |
+| `LARECOMP_TOUCH_SHOW_INPUT` | 0 / 1 | iPhone, iPad and Android: show scripted input (`LARECOMP_INPUT`) on the touch controls, the buttons lit and the stick moved. |
+| `LARECOMP_UPDATE_TAGS` | `tag,tag,...` | The update check sees these release tags instead of asking GitHub (no network). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
@@ -162,6 +172,9 @@ All of these write to the log (`lasrecomp.log` in the data folder, or the run's 
 | `LARECOMP_LOG_FLAGS` | 1 | Log event flag changes in the loaded save. |
 | `LARECOMP_LOG_INTERVAL` | 1 | Log each change of the game's present interval (its 60 / 30 fps mode). |
 | `LARECOMP_LOG_DYNRES` | 1 | Log every dynamic resolution decision, not only the steps. |
+| `LARECOMP_LOG_WEATHER` | 1 | Log the weather cycle's clock stopping and going on. |
+| `LARECOMP_LOG_TRACKER` | 1 | Log the Tracker's state for each check, and what the ones out of reach still need, once after each update. |
+| `LARECOMP_METAL_HUD` | 1 | Mac, iPhone and iPad. Set by the app itself when it starts with the Metal HUD setting on; not needed by hand. |
 | `LARECOMP_FNPROF` | `from:to` (frames) | Sample which game functions run between those frames, to `build/fnprof.txt`. `0:<to>` starts at process start. |
 | `LARECOMP_DEBUG_FRAME` | frame | Dump that frame's render passes to `build/pass_NNN.png` and log its draws (F9 does the same for the next frame). |
 | `LARECOMP_DEBUG_FRAMES` | count | With `LARECOMP_DEBUG_FRAME` (Vulkan): dump that many frames in a row. |
@@ -188,9 +201,15 @@ These work on both Metal and Vulkan unless noted.
 | `LARECOMP_DYN_TEST` | number | Pin Dynamic resolution at this render height (units of 1080 lines). |
 | `LARECOMP_GAME_DYNRES` | 1 | Turn the game's own dynamic resolution back on (it is off by default). |
 | `LARECOMP_NO_SCALE` | 1 | Keep all render targets at the game's own size (no resolution scaling). |
+| `LARECOMP_AO_SCALE` | 1 to 4 | Draw the game's ambient occlusion at this many times the Switch's size, whatever the setting and render scale. |
+| `LARECOMP_AO_SCALED` | 1 | Scale the ambient occlusion with the frame, as before issue #356 (shows the old haze and dither). |
+| `LARECOMP_SHADOW_SCALE` | 0.5 to 4 | Draw the game's shadow map at this many times the Switch's size, whatever the setting. |
+| `LARECOMP_SHADOW_BIAS_RAW` | 1 | Keep the game's polygon offset slope in the shadow map as it is, instead of scaling it with the map's size (A/B tests). |
+| `LARECOMP_AO_NO_GRID` | 1 | Leave the ambient occlusion shaders on the game's own pixel grid when the AO is larger than the Switch's. |
 | `LARECOMP_NO_FRAME_CLEAR` | 1 (Vulkan: 0 / 1) | Don't clear scene render targets at their first use each frame. On Vulkan the default is no clears on integrated GPUs. |
 | `LARECOMP_TEX_FULLHASH` | 1 | Hash every texture in full each time instead of the faster partial checks. |
 | `LARECOMP_NO_WIDESCREEN` | 1 | Turn the widescreen view off (16:9 framing everywhere). |
+| `LARECOMP_NO_PAUSE_FILL` | 1 | Keep the pause screen's backdrop in the 16:9 box on other window shapes (the game shows around it). |
 | `LARECOMP_WIDE_TEST` | ratio | Pretend the window has this shape, relative to 16:9 (e.g. `1.3125` for 21:9). |
 
 ## Metal
@@ -213,6 +232,7 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | Variable | Values | What it does |
 |---|---|---|
 | `LARECOMP_GPU` | index | Use this GPU (the index from the `[vk] gpu N:` log lines) instead of the first discrete one. |
+| `LARECOMP_VK_PIPELINE_CACHE` | 0 | Start with an empty Vulkan pipeline cache (the saved one is written over as usual). The Android emulator hangs loading a large one. |
 | `LARECOMP_VK_VALIDATION` | 1 | Turn the Khronos validation layer on (it must be installed) and log its warnings and errors (first 500). |
 | `LARECOMP_VK_VALIDATION_STOP` | 1 | As `LARECOMP_VK_VALIDATION`, and exit at the first validation error. |
 | `LARECOMP_VK_PRESENT` | `mailbox`, `fifo`, `immediate` | Present mode (default mailbox, fifo with frame generation). |
@@ -227,6 +247,9 @@ The per-GPU default switches are explained, with the GPUs they were tested on, i
 | `LARECOMP_VK_NO_GMEM` | 1 | Don't bind the guest heap to shaders as storage buffers. |
 | `LARECOMP_VK_GMEM_LAZY` | 0 / 1 | Import the heap to the GPU in chunks on demand. Default on where one import can't hold it. |
 | `LARECOMP_VK_NO_HOST_IMPORT` | 1 | Act as if the driver can't import host memory (tests the copy path on any GPU). |
+| `LARECOMP_VK_HOST_IMPORT` | 1 | Android: import the guest heap even on a phone with under 10 GB of RAM (by default those use the copy path, issue #693). |
+| `LARECOMP_VK_CPU_BC` | 1 | Decode BC textures on the CPU even where the driver lists them (tests the path used on drivers without BC4, BC5 or BC7, issue #693). |
+| `LARECOMP_VK_PRETRANSFORM` | 0 | Android: hand the system landscape window images to turn, instead of drawing them in the panel's own orientation (pre-rotation, the default). |
 | `LARECOMP_VK_RECORDER` | 0 / 1 | Record Vulkan commands on a separate thread. Default on, except on Mali. |
 | `LARECOMP_VK_PIPELINE_BINARY` | 0 / 1 | Our own pipeline binaries cache. Default on for AMD drivers only. |
 | `LARECOMP_VK_DYN_VERTEX` | 0 | Keep the vertex layout in each pipeline instead of dynamic vertex input. |
@@ -272,6 +295,7 @@ the start screen's setup otherwise).
 | `LARECOMP_GAME_LIB` | file path | Load the game code library from this path first. |
 | `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `lasgen`. |
 | `LARECOMP_CC` | file path | Compiler to use instead of the bundled zig. |
+| `LARECOMP_GUEST_BASE` | hex address | Builds with `DYN_BASE=1` only: start the guest window here (4 GB aligned, ending below 2^39). Without it a desktop `DYN_BASE` build uses `0x7100000000`, so the game runs away from its own addresses. iOS (always `DYN_BASE`) ignores it: the window goes into a free gap found at start-up, 1 GB aligned (`plat_place_guest`). |
 
 ## Tool scripts
 

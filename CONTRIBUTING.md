@@ -25,30 +25,39 @@ Pull requests that include Nintendo files can't be merged. Screenshots and short
 
 Report bugs as a [GitHub issue](https://github.com/peiikai/LASRecomp/issues). Please include:
 
-- your platform (macOS / Windows / Linux), hardware (CPU, GPU) and window size / aspect ratio
+- your platform (macOS / Windows / Linux / Android / iPhone / iPad), hardware (CPU, GPU) and window size / aspect ratio
 - what you did, what happened, and what you expected
-- for randomizer problems: the **seed ID** (Randomizer tab, Copy button), the settings, and where you got stuck
+- for randomizer problems: the **seed ID** (Randomizer, the seed's Copy seed ID), the settings, and where you got stuck
   (area / room, which items you had). A seed ID reproduces the exact seed on the same LAS Recomp version.
 - a screenshot or short clip if it's visual
 - the log: `lasrecomp.log` in the data folder (see "Where files live" in the README), always the latest run - or if
   the problem was in an earlier run, that run's `lasrecomp-backup-*.log` (by date modified)
 
-## Which branch to work from
+## Branches and versions
 
-`main` holds the last release and isn't where development happens, so don't base your work on it. Work happens on
-the current development branch:
+`main` holds the last release and isn't where development happens, so don't base your work on it.
 
-- during the beta period: the latest `beta_<n>` branch (for example `beta_5`)
-- after 1.0: the latest `vX.Y.Zb` branch, for the next version (for example `v1.1.0b`)
+- `develop`: where new work lands, for the next version. Base your branch on it and open your pull request against it.
+- `release/<major>.<minor>` (for example `release/0.6`): fixes for a released version only. Base a fix on it when it
+  should ship in the next hotfix of that version; maintainers carry it forward into `develop`.
 
-Pick the highest-numbered one in the [branch list](https://github.com/peiikai/LASRecomp/branches). Base your branch
-on it and open your pull request against it. Before you start, and again before opening the pull request, compare
-your change with what's already on that branch: it moves quickly, and the fix or feature you have in mind may
-already be there or in progress. Rebase onto it if it has moved since you branched.
+Name your branch `type/short-name`, with the issue number when there is one:
+
+- `fix/784-swamp-rock` for a bug fix
+- `feature/weather-hazards` for something new
+- `docs/...`, `ci/...` or `chore/...` for documentation, CI and housekeeping
+
+Releases are tagged with [semantic versions](https://semver.org): `v0.6.0` is Beta 6 and `v0.6.1` its first hotfix
+(the start screen shows them as Beta 6 and Beta 6.1). `v1.0.0` will be the first full release.
+
+Before you start, and again before opening the pull request, compare your change with what's already on your base
+branch: it moves quickly, and the fix or feature you have in mind may already be there or in progress. Rebase onto it
+if it has moved since you branched.
 
 ## Building
 
-See the README's "Building from source" for macOS and [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows.
+See the README's "Building from source" for macOS, [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows,
+[docs/linux.md](docs/linux.md) for Linux and [docs/android.md](docs/android.md) for Android.
 In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start screen, `make gen` once to recompile the game code from
 them, then `make -j10`. The randomizer needs its Python environment in
 `third_party/LAS-Randomizer/venv`.
@@ -64,7 +73,8 @@ them, then `make -j10`. The randomizer needs its Python environment in
 
 - `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
   `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
-  word, so a wrong address fails loudly instead of silently.
+  word, so a wrong address fails loudly instead of silently. `tools/chunk_bounds.py` holds where the C is split into
+  files (made with `gen.py --new-chunk-bounds`; new cuts make every file compile once).
 - `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
   by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
   patch generator (read by `tools/game_addresses.py`, part of the game-library identity) and `runtime_<version>.h`
@@ -110,7 +120,17 @@ The comparison checks every generated C file byte-for-byte.
 
 ## Tests
 
+New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
+untranslated text shows in English.
+
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
+
+`python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
+
+`third_party/LAS-Randomizer/venv/bin/python tools/test_keysanity_text.py [<romfs>]` checks that keysanity dungeon
+items picked up anywhere, floor key spots included, get a message naming their dungeon.
+
+`python tools/test_text_speed.py` checks the Text speed hooks (Normal, Fast, Instant) without game data.
 
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.
@@ -130,7 +150,7 @@ reused/compiled counts in the log, and launch the resulting game library.
 
 ## Pull requests
 
-- Target the current development branch (see "Which branch to work from"), not `main`.
+- Target `develop` (or `release/<major>.<minor>` for a hotfix; see "Branches and versions"), not `main`.
 - Keep each pull request focused on one change; small is easier to review.
 - Describe what changed, why, and how you tested it (platform, seeds, screenshots).
 - Don't include personal paths or information in code, comments or commit messages.

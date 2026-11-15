@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Our own message texts in every language the game has (the Escape Bottle, the Hint Sheet): the sentences are
-ours, written here per language; names of items and places come from the game's own message
+"""Our own message texts in every language the game has (the Escape Bottle, the Hint Sheet): the
+sentences are ours, written here per language; names of items and places come from the game's own message
 files of that language at generation time (UI.msbt ItemName_*, Glossary.msbt, Place.msbt), never stored here.
 
     lang_of(rel)                       'regionEU/EUde/message/System.msbt' -> 'de' (LANGS)
@@ -242,6 +242,9 @@ DETAIL = {
     'bush': {'de': 'unter einem Busch', 'fr': 'sous un buisson', 'es': 'bajo un arbusto', 'it': 'sotto un cespuglio',
              'nl': 'onder een struik', 'ru': 'под кустом', 'ja': '草むらの下', 'ko': '풀숲 아래', 'zh_cn': '草丛下',
              'zh_tw': '草叢下'},
+    'rock': {'de': 'unter einem Stein', 'fr': 'sous un rocher', 'es': 'bajo una roca', 'it': 'sotto una roccia',
+             'nl': 'onder een steen', 'ru': 'под камнем', 'ja': '岩の下', 'ko': '바위 아래', 'zh_cn': '岩石下',
+             'zh_tw': '岩石下'},
     'buried': {'de': 'vergraben', 'fr': 'sous terre', 'es': 'bajo tierra', 'it': 'sottoterra', 'nl': 'begraven',
                'ru': 'в земле', 'ja': '地面の中', 'ko': '땅속', 'zh_cn': '埋在地下', 'zh_tw': '埋在地下'},
     'tree': {'de': 'in einem Baum, mit Sprint dagegenrennen', 'fr': 'dans un arbre, foncez dedans',
@@ -249,6 +252,9 @@ DETAIL = {
              'it': 'in un albero, colpiscilo di corsa', 'nl': 'in een boom, ren ertegenaan',
              'ru': 'в дереве, врежьтесь в него с разбега', 'ja': '木の中 ダッシュで 体当たり',
              'ko': '나무 안, 대시로 부딪치기', 'zh_cn': '树里，冲刺撞击', 'zh_tw': '樹裡，衝刺撞擊'},
+    'apple': {'de': 'in einem Apfelbaum', 'fr': 'dans un pommier', 'es': 'en un manzano', 'it': 'in un melo',
+              'nl': 'in een appelboom', 'ru': 'в яблоне', 'ja': 'リンゴの木の中', 'ko': '사과나무 안', 'zh_cn': '苹果树里',
+              'zh_tw': '蘋果樹裡'},
     'underwater': {'de': 'unter Wasser', 'fr': "sous l'eau", 'es': 'bajo el agua', 'it': "sott'acqua",
                    'nl': 'onder water', 'ru': 'под водой', 'ja': '水の中', 'ko': '물속', 'zh_cn': '水底', 'zh_tw': '水底'},
     'boss': {'de': 'beim Endboss', 'fr': 'avec le boss', 'es': 'con el jefe', 'it': 'con il guardiano',

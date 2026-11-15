@@ -95,6 +95,12 @@ def makeStartChanges(flowchart, settings):
     
     if settings['boss-cutscenes']: # set boss cutscenes to have already been watched
         player_start_event_flags.extend(BOSS_FLAGS)
+
+    # (LARecomp: dungeon room shuffle - Eagle's Tower starts collapsed, tools/rando/eagle_tower.py)
+    if settings.get('dungeon-room-shuffle', 'off') not in ('off', None, False):
+        player_start_event_flags.extend(('TowerPillarBroken_L07_02B', 'TowerPillarBroken_L07_02C',
+                                         'TowerPillarBroken_L07_03B', 'TowerPillarBroken_L07_03C',
+                                         'TowerPillarBrokenAll', 'Lv7BrokenPillar'))
     # if settings['nag-meesages']: # set annoying one-time messages to not pop-up
     #     player_start_event_flags.extend(MESSAGE_FLAGS)
     
@@ -113,15 +119,16 @@ def makeStartChanges(flowchart, settings):
         ])
 
     # Auto give dungeon items when entering the dungeon (We have to do that for the level to be identified properly)
-    dungeon_item_setting = settings['dungeon-items']
-    if dungeon_item_setting != 'none':
+    start = data.start_dungeon_items(settings)
+    if start:
         event_defs = []
 
-        if dungeon_item_setting in ['mc', 'mcb']:
+        if 'map' in start:
             event_defs += item_get.insertItemWithoutAnimation('DungeonMap', -1)
+        if 'compass' in start:
             event_defs += item_get.insertItemWithoutAnimation('Compass', -1)
 
-        if dungeon_item_setting in ['stone-beak', 'mcb']:
+        if 'stone-beak' in start:
             event_defs += item_get.insertItemWithoutAnimation('StoneBeak', -1)
 
         # Connect events to the DungeonIn and DefaultUpStairsOut entrypoints

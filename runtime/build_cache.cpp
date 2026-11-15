@@ -2,7 +2,9 @@
 // Generated source and logs survive interruption, but are removed after successful publication.
 #include "build_cache.h"
 #include "cache_sha256.h"
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -146,14 +148,21 @@ std::unique_ptr<BuildCache> acquire(const char *game_dir) {
     need(c->handle != INVALID_HANDLE_VALUE, "This game folder is already being compiled by another process.");
 #else
     c->handle = open(lock.c_str(), O_CREAT | O_RDWR, 0600);
-    need(c->handle >= 0 && flock(c->handle, LOCK_EX | LOCK_NB) == 0,
-         "This game folder is already being compiled by another process.");
+    need(c->handle >= 0, "Couldn't open the game folder's build lock.");
+    // Only a lock that another process holds stops the build. A file system without locks (Android's SD card through
+    // FUSE: flock gives ENOSYS) builds unlocked - it said "already being compiled" there every time, so an update
+    // that needed new game code sent the player back to setup.
+    if (flock(c->handle, LOCK_EX | LOCK_NB) != 0) {
+        need(errno != EWOULDBLOCK, "This game folder is already being compiled by another process.");
+        fprintf(stderr, "[gamebuild] no file locks on this file system (%s): building without one\n", strerror(errno));
+    }
 #endif
     plain_tree(c->root);
     return c;
 }
 bool library_name(const std::string &s) {
-    return s == "lasgame.dll" || s == "lasgame.so" || s == "lasgame.dylib";
+    return s == "lasgame.dll" || s == "lasgame.so" || s == "lasgame.dylib" ||
+           s == "lasgame-ios.dylib";  // (the iOS library built on any desktop, runtime/gamebuild.c GAMEBUILD_IOS)
 }
 void recover(BuildCache *c) {
     // The library and its ID cannot be replaced together. A remaining journal means restore the old pair
@@ -206,7 +215,7 @@ extern "C" BuildCache *build_cache_open(const char *game_dir, const char *spec, 
         auto c = acquire(game_dir);
         auto owner = c->root / "owner";
         if (fs::exists(owner))
-            need(read(owner, 64) == "LASBUILD3\n", "Unknown build cache; clear it from Game Files and retry.");
+            need(read(owner, 64) == "LASBUILD3\n", "Unknown build cache; clear it from System and retry.");
         else {
             // Pre-receipt beta_5 caches are ours too; upgrade them without asking every existing player to clear.
             recover(c.get());
@@ -406,4 +415,16 @@ extern "C" bool build_cache_clear(const char *game_dir, char *why, size_t cap) {
         error(why, cap, e);
         return false;
     }
+}
+extern "C" bool build_cache_file_sha256(const char *path, char out[65]) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return false;
+    CacheSha256 hash;
+    static thread_local char block[1 << 16];
+    size_t n;
+    while ((n = fread(block, 1, sizeof block, f)) > 0) hash.add(block, n);
+    bool ok = !ferror(f);
+    fclose(f);
+    if (ok) snprintf(out, 65, "%s", hash.finish().c_str());
+    return ok;
 }

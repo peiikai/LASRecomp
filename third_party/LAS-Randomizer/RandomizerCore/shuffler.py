@@ -1,6 +1,7 @@
 from PySide6 import QtCore
 from .Paths.randomizer_paths import IS_RUNNING_FROM_SOURCE
 import RandomizerCore.spoiler as spoiler
+from RandomizerCore.Randomizers.data import start_dungeon_items as start_dungeon_item_kinds
 import re
 import copy
 import random
@@ -141,15 +142,8 @@ class ItemShuffler(QtCore.QThread):
                 self.vanilla_locations.add(inst)
         
         # if start with compass & map setting is enabled, adding them into the starting item setting
-        dungeon_item_setting = self.settings['dungeon-items']
-        if dungeon_item_setting != 'none':
-            to_check = ()
-            if dungeon_item_setting == 'mc':
-                to_check = ('map', 'compass')
-            elif dungeon_item_setting == 'mcb':
-                to_check = ('map', 'compass', 'stone-beak')
-            elif dungeon_item_setting == 'stone-beak':
-                to_check = 'stone-beak'
+        to_check = start_dungeon_item_kinds(self.settings)
+        if to_check:
 
             start_dungeon_items = [s for s in self.item_defs if s.startswith(to_check)]
             for e, item in enumerate(start_dungeon_items):
@@ -281,6 +275,8 @@ class ItemShuffler(QtCore.QThread):
             # edit the new dungeon condition to be the condition of the old one
             for c in conditions:
                 self.logic_defs[c]['condition-basic'] = conditions[c]
+        elif self.settings.get('mixed-dungeon-ways'):  # (LAS Recomp: dungeon doors mixed with houses - las_headless)
+            self.dungeon_entrances = dict(self.settings['mixed-dungeon-ways'])
         else:
             for dungeon in dungeons:
                 self.dungeon_entrances[dungeon] = dungeon
@@ -807,15 +803,8 @@ class ItemShuffler(QtCore.QThread):
 
             # if settings['dungeon-items'] == 'keys':
             #     item_pool = [s for s in item_pool if s.startswith(('map', 'compass', 'stone'))]
-            dungeon_item_setting = self.settings['dungeon-items']
-            if dungeon_item_setting != 'none':
-                to_check = ()
-                if dungeon_item_setting == 'mc':
-                    to_check = ('map', 'compass')
-                elif dungeon_item_setting == 'mcb':
-                    to_check = ('map', 'compass', 'stone-beak')
-                elif dungeon_item_setting == 'stone-beak':
-                    to_check = 'stone-beak'
+            to_check = start_dungeon_item_kinds(self.settings)
+            if to_check:
                 item_pool = [s for s in items if len(s) >= 2 and s[-2:] == f'D{i}' and not s.startswith(to_check)]
             else:
                 item_pool = [s for s in items if len(s) >= 2 and s[-2:] == f'D{i}']
@@ -834,6 +823,7 @@ class ItemShuffler(QtCore.QThread):
             
             # Keep track of where we placed items. this is necessary to undo placements if we get stuck
             placement_tracker = []
+            undos = 0  # (LAS Recomp: the undo / reshuffle can go round forever - room shuffle gives up the layout)
             
             # Iterate through the dungeon items for that dungeon (inherently in order of nightmare key, small keys, stone beak, compass, map)
             while item_pool and self.thread_active:
@@ -862,6 +852,9 @@ class ItemShuffler(QtCore.QThread):
                                                    "reachable without it" + ''.join(
                                     f"\n  {l}: {self.logic_defs[l].get('condition-basic')}" for l in sorted(location_pool)
                                     if verbose))
+                            undos += 1
+                            if undos > 60 and self.settings.get('dungeon-of'):
+                                raise RuntimeError(f"can't place the items of D{i}: {undos} tries")
                             undo_location = placement_tracker.pop(0)
                             location_pool.append(undo_location)
                             locations.append(undo_location)
@@ -965,7 +958,8 @@ class ItemShuffler(QtCore.QThread):
             while not success and self.thread_active:
                 placements['tarin'] = items[0]
                 success = (self.canReachLocation('can-shop', placements, settings_access, self.logic)
-                        or self.canReachLocation(self.dungeon_entrances['tail-cave'], placements, settings_access, self.logic)
+                        # (LAS Recomp, dungeons mixed with houses: Tail Cave's door may lead into a house - its door node)
+                        or self.canReachLocation(self.dungeon_entrances.get('tail-cave', 'door-d1-tail-cave'), placements, settings_access, self.logic)
                         or self.canReachLocation('beach', placements, settings_access, self.logic)
                         # or self.canReachLocation('mamasha', placements, settings_access, logic)
                         or self.canReachLocation('ciao-ciao', placements, settings_access, self.logic)

@@ -15,6 +15,8 @@ import copy
 import random
 import traceback
 
+CHEST_LOOK = None  # [LAS Recomp] chest looks: location (None = Dampe's panel chests) -> model file (chest_looks.py)
+
 
 
 class ModsProcess(QtCore.QThread):
@@ -179,6 +181,8 @@ class ModsProcess(QtCore.QThread):
 
         chest_rooms = {}
         chest_rooms.update(data.CHEST_ROOMS)
+        if CHEST_LOOK:  # [LAS Recomp] every chest names its model, size unchanged
+            chest_rooms.update(data.PANEL_CHEST_ROOMS)
 
         # CAMC Pre-Checks
         if self.settings['chest-aspect'] == 'camc':
@@ -231,7 +235,7 @@ class ModsProcess(QtCore.QThread):
                     if actor.name.startswith(b'ObjTreasureBox'):
                         room_data.setChestContent(
                             actor.parameters[1].decode("utf-8"), actor.parameters[2],
-                            chest_size=1.0, chest_model=data.CHEST_TEXTURES['default'])
+                            chest_size=1.0, chest_model=CHEST_LOOK(None) if CHEST_LOOK else data.CHEST_TEXTURES['default'])
                 self.writeFile(f'{data.PANEL_CHEST_ROOMS[room]}.leb', room_data)
                 continue
 
@@ -265,6 +269,8 @@ class ModsProcess(QtCore.QThread):
             model = data.CHEST_TEXTURES['default'] if self.settings['chest-aspect'] == 'camc' else None
             if self.settings['chest-aspect'] == 'camc' and item_chest_type is not None:
                 model = data.CHEST_TEXTURES[item_chest_type]
+            if CHEST_LOOK:
+                size, model = 1.0, CHEST_LOOK(room)
 
             if room == 'taltal-5-chest-puzzle':
                 for i in range(5):
@@ -498,7 +504,12 @@ class ModsProcess(QtCore.QThread):
         event_tools.insertEventAfter(flow.flowchart, 'Event128', 'Event58')
 
         # make the fairy queen send the player to the proper exit if Shuffle Dungeons is on
-        if self.settings['shuffle-dungeons']:
+        if self.settings.get('dungeon-exits'):  # (LAS Recomp: dungeon doors mixed with houses - outside its exit door)
+            destin = self.settings['dungeon-exits']['color-dungeon']
+            warp_event = event_tools.findEvent(flow.flowchart, 'Event37')
+            warp_event.data.params.data['level'] = re.match('(.+)_\\d\\d[A-Z]', destin).group(1)
+            warp_event.data.params.data['locator'] = destin
+        elif self.settings['shuffle-dungeons']:
             ent_keys = list(self.placements['dungeon-entrances'].keys())
             ent_values = list(self.placements['dungeon-entrances'].values())
             d = data.DUNGEON_ENTRANCES[ent_keys[ent_values.index('color-dungeon')]]
@@ -1485,7 +1496,11 @@ class ModsProcess(QtCore.QThread):
             
             item_key, item_index, model_path, model_name = self.getItemInfo(room, self.dungeon_trap_models)
 
-            if self.settings['shuffle-dungeons']:
+            if self.settings.get('dungeon-exits'):  # (LAS Recomp: dungeon doors mixed with houses - outside its exit door)
+                cur_dun = re.match('(.+)_\\d\\d[A-Z]', data.INSTRUMENT_ROOMS[room]).group(1)
+                destination = next(self.settings['dungeon-exits'][k] for k, v in data.DUNGEON_ENTRANCES.items()
+                                   if re.match('(.+)_\\d\\d[A-Z]', v[0]).group(1) == cur_dun)
+            elif self.settings['shuffle-dungeons']:
                 cur_dun = re.match('(.+)_\\d\\d[A-Z]', data.INSTRUMENT_ROOMS[room]).group(1)
                 for k,v in data.DUNGEON_ENTRANCES.items():
                     dun = re.match('(.+)_\\d\\d[A-Z]', v[0]).group(1)

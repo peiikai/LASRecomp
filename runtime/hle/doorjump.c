@@ -36,6 +36,18 @@ static int g_npairs;
 static Jump *g_jumps;
 static int g_njumps = -1;
 
+// A cell's place on the level's grid from its name's row / column (door_jumps.tsv, the map overlay and the dungeon
+// map keep the names). Eagle's Tower's names don't match positions (tools/rando/rooms.py POSITIONS): 2F 01-04 A-D,
+// 1F files 05-08 A-D at rows 7-10, the 3F files E-H at columns G-J, the free cells' names I / J (columns E / F) and
+// rows 09 / 10 (rows 5 / 6).
+static void grid_pos(const char *level, int nrow, int ncol, int *row, int *col) {
+    *row = nrow, *col = ncol;
+    if (strcmp(level, "Lv07EagleTower")) return;
+    if (ncol >= 8) { *col = 4 + ncol - 8; return; }
+    *col = ncol < 4 ? ncol : ncol + 2;
+    *row = nrow <= 4 ? nrow : nrow <= 8 ? nrow + 2 : nrow - 4;
+}
+
 static void load(void) {
     g_njumps = 0;
     const char *dir = rando_seed_dir();
@@ -47,14 +59,15 @@ static void load(void) {
     char line[256];
     int cap = 0;
     while (fgets(line, sizeof line, f)) {
+        if (line[0] == '#') continue;
         Jump j;
         char cell[8], side[4], tcell[8], tside[4];
         j.depth = 0.9f;  // how far past the target edge Link lands (Chaos: further when the target has its own door)
         j.height = -100.0f;
         j.lateral = 0.0f;  // (10th column: Link lands this far along the edge from the partner's centre - where half
                            // of a two-tile doorway's way in is a pit, #383; dungeon_gen.landing_depth)
-        int n = sscanf(line, "%39s %7s %3s %d %d %7s %3s %f %f %f", j.level, cell, side, &j.own, &j.partner, tcell, tside,
-                       &j.depth, &j.height, &j.lateral);
+        int n = sscanf(line, "%39s %7s %3s %d %d %7s %3s %f %f %f", j.level, cell, side, &j.own, &j.partner, tcell,
+                       tside, &j.depth, &j.height, &j.lateral);
         if (n != 5 && n != 7 && n != 8 && n != 9 && n != 10) continue;
         j.row = atoi(cell);  // "08C" -> row 8, column C
         j.col = cell[2] - 'A';
@@ -65,8 +78,9 @@ static void load(void) {
             // its pair: the reverse row's, if seen already
             for (int k = 0; k < g_npairs && j.pair < 0; k++) {
                 const ChaosPair *q = &g_pairs[k];
-                if (!strcmp(q->level, j.level) && q->col[1] == j.col && q->row[1] == j.row && q->side[1] == j.side &&
-                    q->slot[1] == j.own && q->col[0] == j.tcol && q->row[0] == j.trow && q->side[0] == j.tside)
+                if (!strcmp(q->level, j.level) && q->col[1] == j.col && q->row[1] == j.row &&
+                    q->side[1] == j.side && q->slot[1] == j.own && q->col[0] == j.tcol && q->row[0] == j.trow &&
+                    q->side[0] == j.tside)
                     j.pair = k, g_pairs[k].two = true;
             }
             bool self = j.trow == j.row && j.tcol == j.col && j.tside == j.side && j.partner == j.own;
@@ -257,7 +271,9 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
             if (i == g_njumps && want < 0) break;
             if (j->row != row || j->col != col || j->side != side || strcmp(j->level, lv)) continue;  // (this level's)
             if (want >= 0 && j->own != want) continue;
-            float x0 = 15.0f * col, z0 = 12.0f * (row - 1), x = 0, z = 0;
+            int gr, gc;
+            grid_pos(lv, row, col, &gr, &gc);
+            float x0 = 15.0f * gc, z0 = 12.0f * (gr - 1), x = 0, z = 0;
             switch (side) {
             case 'W': x = x0 + 1.2f; z = z0 + j->own * 0.75f; break;
             case 'E': x = x0 + 15.0f - 1.2f; z = z0 + j->own * 0.75f; break;
@@ -276,7 +292,7 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
                     { pos[1] = pos2[1] = b->height + 0.05f; break; }
             }
             px0 = x, pz0 = z;
-            er = j->trow, ec = j->tcol;
+            grid_pos(lv, j->trow, j->tcol, &er, &ec);
             g_test_lx = side == 'W' ? -32767 : side == 'E' ? 32767 : 0;  // walk out
             g_test_ly = side == 'N' ? 32767 : side == 'S' ? -32767 : 0;
             g_test_stick_until = frame + 180;  // cut to 40 frames after the jump (doorjump_tick)
@@ -293,8 +309,9 @@ static void test_tick(uint64_t frame, uint64_t pc, const char *lv) {
     } else if (placed >= 0 && (long)frame == placed + 300) {
         float x = pos[0], z = pos[2];
         int c = (int)floorf(x / 15.0f), r = (int)floorf(z / 12.0f) + 1;
+        bool ok = r == er && c == ec;
         LOG("[doorjump-test] %s %c -> now in %02d%c (%.2f, %.2f), expected %02d%c: %s (%d jumps fired)\n", cell, side, r,
-            'A' + c, x, z, er, 'A' + ec, (r == er && c == ec) ? (fell ? "FELL" : "PASS") : g_jumps_fired ? "FAIL-after-jump" : "FAIL",
+            'A' + c, x, z, er, 'A' + ec, ok ? (fell ? "FELL" : "PASS") : g_jumps_fired ? "FAIL-after-jump" : "FAIL",
             g_jumps_fired);
         at = -1;
     }
@@ -432,7 +449,10 @@ void doorjump_tick(uint64_t frame) {
     float lx = x - 15.0f * col, lz = z - 12.0f * (row - 1);
     for (int i = 0; i < g_njumps; i++) {
         Jump *j = &g_jumps[i];
-        if (j->col != col || j->row != row || strcmp(j->level, lv)) continue;
+        if (strcmp(j->level, lv)) continue;
+        int jr, jc;
+        grid_pos(lv, j->row, j->col, &jr, &jc);
+        if (jc != col || jr != row) continue;
         float depth, lateral, out;  // distance to the edge, position along it, movement towards it
         switch (j->side) {
         case 'W': depth = lx; lateral = lz; out = -dx; break;
@@ -469,7 +489,9 @@ void doorjump_tick(uint64_t frame) {
         j->still = 0;
         float nx = x, nz = z, across = j->depth;  // just past the edge, in front of the partner doorway
         // just inside the target room's doorway on its side (for a neighbour: just past the shared edge)
-        float tx0 = 15.0f * j->tcol, tz0 = 12.0f * (j->trow - 1);
+        int tr, tc;
+        grid_pos(lv, j->trow, j->tcol, &tr, &tc);
+        float tx0 = 15.0f * tc, tz0 = 12.0f * (tr - 1);
         switch (j->tside) {
         case 'E': nx = tx0 + 15.0f - across; nz = tz0 + j->partner * 0.75f + j->lateral; break;
         case 'W': nx = tx0 + across; nz = tz0 + j->partner * 0.75f + j->lateral; break;

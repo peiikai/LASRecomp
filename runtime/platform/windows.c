@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <shellapi.h>
+#include <psapi.h>  // (K32GetProcessMemoryInfo: in kernel32, no psapi.lib)
 #include <timeapi.h>
 #include <io.h>
 #include <wchar.h>
@@ -12,6 +13,15 @@
 #include "../platform.h"
 
 void rt_crash_explain(char *out, size_t n, const char *log_path);  // runtime/crash_explain.c
+
+// The faulting instruction and stack pointer in an exception's CONTEXT (its registers differ per arch)
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define CTX_PC(c) ((c)->Pc)
+#define CTX_SP(c) ((c)->Sp)
+#else
+#define CTX_PC(c) ((c)->Rip)
+#define CTX_SP(c) ((c)->Rsp)
+#endif
 
 // ---- guest address space
 // The window is reserved up front and committed per region (plat_commit from the loader / kernel). Anything
@@ -42,7 +52,7 @@ static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *ep) {
     uint64_t fa = er->ExceptionInformation[1];
     // (not for an execute fault: on a read-write page, retrying it would fault again forever)
     if (er->ExceptionInformation[0] != EXCEPTION_EXECUTE_FAULT && lazy_commit(fa)) return EXCEPTION_CONTINUE_EXECUTION;
-    if (g_report_crashes && rt_fault_watch(fa, ep->ContextRecord->Rip)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (g_report_crashes && rt_fault_watch(fa, CTX_PC(ep->ContextRecord))) return EXCEPTION_CONTINUE_EXECUTION;
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
@@ -145,6 +155,11 @@ static BOOL CALLBACK tsc_calibrate(PINIT_ONCE o, PVOID p, PVOID *c) {
     return TRUE;
 }
 #endif
+uint64_t plat_mem_used_bytes(void) {  // (private bytes: Task Manager's Memory column)
+    PROCESS_MEMORY_COUNTERS_EX pm = {.cb = sizeof pm};
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pm, sizeof pm) ? pm.PrivateUsage : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
 #if defined(__x86_64__) || defined(_M_X64)
     InitOnceExecuteOnce(&tsc_once, tsc_calibrate, NULL, NULL);
@@ -400,13 +415,47 @@ static void publish_log(void) {
     ReleaseMutex(g_log_mutex);
 }
 
+// Command-line runs (plat_cli_begin, runtime/platform.h). The release exe is a GUI-subsystem program: started from a
+// console it gets no standard handles, so it attaches to the parent's console and writes there; an inherited pipe or
+// file (a script capturing it) is kept as it is. Either way the session log below takes stderr, as for the GUI launch.
+static HANDLE g_cli_out = INVALID_HANDLE_VALUE;
+static bool g_cli, g_cli_console, g_cli_attached;  // (attached: stderr never reaches that console)
+
+void plat_cli_begin(void) {
+    g_cli = true;
+    HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    if (err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) {
+        if (!DuplicateHandle(GetCurrentProcess(), err, GetCurrentProcess(), &g_cli_out, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            g_cli_out = INVALID_HANDLE_VALUE;
+    } else if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        g_cli_attached = true;
+        g_cli_out = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                OPEN_EXISTING, 0, NULL);
+    }
+    DWORD mode;
+    g_cli_console = g_cli_out != INVALID_HANDLE_VALUE && GetConsoleMode(g_cli_out, &mode);
+}
+
+bool plat_cli_write(const char *s, size_t n) {
+    if (g_cli_out == INVALID_HANDLE_VALUE || (!g_log_path[0] && !g_cli_attached)) return false;
+    while (n) {
+        DWORD w = 0;
+        if (!WriteFile(g_cli_out, s, (DWORD)n, &w, NULL) || !w) break;
+        s += w;
+        n -= w;
+    }
+    return true;
+}
+
+bool plat_cli_tty(void) { return g_cli_console && (g_log_path[0] || g_cli_attached); }
+
 static void log_to_file_without_console(void) {
     // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting.
     // A relaunched game must still join its GUI session and publish its fallback copy on exit.
     const char *inherited = getenv("LASRECOMP_LOG_FILE");
     bool fresh = !inherited || !*inherited;
     HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
-    if (fresh && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
+    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
     char dir[MAX_PATH];
     DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
     if (!n || n >= sizeof dir) return;
@@ -477,13 +526,17 @@ static void log_to_file_without_console(void) {
 }
 
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
-// with an illegal instruction on an older CPU.
+// with an illegal instruction on an older CPU. ARM64 runs the guest's FP/SIMD as its own instructions: nothing to check.
 static void require_cpu(void) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return;
+#else
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
     MessageBoxA(NULL, "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or newer).",
                 "LAS Recomp", MB_ICONERROR | MB_OK);
     ExitProcess(1);
+#endif
 }
 
 // Fatal error (rt_fatal_trace): what happened in plain words (runtime/crash_explain.c) in a message box, when there is
@@ -495,19 +548,6 @@ void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
     MessageBoxA(NULL, text, "LAS Recomp", MB_ICONERROR | MB_OK);
-}
-
-static DWORD WINAPI notice_thread(LPVOID text) {
-    MessageBoxA(NULL, text, "LAS Recomp", MB_ICONWARNING | MB_OK);
-    free(text);
-    return 0;
-}
-void plat_notice(const char *text) {
-    if (!g_log_path[0]) return;
-    char *copy = _strdup(text);
-    HANDLE t = copy ? CreateThread(NULL, 0, notice_thread, copy, 0, NULL) : NULL;
-    if (t) CloseHandle(t);
-    else free(copy);
 }
 
 bool plat_module_name(uint64_t pc, char *out, size_t n) {
@@ -679,12 +719,16 @@ static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *ep) {
     uint64_t fa = er->NumberParameters >= 2 ? er->ExceptionInformation[1] : 0;
     char what[48];
     snprintf(what, sizeof what, "exception %08lx", er->ExceptionCode);
+#if defined(__aarch64__) || defined(_M_ARM64)
+    uint64_t lr = ep->ContextRecord->Lr;
+#else
     // x64 has no link register: report the return address on top of the stack (valid at function entry).
     uint64_t lr = 0;
     MEMORY_BASIC_INFORMATION mi;
-    if (VirtualQuery((void *)(uintptr_t)ep->ContextRecord->Rsp, &mi, sizeof mi) && mi.State == MEM_COMMIT)
-        lr = *(uint64_t *)(uintptr_t)ep->ContextRecord->Rsp;
-    rt_fault_report(what, fa, ep->ContextRecord->Rip, lr);
+    if (VirtualQuery((void *)(uintptr_t)CTX_SP(ep->ContextRecord), &mi, sizeof mi) && mi.State == MEM_COMMIT)
+        lr = *(uint64_t *)(uintptr_t)CTX_SP(ep->ContextRecord);
+#endif
+    rt_fault_report(what, fa, CTX_PC(ep->ContextRecord), lr);
 }
 
 void plat_crash_handler_install(void) {
@@ -930,22 +974,22 @@ static bool final_path(const wchar_t *p, wchar_t *out, DWORD n) {
 #endif
 
 // Under one of the OneDrive folders the environment names (personal, work / school), or a cloud file itself
-bool plat_onedrive_synced(const char *dir) {
+const char *plat_cloud_synced(const char *dir) {
     wchar_t w[MAX_PATH], d[1024], r[1024], v[1024];
-    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return false;
+    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return NULL;
     DWORD a = GetFileAttributesW(d);
     if (a != INVALID_FILE_ATTRIBUTES &&
         (a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_PINNED | FILE_ATTRIBUTE_UNPINNED)))
-        return true;
+        return "OneDrive";
     static const wchar_t *const vars[] = {L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial"};
     for (int i = 0; i < 3; i++) {
         DWORD k = GetEnvironmentVariableW(vars[i], v, 1024);
         if (!k || k >= 1024 || !final_path(v, r, 1024)) continue;
         size_t l = wcslen(r);
         if (r[l - 1] == L'\\') l--;  // (a drive's root: "D:\")
-        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return true;
+        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return "OneDrive";
     }
-    return false;
+    return NULL;
 }
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
