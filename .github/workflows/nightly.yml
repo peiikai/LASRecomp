@@ -284,6 +284,7 @@ jobs:
                 find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
           [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
       - name: Publish
+        shell: bash  # (Git Bash: gh is on its PATH, not MSYS2's)
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-windows.zip windows.zip
 
@@ -349,6 +350,7 @@ jobs:
                 find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
           [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
       - name: Publish
+        shell: bash  # (Git Bash: gh is on its PATH, not MSYS2's)
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-windows-arm64.zip windows-arm64.zip
 
