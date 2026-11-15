@@ -69,7 +69,8 @@ int main(void) {
         CHECK(bundle_build("test-foo").empty() && bundle_build("alpha_3").empty(), "no build number without a release");
     }
     const char *never[] = {"alpha_3", "test-388-grass", "beta_0", "beta_5.0", "v0.0.1", "v1.0", "v0.6.0-rc1", "beta_5.3x",
-                           "ci-test-1", "", "v", "beta_", "experimental", "experimental-202610302315-abc1234"};
+                           "ci-test-1", "", "v", "beta_", "experimental", "experimental-202610302315-abc1234", "nightly",
+                           "nightly-202611160400-abc1234"};
     for (const char *t : never) CHECK(tag_rank(t) == -1, "'%s' is not a release (%lld)", t, tag_rank(t));
 
     const char *labels[][3] = {  // tag, label, with the word
@@ -83,6 +84,8 @@ int main(void) {
         {"test-foo", "Test build foo", "Test build foo"},
         {"experimental", "Experimental build", "Experimental build"},
         {"experimental-202610302315-abc1234", "Experimental build 2026-10-30", "Experimental build 2026-10-30"},
+        {"nightly", "Nightly build", "Nightly build"},
+        {"nightly-202611160400-abc1234", "Nightly build 2026-11-16", "Nightly build 2026-11-16"},
     };
     for (auto &l : labels) {
         std::string a = tag_label(l[0], false), b = tag_label(l[0], true);
@@ -100,6 +103,17 @@ int main(void) {
               newest_experimental(body, "linux-aarch64"));
         CHECK(newest_experimental(body, "windows-arm64") == 202612010000LL, "windows-arm64");
         CHECK(newest_experimental(body, "linux-x86_64") == 0 && newest_experimental("", "linux-aarch64") == 0, "none");
+    }
+    {  // the newest nightly of one platform; experimental files don't count, nor the other way round
+        std::string body = "\"name\":\"LAS.Recomp-nightly-202611160400-abc1234-macOS.dmg\"\n"
+                           "\"name\":\"LAS.Recomp-nightly-202611170400-def5678-macOS.dmg\"\n"
+                           "\"name\":\"LAS.Recomp-nightly-202611170400-def5678-android.apk\"\n"
+                           "\"name\":\"LAS.Recomp-experimental-202612010000-0123456-macOS.dmg\"\n"
+                           "\"name\":\"LAS.Recomp-nightly-202611180400-0123456-windows-arm64.zip\"\n";
+        CHECK(newest_nightly(body, "macOS") == 202611170400LL, "nightly macOS: %lld", newest_nightly(body, "macOS"));
+        CHECK(newest_nightly(body, "android") == 202611170400LL, "nightly android");
+        CHECK(newest_nightly(body, "windows") == 0, "nightly windows: none (windows-arm64 is another platform)");
+        CHECK(newest_experimental(body, "macOS") == 202612010000LL, "experimental macOS ignores nightlies");
     }
     if (fails) { printf("%d failed\n", fails); return 1; }
     printf("update tags: all passed\n");

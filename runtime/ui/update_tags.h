@@ -35,18 +35,22 @@ static inline std::string tag_label(const std::string &t, bool with_word) {
     if (t == "experimental") return "Experimental build";
     if (!t.compare(0, 13, "experimental-") && t.size() >= 21)  // experimental-<YYYYMMDDHHMM>-<commit>
         return "Experimental build " + t.substr(13, 4) + "-" + t.substr(17, 2) + "-" + t.substr(19, 2);
+    if (t == "nightly") return "Nightly build";
+    if (!t.compare(0, 8, "nightly-") && t.size() >= 16)  // nightly-<YYYYMMDDHHMM>-<commit>
+        return "Nightly build " + t.substr(8, 4) + "-" + t.substr(12, 2) + "-" + t.substr(14, 2);
     std::string v = t.size() > 1 && t[0] == 'v' ? t.substr(1) : t;
     return with_word ? "Version " + v : v;
 }
 
-// Experimental builds (Linux aarch64, later Windows on ARM: .github/workflows/experimental.yml) are never on the normal
-// releases: they sit on one rolling pre-release, "experimental", named LAS.Recomp-experimental-<YYYYMMDDHHMM>-<commit>-
-// <platform>.<ext>. The newest stamp there for this platform (e.g. "linux-aarch64"), found in the releases JSON; 0: none.
-static inline long long newest_experimental(const std::string &body, const std::string &platform) {
-    static const char key[] = "LAS.Recomp-experimental-";
+// Rolling builds are never on the normal releases: each kind sits on one rolling pre-release named after it, its files
+// named LAS.Recomp-<kind>-<YYYYMMDDHHMM>-<commit>-<platform>.<ext>. Kinds: "experimental" (experimental platforms,
+// .github/workflows/experimental.yml) and "nightly" (every platform from develop, .github/workflows/nightly.yml).
+// The newest stamp of that kind for this platform (e.g. "linux-aarch64"), found in the releases JSON; 0: none.
+static inline long long newest_rolling(const std::string &body, const std::string &kind, const std::string &platform) {
+    const std::string key = "LAS.Recomp-" + kind + "-";
     long long best = 0;
     for (size_t at = 0; (at = body.find(key, at)) != std::string::npos;) {
-        at += sizeof key - 1;
+        at += key.size();
         long long stamp = 0;
         size_t i = at;
         for (; i < body.size() && i - at < 12 && body[i] >= '0' && body[i] <= '9'; i++) stamp = stamp * 10 + (body[i] - '0');
@@ -58,4 +62,10 @@ static inline long long newest_experimental(const std::string &body, const std::
         if (stamp > best) best = stamp;
     }
     return best;
+}
+static inline long long newest_experimental(const std::string &body, const std::string &platform) {
+    return newest_rolling(body, "experimental", platform);
+}
+static inline long long newest_nightly(const std::string &body, const std::string &platform) {
+    return newest_rolling(body, "nightly", platform);
 }
