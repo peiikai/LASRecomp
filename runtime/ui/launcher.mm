@@ -122,6 +122,9 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
+// Nightly builds (.github/workflows/nightly.yml sets this): the build's time (YYYYMMDDHHMM, UTC; 0: not a nightly).
+// They only look for a newer nightly build of their own platform, never a release or an experimental build.
+#define LARECOMP_NIGHTLY_STAMP 0LL
 // An experimental platform that joins the normal releases: from this release on, its experimental builds offer it
 // (and any later one) ahead of a newer experimental build. Android ships in Beta 6.
 #ifdef __ANDROID__
@@ -133,6 +136,8 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 #define LARECOMP_PLATFORM "windows-arm64"
 #elif defined(_WIN32)
 #define LARECOMP_PLATFORM "windows"
+#elif PLAT_IOS
+#define LARECOMP_PLATFORM "iOS"  // (its file: the iOS kit, LAS.Recomp-<version>-iOS.laskit)
 #elif defined(__APPLE__)
 #define LARECOMP_PLATFORM "macOS"
 #elif defined(__ANDROID__)
@@ -216,8 +221,10 @@ static void *update_thread(void *) {
     }
     std::string best;
     // the newest release above this rank (a test build ranks just below the release it previews; other test builds
-    // rank -1: never offered). An experimental build only takes the release its platform joins (or a later one).
-    long long best_rank = LARECOMP_EXPERIMENTAL_STAMP ? (LARECOMP_EXPERIMENTAL_UNTIL[0] ? tag_rank(LARECOMP_EXPERIMENTAL_UNTIL) - 1 : LLONG_MAX)
+    // rank -1: never offered). An experimental build only takes the release its platform joins (or a later one); a nightly
+    // build takes no release at all, only a newer nightly.
+    long long best_rank = LARECOMP_NIGHTLY_STAMP ? LLONG_MAX
+                        : LARECOMP_EXPERIMENTAL_STAMP ? (LARECOMP_EXPERIMENTAL_UNTIL[0] ? tag_rank(LARECOMP_EXPERIMENTAL_UNTIL) - 1 : LLONG_MAX)
                         : strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
     for (size_t at = 0; best_rank < LLONG_MAX && (at = body.find("\"tag_name\"", at)) != std::string::npos;) {
         size_t q1 = body.find('"', body.find(':', at) + 1), q2 = q1 == std::string::npos ? q1 : body.find('"', q1 + 1);
@@ -228,6 +235,7 @@ static void *update_thread(void *) {
     }
     if (LARECOMP_EXPERIMENTAL_STAMP && best.empty() && newest_experimental(body, LARECOMP_PLATFORM) > LARECOMP_EXPERIMENTAL_STAMP)
         best = "experimental";
+    if (LARECOMP_NIGHTLY_STAMP && newest_nightly(body, LARECOMP_PLATFORM) > LARECOMP_NIGHTLY_STAMP) best = "nightly";
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);
     g_update_tag = best;

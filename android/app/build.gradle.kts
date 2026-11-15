@@ -14,7 +14,9 @@ android {
     ndkVersion = "30.0.16248370"
 
     defaultConfig {
-        applicationId = "com.lasrecomp.android"
+        // (nightly builds: .github/workflows/nightly.yml installs them as their own app, beside the release one)
+        applicationId = System.getenv("LARECOMP_APPLICATION_ID") ?: "com.lasrecomp.android"
+        manifestPlaceholders["appLabel"] = System.getenv("LARECOMP_APP_LABEL") ?: "LAS Recomp"
         minSdk = 30
         targetSdk = 36
         // (experimental builds: .github/workflows/experimental.yml sets the build's version and a code that grows)

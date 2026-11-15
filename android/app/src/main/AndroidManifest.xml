@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
-        android:label="LAS Recomp"
+        android:label="${appLabel}"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen"
