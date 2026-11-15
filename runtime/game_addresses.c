@@ -2,6 +2,7 @@
 #include "game_addresses.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "rt.h"
@@ -40,15 +41,33 @@ const GameVersion *game_version_by_build_id(const uint8_t id[20]) {
     return NULL;
 }
 
-// The main program's build ID (0x40 in the file). false: missing or not a program.
-static bool read_build_id(const char *path, uint8_t id[20]) {
+const GameVersion *game_version_by_build_prefix(const char *hex) {
+    size_t n = strlen(hex);
+    if (n < 16 || n > 40) return NULL;
+    for (size_t i = 0; i < sizeof versions / sizeof versions[0]; i++)
+        if (!strncmp(versions[i].build_id, hex, n)) return &versions[i];
+    return NULL;
+}
+
+// The main program's build ID (0x40 in the file), or why there is none.
+static GameMainKind read_main(const char *path, uint8_t id[20]) {
     uint8_t hdr[0x60];
     FILE *f = fopen(path, "rb");
-    if (!f) return false;
+    if (!f) return GAME_MAIN_MISSING;
     bool ok = fread(hdr, 1, sizeof hdr, f) == sizeof hdr && !memcmp(hdr, "NSO0", 4);
     fclose(f);
     if (ok) memcpy(id, hdr + 0x40, 20);
-    return ok;
+    return ok ? GAME_MAIN_NSO : GAME_MAIN_NOT_NSO;
+}
+static bool read_build_id(const char *path, uint8_t id[20]) { return read_main(path, id) == GAME_MAIN_NSO; }
+
+GameMainKind game_main_build_id(const char *main_path, char hex[41]) {
+    uint8_t id[20];
+    GameMainKind k = read_main(main_path, id);
+    hex[0] = 0;
+    if (k == GAME_MAIN_NSO)
+        for (int i = 0; i < 20; i++) snprintf(hex + 2 * i, 3, "%02X", id[i]);
+    return k;
 }
 
 const GameVersion *game_version_of_main(const char *main_path) {
@@ -67,8 +86,10 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
     char exefs[1100], path[1100];
     snprintf(exefs, sizeof exefs, "%s/exefs", game_dir);
     snprintf(path, sizeof path, "%s/main", exefs);
-    if (!read_build_id(path, id)) {
-        snprintf(why, why_size, "the game files' exefs/main is missing or unreadable");
+    GameMainKind k = read_main(path, id);
+    if (k != GAME_MAIN_NSO) {
+        snprintf(why, why_size, k == GAME_MAIN_MISSING ? "the game files' exefs/main is missing or unreadable"
+                                                       : "the game files' exefs/main isn't a program (no NSO0 header)");
         return false;
     }
     const GameVersion *v = game_version_by_build_id(id);
@@ -80,6 +101,16 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
     }
     g_version = v;
     g_ga = v->addrs;
+#ifdef LARECOMP_DYN_BASE
+    // The tables hold the game's own addresses (GUEST_CANON..): moved to where the window is (rt.h). Everything in
+    // GameAddrs is a uint64_t address, so the table is walked as an array.
+    static GameAddrs moved;
+    moved = *v->addrs;
+    uint64_t *p = (uint64_t *)&moved;
+    for (size_t i = 0; i < sizeof moved / sizeof *p; i++)
+        if (p[i] >= GUEST_CANON && p[i] < GUEST_CANON + GUEST_SIZE) p[i] = p[i] - GUEST_CANON + GUEST_LO;
+    g_ga = &moved;
+#endif
     char label[32];
     LOG("[game] version %s (main build ID %.16s, address table %s)\n",
         game_release_label(exefs, label, sizeof label), v->build_id, v->key);
@@ -87,3 +118,91 @@ bool game_version_select(const char *game_dir, char *why, size_t why_size) {
 }
 
 const GameVersion *game_version(void) { return g_version; }
+
+uint64_t game_romfs_bytes(const GameVersion *v) {
+    if (!v) return 0;
+    if (!strcmp(v->key, "v1_0_0")) return 6232003695ull;
+    if (!strcmp(v->key, "v1_0_1")) return 6232003903ull;  // (1.0.1 and 1.1.0 have the same RomFS)
+    return 0;
+}
+
+static const struct { uint64_t hash; uint8_t versions; } romfs_files[] = {
+#include "game_addresses/romfs_files.h"
+};
+enum { ROMFS_ENTRIES = sizeof romfs_files / sizeof *romfs_files };
+struct GameRomfsCheck {
+    uint8_t version;              // romfs_files' bit for the version
+    uint8_t seen[ROMFS_ENTRIES];  // (a file can be passed once: a folder has one file of a name)
+};
+
+GameRomfsCheck *game_romfs_check_begin(const GameVersion *v) {
+    uint8_t bit = !v ? 0 : !strcmp(v->key, "v1_0_0") ? 1 : !strcmp(v->key, "v1_0_1") ? 2 : 0;
+    if (!bit) return NULL;
+    GameRomfsCheck *c = calloc(1, sizeof *c);
+    if (c) c->version = bit;
+    return c;
+}
+
+uint64_t game_romfs_hash(const char *rel, uint64_t size) {
+    char digits[24];
+    snprintf(digits, sizeof digits, "%llu", (unsigned long long)size);
+    uint64_t h = 0xcbf29ce484222325ull;  // FNV-1a 64 of "<rel>\0<size>", as tools/romfs_files.py
+    for (const unsigned char *p = (const unsigned char *)rel; ; p++) {
+        h = (h ^ *p) * 0x100000001b3ull;
+        if (!*p) break;
+    }
+    for (const char *p = digits; *p; p++) h = (h ^ (unsigned char)*p) * 0x100000001b3ull;
+    return h;
+}
+
+bool game_romfs_check_file(GameRomfsCheck *c, const char *rel, uint64_t size, uint64_t *bytes) {
+    if (!c) {
+        if (bytes) *bytes += size;
+        return true;
+    }
+    uint64_t h = game_romfs_hash(rel, size);
+    size_t lo = 0, hi = ROMFS_ENTRIES;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (romfs_files[mid].hash < h) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == ROMFS_ENTRIES || romfs_files[lo].hash != h || !(romfs_files[lo].versions & c->version)) return false;
+    c->seen[lo] = 1;
+    if (bytes) *bytes += size;
+    return true;
+}
+
+int game_romfs_check_end(GameRomfsCheck *c) {
+    if (!c) return 0;
+    int missing = 0;
+    for (size_t i = 0; i < ROMFS_ENTRIES; i++) missing += (romfs_files[i].versions & c->version) && !c->seen[i];
+    free(c);
+    return missing;
+}
+
+bool game_romfs_exefs_copy(const char *game_dir, const char *rel, uint64_t size) {
+    static const char *const names[] = {"main", "main.npdm", "rtld", "sdk", "subsdk0", "subsdk1"};
+    bool named = false;
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++) named |= !strcmp(rel, names[i]);
+    if (!named || !game_dir) return false;
+    char path[1200];
+    snprintf(path, sizeof path, "%s/exefs/%s", game_dir, rel);
+    FILE *a = fopen(path, "rb");
+    snprintf(path, sizeof path, "%s/romfs/%s", game_dir, rel);
+    FILE *b = fopen(path, "rb");
+    enum { CHUNK = 1 << 16 };
+    char *x = malloc(2 * CHUNK), *y = x ? x + CHUNK : NULL;
+    bool same = a && b && x;
+    uint64_t n = 0;
+    while (same) {
+        size_t r = fread(x, 1, CHUNK, a), s = fread(y, 1, CHUNK, b);
+        same = r == s && !memcmp(x, y, r);
+        n += r;
+        if (r < CHUNK) break;
+    }
+    free(x);
+    if (a) fclose(a);
+    if (b) fclose(b);
+    return same && n == size;
+}

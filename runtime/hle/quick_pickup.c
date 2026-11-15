@@ -23,7 +23,10 @@ typedef struct { char entry[48]; int flag, item, count, index; char se[40]; } Qu
 static Quick *g_q;
 static int g_nq;
 static char g_seed[512];
-static struct { uint64_t actor, frame; } g_done[8];  // actors given here lately (a repeat request: nothing again)
+// items given here lately, by their entry (a repeat request while the item goes: nothing again). Not by the actor's
+// address: a freed item's memory is soon a new item's (the next bush cut), and a touch of that one within the window
+// gave nothing - Link had to run over it again (user, beta 6 bushsanity)
+static struct { const Quick *q; uint64_t frame; } g_done[8];
 static unsigned g_done_at;
 
 RT_ON_RESET(quick_pickup_reset) {
@@ -64,9 +67,16 @@ static const Quick *find(const char *name, size_t len) {
 int rt_actor_event(Cpu *c) {
     static int off = -1;
     if (off < 0) off = getenv("LARECOMP_QUICK_PICKUPS") && !atoi(getenv("LARECOMP_QUICK_PICKUPS"));
-    if (off) return 0;
     uint64_t actor = LD64(c->x[20] + 0x58);
     if (!actor || LD64(actor) != GA(SINKING_SWORD_VTABLE)) return 0;
+    extern bool shell_spot_hung_actor(uint64_t actor);  // (Applesanity: an item hanging in its tree - shell_spots.c)
+    if (shell_spot_hung_actor(actor)) {
+        static uint64_t said;
+        if (said != actor) LOG("[quick] an item hanging in an apple tree: not picked up\n");
+        said = actor;
+        return 2;
+    }
+    if (off) return 0;
     uint64_t name = LD64(c->x[29] - 0x40), len = LD64(c->x[29] - 0x38);
     if (!name || !len || len > 47) return 0;
     const Quick *q = find((const char *)(uintptr_t)name, (size_t)len);
@@ -74,11 +84,20 @@ int rt_actor_event(Cpu *c) {
     extern uint64_t renderer_present_count(void);
     uint64_t frame = renderer_present_count();
     for (unsigned i = 0; i < sizeof g_done / sizeof g_done[0]; i++)
-        if (g_done[i].actor == actor && frame - g_done[i].frame < 120) return 2;  // (given; it goes with this frame)
-    unsigned slot = g_done_at++ % (sizeof g_done / sizeof g_done[0]);
-    g_done[slot].actor = actor, g_done[slot].frame = frame;
-
+        if (g_done[i].q == q && frame - g_done[i].frame < 120) return 2;  // (given; it goes with this frame)
     Cpu saved = *c;  // (the game's registers as they were: the skip returns from the function)
+    extern bool flags_ext_get(int idx);
+    if (q->flag >= 0 && flags_ext_get(q->flag)) {  // taken before: this one only goes (nothing given twice)
+        c->x[0] = actor;
+        guest_call(c, GA(ACTOR_KILL));
+        *c = saved;
+        LOG("[quick] f%llu %.*s: flag %d already set - removed, nothing given\n", (unsigned long long)frame, (int)len,
+            (const char *)(uintptr_t)name, q->flag);
+        return 2;
+    }
+    unsigned slot = g_done_at++ % (sizeof g_done / sizeof g_done[0]);
+    g_done[slot].q = q, g_done[slot].frame = frame;
+
     if (q->flag >= 0) {  // EventFlags.SetFlag
         extern void flags_put(int idx, bool on);
         flags_put(q->flag, true);

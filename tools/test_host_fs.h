@@ -42,6 +42,8 @@ static ssize_t test_write(int fd, const void *p, size_t n, off_t off) {
 #undef fsync
 const char *g_romfs_dir;
 int rt_romfs_files;
+uint64_t rt_romfs_bytes;
+int rt_romfs_missing;
 const char *rando_seed_dir(void) { return NULL; }
 bool romfs_layout(const char *p, RomfsLayout *l, char *why, size_t n) { abort(); }
 bool rando_romfs_override(const char *p, char *out, size_t n) { abort(); }
@@ -50,9 +52,16 @@ void enemy_random_filter(const char *p, uint64_t off, uint8_t *d, uint64_t n) {}
 void rt_fatal_msg(const char *fmt, ...) { abort(); }
 void rt_fatal_trace(void) { abort(); }
 void save_editor_file_read(const char *p, uint64_t a, int64_t o, int64_t n) {}
+void weather_cycle_save_read(const char *p, uint64_t a, int64_t o, int64_t n) {}  // (runtime/nvn/weather_cycle.c)
+void weather_cycle_save_written(const char *p, uint64_t a, int64_t o, int64_t n) {}
+void dpad_items_save_read(const char *p, uint64_t a, int64_t o, int64_t n) {}  // (runtime/hle/dpad_items.c)
+void dpad_items_save_written(const char *p, uint64_t a, int64_t o, int64_t n) {}
 void pace_hitch(const char *why) {}  // (runtime/nvn/pace.c: a save commit is a stall)
 static int notices;  // save-failed warnings shown (fs.c tells the player once per run)
-void plat_notice(const char *text) { notices++; }
+void menu_save_failed(const char *folder) { notices++; }
+#ifdef __linux__
+void plat_os_write(uint64_t addr, uint64_t size) { (void)addr; (void)size; }  // (fs.c's file reads: no soft write tracking here)
+#endif
 #include "../runtime/game_addresses.h"
 static uint8_t live_save[0x6000];
 static GameAddrs test_ga = {  // the 1.0.0 table, with the live save in host memory
@@ -62,6 +71,15 @@ static GameAddrs test_ga = {  // the 1.0.0 table, with the live save in host mem
 #undef GA_ADDR
 };
 const GameAddrs *g_ga = &test_ga;
+const GameVersion *game_version(void) { return NULL; }
+uint64_t game_romfs_bytes(const GameVersion *v) { return 0; }
+GameRomfsCheck *game_romfs_check_begin(const GameVersion *v) { return NULL; }
+bool game_romfs_check_file(GameRomfsCheck *c, const char *rel, uint64_t size, uint64_t *bytes) {
+    if (bytes) *bytes += size;
+    return true;
+}
+int game_romfs_check_end(GameRomfsCheck *c) { return 0; }
+bool game_romfs_exefs_copy(const char *game_dir, const char *rel, uint64_t size) { return false; }
 __attribute__((constructor)) static void test_ga_init(void) { test_ga.LIVE_SAVE = (uintptr_t)live_save; }
 #include "../runtime/hle/flags_ext.c"
 Service *service_new(const char *name, ServiceHandler handler, void *state) {

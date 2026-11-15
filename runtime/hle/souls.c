@@ -56,6 +56,7 @@ static void load(void) {
     FILE *f = fopen(p, "r");
     if (!f) return;
     while (fgets(line, sizeof line, f)) {
+        line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
         Soul *s = &g_souls[g_nsouls];
         Wall *w = &g_walls[g_nwalls];
         char cells[160];
@@ -116,6 +117,8 @@ uint64_t rt_actor_create_fn(uint64_t fn, uint32_t type, uint64_t info) {
     if (rt_bush_item_skip(type, info)) return 0;
     extern bool rt_shell_skip(uint32_t type, uint64_t info);  // Secret Seashell spots (shell_spots.c)
     if (rt_shell_skip(type, info)) return 0;
+    extern bool rt_apple_skip(uint32_t type, uint64_t info);  // Applesanity (apple_trees.c)
+    if (rt_apple_skip(type, info)) return 0;
     extern bool rt_no_buff_actor(uint32_t type);  // no-buff-drops (qol.c): no Piece of Power / Guardian Acorn at all
     if (rt_no_buff_actor(type)) return 0;
     if (g_nsouls < 0) load();

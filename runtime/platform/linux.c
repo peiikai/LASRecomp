@@ -1,14 +1,24 @@
-// Linux host layer (runtime/platform.h). x86-64 and aarch64.
+// Linux host layer (runtime/platform.h). x86-64 and aarch64. Also Android (arm64): what differs there is under
+// __ANDROID__ - the log also goes to logcat, the data folder and the shipped resources are the app's, backtraces come
+// from the unwinder (no execinfo before API 33), and the process can't re-exec itself. From LASRecompAndroid by mamcjr
+// (MIT), runtime/platform/android.c.
 #define _GNU_SOURCE
 #include <SDL3/SDL.h>
 #include <dlfcn.h>
 #include <errno.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <sys/system_properties.h>
+#include <unwind.h>
+#else
 #include <execinfo.h>
+#endif
 #include <fcntl.h>
 #include <linux/userfaultfd.h>
 #include <pthread.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +38,11 @@
 #include "posix_log.h"
 
 void rt_crash_explain(char *out, size_t n, const char *log_path);  // runtime/crash_explain.c
+
+#ifdef __ANDROID__  // (Bionic has no pthread_setaffinity_np: the calling thread's own, which is all it is used for)
+static int set_own_affinity(pthread_t t, size_t n, const cpu_set_t *set) { (void)t; return sched_setaffinity(gettid(), n, set); }
+#define pthread_setaffinity_np set_own_affinity
+#endif
 
 #ifndef MAP_FIXED_NOREPLACE
 #define MAP_FIXED_NOREPLACE 0x100000
@@ -108,6 +123,125 @@ void plat_write_tracking_off(const char *why) {
     g_pagemap = g_uffd = -1;
 }
 
+// ---- soft page write tracking: mprotect + SIGSEGV, where the kernel's can't run (LARECOMP_SOFT_WRITE_TRACKING=0: off)
+// The guest heap as driver memory (exec.c guest_heap_dmabuf: RADV) is no anonymous memory, so userfaultfd can't watch
+// it; there a query instead protects the pages it covered read-only, and the CPU's first write to one faults:
+// crash_handler (soft_fault) records the page and gives it its write access back. The GPU's own mapping of the memory
+// is not the CPU's page table, so the GPU never notices. Only pages a query covered ever fault, and each at most once
+// between two queries. The OS's own writes (file reads into the heap) would fail on a protected page instead of
+// faulting: plat_os_write unprotects first.
+// Page states: 0 never protected (not ours), 1 protected, 2 being given back, 3 writable again (was ours).
+enum { SOFT_NONE, SOFT_ARMED, SOFT_RELEASING, SOFT_OPEN };
+static _Atomic uint8_t *g_soft_state, *g_soft_written;  // one byte per 4K page of [g_soft_lo, g_soft_hi)
+static uint64_t g_soft_lo, g_soft_hi;
+static _Atomic uint64_t g_soft_faults, g_soft_queries, g_soft_protects;
+#define SOFT_PAGE 4096ull
+
+void plat_soft_write_tracking(uint64_t lo, uint64_t hi) {
+    const char *e = getenv("LARECOMP_SOFT_WRITE_TRACKING");
+    if ((e && !atoi(e)) || g_soft_state) return;
+    uint64_t n = (hi - lo) / SOFT_PAGE;
+    g_soft_state = calloc(n, 1), g_soft_written = calloc(n, 1);  // (untouched parts of these cost nothing either)
+    if (!g_soft_state || !g_soft_written) { free((void *)g_soft_state), free((void *)g_soft_written); g_soft_state = NULL; return; }
+    g_soft_lo = lo, g_soft_hi = hi;
+    fprintf(stderr, "[plat] soft page write tracking on (mprotect + SIGSEGV) over %llx-%llx\n", (unsigned long long)lo,
+            (unsigned long long)hi);
+}
+
+// Give page p its write access back and count it written (the fault handler and plat_os_write). False: not ours.
+static bool soft_release(uint64_t p) {
+    uint8_t st = SOFT_ARMED;
+    if (atomic_compare_exchange_strong(&g_soft_state[p], &st, SOFT_RELEASING)) {
+        atomic_store(&g_soft_written[p], 1);  // (before the page opens: a query that sees it open sees it written)
+        mprotect((void *)(uintptr_t)(g_soft_lo + p * SOFT_PAGE), SOFT_PAGE, PROT_READ | PROT_WRITE);
+        atomic_store(&g_soft_state[p], SOFT_OPEN);
+        atomic_fetch_add(&g_soft_faults, 1);
+        return true;
+    }
+    while (st == SOFT_RELEASING) st = atomic_load(&g_soft_state[p]);  // (another thread opens it: the write retries)
+    return st == SOFT_OPEN;  // (opened by another thread meanwhile: retry; SOFT_NONE: never ours, a real fault)
+}
+
+static bool soft_fault(uint64_t fa) {
+    if (!g_soft_state || fa < g_soft_lo || fa >= g_soft_hi) return false;
+    return soft_release((fa - g_soft_lo) / SOFT_PAGE);
+}
+
+void plat_os_write(uint64_t addr, uint64_t size) {
+    if (!g_soft_state || !size || addr >= g_soft_hi || addr + size <= g_soft_lo) return;
+    uint64_t a = addr < g_soft_lo ? g_soft_lo : addr, b = addr + size > g_soft_hi ? g_soft_hi : addr + size;
+    for (uint64_t p = (a - g_soft_lo) / SOFT_PAGE; p <= (b - 1 - g_soft_lo) / SOFT_PAGE; p++)
+        if (atomic_load(&g_soft_state[p]) == SOFT_ARMED) soft_release(p);
+}
+
+// The kernel driver about to pin [addr, addr+size) for writing (a host-pointer import: Mali's kbase pins with write
+// access, which fails on a page soft tracking protected read-only - the whole import is refused). Queries stop
+// protecting (they report every page they cover as written meanwhile: the safe side), the ones already running are
+// waited out, and the range's protected pages are opened (counted written). plat_os_write_end: queries protect again.
+static _Atomic int g_soft_hold, g_soft_inflight;
+void plat_os_write_begin(uint64_t addr, uint64_t size) {
+    if (!g_soft_state) return;
+    atomic_fetch_add(&g_soft_hold, 1);
+    while (atomic_load(&g_soft_inflight)) sched_yield();
+    plat_os_write(addr, size);
+}
+void plat_os_write_end(void) {
+    if (g_soft_state) atomic_fetch_sub(&g_soft_hold, 1);
+}
+
+// plat_written_pages over soft tracking: protect the range's open pages first, then take the written marks, so a write
+// between the two is either already marked or faults after the protection.
+static int soft_written_pages_(uint64_t addr, uint64_t size, uint64_t *pages, int max);
+static int soft_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max) {
+    if (addr < g_soft_lo || addr + size > g_soft_hi || max <= 0) return -1;
+    atomic_fetch_add(&g_soft_inflight, 1);
+    int n;
+    if (atomic_load(&g_soft_hold)) {  // (an import is pinning pages: protect nothing, every page counts as written)
+        // The marks stay set: the pages stay open meanwhile, so a CPU write to one now neither faults nor marks it; the
+        // first query after the hold arms the page and must still report it (once more: the safe side).
+        uint64_t first = (addr - g_soft_lo) / SOFT_PAGE, last = (addr + size - 1 - g_soft_lo) / SOFT_PAGE;
+        n = 0;
+        for (uint64_t p = first; p <= last && n < max; p++) { atomic_store(&g_soft_written[p], 1); pages[n++] = g_soft_lo + p * SOFT_PAGE; }
+    } else n = soft_written_pages_(addr, size, pages, max);
+    atomic_fetch_sub(&g_soft_inflight, 1);
+    return n;
+}
+static int soft_written_pages_(uint64_t addr, uint64_t size, uint64_t *pages, int max) {
+    uint64_t first = (addr - g_soft_lo) / SOFT_PAGE, last = (addr + size - 1 - g_soft_lo) / SOFT_PAGE;
+    for (uint64_t p = first; p <= last;) {  // runs of pages not protected: one mprotect each
+        uint8_t st = atomic_load(&g_soft_state[p]);
+        if (st == SOFT_ARMED || st == SOFT_RELEASING) { p++; continue; }
+        uint64_t q = p;
+        while (q <= last && (st = atomic_load(&g_soft_state[q])) != SOFT_ARMED && st != SOFT_RELEASING) q++;
+        for (uint64_t i = p; i < q; i++) atomic_store(&g_soft_state[i], SOFT_ARMED);
+        if (mprotect((void *)(uintptr_t)(g_soft_lo + p * SOFT_PAGE), (q - p) * SOFT_PAGE, PROT_READ)) {
+            static int warned;
+            if (warned++ < 5)
+                fprintf(stderr, "[plat] soft tracking: mprotect %llx +%llu pages failed: %s\n",
+                        (unsigned long long)(g_soft_lo + p * SOFT_PAGE), (unsigned long long)(q - p), strerror(errno));
+        }
+        atomic_fetch_add(&g_soft_protects, 1);
+        p = q;
+    }
+    int n = 0;
+    for (uint64_t p = first; p <= last; p++)
+        if (atomic_load(&g_soft_written[p]) && atomic_exchange(&g_soft_written[p], 0)) {
+            if (n < max) pages[n] = g_soft_lo + p * SOFT_PAGE;
+            n++;
+        }
+    uint64_t q = atomic_fetch_add(&g_soft_queries, 1);
+    static uint64_t last_log;
+    uint64_t now = plat_now_ns();
+    if (now - last_log > 5000000000ull) {
+        fprintf(stderr, "[plat] soft tracking, last 5 s: %llu queries, %llu protects, %llu faults\n",
+                    (unsigned long long)q, (unsigned long long)atomic_exchange(&g_soft_protects, 0),
+                    (unsigned long long)atomic_exchange(&g_soft_faults, 0));
+        atomic_store(&g_soft_queries, 0);
+        last_log = now;
+    }
+    return n < max ? n : max;
+}
+
 // ---- guest address space
 // Everything readable/writable from the start, like macOS: the guest maps at 4K granularity, and untouched pages
 // cost nothing (MAP_NORESERVE: the 12 GB window doesn't count against overcommit).
@@ -132,6 +266,7 @@ bool plat_reset_guest(uint64_t lo, uint64_t hi) {
 void plat_commit(uint64_t addr, uint64_t size) { (void)addr; (void)size; }
 
 int plat_written_pages(uint64_t addr, uint64_t size, uint64_t *pages, int max, uint64_t *page) {
+    if (g_soft_state) { *page = SOFT_PAGE; return soft_written_pages(addr, size, pages, max); }
     if (g_pagemap < 0 || addr < g_wt_lo || addr + size > g_wt_hi || max <= 0) return -1;
     WtRegion v[64];
     uint64_t at = addr, end = addr + size;
@@ -166,6 +301,14 @@ uint64_t plat_now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
 }
 
+uint64_t plat_mem_used_bytes(void) {  // (resident pages: /proc/self/statm's second field)
+    FILE *f = fopen("/proc/self/statm", "r");
+    unsigned long long size = 0, res = 0;
+    bool ok = f && fscanf(f, "%llu %llu", &size, &res) == 2;
+    if (f) fclose(f);
+    return ok ? res * (uint64_t)sysconf(_SC_PAGESIZE) : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
     struct timespec ts;
     return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec : 0;
@@ -178,12 +321,165 @@ void plat_sleep_until_ns(uint64_t t) {
 
 // Real-time scheduling where the user may have it (rtkit / limits.conf), else just a higher priority: keeps the
 // vsync thread on time while the guest threads load every core.
+static int pcore_process_cpus(void);
 int plat_cpu_count(void) {
+    int n = pcore_process_cpus();  // (the process's cores, also from a thread held to the big ones)
+    if (n) return n;
     cpu_set_t set;
     return sched_getaffinity(0, sizeof set, &set) == 0 ? CPU_COUNT(&set) : 0;
 }
 
-void plat_thread_guest(int prio) { (void)prio; }  // (the OS's default scheduling serves the game here)
+static void pcore_guest(void);
+// A guest thread: with big and little cores, on the big ones with the frame's other critical threads (pcore_guest);
+// otherwise the OS's default scheduling serves the game here
+void plat_thread_guest(int prio) { (void)prio; pcore_guest(); }
+
+// The frame's critical threads on the big cores of a big.LITTLE / hybrid CPU. The scheduler places a thread by its
+// recent load, so the game or render thread, idle for part of each frame, often lands on a little core: on an RK3588
+// (4x Cortex-A55 + 4x A76) the game's main thread ran on an A55 most of the time and frames missed the 30 fps mode's
+// 33 ms. A core's class: its cpu_capacity (arm64, from the device tree), else its highest frequency. "Big" = every
+// class above the lowest (as Windows' efficiency classes), within the process affinity. LARECOMP_PCORE=0: off.
+static pthread_once_t pcore_once = PTHREAD_ONCE_INIT;
+static cpu_set_t pcore_set, pcore_all;  // the big cores; the process's own cores (plat_thread_default_core)
+static int pcore_n;  // 0: no selection (off, not hybrid, or the affinity allows only one class)
+
+static long cpu_sysfs_long(int cpu, const char *file) {
+    char p[96], b[32];
+    snprintf(p, sizeof p, "/sys/devices/system/cpu/cpu%d/%s", cpu, file);
+    FILE *f = fopen(p, "r");
+    if (!f) return -1;
+    long v = fgets(b, sizeof b, f) ? atol(b) : -1;
+    fclose(f);
+    return v;
+}
+
+// "0-7,16-23" (a sysfs cpu list) into a set; the number of cpus, or -1 when the file is missing / empty
+static int cpulist_read(const char *path, cpu_set_t *set) {
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
+    char b[256];
+    bool ok = fgets(b, sizeof b, f) != NULL;
+    fclose(f);
+    if (!ok) return -1;
+    CPU_ZERO(set);
+    int n = 0;
+    for (char *p = b; *p && *p != '\n';) {
+        char *q;
+        long lo = strtol(p, &q, 10), hi = lo;
+        if (q == p) break;
+        if (*q == '-') hi = strtol(q + 1, &q, 10);
+        for (long c = lo; c <= hi && c < CPU_SETSIZE; c++) { CPU_SET((int)c, set); n++; }
+        p = *q == ',' ? q + 1 : q;
+    }
+    return n ? n : -1;
+}
+
+static void pcore_log_set(const char *how, int ncpu) {
+    char list[256] = "";
+    size_t n = 0;
+    for (int c = 0; c < CPU_SETSIZE; c++)
+        if (CPU_ISSET(c, &pcore_set) && n < sizeof list - 8) n += (size_t)snprintf(list + n, sizeof list - n, "%s%d", n ? "," : "", c);
+    fprintf(stderr, "[pcore] big.LITTLE / hybrid CPU (%s): game threads on cores %s (%d of %d)\n", how, list, pcore_n, ncpu);
+}
+
+static void pcore_init(void) {
+    const char *e = getenv("LARECOMP_PCORE");
+    if (e && *e && atoi(e) == 0) { fprintf(stderr, "[pcore] off (LARECOMP_PCORE=0): default scheduling\n"); return; }
+    cpu_set_t allowed;
+    if (sched_getaffinity(0, sizeof allowed, &allowed) != 0) return;
+    pcore_all = allowed;
+    int ncpu = CPU_COUNT(&allowed);
+    char how[96];
+#if defined(__aarch64__) || defined(__arm__)
+    // arm64: each core's capacity from the device tree; big = every class above the lowest
+    long cap[CPU_SETSIZE], lo = -1, hi = -1;
+    for (int c = 0; c < CPU_SETSIZE; c++) {
+        cap[c] = CPU_ISSET(c, &allowed) ? cpu_sysfs_long(c, "cpu_capacity") : -1;
+        if (cap[c] <= 0) continue;
+        if (lo < 0 || cap[c] < lo) lo = cap[c];
+        if (cap[c] > hi) hi = cap[c];
+    }
+    if (lo > 0 && hi > lo) {
+        CPU_ZERO(&pcore_set);
+        for (int c = 0; c < CPU_SETSIZE; c++)
+            if (cap[c] > lo) { CPU_SET(c, &pcore_set); pcore_n++; }
+        snprintf(how, sizeof how, "cpu_capacity %ld..%ld", lo, hi);
+        pcore_log_set(how, ncpu);
+        return;
+    }
+    if (lo > 0) { fprintf(stderr, "[pcore] %d cores of one capacity: default scheduling\n", ncpu); return; }
+#else
+    // Intel hybrid: the kernel lists the P and E cores (these files exist only on a hybrid CPU)
+    cpu_set_t pc, ec;
+    if (cpulist_read("/sys/devices/cpu_core/cpus", &pc) > 0 && cpulist_read("/sys/devices/cpu_atom/cpus", &ec) > 0) {
+        CPU_AND(&pcore_set, &pc, &allowed);
+        CPU_AND(&ec, &ec, &allowed);
+        if (CPU_COUNT(&pcore_set) && CPU_COUNT(&ec)) {
+            pcore_n = CPU_COUNT(&pcore_set);
+            pcore_log_set("cpu_core / cpu_atom", ncpu);
+            return;
+        }
+        fprintf(stderr, "[pcore] hybrid CPU, but the affinity allows one kind only: default scheduling\n");
+        return;
+    }
+#endif
+    // Otherwise each core's highest frequency, and only a large gap counts: a desktop's favoured cores (Turbo Boost Max
+    // 3.0, some Ryzen frequency drivers) report a few percent more than the rest of the same kind of core, and pinning
+    // the game to those one or two would be a big regression. Big and little when the slowest is under 80 % of the
+    // fastest; big = every core within 80 % of the fastest.
+    long f[CPU_SETSIZE], flo = -1, fhi = -1;
+    for (int c = 0; c < CPU_SETSIZE; c++) {
+        f[c] = CPU_ISSET(c, &allowed) ? cpu_sysfs_long(c, "cpufreq/cpuinfo_max_freq") : -1;
+        if (f[c] <= 0) continue;
+        if (flo < 0 || f[c] < flo) flo = f[c];
+        if (f[c] > fhi) fhi = f[c];
+    }
+    if (flo <= 0 || flo * 5 >= fhi * 4) {
+        fprintf(stderr, "[pcore] %d cores of one class (highest frequency %ld..%ld kHz): default scheduling\n", ncpu, flo, fhi);
+        return;
+    }
+    CPU_ZERO(&pcore_set);
+    for (int c = 0; c < CPU_SETSIZE; c++)
+        if (f[c] > 0 && f[c] * 5 >= fhi * 4) { CPU_SET(c, &pcore_set); pcore_n++; }
+    snprintf(how, sizeof how, "highest frequency %ld..%ld kHz", flo, fhi);
+    pcore_log_set(how, ncpu);
+}
+
+static int pcore_process_cpus(void) {
+    pthread_once(&pcore_once, pcore_init);
+    return pcore_n ? CPU_COUNT(&pcore_all) : 0;
+}
+
+void plat_thread_default_core(void) {
+    pthread_once(&pcore_once, pcore_init);
+    if (pcore_n) pthread_setaffinity_np(pthread_self(), sizeof pcore_all, &pcore_all);
+}
+
+// The game's own threads join the big cores too: its frame work isn't only on the main thread (on an RK3588 the
+// busiest guest thread during play has Switch priority 32, the main thread 44, and a build that left the guest threads
+// free missed vblanks in 11-12 % of 2 s windows on a walking route, against 2 % with them on the A76s). On the Switch
+// the game owns its cores as well. LARECOMP_PCORE_GUEST=0: only the game / render / vsync threads.
+static void pcore_guest(void) {
+    pthread_once(&pcore_once, pcore_init);
+    if (!pcore_n) return;
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("LARECOMP_PCORE_GUEST");
+        on = !e || !*e || atoi(e) != 0;
+        fprintf(stderr, "[pcore] guest threads: %s\n", on ? "big cores" : "all cores (LARECOMP_PCORE_GUEST=0)");
+    }
+    pthread_setaffinity_np(pthread_self(), sizeof (on ? pcore_set : pcore_all), on ? &pcore_set : &pcore_all);
+}
+
+void plat_thread_perf_core(int role) {
+    pthread_once(&pcore_once, pcore_init);
+    if (!pcore_n) return;
+    bool ok = pthread_setaffinity_np(pthread_self(), sizeof pcore_set, &pcore_set) == 0;
+    static _Atomic int logged;  // (once per role: a reboot's new game thread applies the same, quietly)
+    static const char *const names[] = {"game", "render", "vsync"};
+    if (role < 0 || role > 2 || (atomic_fetch_or(&logged, 1 << role) & (1 << role))) return;
+    fprintf(stderr, "[pcore] %s thread: %s\n", names[role], ok ? "big cores" : "affinity refused (default scheduling)");
+}
 
 void plat_thread_realtime(uint64_t period_ns) {
     (void)period_ns;
@@ -198,24 +494,80 @@ int plat_thread_realtime_check(uint64_t period_ns) { (void)period_ns; return -1;
 // (runtime/paths.h; rt_paths_init runs later, so the same rule is applied here), with five backups (posix_log.h).
 static char g_log_path[1024];
 
+#ifdef __ANDROID__
+// stdout / stderr go through a pipe: each line to logcat (tag LASRecomp) and to lasrecomp.log in the data folder, which
+// players attach to bug reports as on the desktop
+static int g_log_fd = -1;
+static void *log_pump(void *arg) {
+    int fd = (int)(intptr_t)arg;
+    char buf[4096];
+    size_t n = 0;
+    for (;;) {
+        ssize_t r = read(fd, buf + n, sizeof buf - 1 - n);
+        if (r <= 0) break;
+        if (g_log_fd >= 0) (void)!write(g_log_fd, buf + n, (size_t)r);
+        n += (size_t)r;
+        char *start = buf, *nl;
+        while ((nl = memchr(start, '\n', (size_t)(buf + n - start)))) {
+            *nl = 0;
+            __android_log_write(ANDROID_LOG_INFO, "LASRecomp", start);
+            start = nl + 1;
+        }
+        n = (size_t)(buf + n - start);
+        memmove(buf, start, n);
+        if (n == sizeof buf - 1) {  // (a line longer than the buffer: in pieces)
+            buf[n] = 0;
+            __android_log_write(ANDROID_LOG_INFO, "LASRecomp", buf);
+            n = 0;
+        }
+    }
+    return NULL;
+}
+#endif
+
 static void log_to_file_without_terminal(void) {
-    if (isatty(STDERR_FILENO)) return;
+#ifdef __ANDROID__
+    char dir[900];
+    if (rt_data_root_early(dir, sizeof dir)) {
+        mkdir(dir, 0755);
+        session_log_open(dir, g_log_path, sizeof g_log_path);  // (stderr to the file: taken over by the pipe below)
+        if (g_log_path[0]) g_log_fd = dup(STDERR_FILENO);
+    }
+    int p[2];
+    if (pipe(p) != 0) return;
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    dup2(p[1], STDOUT_FILENO);
+    dup2(p[1], STDERR_FILENO);
+    close(p[1]);
+    pthread_t t;
+    if (pthread_create(&t, NULL, log_pump, (void *)(intptr_t)p[0]) == 0) pthread_detach(t);
+#else
+    if (isatty(STDERR_FILENO) && !g_cli) return;  // (a command-line run logs from a terminal too: plat_cli_begin)
     char dir[900];
     if (!rt_data_root_early(dir, sizeof dir)) return;  // dev mode: wherever stderr goes already
     for (char *c = dir + 1; *c; c++)
         if (*c == '/') { *c = 0; mkdir(dir, 0755); *c = '/'; }
     mkdir(dir, 0755);
     session_log_open(dir, g_log_path, sizeof g_log_path);
+#endif
 }
+
+void plat_cli_begin(void) { cli_keep_stderr(); }
+bool plat_cli_write(const char *s, size_t n) { return cli_write(s, n, g_log_path[0] != 0); }
+bool plat_cli_tty(void) { return g_cli_isatty && g_log_path[0]; }
 
 #if defined(__x86_64__)
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
-// with an illegal instruction on an older CPU.
+// with an illegal instruction on an older CPU. Without a terminal also in a message box, as on Windows: the log line
+// alone looks like the app never started.
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    fprintf(stderr, "FATAL: LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or "
-                    "newer).\n");
+    static const char msg[] = "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or "
+                              "newer).";
+    fprintf(stderr, "FATAL: %s\n", msg);
+    if (g_log_path[0]) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
     exit(1);
 }
 #else
@@ -236,6 +588,21 @@ static bool kv_line(const char *line, const char *key, char sep, char *out, size
 }
 
 void plat_system_info(PlatSysInfo *si) {
+#ifdef __ANDROID__
+    {   // the device and Android release (no os-release); the CPU, cores and RAM as on Linux below
+        char model[PROP_VALUE_MAX] = "", maker[PROP_VALUE_MAX] = "", rel[PROP_VALUE_MAX] = "", soc[PROP_VALUE_MAX] = "";
+        __system_property_get("ro.product.model", model);
+        __system_property_get("ro.product.manufacturer", maker);
+        __system_property_get("ro.build.version.release", rel);
+        __system_property_get("ro.soc.model", soc);
+        struct utsname u;
+        bool k = uname(&u) == 0;
+        snprintf(si->os, sizeof si->os, "Android %s, %s %s (kernel %.32s)", rel, maker, model, k ? u.release : "?");
+        if (soc[0]) snprintf(si->cpu, sizeof si->cpu, "%s", soc);
+    }
+    char line[512];
+    FILE *f;
+#else
     // the OS: /etc/os-release (the host's, also inside an AppImage; SteamOS: NAME="SteamOS", VERSION_ID), the kernel
     char pretty[96] = "", name[64] = "", ver[48] = "", line[512];
     FILE *f = fopen("/etc/os-release", "r");
@@ -253,6 +620,7 @@ void plat_system_info(PlatSysInfo *si) {
     struct utsname u;
     if (uname(&u) == 0) snprintf(si->os, sizeof si->os, "%.80s (%s, kernel %.32s)", os, u.machine, u.release);
     else snprintf(si->os, sizeof si->os, "%.80s", os);
+#endif
     // the CPU: x86 "model name"; ARM boards often have none - the device tree's model then (e.g. "Raspberry Pi 5")
     // cores: distinct (physical id, core id) pairs; threads: the processors online
     si->threads = (int)sysconf(_SC_NPROCESSORS_ONLN);
@@ -289,6 +657,12 @@ void plat_init(void) {
 
 // (inside an AppImage: the binary in its mount, which stays mounted while this process lives - re-exec included)
 bool plat_exe_path(char *buf, size_t size) {
+#ifdef __ANDROID__
+    // the process is app_process64: "the executable" is a file in the folder the activity copies the shipped resources
+    // to (internal storage, files/res: the start screen's font, the icon), so rt_resource finds them next to it
+    const char *files = SDL_GetAndroidInternalStoragePath();
+    return files && (size_t)snprintf(buf, size, "%s/res/lasrecomp", files) < size;
+#endif
     ssize_t n = readlink("/proc/self/exe", buf, size - 1);
     if (n <= 0) return false;
     buf[n] = 0;
@@ -312,6 +686,14 @@ static char **self_argv(void) {
 }
 
 void plat_exec(char *const argv[]) {
+#ifdef __ANDROID__
+    // (an app process can't replace itself: the activity starts the app again and ends this process - argv isn't
+    // used, a new process starts as the launcher icon would. Still here after a while: the caller reports the failure)
+    (void)argv;
+    extern bool android_call(const char *method);
+    if (android_call("restartApp")) sleep(10);
+    return;
+#endif
     if (argv) { execv(argv[0], argv); return; }
     char path[4096];
     char **av = self_argv();
@@ -331,25 +713,22 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
 
 // Fatal error without a terminal: say so in a message box rather than vanishing (the details are in the log).
 // (what happened in plain words: runtime/crash_explain.c)
+#ifdef __ANDROID__
+#include "android_storage.h"
+bool rt_fatal_is_driver(void);  // runtime/crash_explain.c
+#endif
 void plat_fatal_notice(void) {
     char text[1600];
     rt_crash_explain(text, sizeof text, g_log_path);
     if (!g_log_path[0]) return;
     fflush(stderr);
+#ifdef __ANDROID__
+    {   // the graphics driver's error (it crashed, or Vulkan failed): the activity's dialog, which can choose another driver package or the phone's own (the
+        // driver loads before the start screen, so its Settings rows can't be reached)
+        if (rt_fatal_is_driver() && android_driver_error_dialog(text)) return;
+    }
+#endif
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", text, NULL);
-}
-
-static void *notice_thread(void *text) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", text, NULL);
-    free(text);
-    return NULL;
-}
-void plat_notice(const char *text) {
-    if (!g_log_path[0]) return;
-    pthread_t t;
-    char *copy = strdup(text);
-    if (copy && !pthread_create(&t, NULL, notice_thread, copy)) pthread_detach(t);
-    else free(copy);
 }
 
 bool plat_module_name(uint64_t pc, char *out, size_t n) {
@@ -360,6 +739,21 @@ bool plat_module_name(uint64_t pc, char *out, size_t n) {
 }
 
 const char *rt_host_fn_name(uint64_t pc, uint64_t *offset);  // runtime/dispatch.c
+
+#ifdef __ANDROID__
+typedef struct { void **pcs; int n, max; } Trace;
+static _Unwind_Reason_Code trace_step(struct _Unwind_Context *ctx, void *arg) {
+    Trace *t = arg;
+    uintptr_t pc = _Unwind_GetIP(ctx);
+    if (pc && t->n < t->max) t->pcs[t->n++] = (void *)pc;
+    return t->n < t->max ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+static int backtrace(void **bt, int max) {
+    Trace t = {bt, 0, max};
+    _Unwind_Backtrace(trace_step, &t);
+    return t.n;
+}
+#endif
 
 void plat_print_backtrace(void) {
     void *bt[64];
@@ -394,6 +788,7 @@ static void crash_handler(int sig, siginfo_t *si, void *ctx) {
     uint64_t pc = (uint64_t)uc->uc_mcontext.gregs[REG_RIP], sp = (uint64_t)uc->uc_mcontext.gregs[REG_RSP], lr = 0;
     if (sig != SIGSEGV || (fa & ~0xFFFull) != (sp & ~0xFFFull)) lr = *(uint64_t *)(uintptr_t)sp;
 #endif
+    if (sig == SIGSEGV && soft_fault(fa)) return;  // (soft page write tracking: the write retries on an open page)
     if (rt_fault_watch(fa, pc)) return;
     char what[32];
     snprintf(what, sizeof what, "signal %d", sig);
@@ -454,7 +849,7 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
-bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
+const char *plat_cloud_synced(const char *dir) { (void)dir; return NULL; }
 
 // End the process at once, skipping the library teardown: as on Windows, the GPU driver's threads crashed in exit()
 // while the game's threads still submitted work.

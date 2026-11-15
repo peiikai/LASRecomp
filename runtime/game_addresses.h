@@ -33,6 +33,12 @@ typedef struct GameVersion {
 
 // The version whose main build ID is the first 20 bytes of id (exefs/main 0x40), or NULL.
 const GameVersion *game_version_by_build_id(const uint8_t id[20]);
+// The version whose main build ID starts with hex (upper-case, 16 digits or more: a game code library's id), or NULL.
+const GameVersion *game_version_by_build_prefix(const char *hex);
+// What a main program file (exefs/main) is: GAME_MAIN_NSO with its build ID in hex (40 upper-case digits), or why it
+// has none (hex ""). For the log when the version is refused: a build ID no version has, or no program at all (#696).
+typedef enum { GAME_MAIN_NSO, GAME_MAIN_MISSING, GAME_MAIN_NOT_NSO } GameMainKind;
+GameMainKind game_main_build_id(const char *main_path, char hex[41]);
 // The version of a main program file (exefs/main), or NULL (missing, unreadable or unknown).
 const GameVersion *game_version_of_main(const char *main_path);
 // The version of the game files in game_dir (its exefs/main), or NULL.
@@ -44,6 +50,27 @@ const char *game_release_label(const char *exefs_dir, char *buf, size_t size);
 bool game_version_select(const char *game_dir, char *why, size_t why_size);
 // The selected version (NULL before game_version_select).
 const GameVersion *game_version(void);
+// The bytes of all the game's RomFS files in version v, summed (0: unknown). A copy with every file there but another
+// total has a damaged or changed file (issue #391). Only the totals ship.
+uint64_t game_romfs_bytes(const GameVersion *v);
+// File by file: some copies have files that no version has, or a damaged one, beside the game's (game_addresses/
+// romfs_files.h: hashes of the game's paths and sizes only). Begin with the copy's version (NULL: unknown version, the
+// check does nothing), pass every file found (path relative to romfs, '/' separators) and end it.
+typedef struct GameRomfsCheck GameRomfsCheck;
+GameRomfsCheck *game_romfs_check_begin(const GameVersion *v);
+// false: not one of this version's files (another name, or another size). bytes (or NULL): the game's files' sizes
+// summed, the ones that aren't the game's left out (an extra file alone isn't a changed game file: issue #553; a game
+// file of another size is missing to game_romfs_check_end). With no check (c NULL) every file is added.
+bool game_romfs_check_file(GameRomfsCheck *c, const char *rel, uint64_t size, uint64_t *bytes);
+// How many of this version's files weren't passed (missing, or changed: another size); frees c.
+int game_romfs_check_end(GameRomfsCheck *c);
+// The table's hash of a file (tools/romfs_files.py hashes the same way).
+uint64_t game_romfs_hash(const char *rel, uint64_t size);
+// Some copies also have the game code's six files (exefs: main, main.npdm, rtld, sdk, subsdk0, subsdk1) at the romfs
+// root, each the same file as in exefs (issue #389: 3842 files). Nothing reads them there, so the checks skip them.
+// true: rel is one of those names at the romfs root, and <game_dir>/romfs/<rel> has size bytes, the same bytes as
+// <game_dir>/exefs/<rel>. Anything else there (another name, size or content) stays an odd file.
+bool game_romfs_exefs_copy(const char *game_dir, const char *rel, uint64_t size);
 
 #ifdef __cplusplus
 }

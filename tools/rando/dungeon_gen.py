@@ -17,6 +17,7 @@ exit side is kept out of the layout; rooms in new cells have no darkness cover (
 Runs in the LAS venv.
 """
 import functools
+import glob
 import json
 import os
 import random
@@ -39,7 +40,13 @@ NOT_MOVABLE = ('Stairs', 'Downstairs', 'Upstairs', 'Warp', 'Hole', 'PlayerStart'
                'CoralTri', 'EveningCalm', 'ThunderD', 'HeartContainer', 'Owl', 'Return', 'BossDoor')
 # doorways that only work with their original neighbour (tied to their vanilla partner). Tail Cave 06A's hallway was
 # here until the catalog learnt that cells sharing a camera zone are one room (05A/06A/07A: now a fixed unit).
-PINNED = set()
+# Ledges across a room edge: a check on a raised strip that only the vanilla neighbour's ledge reaches (both rooms
+# movable: they move as a pair, the side is never sealed or jumped - chaos_free). Face Shrine 07G's chest
+# (D6-wizzrobes-ledge) sits on a strip running south into 08G, whose ramp leads up to it (user's preview-3 photo: a
+# different room below, chest out of reach). Pairs where one side stays anyway are in STAY (Key Cavern 03D, Turtle
+# Rock 03E). The audit behind these lists: notes/PLAN.md 2026-10-26.
+TIED = {('Lv06FaceShrine_07G', 'S')}
+PINNED = {x for room, s in TIED for x in ((room, s), (rooms.neighbour(room, s), rooms.OPP[s]))}
 
 
 def pinned_ok(room, s, other):
@@ -103,16 +110,52 @@ def map_shift(romfs, level, cell):
     return map_shifts(romfs).get(anim, (0.0, 0.0))
 
 
-def on_map(romfs, level, c, r):
-    """Cell (c, r) is drawn on its floor's map paper."""
-    sx, sy = map_shift(romfs, level, cell_name(level, c, r))
+def floor_room(level, cell, room):
+    """The room whose map row (floor, map page) a cell takes: LINK_LEVELS - a room of the level moved there keeps
+    its own floor (Eagle's Tower keeps the orange / blue pegs' state per floor: 04G moved into a cell with the
+    entrance's floor showed 1F's state, not 3F's - play test, DevEaglePlay); otherwise the cell's own."""
+    if room and level in LINK_LEVELS and rooms.level_of(room) == level and room != cell:
+        return room
+    return cell
+
+
+def on_map(romfs, level, c, r, room=None):
+    """Cell (c, r) is drawn on its floor's map paper (room: the room placed there, floor_room)."""
+    name = cell_name(level, c, r)
+    sx, sy = map_shift(romfs, level, floor_room(level, name, room))
+    c, r = ord(name[-1]) - ord('A'), int(name[-3:-1])  # (the map draws a cell by its name: Eagle's Tower)
+    if not (0 <= c < COLS and 1 <= r <= ROWS):
+        # the map holds 8 x 8 named cells: Eagle's Tower's spare names (rows 09 / 10, columns I / J) crashed the game
+        # as soon as the dungeon map opened (play test, DevEaglePlay: rooms in 09B / 10A ...)
+        return False
     x0, y0 = c * MAP_CELL_W - 326 + sx, 259 - r * MAP_CELL_H + sy
     return x0 >= -326 - MAP_TOL and x0 + MAP_CELL_W <= 326 + MAP_TOL and y0 >= -259 - MAP_TOL and \
         y0 + MAP_CELL_H <= 259 + MAP_TOL
 
 
-# rooms tied to a room that stays by level-local flags: Bottle Grotto 07G's event box sets 31 / 32 for 06G's blocks
-STAY = {'Lv02BottleGrotto_07G'}
+# rooms tied to a room that stays by level-local flags: Bottle Grotto 07G's event box sets 31 / 32 for 06G's blocks.
+# Eagle's Tower's roof route: 02F's raised walkway runs through 03F (Nightmare door) to the roof stairs in 03G, whose
+# north door (opened by the boss) leads to the instrument in 02G - kept together where they are.
+# Its 02B (a pillar room: wide open sides, hole and 02F's landing) found no other place and was left out - 02F's hole
+# then dropped Link into whatever room had its cell: kept home too.
+# Ledges whose other end stays (TIED for pairs that can move): Key Cavern 02D's east-ledge chest is reached from 03D's
+# ramp up its north edge (02D is part of a fixed unit); Turtle Rock 02E's northern-ledge chest is hookshotted from the
+# strip that 03E's ramp leads up to (02E is a fixed unit). Moved, the chest was out of reach.
+# Rooms the only possible neighbour of a room that stays (a doorway that can't jump - water channel, Nightmare door,
+# wide opening - and that no other room matches): Catfish's Maw 04F under 03F's water channel, Angler's Tunnel 03G
+# above 04G, Eagle's Tower 04F under 03F, 02A beside 02B's open west side. Moved away (another dungeon took Catfish's
+# 04F under any room with a doorway at its slot), the round could never close: seed NXC11-...: Catfish's Maw plan()
+# failed 76 times.
+STAY = {'Lv02BottleGrotto_07G', 'Lv07EagleTower_02F', 'Lv07EagleTower_03G', 'Lv07EagleTower_02G',
+        'Lv07EagleTower_02B', 'Lv03KeyCavern_03D', 'Lv08TurtleRock_03E',
+        'Lv05CatfishsMaw_04F', 'Lv04AnglersTunnel_03G', 'Lv07EagleTower_04F', 'Lv07EagleTower_02A'}
+
+# Movable stairs and holes (levels where they are tested): rooms with stairs, holes or the landing spots of holes may
+# move inside their own level - the floor links follow them (the stairs / hole names a player start of its partner
+# room, and the starts move with their rooms: _moved_starts), room_logic.py follows them as edges (stairs both ways,
+# holes one way). Such rooms never leave their level.
+LINK_LEVELS = {'Lv07EagleTower'}
+LINK_ACTORS = ('Stairs', 'Downstairs', 'Upstairs', 'Hole', 'PlayerStart')
 
 
 def _base_tex(romfs, level, entrance):
@@ -126,21 +169,86 @@ def _base_tex(romfs, level, entrance):
     return out & (set(room_textures(romfs, entrance)) | set(_tex_cache.get(level, set())))
 
 
-def movable(v):
+def movable(v, room=None):
+    """room: its name - in LINK_LEVELS its stairs / holes / landing spots don't keep it at home."""
     if any(u in STAY for u in v.get('unit', ())):
         return False
     if BOSS_TYPES & set(v.get('types', [])):
         return False
-    return not any(k in a for a in v['actors'] for k in NOT_MOVABLE)
+    skip = LINK_ACTORS if room and rooms.level_of(room) in LINK_LEVELS else ()
+    return not any(k in a for a in v['actors'] for k in NOT_MOVABLE if k not in skip)
+
+
+@functools.lru_cache(None)
+def _partners(romfs, level):
+    """LINK_LEVELS: {room: rooms its stairs join} (room_logic.stairs_links) - each pair on its own, not the one
+    passage network of other dungeons (Eagle's Tower's roof stairs in 03G led nowhere a jump was needed: its 3F strip
+    was left cut off)."""
+    import json
+    import room_logic
+    cat = json.load(open(os.path.join(HERE, 'room_catalog.json')))
+    out = {}
+    for a, b in room_logic.stairs_links(romfs, level, cat):
+        out.setdefault(a, set()).add(b)
+        out.setdefault(b, set()).add(a)
+    return out
+
+
+@functools.lru_cache(None)
+def level_cells(romfs, level):
+    """{area name: camera zone id} of the level's own (vanilla) level file."""
+    fh = fixedhash.FixedHash(open(os.path.join(romfs, 'region_common', 'level', level, level + '.lvb'), 'rb').read())
+    names = [e.name.decode() for e in fh.get(b'area').data.entries]
+    out = {}
+    for z in fh.get(b'zone').data.entries:
+        n = z.data[0x9c + 6]
+        for i in z.data[0x9c + 7:0x9c + 7 + n]:
+            if i < len(names):
+                out[names[i]] = struct.unpack_from('<I', z.data, 0)[0]
+    return out
+
+
+def dead_shadow(level):
+    """Cells next to (or diagonal to) a rooms.DEAD room: its own darkness lid still reaches over the cells it had
+    empty around it and blacked out half of a room placed there (play test, DevEaglePlay: Eagle's Tower 04G moved to
+    08E, under the pre-collapse 07E / 08F)."""
+    dead = {cell_pos(k) for k in rooms.DEAD if rooms.level_of(k) == level}
+    return {(c + dc, r + dr) for c, r in dead for dc in (-1, 0, 1) for dr in (-1, 0, 1)} - dead
+
+
+def link_targets(cat, romfs, level):
+    """LINK_LEVELS: the rooms its stairs and holes lead into (none elsewhere)."""
+    if level not in LINK_LEVELS or not romfs:
+        return set()
+    import room_logic
+    return set(_partners(romfs, level)) | {b for _, b in room_logic.hole_links(romfs, level, cat)}
+
+
+def linked_all(cat, romfs, level, layout):
+    """LINK_LEVELS: every room a stairs or hole of the level leads into is in the layout. One left out keeps its
+    player start at its old cell - the stairs / hole would drop Link into whatever room is there now (DevEaglePlay:
+    02F's hole into 02B's spot, 02B unused)."""
+    if level not in LINK_LEVELS or not romfs:
+        return True
+    return link_targets(cat, romfs, level) <= set(layout.values())
+
+
+def link_room(cat, room):
+    """A room of a LINK_LEVELS level that only moves thanks to them (it stays in its level)."""
+    return rooms.level_of(room) in LINK_LEVELS and not movable(cat[room]) and movable(cat[room], room)
 
 
 def cell_name(level, col, row):
-    return f'{level}_{row:02d}{chr(ord("A") + col)}'
+    return rooms.cell_name(level, col, row)  # (Eagle's Tower: names don't match positions, rooms.POSITIONS)
 
 
 def cell_pos(name):
-    rc = name.rsplit('_', 1)[1][:3]
-    return ord(rc[2]) - ord('A'), int(rc[:2])
+    return rooms.cell_pos(name)
+
+
+def grid_size(level):
+    """(columns, rows) of the level's grid: 8 x 8, Eagle's Tower 10 x 10 (rooms.GRIDS)."""
+    return rooms.GRIDS.get(level, (COLS, ROWS))
 
 
 # A level's map texture archive: archives over 255 textures crashed - a LAS BNTX writer bug (relocation stride,
@@ -172,7 +280,7 @@ def anchors_of(cat, level):
     warps, the boss / mini-boss rooms, instrument, exits, NPCs...) and every multi-cell room."""
     out = set()
     for k, v in cat.items():
-        if k.startswith(level + '_') and not movable(v):
+        if k.startswith(level + '_') and not movable(v, k):
             out |= set(v['unit'])
     # multi-cell rooms stay too (the pool is single rooms; moving units is queued): a free unit's cells were
     # unfillable holes otherwise (Key Cavern 01D above the boss area; Tail Cave 05C-06E: an exact room set can't
@@ -220,8 +328,10 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
         size = len(fixed) + len(exact)
     if size is None:
         size = len(fixed) + 10
-    pool = sorted(k for k, v in cat.items() if len(v['unit']) == 1 and movable(v) and k not in fixed
-                  and k not in exclude and not k.startswith('Lv07EagleTower') and (exact is None or k in exact))
+    # (Eagle's Tower's rooms stay in the tower: their pegs and floors are its own)
+    pool = sorted(k for k, v in cat.items() if len(v['unit']) == 1 and movable(v, k) and k not in fixed
+                  and k not in exclude and (not k.startswith('Lv07EagleTower') or level == 'Lv07EagleTower')
+                  and (exact is None or k in exact))
     base_tex = _base_tex(romfs, level, entrance) if romfs else set()
     offgrid = offgrid_rooms(romfs, cat, level) if romfs else []
     level_files = {k for k in cat if k.startswith(level + '_')}  # grid rooms with a file (side-view ones excluded)
@@ -232,7 +342,8 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
 
     so = {k: {s: () if s in exits.get(k, ()) else op[k][s] for s in 'NSWE'} for k in op}  # (hot: precomputed)
     orig_nb = {k: {s: rooms.neighbour(k, s) for s in 'NSWE'} for k in op}
-    names = {(c, r): cell_name(level, c, r) for c in range(-1, COLS + 1) for r in range(0, ROWS + 2)}
+    cols, rows = grid_size(level)
+    names = {(c, r): cell_name(level, c, r) for c in range(-1, cols + 1) for r in range(0, rows + 2)}
 
     def side_open(room, s):
         return so[room][s]
@@ -257,7 +368,7 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
     def can_seal(room, s):
         if chaos:
             return chaos_side[room][s] and s not in exits.get(room, ())
-        return seal and sealable(op[room][s])
+        return seal and sealable(op[room][s]) and (room, s) not in PINNED
 
     def joined(a, b, s, home_pair):
         x, y = side_open(a, s), side_open(b, rooms.OPP[s])
@@ -273,8 +384,15 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
     # room there would share the name - the game found the side-view record, the room never activated, Link fell
     taken = {cell_pos(n) for n in offgrid if re.match(r'.*_\d\d[A-Z]$', n)}
 
+    near_dead = dead_shadow(level)
+
+    # LINK_LEVELS keep their own level file (write: a rebuilt one lost Eagle's Tower's shared crystal / peg state
+    # across floors - play test): only cells it has
+    own_cells = set(level_cells(romfs, level)) if romfs and level in LINK_LEVELS else None
+
     def inside(c, r):
-        return 0 <= c < COLS and 1 <= r <= ROWS and (c, r) not in taken and (not romfs or on_map(romfs, level, c, r))
+        return 0 <= c < cols and 1 <= r <= rows and (c, r) not in taken and (c, r) not in near_dead and \
+            (own_cells is None or names[(c, r)] in own_cells) and (not romfs or on_map(romfs, level, c, r))
 
     for attempt in range(tries):
         rng = random.Random(f'{seed}-{level}-{attempt}')
@@ -341,10 +459,15 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
         # stairs: the side-view passages under them join the anchors with stairs (Key Cavern's halves meet only there);
         # reaching one stairs room reaches them all (approximation: one passage network per dungeon)
         stairs = {cell_pos(k) for k in fixed if any(t in a for a in cat[k]['actors'] for t in ('Downstairs', 'Upstairs'))}
+        partners = _partners(romfs, level) if romfs and level in LINK_LEVELS else None
+        # LINK_LEVELS: every room a stairs or hole leads into has to be placed (linked_all) - left to chance, the tower
+        # often closed without 01C / 04G and the whole round was thrown away (seed NXC11-...: 238 of 320 tries)
+        must = set(link_targets(cat, romfs, level)) - fixed if partners is not None else set()
 
         def chaos_ok():
             # pieces joined physically (incl. the stairs network); each needs a free, unjoined doorway for a jump
             comps, stubs = [], []
+            pos_of = {k: p for p, k in placed.items()}
             left = {p for p, k in placed.items() if any(so[k].values())}  # (doorless rooms: no way in anyway)
             while left:
                 start = left.pop()
@@ -352,7 +475,9 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
                 while todo:
                     c, r = todo.pop()
                     nbrs = []
-                    if (c, r) in stairs:
+                    if partners is not None:
+                        nbrs += [pos_of[p] for p in partners.get(placed[(c, r)], ()) if p in pos_of]
+                    elif (c, r) in stairs:
                         nbrs += [st for st in stairs if st != (c, r)]
                     for s in 'NSWE':
                         n = nbr(c, r, s)
@@ -378,9 +503,15 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
             if chaos:
                 return chaos_ok()
             seen, todo = {cell_pos(entrance)}, [cell_pos(entrance)]
+            pos_of = {k: p for p, k in placed.items()}
             while todo:
                 c, r = todo.pop()
-                if (c, r) in stairs:
+                if partners is not None:
+                    for p in partners.get(placed[(c, r)], ()):
+                        if p in pos_of and pos_of[p] not in seen:
+                            seen.add(pos_of[p])
+                            todo.append(pos_of[p])
+                elif (c, r) in stairs:
                     for st in stairs - seen:
                         seen.add(st)
                         todo.append(st)
@@ -403,8 +534,9 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
             fr = frontier()
             req = required(fr)
             left = None if exact is None else len(fixed) + len(exact) - len(used)
-            if not fr or (seal and not req and (left == 0 or (left is None and len(placed) >= size))):
-                return (exact is None or left == 0) and connected()
+            done = must <= used
+            if not fr or (done and seal and not req and (left == 0 or (left is None and len(placed) >= size))):
+                return done and (exact is None or left == 0) and connected()
             if left is not None and len(req) > left:
                 return False  # more open cells than rooms left
             budget[0] -= 1
@@ -424,11 +556,14 @@ def plan(cat, level, entrance, seed, size=None, exit_side=None, tries=400, romfs
                     n = fits(room, c, r)
                     if n is None:
                         continue
+                    if romfs and floor_room(level, names[(c, r)], room) != names[(c, r)] and \
+                            not on_map(romfs, level, c, r, room):
+                        continue  # (on its own floor's map page it would be off the paper)
                     if romfs and len(tex | room_textures(romfs, room)) > TEXTURE_BUDGET:
                         continue
                     # grow while small (rooms opening 1-2 more doorways first), then close (rooms opening nothing
                     # first; opening more is still allowed - exact dead ends are rare)
-                    out.append((abs(n - 1.5) if not want_close else n, rng.random(), room))
+                    out.append((room not in must, abs(n - 1.5) if not want_close else n, rng.random(), room))
                 return out
             # fewest candidates first (and give up at once when an open cell has none)
             best = None
@@ -488,7 +623,7 @@ CHAOS_DOORS = {'shutter', 'lock', 'cracked', 'potdoor'}  # (a jump INTO one land
 
 
 def chaos_free(cat, room, side, slot):
-    if isinstance(slot, str):
+    if isinstance(slot, str) or (room, side) in PINNED:  # (a tied side only joins its vanilla partner)
         return False
     doors = [d for d in cat[room]['doors'] if len(d) > 3 and d[0] == side and abs(d[3] - slot) <= 1]
     # a door that belonged to the old neighbour ('(mirror)') leaves a plain opening; the room's own door may still be
@@ -632,34 +767,51 @@ WARP_PADS = {0xF3}  # ObjDungeonWarp: paired warp tiles naming '<room>_Warp' sta
 GLOBAL_FLAG_BASE = 1600  # fresh event flags for generated rooms (the game uses < 1119; save bitfield = 2048 bits)
 
 
+CRYSTAL_FLAG = 9  # the level-local flag the game keeps a dungeon's crystal switch state in (FlagMap)
+
+
+def crystal_levels(cat):
+    """Levels with crystal switches in their own rooms (their uses of CRYSTAL_FLAG are the crystal state)."""
+    return {rooms.level_of(r) for r, v in cat.items() if 'ObjCrystalSw' in v.get('actors', ())}
+
+
 class FlagMap:
     """Room objects keep their state in flags: switch slot (type 1, index) = a global event flag (unique per room in
     the game: a room used twice, or played before in another dungeon, would share / inherit state), (type 0,
     index) = a level-local flag (0..254 per dungeon; rooms from different dungeons collide). Every generated
-    dungeon gets fresh numbers; objects sharing a flag in their source room keep sharing it."""
+    dungeon gets fresh numbers; objects sharing a flag in their source room keep sharing it.
+    Level-local flag 9 is the game's own: it holds the dungeon's crystal switch state (orange / blue pegs). It is never
+    handed out (a moved room's horse head with flag 9 reset the pegs on every floor change - Eagle's Tower play test;
+    clear-the-room shutters with it opened / closed with the pegs); rooms of a dungeon with crystal switches keep
+    their own uses of it (Bottle Grotto's warp-in starts)."""
 
-    def __init__(self, next_global=GLOBAL_FLAG_BASE, reserved_local=(), keep_global=()):
+    def __init__(self, next_global=GLOBAL_FLAG_BASE, reserved_local=(), keep_global=(), crystal_levels=()):
         self.g, self.l = {}, {}
         self.next_g, self.next_l = next_global, 1
-        self.reserved = set(reserved_local)  # local flags of the rooms that keep theirs (anchors)
+        self.reserved = set(reserved_local) | {CRYSTAL_FLAG}  # local flags of the rooms that keep theirs (anchors)
+        self.crystal_levels = set(crystal_levels)
         # global flags of this level's rooms that stay: a moved room sharing one (the other half of a locked door,
         # a shutter pair) keeps it - one lock, as room_logic.py counts it (a fresh flag made it two: a key short)
         self.keep = set(keep_global)
+        self.scope = None  # a room's second copy (_even_stubs): the cell - flags of its own, not shared with the first
 
     def glob(self, i):
-        if i in self.keep:
+        if i in self.keep and self.scope is None:
             return i
-        if i not in self.g:
-            self.g[i] = self.next_g
+        k = i if self.scope is None else (self.scope, i)
+        if k not in self.g:
+            self.g[k] = self.next_g
             self.next_g += 1
             if self.next_g >= 3800:  # (2048+ via runtime/hle/flags_ext.c; 3800+ = Chaos map letters)
                 raise RuntimeError('out of free event flags')
-        return self.g[i]
+        return self.g[k]
 
     def local(self, level, i):
         if i in (0, 255):
             return i
-        k = (level, i)
+        if i == CRYSTAL_FLAG and level in self.crystal_levels:
+            return i
+        k = (level, i) if self.scope is None else (level, i, self.scope)
         if k not in self.l:
             while self.next_l in self.reserved:
                 self.next_l += 1
@@ -668,6 +820,21 @@ class FlagMap:
             if self.next_l >= 255:
                 raise RuntimeError('out of level-local flags')
         return self.l[k]
+
+
+class _CrystalFlagOnly:
+    """The flags of a room that keeps its own (an anchor), but with its uses of CRYSTAL_FLAG renumbered: a dungeon
+    without crystal switches uses flag 9 for its own things (Catfish's Maw 05E's event box), which a crystal room
+    moved in would share."""
+
+    def __init__(self, flags):
+        self.flags = flags
+
+    def glob(self, i):
+        return i
+
+    def local(self, level, i):
+        return self.flags.local(level, i) if i == CRYSTAL_FLAG else i
 
 
 _roof_cache = {}
@@ -818,6 +985,40 @@ def _fix_room(romfs, out, cell, src, zone_id, flags=None, missing=None, unit_who
     open(p, 'wb').write(r.repack())
 
 
+def copy_cells(layout):
+    """The cells of a layout holding a room placed twice (_even_stubs' copies): the cell at home (else the first one)
+    holds the room, the others its copies."""
+    first = {}
+    for cell, src in sorted(layout.items(), key=lambda x: (x[0] != x[1], x[0])):
+        first.setdefault(src, cell)
+    return {cell for cell, src in layout.items() if first[src] != cell}
+
+
+COPY_KEY_TAG = 0x6C  # actor keys of a room's second copy (_even_stubs): the level's keys must stay unique
+
+
+def _own_keys(romfs, out, level, cells):
+    """Gives every actor of the copied rooms in `cells` a key no other room of the level uses (key and name: the
+    name ends in the key). Links between actors go by index, so they stay."""
+    from RandomizerCore.Tools import leb
+    used = set()
+    for d in (os.path.join(romfs, 'region_common', 'level', level), os.path.join(out, 'region_common', 'level', level)):
+        for f in sorted(glob.glob(os.path.join(d, '*.leb'))):
+            if os.path.basename(f)[:-4] not in cells:
+                used.update(a.key for a in leb.Room(open(f, 'rb').read()).actors)
+    for cell in sorted(cells):
+        p = os.path.join(out, 'region_common', 'level', level, cell + '.leb')
+        r = leb.Room(open(p, 'rb').read())
+        for a in r.actors:
+            k = (COPY_KEY_TAG << 56) | (a.key & 0x00FFFFFFFFFFFFFF)
+            while k in used:
+                k = (COPY_KEY_TAG << 56) | ((k + (1 << 32)) & 0x00FFFFFFFFFFFFFF)
+            used.add(k)
+            a.key = k
+            a.name = a.name[:-16] + b'%016X' % k
+        open(p, 'wb').write(r.repack())
+
+
 def _source_records(romfs, room):
     """The room's own area record and the record of the camera zone holding it, from its source level."""
     lv = rooms.level_of(room)
@@ -837,17 +1038,18 @@ ENTRANCES = {  # each dungeon's entrance room (its AreaLevelOpen back to the ove
     'Lv01TailCave': 'Lv01TailCave_08D', 'Lv02BottleGrotto': 'Lv02BottleGrotto_08C', 'Lv03KeyCavern': 'Lv03KeyCavern_08B',
     'Lv04AnglersTunnel': 'Lv04AnglersTunnel_08D', 'Lv05CatfishsMaw': 'Lv05CatfishsMaw_08H',
     'Lv06FaceShrine': 'Lv06FaceShrine_08D', 'Lv08TurtleRock': 'Lv08TurtleRock_08D',
-    'Lv10ClothesDungeon': 'Lv10ClothesDungeon_08C'}  # (Eagle's Tower: its own rules, notes/PLAN.md)
+    'Lv10ClothesDungeon': 'Lv10ClothesDungeon_08C',
+    'Lv07EagleTower': 'Lv07EagleTower_08B'}  # (Eagle's Tower: room shuffle starts it collapsed, eagle_tower.py)
 
 
 _grid_cache = {}
 
 
 def landing_depth(romfs, room, side, slot, min_tile):
-    """(depth, floor height): how far past the edge Link lands at a doorway (Chaos jumps) and the floor there - the
-    centre of the first tile inward from the edge,
-    along the doorway's line, that is floor - no collision, no deep water / lava / pit / crumbling floor (Turtle Rock
-    07D: lava right inside its west doorway) - starting at `min_tile` (1 = past a door of the room's own)."""
+    """(depth, floor height, lateral): how far past the edge Link lands at a doorway (Chaos jumps), the floor there and
+    how far along the edge from the doorway's centre (0, or half a tile: see below) - the first tile inward from the
+    edge, along the doorway's line, that is floor - no collision, no deep water / lava / pit / crumbling floor (Turtle
+    Rock 07D: lava right inside its west doorway) - starting at `min_tile` (1 = past a door of the room's own)."""
     import struct
     from RandomizerCore.Tools import leb
     if room not in _grid_cache:
@@ -859,26 +1061,181 @@ def landing_depth(romfs, room, side, slot, min_tile):
     def tile(row, col):
         o = 0x10 * (row * 10 + col)
         return raw[o:o + 3], struct.unpack_from('<f', raw, o + 12)[0]
-    def free(i):
-        row, col = {'N': (i, along), 'S': (7 - i, along), 'W': (min(along, 7), i), 'E': (min(along, 7), 9 - i)}[side]
+    def free(i, a=along, pit_only=False):
+        row, col = {'N': (i, a), 'S': (7 - i, a), 'W': (min(a, 7), i), 'E': (min(a, 7), 9 - i)}[side]
         t, h = tile(min(row, 7), min(col, 9))
         solid = bool(t[0] & 2) and not t[2] & 8
         # bit 0: a hole under the tile - a pit, or a floor that crumbles once stood on (Turtle Rock 03G's tiles,
         # ObjDungeonCollapse...: Link landed on one inside its west doorway, it gave way and he fell - seed
         # 52YTE-YT280-5000H-4MG2E-G1000-0001V Tail Cave 07F E -> 06F W)
         hazard = (t[2] & 4 and h < -0.3) or h < -1.0 or t[0] & 1
-        return not solid and not hazard, h
+        return not hazard and (pit_only or not solid), h
+    # Link lands on the doorway's centre line (slot * 0.75, runtime/hle/doorjump.c). A two-tile doorway's centre (even
+    # slot) is the edge between tiles along-1 and along: he stands on both, and a pit in the other half (along-1)
+    # pulls him in (#383: Turtle Rock 06B's south doorway, a pit column on its left - seed WildTarin613, Catfish 04G E
+    # -> 07D S). There he lands half a tile over, on tile along's centre (the row's 10th column); with no landing on
+    # tile along at all, on tile along-1's.
+    even = not isinstance(slot, str) and slot % 2 == 0 and 0 < along < (10 if side in 'NS' else 8)
+
+    def centre(i):  # (the other half may be a wall or block: the game's collision just nudges him)
+        return not even or free(i, along - 1, True)[0]
     # never on the doorway tile itself (the game walks a Link who stands there on through the doorway - straight
     # back into the jump: DevChaos1 Color Dungeon 07H -> 08H), and only where he can walk on inward
-    for i in range(max(min_tile, 1), 5):
-        ok, h = free(i)
-        if ok and free(i + 1)[0]:
-            return round(i * 1.5 + 0.75, 2), round(max(h, 0.0), 2)
-    for i in range(max(min_tile, 1), 5):
-        ok, h = free(i)
-        if ok:
-            return round(i * 1.5 + 0.75, 2), round(max(h, 0.0), 2)
-    return 2.2, 0.0
+    first = max(min_tile, 1)
+    for walk_on in (True, False):
+        for i in range(first, 5):
+            ok, h = free(i)
+            if ok and (not walk_on or free(i + 1)[0]):
+                lat = 0.0 if centre(i) and (not walk_on or centre(i + 1)) else 0.75
+                return round(i * 1.5 + 0.75, 2), round(max(h, 0.0), 2), lat
+    for walk_on in (True, False) if even else ():
+        for i in range(first, 5):
+            ok, h = free(i, along - 1)
+            if ok and (not walk_on or free(i + 1, along - 1)[0]):
+                return round(i * 1.5 + 0.75, 2), round(max(h, 0.0), 2), -0.75
+    return 2.2, 0.0, 0.0
+
+
+# ---- Drop-down-only doorways (user's beta_6 photo, seed LuckyMoblin988: Turtle Rock 07E's pot room in Tail Cave 07C).
+# A raised doorway whose tiles sit on a ledge walled off from the rest of its room: Link comes in through it (a door
+# jump lands him past the ledge, landing_depth; in vanilla he drops off it), never leaves by it - the ledge can't be
+# climbed from the room's floor. room_logic.level_graph makes them one-way (in only), so the item logic and the
+# generator's own checks (boss_door_ok, fill_ok) never count on leaving through one; checks behind one with no other
+# way in drop out of logic (excluded, like rooms the layout leaves unreachable). inward_only finds them in the tile
+# grids; the reviewed result (grids read by hand 2026-10-28) is INWARD_REVIEWED, guarded by tools/test_room_ledges.py:
+#   Turtle Rock 07E N16  1.5 notch, ledge row 1 above the 0.0 floor - the photo (vanilla: dropped into from 06E)
+#   Turtle Rock 05B N3   1.5 strip (row 1) behind ledge row 2 (vanilla: dropped into from 04B)
+#   Turtle Rock 03C W3   1.5 strip (row 1, cols 0-2) behind ledge row 2 (vanilla: from 03B's ramp)
+#   Turtle Rock 03G W3   1.5 notch, ledge column 1, pits below (PLAN 2026-10-09: Link fell walking into it)
+#   Turtle Rock 03E E3   1.5 notch behind a ledge tile (03E stays home: STAY)
+#   Turtle Rock 04E W3   1.5 notch (row 1, cols 0-1) walled by ledge tiles
+#   Turtle Rock 02E S7   1.5 notch (col 3, rows 6-7) walled by ledge tiles (from 03E's ramp: the northern-ledge strip)
+#   Face Shrine 04H S17  1.5 notch behind a 3.0 wall (vanilla: the end of 05H's ramp)
+#   Face Shrine 07G S17  the wizzrobes-ledge strip (TIED to 08G, LEDGE_VIA: reached from 08G's ramp only)
+#   Key Cavern 01D S17   1.5 notch behind a ledge; its vanilla partner 02D N17 is walled off too (a dead pair)
+#   Key Cavern 02D N17   1.5 notch walled off from 02D's east strip
+#   Turtle Rock 06E S16  'arrival': 06E's upstairs come out on its south strip (its ramp only leads into the pits) -
+#                        left from the rooms the stairs come from, never from 06E's floor
+# Not ledges: doorway tiles at 2.0 / 3.0 with open floor right behind them are door frames (Color Dungeon, Angler's
+# Tunnel); a raised strip with a ramp down to its room's floor (Key Cavern 01A, Face Shrine 03B-04D walkways) or on
+# to another doorway is walkable; sides between cells of one unit (Turtle Rock 06F S / 07F N) never jump.
+INWARD_REVIEWED = {
+    ('Lv08TurtleRock_07E', 'N', 16): 'ledge', ('Lv08TurtleRock_05B', 'N', 3): 'ledge',
+    ('Lv08TurtleRock_03C', 'W', 3): 'ledge', ('Lv08TurtleRock_03G', 'W', 3): 'ledge',
+    ('Lv08TurtleRock_03E', 'E', 3): 'ledge', ('Lv08TurtleRock_04E', 'W', 3): 'ledge',
+    ('Lv08TurtleRock_02E', 'S', 7): 'ledge', ('Lv06FaceShrine_04H', 'S', 17): 'ledge',
+    ('Lv06FaceShrine_07G', 'S', 17): 'ledge', ('Lv03KeyCavern_01D', 'S', 17): 'ledge',
+    ('Lv03KeyCavern_02D', 'N', 17): 'ledge', ('Lv08TurtleRock_06E', 'S', 16): 'arrival'}
+INWARD_ARRIVALS = ('AreaUpstairs', 'AreaDownstairs', 'TagPlayerStart', 'ObjDungeonWarp')
+
+
+@functools.lru_cache(maxsize=None)
+def _inward_only(romfs, catalog_path):
+    from RandomizerCore.Tools import leb
+    cat = json.load(open(catalog_path))
+    grids, arrivals = {}, {}
+
+    def grid(room):
+        if room not in grids:
+            r = leb.Room(open(rooms._leb_path(romfs, room), 'rb').read())
+            raw = rooms._grid(r)[b'data'].data
+            g = {}
+            for row in range(8):
+                for col in range(10):
+                    o = 0x10 * (row * 10 + col)
+                    t, h = raw[o:o + 3], struct.unpack_from('<f', raw, o + 12)[0]
+                    hole = (t[2] & 4 and h < -0.3) or h < -1.0 or t[0] & 1
+                    g[(row, col)] = (bool(t[0] & 2) and not t[2] & 8, bool(hole), h)
+            grids[room] = g
+            ox, oz = rooms.cell_origin(room)
+            arrivals[room] = {(min(7, max(0, int((a.posZ - oz) / 1.5))), min(9, max(0, int((a.posX - ox) / 1.5))))
+                              for a in r.actors if a.name.decode(errors='ignore').startswith(INWARD_ARRIVALS)}
+        return grids[room]
+
+    def tiles(side, slot):
+        along = {slot // 2 - 1, slot // 2} if slot % 2 == 0 else {slot // 2}
+        n = 10 if side in 'NS' else 8
+        return [(a, {'N': (0, a), 'S': (7, a), 'W': (a, 0), 'E': (a, 9)}[side]) for a in sorted(along) if 0 <= a < n]
+
+    def line(side, a, i):
+        return {'N': (i, a), 'S': (7 - i, a), 'W': (a, i), 'E': (a, 9 - i)}[side]
+    out = {}
+    for room, v in sorted(cat.items()):
+        unit = v['unit']
+        try:
+            for u in unit:
+                grid(u)
+        except (OSError, TypeError, KeyError):
+            continue
+        pos = {rooms.cell_pos(u): u for u in unit}
+        c0, r0 = rooms.cell_pos(room)
+        external = set()  # doorway tiles of the unit's outer sides
+        for u in unit:
+            c, r = rooms.cell_pos(u)
+            for s, lst in openings(cat, u).items():
+                if (c + rooms.STEP[s][0], r + rooms.STEP[s][1]) in pos:
+                    continue
+                for sl, _, _ in lst:
+                    if not isinstance(sl, str):
+                        external |= {(u,) + t for _, t in tiles(s, sl)}
+        for s, lst in openings(cat, room).items():
+            if (c0 + rooms.STEP[s][0], r0 + rooms.STEP[s][1]) in pos:
+                continue  # (between cells of one unit: never jumps)
+            for sl, _, own in lst:
+                if isinstance(sl, str) or own:
+                    continue
+                g = grids[room]
+                ts = tiles(s, sl)
+                if not ts or any(g[t][0] or g[t][1] for _, t in ts):
+                    continue
+                top = max(g[t][2] for _, t in ts)
+                if top < 1.0:
+                    continue
+                ledge = False  # along the doorway's line: the raised tiles, then a solid one (a door frame: open floor)
+                for a, _ in ts:
+                    i = 0
+                    while i < 7 and not g[line(s, a, i)][0] and abs(g[line(s, a, i)][2] - top) <= 0.3:
+                        i += 1
+                    ledge |= i < 7 and g[line(s, a, i)][0]
+                if not ledge:
+                    continue
+                start = {(room,) + t for _, t in ts}
+                seen, todo = set(start), list(start)
+                while todo:  # the ledge: walkable tiles at about its height (steps up to 0.8: ramps), across the unit
+                    u, row, col = todo.pop()
+                    cu, ru = rooms.cell_pos(u)
+                    for dr, dc in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                        nr, nc, nu = row + dr, col + dc, u
+                        if not (0 <= nr < 8 and 0 <= nc < 10):
+                            p = (cu + (nc > 9) - (nc < 0), ru + (nr > 7) - (nr < 0))
+                            if p not in pos:
+                                continue
+                            nu, nr, nc = pos[p], nr % 8, nc % 10
+                        solid, hole, h = grids[nu][(nr, nc)]
+                        if not solid and not hole and abs(h - grids[u][(row, col)][2]) <= 0.8 and \
+                                (nu, nr, nc) not in seen:
+                            seen.add((nu, nr, nc))
+                            todo.append((nu, nr, nc))
+                if seen & (external - start):
+                    continue  # (a walkway on to another doorway)
+                if any(grids[u][(rw, cl)][2] < top - 0.8 for u, rw, cl in seen):
+                    continue  # (a ramp down to the floor: Key Cavern 01A's east strip)
+                near = {(u, rw + dr, cl + dc) for u, rw, cl in seen for dr in (-1, 0, 1) for dc in (-1, 0, 1)}
+                arrive = any((u,) + t in near for u in unit for t in arrivals[u])
+                out[(room, s, sl)] = 'arrival' if arrive else 'ledge'
+    return out
+
+
+def inward_only(romfs, cat_path=None, reviewed=True):
+    """{(room, side, slot): 'ledge' | 'arrival'}: doorways Link can come in through but never leave by - raised
+    doorway tiles walled off by a ledge from everything else of their unit ('arrival': the ledge holds stairs / a
+    player start - reached from there, not from the room). The tile-grid result plus INWARD_REVIEWED (reviewed=False:
+    the grids alone, for the test)."""
+    found = dict(_inward_only(romfs, cat_path or os.path.join(HERE, 'room_catalog.json')))
+    if reviewed:
+        for k, v in INWARD_REVIEWED.items():
+            found.setdefault(k, v)
+    return found
 
 
 def dead_ends(cat, level, layout):
@@ -906,27 +1263,13 @@ def dead_ends(cat, level, layout):
     return out
 
 
-def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness=False):
-    """Chaos: pairs every free doorway that isn't physically joined with another one (any room of the level, any
-    side) -> door_jumps rows (level, cell, side, own centre, partner centre, partner cell, partner side), both ways.
-    Pieces joined physically (incl. the stairs network) are linked first (a random spanning tree), the rest pair at
-    random; an odd one out leads back to itself."""
+def _chaos_sides(cat, layout, entrance):
+    """The cell sides chaos_pairs works with, in its order: ('join', pos, cell, side, neighbour pos) for sides joined
+    physically, ('stub', pos, cell, side, free centres) for sides with free doorways (one of them is paired, the rest
+    follow it)."""
     pos = {cell_pos(k): k for k in layout}
     exits = _exit_sides(cat, entrance)
-    stairs = {cell_pos(c) for c, r in layout.items() if c == r and
-              any(t in a for a in cat[r]['actors'] for t in ('Downstairs', 'Upstairs'))}
-    parent = {p: p for p in pos}
-    follow = {}  # one cell side's other free doorways: they go where its first one goes
-
-    def find(p):
-        while parent[p] != p:
-            parent[p] = parent[parent[p]]
-            p = parent[p]
-        return p
-    st = sorted(stairs)
-    for a in st[1:]:
-        parent[find(a)] = find(st[0])
-    stubs = []
+    out = []
     for (c, r), cell in sorted(pos.items()):
         room = layout[cell]
         op = openings(cat, room)
@@ -942,13 +1285,53 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
                 theirs = openings(cat, layout[n])[rooms.OPP[s]]
                 home = room == cell and layout[n] == n and rooms.neighbour(room, s) == n
                 if home or (theirs and [x[0] for x in mine] == [x[0] for x in theirs] and _openings_match(mine, theirs)):
-                    parent[find((c, r))] = find((c + dc, r + dr))  # a real connection
+                    out.append(('join', (c, r), cell, s, (c + dc, r + dr)))
                     continue
             free = [x[0] for x in mine if chaos_free(cat, room, s, x[0])]
-            if free:  # (same side, same place: one of them is paired, the rest follow it)
-                rng.shuffle(free)
-                stubs.append(((c, r), cell, s, free[0]))
-                follow[(cell, s)] = [((c, r), cell, s, x) for x in free[1:]]
+            if free:
+                out.append(('stub', (c, r), cell, s, free))
+    return out
+
+
+def chaos_stub_count(cat, level, layout):
+    """How many doorway sides of a Coupled layout chaos_pairs pairs: an odd count leaves one without a partner."""
+    return sum(1 for x in _chaos_sides(cat, layout, ENTRANCES[level]) if x[0] == 'stub')
+
+
+def chaos_pieces(cat, level, layout, entrance, rng, romfs_for_tiles=None):
+    """A Chaos layout's pieces (rooms joined physically, the stairs network as one) and their free doorways:
+    (comps {root: [pos]}, by_comp {root: [stub]}, follow {(cell, side): [stub]}); stub = (pos, cell, side, slot).
+    One free doorway per cell side is a stub, the side's others follow it (follow)."""
+    pos = {cell_pos(k): k for k in layout}
+    stairs = {cell_pos(c) for c, r in layout.items() if c == r and
+              any(t in a for a in cat[r]['actors'] for t in ('Downstairs', 'Upstairs'))}
+    parent = {p: p for p in pos}
+    follow = {}  # one cell side's other free doorways: they go where its first one goes
+
+    def find(p):
+        while parent[p] != p:
+            parent[p] = parent[parent[p]]
+            p = parent[p]
+        return p
+    if level in LINK_LEVELS and romfs_for_tiles:  # (stairs pairs, wherever their rooms are)
+        pos_of = {r: cell_pos(c) for c, r in layout.items()}
+        for a, bs in _partners(romfs_for_tiles, level).items():
+            for b in bs:
+                if a in pos_of and b in pos_of:
+                    parent[find(pos_of[a])] = find(pos_of[b])
+    else:
+        st = sorted(stairs)
+        for a in st[1:]:
+            parent[find(a)] = find(st[0])
+    stubs = []
+    for kind, p, cell, s, x in _chaos_sides(cat, layout, entrance):
+        if kind == 'join':
+            parent[find(p)] = find(x)  # a real connection
+            continue
+        free = list(x)  # (same side, same place: one of them is paired, the rest follow it)
+        rng.shuffle(free)
+        stubs.append((p, cell, s, free[0]))
+        follow[(cell, s)] = [(p, cell, s, y) for y in free[1:]]
     comps = {}
     for p in pos:
         if any(openings(cat, layout[pos[p]]).values()):
@@ -956,14 +1339,33 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
     by_comp = {}
     for st_ in stubs:
         by_comp.setdefault(find(st_[0]), []).append(st_)
+    return comps, by_comp, follow
+
+
+def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness=False):
+    """Chaos: pairs every free doorway that isn't physically joined with another one (any room of the level, any
+    side) -> door_jumps rows (level, cell, side, own centre, partner centre, partner cell, partner side), both ways.
+    Pieces joined physically (incl. the stairs network) are linked first (a random spanning tree), the rest pair at
+    random. Coupled needs an even number of free sides (plan_all_chaos: _even_stubs); an odd one is refused (None)."""
+    comps, by_comp, follow = chaos_pieces(cat, level, layout, entrance, rng, romfs_for_tiles)
+    # drop-down-only doorways (inward_only: Link never leaves through one) never carry the spanning tree / the ring:
+    # every piece hangs on by a doorway that works both ways, so the whole dungeon stays reachable and escapable; they
+    # pair among the rest (one-way extras, in only)
+    inward = inward_only(romfs_for_tiles) if romfs_for_tiles else {}
+
+    def oneway(x):
+        return (layout[x[1]], x[2], x[3]) in inward
     for v in by_comp.values():
         rng.shuffle(v)
+        v.sort(key=lambda x: not oneway(x))  # (two-way doorways last: pop() takes them first)
     order = sorted(comps)
     rng.shuffle(order)
     order.sort(key=lambda k: -len(by_comp.get(k, ())))  # pieces with many free doorways first (random among equals)
     pairs = []
     if any(k not in by_comp for k in order) and len(order) > 1:
         return None  # a piece without a free doorway can't be reached
+    if len(order) > 1 and any(all(oneway(x) for x in by_comp[k]) for k in order):
+        return None  # (a piece left only through drop-down-only doorways: Link would be stuck in it)
     if madness:
         return _with_followers(cat, level, layout, romfs_for_tiles, follow,
                                _madness_rows(level, layout, order, by_comp, rng, romfs_for_tiles, cat))
@@ -993,8 +1395,8 @@ def chaos_pairs(cat, level, layout, entrance, rng, romfs_for_tiles=None, madness
             if j != i and c[1] != b[1] and d[1] != a[1]:
                 pairs[i], pairs[j] = (a, d), (c, b)
                 break
-    if rest:
-        pairs.append((rest[0], rest[0]))  # odd one out: leads back into its own doorway (a wall; no map letter)
+    if rest:  # (an odd one out would lead back into its own doorway - user 2026-10-27: never; plan_all_chaos evens
+        return None  # the count first, so this only drops a layout that slipped through)
     out = []
     for a, b in pairs:
         for x, y in ((a, b), (b, a)) if a != b else ((a, b),):
@@ -1018,8 +1420,9 @@ def _jump_row(cat, level, layout, romfs, x, y):
     # the room's own door in that doorway: arrive past it (it may still be shut)
     own = any(not d[2].endswith('(mirror)') and d[0] == y[2] and abs(d[3] - y[3]) <= 1
               for d in cat[layout[y[1]]]['doors'] if len(d) > 3)
-    depth, height = landing_depth(romfs, layout[y[1]], y[2], y[3], 1 if own else 0)
-    return (level, x[1].rsplit('_', 1)[1], x[2], x[3], y[3], y[1].rsplit('_', 1)[1], y[2], depth, height)
+    depth, height, lateral = landing_depth(romfs, layout[y[1]], y[2], y[3], 1 if own else 0)
+    row = (level, x[1].rsplit('_', 1)[1], x[2], x[3], y[3], y[1].rsplit('_', 1)[1], y[2], depth, height)
+    return row + (lateral,) if lateral else row  # (10th column only where Link lands off the doorway's centre)
 
 
 def _madness_rows(level, layout, order, by_comp, rng, romfs, cat):
@@ -1032,9 +1435,12 @@ def _madness_rows(level, layout, order, by_comp, rng, romfs, cat):
         return []
     ring = [k for k in order if by_comp.get(k)]
     exits, arrivals = {}, {}
+    inward = inward_only(romfs) if romfs else {}
     for k in ring:
         v = by_comp[k][:]
         rng.shuffle(v)
+        # (the ring's way out of a piece: never a drop-down-only doorway - chaos_pairs made sure there is another)
+        v.sort(key=lambda x: (layout[x[1]], x[2], x[3]) in inward)
         exits[k], arrivals[k] = v[0], v[-1]  # (one doorway only: it's both)
     link = {}
     if len(ring) > 1:
@@ -1057,6 +1463,276 @@ def _madness_rows(level, layout, order, by_comp, rng, romfs, cat):
     return [_jump_row(cat, level, layout, romfs, x, y) for x, y in sorted(link.items())]
 
 
+def _place_room(cat, romfs, lv, L, group, rng):
+    """Puts a room group (the leftovers of plan_all_chaos: [(room, (dc, dr))], a TIED pair as one piece) into a random
+    empty cell of level lv's layout L that nobody's doorway faces: the cells taken, None if there is no such cell."""
+    room = group[0][0]
+    # (the level's map texture archive has a budget: the leftover room's textures must fit too)
+    tex = _base_tex(romfs, lv, ENTRANCES[lv]).union(  # (as plan(): roofs and side-view passages too)
+        *(room_textures(romfs, k) for k in list(L.values()) + offgrid_rooms(romfs, cat, lv)))
+    if len(tex.union(*(room_textures(romfs, m) for m, _ in group))) > TEXTURE_BUDGET:
+        return None
+    taken = {cell_pos(k) for k in L}
+    reserved = {cell_pos(n) for n in offgrid_rooms(romfs, cat, lv) if re.match(r'.*_\d\d[A-Z]$', n)}
+    free_set = {(c, r) for c in range(grid_size(lv)[0]) for r in range(1, grid_size(lv)[1] + 1)
+                if (c, r) not in taken and (c, r) not in reserved and (c, r) not in dead_shadow(lv)
+                and on_map(romfs, lv, c, r)
+                and (lv not in LINK_LEVELS or cell_name(lv, c, r) in level_cells(romfs, lv))}
+    free_cells = [(c, r) for c in range(grid_size(lv)[0]) for r in range(1, grid_size(lv)[1] + 1)
+                  if (c, r) in free_set and on_map(romfs, lv, c, r, room)]
+    rng.shuffle(free_cells)
+    for c, r in free_cells:
+        at = {m: (c + dc, r + dr) for m, (dc, dr) in group}
+        ok = all(p in free_set and on_map(romfs, lv, *p, m) for m, p in at.items())
+        mine_at = {p: m for m, p in at.items()}
+        for m, (mc, mr) in at.items() if ok else ():
+            for s in 'NSWE':
+                dc, dr = rooms.STEP[s]
+                n = (mc + dc, mr + dr)
+                if n in mine_at:
+                    continue  # (its pair partner)
+                if n in taken:
+                    theirs = openings(cat, L[cell_name(lv, *n)])[rooms.OPP[s]]
+                    mine = openings(cat, m)[s]
+                    if theirs and mine and [x[0] for x in mine] == [x[0] for x in theirs]:
+                        ok = False  # would join physically: keep it simple, not next to a matching doorway
+                    # a leftover never joins its neighbours: a wall across every doorway either way (an
+                    # open tile there, even another doorway's, and Link could walk on into the other room -
+                    # plan() checks this for the rooms it places: wall_behind)
+                    if (mine and not walls_off(cat, m, s, L[cell_name(lv, *n)])) or \
+                            (theirs and not walls_off(cat, L[cell_name(lv, *n)], rooms.OPP[s], m)):
+                        ok = False
+                    if theirs and not all(chaos_free(cat, L[cell_name(lv, *n)], rooms.OPP[s], x[0])
+                                          for x in theirs):
+                        ok = False
+        if ok:
+            for m, p in at.items():
+                L[cell_name(lv, *p)] = m
+            return [cell_name(lv, *p) for p in at.values()]
+    return None
+
+
+_check_rooms_cache = []
+
+
+def _check_rooms(cat):
+    """Rooms holding a check (location_rooms.json, and every pot: potsanity)."""
+    if not _check_rooms_cache:
+        locs = json.load(open(os.path.join(HERE, 'location_rooms.json')))
+        _check_rooms_cache.append({v['room'] for v in locs.values() if v.get('room')} |
+                                  {k for k, v in cat.items() if 'ObjDungeonPot' in v.get('actors', ())})
+    return _check_rooms_cache[0]
+
+
+# Actors that keep a room from being used twice (_even_stubs' copies): items and what holds them, keys and locks,
+# switches whose state the dungeon shares (crystals, switch chests), stairs / holes / warps, NPCs, bosses
+COPY_UNFIT = ('Item', 'TreasureBox', 'DungeonPot', 'DungeonOw', 'LockDoor', 'LockBlock', 'CrystalSw', 'SwitchChe',
+              'stairs', 'Npc', 'HoleLowe', 'BossDoor', 'Boss', 'DungeonWa', 'DungeonSt', 'LevelOpen')
+
+
+def copy_fit(cat, room, fixed=()):
+    """A room that may be placed a second time: one cell, no check, nothing in COPY_UNFIT, no lock / boss / one-way
+    door of its own (a lock would need a key more), every doorway free to jump."""
+    import room_logic
+    v = cat[room]
+    if not room.startswith('Lv') or len(v['unit']) != 1 or not movable(v, room) or room in fixed or \
+            room in _check_rooms(cat) or room_logic.EXIT_REQ.get(room):
+        return False
+    if any(b.lower() in a.lower() for a in v.get('actors', ()) for b in COPY_UNFIT):
+        return False
+    if any(len(d) > 3 and (d[2] in ('lock', 'bossdoor') or 'oneway' in d[2]) for d in v['doors']):
+        return False
+    return _jumpable(cat, room)
+
+
+def _jumpable(cat, room):
+    """A single room (no TIED pair) whose doorways can all jump: it can go into any empty cell (_place_room)."""
+    if any(room in (h, rooms.neighbour(h, hs)) for h, hs in TIED):
+        return False
+    op = openings(cat, room)
+    return any(op.values()) and all(chaos_free(cat, room, s, x[0]) for s, v in op.items() for x in v
+                                    if (room, s) not in PINNED)
+
+
+def _even_stubs(cat, romfs, levels, out, pool, used, extra, rng):
+    """Coupled pairs doorway sides two by two: a dungeon with an odd number of free sides (chaos_stub_count) would
+    leave one leading back into itself. Each such dungeon gets, in this order of preference:
+      room  an unused room with an odd number of doorway sides, placed as a leftover (_place_room)
+      move  a leftover from another odd dungeon (evens out both)
+      swap  a leftover of the dungeon makes room for an unused room (the leftover ends up unused)
+      drop  a leftover without checks taken out again (it ends up unused)
+      copy  a second copy of a room without checks (copy_fit) - write() gives it flags and actor keys of its own
+    Returns [(kind, room, level, cell)], None if a dungeon stays odd (the round is drawn again)."""
+    def odd(lv):
+        return chaos_stub_count(cat, lv, out[lv]) % 2 != 0
+
+    def may_go(room, lv):
+        return not room.startswith('Lv07EagleTower') or lv == 'Lv07EagleTower'  # (the tower's rooms stay in it)
+
+    def try_place(room, lv):
+        cells = _place_room(cat, romfs, lv, out[lv], [(room, (0, 0))], rng)
+        if cells and odd(lv):  # (a side joined after all: no help)
+            del out[lv][cells[0]]
+            return None
+        return cells and cells[0]
+
+    fixes = []
+    for lv in sorted(levels):
+        if not odd(lv):
+            continue
+        cands = sorted(r for r in pool - used if may_go(r, lv) and _jumpable(cat, r))
+        rng.shuffle(cands)
+        for room in cands:
+            cell = try_place(room, lv)
+            if cell:
+                used.add(room)
+                extra.setdefault(lv, []).append(cell)
+                fixes.append(('room', room, lv, cell))
+                break
+        else:
+            cell = None
+        for lv2 in sorted(levels) if not cell else ():
+            if lv2 == lv or not odd(lv2):
+                continue
+            for c2 in list(extra.get(lv2, ())):
+                room = out[lv2][c2]
+                if not may_go(room, lv):
+                    continue
+                del out[lv2][c2]
+                if not odd(lv2):
+                    cell = try_place(room, lv)
+                    if cell:
+                        extra[lv2].remove(c2)
+                        extra.setdefault(lv, []).append(cell)
+                        fixes.append(('move', room, lv, cell))
+                        break
+                out[lv2][c2] = room
+            if cell:
+                break
+        for c2 in list(extra.get(lv, ())) if not cell else ():  # (the other way: one of its leftovers moves there)
+            room = out[lv][c2]
+            del out[lv][c2]
+            if not odd(lv):
+                for lv2 in sorted(levels):
+                    if lv2 != lv and odd(lv2) and may_go(room, lv2):
+                        c3 = try_place(room, lv2)
+                        if c3:
+                            extra[lv].remove(c2)
+                            extra.setdefault(lv2, []).append(c3)
+                            fixes.append(('move', room, lv2, c3))
+                            cell = c2
+                            break
+            if cell:
+                break
+            out[lv][c2] = room
+        for c2 in list(extra.get(lv, ())) if not cell else ():
+            room = out[lv][c2]
+            del out[lv][c2]
+            for other in [r for r in cands if r not in used]:
+                cell = try_place(other, lv)
+                if cell:
+                    extra[lv].remove(c2)
+                    extra[lv].append(cell)
+                    used.discard(room)
+                    used.add(other)
+                    fixes.append(('swap', other, lv, cell))
+                    break
+            if cell:
+                break
+            out[lv][c2] = room
+        for c2 in list(extra.get(lv, ())) if not cell else ():
+            room = out[lv][c2]
+            if room in _check_rooms(cat):
+                continue
+            del out[lv][c2]
+            if not odd(lv):
+                extra[lv].remove(c2)
+                used.discard(room)
+                cell = c2
+                fixes.append(('drop', room, lv, c2))
+                break
+            out[lv][c2] = room
+        if not cell:
+            fixed = set()
+            for x in levels:
+                fixed |= set(anchors_of(cat, x)) | {ENTRANCES[x]}
+            cands = sorted(r for r in cat if r.split('_')[0] in levels and (r in used or r not in pool)
+                           and may_go(r, lv) and copy_fit(cat, r, fixed)
+                           and sum(1 for v in openings(cat, r).values() if v) % 2)
+            rng.shuffle(cands)
+            cands.sort(key=lambda r: any(f[0] == 'copy' and f[1] == r for f in fixes))  # (another room first)
+            for room in cands:
+                cell = try_place(room, lv)
+                if cell:
+                    fixes.append(('copy', room, lv, cell))
+                    break
+        if not cell:
+            return None
+    return fixes
+
+
+def chaos_place(cat, sub, romfs, levels, rng, pool, shuffle=False, even=True):
+    """Chaos placement for `levels` (plan(chaos=True) per dungeon, then every leftover room whose doorways can all jump
+    into an empty cell): ({level: layout}, rooms used, _even_stubs fixes), or None when a dungeon can't be built or a
+    layout has a dead end. even: each dungeon an even number of free doorway sides (Coupled). The
+    doorways are paired afterwards (chaos_pairs)."""
+    order = sorted(levels, key=lambda lv: -len(anchors_of(cat, lv)))
+    if shuffle:  # (later rounds: other orders)
+        rng.shuffle(order)
+    used, out, failed = set(), {}, []
+    for lv in order:
+        n = len(set(anchors_of(cat, lv)) | {ENTRANCES[lv]})
+        L = None
+        for add in (6, 3, 0):
+            L = L or plan(cat, lv, ENTRANCES[lv], sub, size=n + add, romfs=romfs, exclude=used, tries=12, chaos=True)
+        if L is None:
+            failed.append(lv)
+            continue
+        used |= {src for src in L.values() if src in pool}
+        out[lv] = L
+    if failed:
+        return None
+    # leftovers: rooms whose doorways can all jump go into empty cells (every room used once)
+    left = sorted(pool - used)
+    rng.shuffle(left)
+    extra = {}  # level -> cells of the single leftovers placed in it
+    share = {lv: sum(1 for k in pool if k.startswith(lv + '_')) for lv in levels}
+    for room in left:
+        # a TIED pair goes in as one piece (the first room, its partner one cell over: they join physically)
+        if any(rooms.neighbour(h, hs) == room for h, hs in TIED):
+            continue  # (placed with its head)
+        group = [(room, (0, 0))] + [(rooms.neighbour(room, hs), rooms.STEP[hs]) for h, hs in TIED if h == room]
+        if any(m not in pool or m in used for m, _ in group):
+            continue
+        if not all(chaos_free(cat, m, s, x[0]) for m, _ in group for s, v in openings(cat, m).items() for x in v
+                   if (m, s) not in PINNED):
+            continue
+        # the dungeon furthest below its share of the pool, then a random empty cell nobody's doorway faces
+        for lv in sorted(levels, key=lambda lv: (sum(1 for v in out[lv].values() if v in pool) - share[lv],
+                                                  rng.random())):
+            if room.startswith('Lv07EagleTower') and lv != 'Lv07EagleTower':
+                continue  # (the tower's rooms stay in the tower)
+            cells = _place_room(cat, romfs, lv, out[lv], group, rng)
+            if cells is None:
+                continue
+            used.update(m for m, _ in group)
+            if len(group) == 1:  # (a single leftover may move again to even out the doorways: _even_stubs)
+                extra.setdefault(lv, []).extend(cells)
+            break
+    # Coupled: every free doorway side needs a partner - a dungeon with an odd number of them gets one more (or
+    # one fewer) room (user 2026-10-27: a doorway leading back into itself looked broken)
+    fixes = _even_stubs(cat, romfs, levels, out, pool, used, extra, random.Random(sub + '-even')) if even else []
+    if fixes is None:
+        return None
+    # a doorway that can't jump (wide opening, one-way door...) needs its matching neighbour, else it leads
+    # into the void (user's seed De: 12 such): such a round is dropped
+    if any(dead_ends(cat, lv, out[lv]) for lv in levels):
+        return None
+    if any(not linked_all(cat, romfs, lv, out[lv]) for lv in levels):
+        return None
+    return out, used, fixes
+
+
 def plan_all_chaos(cat, seed, romfs, levels=None, rounds=None, madness=False, settings=None):
     """Chaos dungeon room shuffle for every dungeon of a seed: each room used once (no duplicates); physical
     placement keeps doorways that can't jump matched; free doorways are paired by chaos_pairs.
@@ -1067,78 +1743,16 @@ def plan_all_chaos(cat, seed, romfs, levels=None, rounds=None, madness=False, se
     fixed = set()
     for lv in levels:
         fixed |= set(anchors_of(cat, lv)) | {ENTRANCES[lv]}
-    pool = {k for k, v in cat.items() if len(v['unit']) == 1 and movable(v) and k not in fixed
+    pool = {k for k, v in cat.items() if len(v['unit']) == 1 and movable(v, k) and k not in fixed
             and k.split('_')[0] in levels}
     best = None
     for rnd in range(rounds):
         sub = seed if rnd == 0 else f'{seed}#{rnd}'
         rng = random.Random(sub + '-chaos')
-        order = sorted(levels, key=lambda lv: -len(anchors_of(cat, lv)))
-        if rnd:
-            rng.shuffle(order)
-        used, out, failed = set(), {}, []
-        for lv in order:
-            n = len(set(anchors_of(cat, lv)) | {ENTRANCES[lv]})
-            L = None
-            for add in (6, 3, 0):
-                L = L or plan(cat, lv, ENTRANCES[lv], sub, size=n + add, romfs=romfs, exclude=used, tries=12, chaos=True)
-            if L is None:
-                failed.append(lv)
-                continue
-            used |= {src for src in L.values() if src in pool}
-            out[lv] = L
-        if failed:
+        placed = chaos_place(cat, sub, romfs, levels, rng, pool, shuffle=rnd > 0, even=not madness)
+        if placed is None:
             continue
-        # leftovers: rooms whose doorways can all jump go into empty cells (every room used once)
-        left = sorted(pool - used)
-        rng.shuffle(left)
-        share = {lv: sum(1 for k in pool if k.startswith(lv + '_')) for lv in levels}
-        for room in left:
-            if not all(chaos_free(cat, room, s, x[0]) for s, v in openings(cat, room).items() for x in v):
-                continue
-            # the dungeon furthest below its share of the pool, then a random empty cell nobody's doorway faces
-            for lv in sorted(levels, key=lambda lv: (sum(1 for v in out[lv].values() if v in pool) - share[lv],
-                                                      rng.random())):
-                L = out[lv]
-                # (the level's map texture archive has a budget: the leftover room's textures must fit too)
-                tex = _base_tex(romfs, lv, ENTRANCES[lv]).union(  # (as plan(): roofs and side-view passages too)
-                    *(room_textures(romfs, k) for k in list(L.values()) + offgrid_rooms(romfs, cat, lv)))
-                if len(tex | room_textures(romfs, room)) > TEXTURE_BUDGET:
-                    continue
-                taken = {cell_pos(k) for k in L}
-                reserved = {cell_pos(n) for n in offgrid_rooms(romfs, cat, lv) if re.match(r'.*_\d\d[A-Z]$', n)}
-                free_cells = [(c, r) for c in range(COLS) for r in range(1, ROWS + 1)
-                              if (c, r) not in taken and (c, r) not in reserved and on_map(romfs, lv, c, r)]
-                rng.shuffle(free_cells)
-                for c, r in free_cells:
-                    ok = True
-                    for s in 'NSWE':
-                        dc, dr = rooms.STEP[s]
-                        n = (c + dc, r + dr)
-                        if n in taken:
-                            theirs = openings(cat, L[cell_name(lv, *n)])[rooms.OPP[s]]
-                            mine = openings(cat, room)[s]
-                            if theirs and mine and [x[0] for x in mine] == [x[0] for x in theirs]:
-                                ok = False  # would join physically: keep it simple, not next to a matching doorway
-                            # a leftover never joins its neighbours: a wall across every doorway either way (an open
-                            # tile there, even another doorway's, and Link could walk on into the other room - plan()
-                            # checks this for the rooms it places: wall_behind)
-                            if (mine and not walls_off(cat, room, s, L[cell_name(lv, *n)])) or \
-                                    (theirs and not walls_off(cat, L[cell_name(lv, *n)], rooms.OPP[s], room)):
-                                ok = False
-                            if theirs and not all(chaos_free(cat, L[cell_name(lv, *n)], rooms.OPP[s], x[0]) for x in theirs):
-                                ok = False
-                    if ok:
-                        L[cell_name(lv, c, r)] = room
-                        used.add(room)
-                        break
-                else:
-                    continue
-                break
-        # a doorway that can't jump (wide opening, one-way door...) needs its matching neighbour, else it leads
-        # into the void (user's seed De: 12 such): such a round is dropped
-        if any(dead_ends(cat, lv, out[lv]) for lv in levels):
-            continue
+        out, used, fixes = placed
         jumps = []
         import room_logic
         for lv in levels:
@@ -1157,15 +1771,20 @@ def plan_all_chaos(cat, seed, romfs, levels=None, rounds=None, madness=False, se
                 break
             jumps += j
         else:
-            score = len(pool - used)
+            # (a round needing no room copies first: a room seen twice is odd - then the fewest rooms left out)
+            score = (sum(1 for f in fixes if f[0] == 'copy'), len(pool - used))
             if best is None or score < best[0]:
-                best = (score, out, jumps)
-            if score == 0:
+                best = (score, out, jumps, fixes)
+            if score == (0, 0):
                 break
     if best is None:
         raise RuntimeError('no Chaos layout')
-    unused, out, jumps = best
-    print(f'chaos: no duplicates; {unused} room(s) unused; {len(jumps)} jump rows')
+    (copies, unused), out, jumps, fixes = best
+    print(f'chaos: {"no duplicates" if not copies else f"{copies} room copy"}; {unused} room(s) unused; '
+          f'{len(jumps)} jump rows')
+    if fixes:
+        print('chaos: even doorways -', ', '.join(f'{k} {room} {"->" if k != "drop" else "from"} {lv} {cell}'
+                                                  for k, room, lv, cell in fixes))
     return out, jumps
 
 
@@ -1193,13 +1812,15 @@ def write_all(romfs, out, layouts, jumps=None):
     with open(os.path.join(os.path.dirname(os.path.abspath(out)), 'dungeon_map.tsv'), 'w') as f:
         for lv, L in layouts.items():
             for cell in sorted(L):
-                f.write('%s\t%s\t%g\t%g\n' % (lv, cell.rsplit('_', 1)[1], *map_shift(romfs, lv, cell)))
-    # each cell's room (level, cell, room): the check tracker places a moved room's checks in the dungeon and cell it
-    # sits in now (tools/rando/tracker.py)
+                f.write('%s\t%s\t%g\t%g\n' % (lv, cell.rsplit('_', 1)[1],
+                                                *map_shift(romfs, lv, floor_room(lv, cell, L[cell]))))
+    # each cell's room (level, cell, room[, 'copy']): the check tracker places a moved room's checks in the dungeon and
+    # cell it sits in now (tools/rando/tracker.py); a room's second copy (_even_stubs, no checks) is marked
     with open(os.path.join(os.path.dirname(os.path.abspath(out)), 'dungeon_rooms.tsv'), 'w') as f:
         for lv, L in layouts.items():
+            copies = copy_cells(L)
             for cell in sorted(L):
-                f.write('%s\t%s\t%s\n' % (lv, cell.rsplit('_', 1)[1], L[cell]))
+                f.write('%s\t%s\t%s%s\n' % (lv, cell.rsplit('_', 1)[1], L[cell], '\tcopy' if cell in copies else ''))
     if shared.next_g > start:  # the flags taken go into the seed's GlobalFlags sheet: later allocators (underwater.py,
         # miniboss_guard.py: the highest index + 1) start after them
         from RandomizerCore.Tools import oead_tools
@@ -1212,6 +1833,23 @@ def write_all(romfs, out, layouts, jumps=None):
     if shared.next_g > 2048:  # flags past the game's 2048: the runtime extends the bitfield for this seed
         with open(os.path.join(os.path.dirname(os.path.abspath(out)), 'flags_ext'), 'a') as f:
             f.write('dungeon generator: event flags up to %d\n' % shared.next_g)
+
+
+def _moved_starts(level, layout, starts):
+    """LINK_LEVELS: a room of the level moved to another cell takes its player starts along (stairs and holes name
+    them: the partner room's stairs / hole lead to wherever it now is). {start: new (x, y, z, rot)}."""
+    if level not in LINK_LEVELS:
+        return {}
+    out = {}
+    for cell, src in layout.items():
+        if src == cell or rooms.level_of(src) != level:
+            continue
+        sx, sz = rooms.cell_origin(src)
+        tx, tz = rooms.cell_origin(cell)
+        for name, (x, y, z, rot) in starts.items():
+            if sx <= x < sx + 15 and sz <= z < sz + 12 and name not in out:
+                out[name] = (x + tx - sx, y, z + tz - sz, rot)
+    return out
 
 
 def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False, shared_flags=None, jumps=None):
@@ -1241,10 +1879,18 @@ def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False
     # the wrong room / left enemies asleep)
     first_zone = max([300] + [z + 1 for z in kept_zones if z < 0x10000])
     zone_ids = {cell: first_zone + i for i, cell in enumerate(sorted(layout))}
-    flags = FlagMap(reserved_local=reserved, keep_global=kept_global)
+    if level in LINK_LEVELS:  # (its own level file, kept: each cell's own camera zone)
+        zone_ids = {cell: level_cells(romfs, level)[cell] for cell in layout}
+    flags = FlagMap(reserved_local=reserved, keep_global=kept_global, crystal_levels=crystal_levels(cat_all))
+    # crystal switches moved into a dungeon that has none: its own rooms' uses of flag 9 move out of their way
+    kept_flags = None
+    if level not in flags.crystal_levels and any('ObjCrystalSw' in cat_all.get(src, {}).get('actors', ())
+                                                 for src in layout.values()):
+        kept_flags = _CrystalFlagOnly(flags)
     cat = json.load(open(os.path.join(HERE, 'room_catalog.json')))
     if shared_flags is not None:  # several dungeons in one seed: global flags continue across them
         flags.next_g = shared_flags.next_g
+    copies = copy_cells(layout)  # (flags and actor keys of their own: a key the level has twice spawns once, #65)
     for cell, src in sorted(layout.items()):
         if src != cell:
             rooms.transplant(romfs, out, src, cell, merge_textures=False)
@@ -1260,11 +1906,20 @@ def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False
                                       for u in unit)
         corners = [k for k, (dc, dr) in (('UL', (-1, -1)), ('UR', (1, -1)), ('DL', (-1, 1)), ('DR', (1, 1)))
                    if (c0 + dc, r0 + dr) in here]
-        flags.keep = kept_global if src.rsplit('_', 1)[0] == level else set()  # (only this level's own rooms)
+        flags.keep = kept_global if src.rsplit('_', 1)[0] == level and cell not in copies else set()  # (only this
+        # level's own rooms)
+        flags.scope = cell if cell in copies else None
         sibs = {(cell_pos(u)[0] - sc, cell_pos(u)[1] - sr) for u in unit} if whole else set()
+        # neighbours its own lid / fade weren't made for: a room now where the source's own dungeon had none. Its
+        # models were shaped around the rooms it had there (Turtle Rock 02E's fade reaches over 03E): counted as
+        # covering them, 01E|02E got the generic fade - a dark seam across the room (user 2026-10-28, Coupled seed)
+        src_lv = rooms.level_of(src)
+        src_cells = {cell_pos(k) for k in cat if rooms.level_of(k) == src_lv} | \
+                    {cell_pos(k) for k in rooms.DEAD if rooms.level_of(k) == src_lv}
         others = [(dc, dr) for dc in (-1, 0, 1) for dr in (-1, 0, 1)
-                  if (dc, dr) != (0, 0) and (c0 + dc, r0 + dr) in here and (dc, dr) not in sibs]
-        _fix_room(romfs, out, cell, src, None if keep else zone_ids[cell], None if keep else flags, missing, whole,
+                  if (dc, dr) != (0, 0) and (c0 + dc, r0 + dr) in here and (dc, dr) not in sibs
+                  and (sc + dc, sr + dr) not in src_cells]
+        _fix_room(romfs, out, cell, src, None if keep else zone_ids[cell], kept_flags if keep else flags, missing, whole,
                   corners, others)
         area, own = _source_records(romfs, src)
         r = {'name': cell, 'unit': zone_ids[cell], 'area_data': area, 'zone_data': own if own_zones else home_zone}
@@ -1272,6 +1927,9 @@ def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False
             zid = struct.unpack_from('<I', own, 0)[0]
             r.update(unit='z%d' % zid, zone_data=own, keep_zone=zid)
         rooms_list.append(r)
+    flags.scope = None
+    if copies:
+        _own_keys(romfs, out, level, copies)
     # side-view passages under the stairs etc.: as they are (own area records, zones, ids)
     for n in offgrid_rooms(romfs, cat, level):
         area, own = _source_records(romfs, n)
@@ -1287,12 +1945,20 @@ def write(romfs, out, level, layout, entrance, own_zones=False, all_starts=False
     starts = {}
     for e in fh.get(b'tagPlayerStart').data.entries:
         starts[e.name.decode()] = struct.unpack_from('<4f', e.data, 0)
+    starts.update(_moved_starts(level, layout, starts))
     # test / warp starts: one named after each cell at its centre (warp straight into any generated room)
     for cell in layout:
-        rc = cell.rsplit('_', 1)[1]
-        x0, z0 = (ord(rc[2]) - ord('A')) * 15.0, (int(rc[:2]) - 1) * 12.0
+        x0, z0 = rooms.cell_origin(cell)
         starts.setdefault(cell, (x0 + 7.5, 0.0, z0 + 6.0, 0.0))
-    lvb = level_builder.build(base, rooms_list, starts=None if all_starts else starts, static=False)
+    if level in LINK_LEVELS:
+        # its own level file with only the player starts (moved rooms took theirs along) and the map objects
+        # changed: rebuilt (areas, tree, zones), Eagle's Tower's crystal switch state no longer carried over from floor
+        # to floor - 04C's stairs reset the pegs (play test; vanilla file + new starts: fine). Its rooms only take
+        # cells it has (plan: own_cells), in their own camera zones (zone_ids).
+        lvb = level_builder.build(base, rooms_list, starts=None if all_starts else starts, static=False,
+                                  keep_level=True)
+    else:
+        lvb = level_builder.build(base, rooms_list, starts=None if all_starts else starts, static=False)
     p = os.path.join(out, 'region_common', 'level', level, level + '.lvb')
     os.makedirs(os.path.dirname(p), exist_ok=True)
     open(p, 'wb').write(lvb)
@@ -1404,9 +2070,23 @@ def _dungeon_map_rooms(romfs, out, layout, entrance):
     keep = [x for x in sheet['values'] if not oead_tools.parseStruct(x)['mLeaName'].startswith(level + '_')
             or oead_tools.parseStruct(x)['mLeaName'] in names]
     sheet['values'] = keep
-    have = {oead_tools.parseStruct(x)['mLeaName'] for x in sheet['values']}
+    rows = {oead_tools.parseStruct(x)['mLeaName']: oead_tools.parseStruct(x) for x in sheet['values']}
+    if level in LINK_LEVELS:  # (a room of the level moved here keeps its own floor and map page: floor_room)
+        for i, x in enumerate(sheet['values']):
+            d = oead_tools.parseStruct(x)
+            src = floor_room(level, d['mLeaName'], layout.get(d['mLeaName']))
+            if src != d['mLeaName'] and src in rows:
+                e = dict(d)
+                e['mFloor'], e['mAnimFloorIndex'] = rows[src]['mFloor'], rows[src]['mAnimFloorIndex']
+                sheet['values'][i] = oead_tools.dictToStruct(e)
+    have = set(rows)
     for cell in sorted(names):
-        if cell not in have:
+        if cell not in have and floor_room(level, cell, layout.get(cell)) in rows:
+            e = dict(rows[floor_room(level, cell, layout.get(cell))])
+            e['mLeaName'] = cell
+            e['mIsBoss'] = False
+            sheet['values'].append(oead_tools.dictToStruct(e))
+        elif cell not in have:
             e = dict(tmpl)
             e['mLeaName'] = cell
             e['mIsBoss'] = False
@@ -1427,10 +2107,11 @@ def _dungeon_map_rooms(romfs, out, layout, entrance):
 
 def ascii_map(layout):
     cells = {cell_pos(k): v for k, v in layout.items()}
+    cols, rows = grid_size(rooms.level_of(next(iter(layout)))) if layout else (COLS, ROWS)
     lines = []
-    for r in range(1, ROWS + 1):
+    for r in range(1, rows + 1):
         lines.append(' '.join((cells[(c, r)].split('_')[0][2:4] + cells[(c, r)][-3:]) if (c, r) in cells else '  .   '
-                              for c in range(COLS)))
+                              for c in range(cols)))
     return '\n'.join(lines)
 
 

@@ -1,0 +1,471 @@
+# Nightly builds: every platform from develop, on one rolling pre-release, "nightly". All on GitHub's own runners
+# (never the self-hosted Mac runner that PRs and releases use), so they build whether or not that Mac is on.
+#
+# Rounds: once a day (10:00 UTC, 4 am US Central) a new round starts if develop moved since the last one: version
+# nightly-<YYYYMMDDHHMM>-<commit>, LARECOMP_NIGHTLY_STAMP = that time, so a nightly's update check only offers a newer
+# nightly of its own platform (runtime/ui/update_tags.h, newest_nightly). Each platform's job puts its own file up as
+# soon as it is built (tools/nightly_publish.sh), so a slow or failed platform never holds the others back.
+# Catch-up: every 3 hours the current round's missing platforms (a failed job, or no macOS runner free) are built
+# again, from the same commit with the same version, until every platform has its file.
+#
+# The round (its stamp and commit) is kept in the release's notes, as a "nightly-round:" line.
+# By hand: gh workflow run nightly.yml [-f new_round=false]   (new_round: start a round now if develop moved)
+name: Nightly
+on:
+  schedule:
+    - cron: '0 10 * * *'   # a new round, if develop moved
+    - cron: '0 */3 * * *'  # catch-up for the current round
+  workflow_dispatch:
+    inputs:
+      new_round:
+        description: 'Start a new round if develop moved (false: only catch up the current one)'
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:  # (one run at a time: a catch-up never races a new round)
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'peiikai/LASRecomp'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # (the rolling release: its notes, its tag)
+    outputs:
+      sha: ${{ steps.p.outputs.sha }}
+      stamp: ${{ steps.p.outputs.stamp }}
+      version: ${{ steps.p.outputs.version }}
+      macos: ${{ steps.p.outputs.macos }}
+      ios: ${{ steps.p.outputs.ios }}
+      windows: ${{ steps.p.outputs.windows }}
+      windows_arm64: ${{ steps.p.outputs.windows_arm64 }}
+      android: ${{ steps.p.outputs.android }}
+      linux: ${{ steps.p.outputs.linux }}
+    steps:
+      - name: Round and missing platforms
+        id: p
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          NEW_ROUND: ${{ inputs.new_round }}
+        run: |
+          DEV=$(gh api "repos/$GH_REPO/commits/develop" -q .sha)
+          BODY=$(gh release view nightly --json body -q .body 2>/dev/null || true)
+          ROUND=$(grep -o 'nightly-round: [0-9]\{12\} [0-9a-f]\{40\}' <<< "$BODY" | head -1 || true)
+          RSTAMP=$(awk '{print $2}' <<< "$ROUND"); RSHA=$(awk '{print $3}' <<< "$ROUND")
+          NEW=false
+          if [ "$SCHEDULE" = '0 10 * * *' ] || { [ "$EVENT" = workflow_dispatch ] && [ "$NEW_ROUND" = true ]; }; then
+            [ "$DEV" != "$RSHA" ] && NEW=true
+          fi
+          [ -z "$RSHA" ] && NEW=true  # (the first round)
+          if [ "$NEW" = true ]; then STAMP=$(date -u +%Y%m%d%H%M); SHA=$DEV; else STAMP=$RSTAMP; SHA=$RSHA; fi
+          VERSION=nightly-$STAMP-${SHA::7}
+          if [ "$NEW" = true ]; then
+            URL=https://github.com/$GH_REPO
+            {
+              echo "> [!WARNING]"
+              echo "> **These are nightly builds of the next version, made from the \`develop\` branch.** They have the newest changes and can be broken on any given day. For normal play, use the **[latest release]($URL/releases/latest)**."
+              echo
+              echo "**Help shape the next version.** Nightlies are made for power users and bug hunters: you get new features as soon as they land, often weeks before a release, and every bug you report here gets fixed before it reaches everyone else. Reports from nightly players are some of the most useful feedback we get."
+              echo
+              echo "Built from [\`${SHA::7}\`]($URL/commit/$SHA) on $(date -u -d "${STAMP::8} ${STAMP:8:2}:${STAMP:10:2}" '+%Y-%m-%d %H:%M UTC'). Each platform's file appears as soon as it is built, and the game tells you on its start screen when a newer nightly is here. A nightly only offers newer nightlies, never a release."
+              echo
+              echo "- macOS: \`macOS.dmg\`  - Windows: \`windows.zip\`  - Windows on ARM: \`windows-arm64.zip\`"
+              echo "- Linux: \`linux-x86_64.AppImage\`, \`linux-aarch64.AppImage\`"
+              echo "- Android: \`android.apk\`, installed as its own app, LAS Recomp Nightly, beside the release one"
+              echo "- iPhone and iPad: \`iOS.laskit\`, made into the app with a nightly desktop build of the same date"
+              if [ -n "$RSHA" ]; then
+                MERGES=$(gh api "repos/$GH_REPO/compare/$RSHA...$SHA" --jq '.commits[] | select(.parents | length > 1) | .commit.message | split("\n") | .[0]' 2>/dev/null | sed -n 's/^Merge pull request \(#[0-9]*\).*/\1/p' | tr '\n' ' ' || true)
+                [ -n "$MERGES" ] && { echo; echo "New since the previous nightly: $MERGES"; }
+              fi
+              echo
+              echo "To report a problem, open an [issue]($URL/issues), say it's a nightly and which date, and attach the log (\`lasrecomp.log\` in the data folder)."
+              echo
+              echo "<!-- nightly-round: $STAMP $SHA -->"
+            } > notes.md
+            if gh release view nightly >/dev/null 2>&1; then
+              gh api -X PATCH "repos/$GH_REPO/git/refs/tags/nightly" -f sha="$SHA" -F force=true > /dev/null
+              gh release edit nightly --notes-file notes.md --title "Nightly builds"
+            else
+              gh release create nightly --prerelease --latest=false --title "Nightly builds" --notes-file notes.md --target "$SHA"
+            fi
+          fi
+          ASSETS=$(gh release view nightly --json assets -q '.assets[].name' 2>/dev/null || true)
+          missing() { grep -qx "LAS.Recomp-$VERSION-$1" <<< "$ASSETS" && echo false || echo true; }
+          LINUX=()
+          [ "$(missing linux-x86_64.AppImage)" = true ] && LINUX+=('{"arch":"x86_64","runner":"ubuntu-24.04"}')
+          [ "$(missing linux-aarch64.AppImage)" = true ] && LINUX+=('{"arch":"aarch64","runner":"ubuntu-24.04-arm"}')
+          LJSON="[$(IFS=,; echo "${LINUX[*]}")]"
+          {
+            echo "sha=$SHA"; echo "stamp=$STAMP"; echo "version=$VERSION"
+            echo "macos=$(missing macOS.dmg)"; echo "ios=$(missing iOS.laskit)"
+            echo "windows=$(missing windows.zip)"; echo "windows_arm64=$(missing windows-arm64.zip)"
+            echo "android=$(missing android.apk)"; echo "linux=$LJSON"
+          } >> "$GITHUB_OUTPUT"
+          echo "round $VERSION ($([ "$NEW" = true ] && echo new || echo catch-up)); develop $DEV"
+          cat "$GITHUB_OUTPUT"
+
+  macos:
+    needs: plan
+    if: needs.plan.outputs.macos == 'true'
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Nightly version
+        env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
+        run: tools/nightly_version.sh "$VERSION" "$STAMP"
+      - name: Packages
+        run: brew install ninja
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps
+            !build/deps/src
+          key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/build_deps_macos.sh') }}
+      - name: Deps (SDL3, LGPL FFmpeg, keystone, Python)
+        run: make deps
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps
+            !build/deps/src
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: pip cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/pip
+          key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'Makefile') }}
+      - name: Generator helpers
+        run: make rando-helper && make gen-helper
+      - name: Compiler for the player's machine
+        run: tools/fetch_zig.sh
+      - name: App and disk image
+        run: make -j"$(sysctl -n hw.ncpu)" dmg
+      - name: No game code
+        run: |
+          A="build/LAS Recomp.app"
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm +111 -o -name '*.dylib' -o -name '*.so' \) | while read -r f; do
+            if nm "$f" 2>/dev/null | grep ' _\{0,1\}f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+      - name: Publish
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-macOS.dmg macOS.dmg
+
+  ios:
+    needs: plan
+    if: needs.plan.outputs.ios == 'true'
+    runs-on: macos-15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Nightly version
+        env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
+        run: tools/nightly_version.sh "$VERSION" "$STAMP"
+      - name: Packages
+        run: brew install ninja python@3.13
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+        run: make deps-ios
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-ios
+            !build/deps-ios/pyvenv
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Toolchain cache (the zig archive, the five lld archives)
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/zig-dl
+            build/lld-dl
+          key: ios-kit-tools-${{ hashFiles('tools/fetch_zig.sh', 'tools/fetch_lld.sh') }}
+      - name: Linkers for every desktop, the compiler's headers
+        run: |
+          tools/fetch_zig.sh
+          for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows aarch64-windows; do LLD_TARGET=$t tools/fetch_lld.sh; done
+      - name: Kit
+        run: make -j"$(sysctl -n hw.ncpu)" ios-kit
+      - name: No game code
+        run: |
+          A="build/ios-skeleton/LAS Recomp.app"
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \); find "$A" -name 'lasgame*' -o -name 'LASGame' -type f)
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm +111 -o -name '*.dylib' -o -name '*.so' \) | while read -r f; do
+            if nm "$f" 2>/dev/null | grep -E ' _?f_[78]0' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+      - name: Publish
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-iOS.laskit iOS.laskit
+
+  windows:
+    needs: plan
+    if: needs.plan.outputs.windows == 'true'
+    runs-on: windows-2022
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: make git curl tar xz diffutils zip unzip
+          pacboy: clang:p lld:p binutils:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p
+            vulkan-memory-allocator:p nasm:p
+      - name: Nightly version
+        env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
+        run: tools/nightly_version.sh "$VERSION" "$STAMP"
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: deps-${{ runner.os }}-${{ hashFiles('tools/build_deps_windows.sh') }}
+      - name: Deps (LGPL FFmpeg)
+        run: make deps-windows
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Generator helpers
+        run: |
+          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
+          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+      - name: Compiler for the player's machine
+        run: tools/fetch_zig.sh
+      - name: Zip
+        run: make -j"$(nproc)" dist
+      - name: No game files or generated C
+        run: |
+          D="build/dist/LAS Recomp"
+          bad=$(find "$D" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+      - name: Publish
+        shell: bash  # (Git Bash: gh is on its PATH, not MSYS2's)
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-windows.zip windows.zip
+
+  windows-arm64:
+    needs: plan
+    if: needs.plan.outputs.windows_arm64 == 'true'
+    runs-on: windows-11-arm
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: make git curl tar xz diffutils zip unzip
+          pacboy: clang:p lld:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p
+      - name: Nightly version
+        env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
+        run: tools/nightly_version.sh "$VERSION" "$STAMP"
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: deps-windows-arm64-${{ hashFiles('tools/build_deps_windows.sh') }}
+      - name: Deps (LGPL FFmpeg)
+        run: make deps-windows
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Generator helpers
+        run: |
+          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
+          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+      - name: Compiler for the player's machine
+        run: tools/fetch_zig.sh
+      - name: Zip
+        run: make -j"$(nproc)" dist
+      - name: No game files or generated C
+        run: |
+          D="build/dist/LAS Recomp"
+          bad=$(find "$D" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+      - name: Publish
+        shell: bash  # (Git Bash: gh is on its PATH, not MSYS2's)
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-windows-arm64.zip windows-arm64.zip
+
+  linux:
+    needs: plan
+    if: needs.plan.outputs.linux != '[]'
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.linux) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Nightly version
+        env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
+        run: tools/nightly_version.sh "$VERSION" "$STAMP"
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: build/linux/${{ matrix.arch }}/deps
+          key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
+      - name: Wheels cache
+        id: wheels
+        uses: actions/cache/restore@v4
+        with:
+          path: build/linux/${{ matrix.arch }}/wheels
+          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'tools/linux/rando_helper.sh', 'tools/linux/Containerfile') }}
+      - name: AppImage
+        run: make appimage ARCH=${{ matrix.arch }}
+      - uses: actions/cache/save@v4
+        if: always() && steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
+        with:
+          path: build/linux/${{ matrix.arch }}/deps
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - uses: actions/cache/save@v4
+        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/rando-venv/.ok', matrix.arch)) != ''
+        with:
+          path: build/linux/${{ matrix.arch }}/wheels
+          key: ${{ steps.wheels.outputs.cache-primary-key }}
+      - name: No game code
+        run: |
+          A=build/linux/${{ matrix.arch }}/AppDir
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
+            if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+      - name: Publish
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-linux-${{ matrix.arch }}.AppImage linux-${{ matrix.arch }}.AppImage
+
+  # its own app (com.lasrecomp.android.nightly, "LAS Recomp Nightly"): installs beside the release app, with its own
+  # data; signed with the published APKs' key
+  android:
+    needs: plan
+    if: needs.plan.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - name: Nightly version
+        env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
+        run: tools/nightly_version.sh "$VERSION" "$STAMP"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: NDK and CMake
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;30.0.16248370" "cmake;3.30.4" "platforms;android-36" > /dev/null
+      - name: Dependencies cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: android/deps/out
+          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh', 'android/gen/**') }}
+      - name: Dependencies (SDL3, shaderc, volk, Vulkan headers; the game code builder)
+        if: steps.deps.outputs.cache-hit != 'true'
+        run: |
+          bash android/deps/build_deps.sh
+          bash android/deps/build_gen_deps.sh
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: android/deps/out
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          LARECOMP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          LARECOMP_VERSION_NAME: ${{ needs.plan.outputs.version }}
+          LARECOMP_APPLICATION_ID: com.lasrecomp.android.nightly
+          LARECOMP_APP_LABEL: LAS Recomp Nightly
+        run: |
+          [ -n "$KEYSTORE_B64" ] && [ -n "$LARECOMP_KEYSTORE_PASSWORD" ] || { echo "::error::the signing key secrets are not set"; exit 1; }
+          export LARECOMP_KEYSTORE=$RUNNER_TEMP/lasrecomp.keystore
+          echo "$KEYSTORE_B64" | base64 -d > "$LARECOMP_KEYSTORE"
+          export LARECOMP_VERSION_CODE=$(( ($(date -u +%s) - $(date -u -d 20260101 +%s)) / 60 ))
+          (cd android && ./gradlew assembleRelease --console=plain)
+          rm -f "$LARECOMP_KEYSTORE"
+      - name: Signed, and no game files
+        env: { VERSION: '${{ needs.plan.outputs.version }}' }
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify --print-certs "$APK"
+          tools/check_apk.sh "$APK"
+          mkdir -p build/dist && cp "$APK" "build/dist/LAS Recomp-$VERSION-android.apk"
+      - name: Publish
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-android.apk android.apk

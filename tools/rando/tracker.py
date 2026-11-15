@@ -5,7 +5,7 @@
           region, condition (basic | advanced... per the seed's logic level), [pit]/[heavy] enemy variants
   checks  every item location: label, overworld map position (cell units: x = column 0..16, y = row 0..16),
           group (dungeon icon, -1 = its overworld screen), flag (GlobalFlags index that is set once collected,
-          -1 = unknown), kind (the tracker's filter: chest / heart / shell / boss / shop / bush / dig / pot / other),
+          -1 = unknown), kind (the tracker's filter: chest / heart / shell / boss / shop / bush / dig / pot / rock / other),
           area (LAS region), dungeon (D0..D8 it physically sits in now, '-') and its cell there ('05B', '-')
   groups  the dungeon icons: at the overworld door that leads into the dungeon (shuffle-dungeons follows LAS's
           dungeon-entrances), labelled by the dungeon reached there
@@ -13,8 +13,11 @@
           the map page shift of its floor (dungeon_map.tsv); door jumps / one-way doorways / room-shuffle letters are
           door_jumps.tsv, which the runtime already reads (runtime/hle/doorjump.c)
   settings  seed settings as logic tokens: S = on, F = off (a condition naming an off setting can't be met)
-Dungeon room shuffle: checks the layout leaves out (settings absent-locations) are not listed; a moved room's checks
-count for the dungeon it sits in now (settings dungeon-of, room_logic.py). Conditions are the seed's final logic.
+  seen    (H rows) shop and Trendy Game checks: the flag the game sets on the first visit (the map icon's) and whether
+          the item there helps progress. Once the player has been inside, the tracker counts only those that do
+Excluded locations (junk only) are not listed, nor (dungeon room shuffle) checks the layout leaves out (settings
+absent-locations); a moved room's checks count for the dungeon it sits in now (settings dungeon-of, room_logic.py).
+Conditions are the seed's final logic.
 Each node also carries its condition with every logic level up to glitched ("trick logic": shown, never required).
 The runtime evaluates reachability from the live save's inventory (never from placements: no spoilers).
 """
@@ -33,6 +36,12 @@ LAS = os.path.join(ROOT, 'third_party', 'LAS-Randomizer')
 DUNGEONS = {'Lv01TailCave': 'D1', 'Lv02BottleGrotto': 'D2', 'Lv03KeyCavern': 'D3', 'Lv04AnglersTunnel': 'D4',
             'Lv05CatfishsMaw': 'D5', 'Lv06FaceShrine': 'D6', 'Lv07EagleTower': 'D7', 'Lv08TurtleRock': 'D8',
             'Lv10ClothesDungeon': 'D0'}
+# checks whose "collected" flag LAS's own event edits set (data.py; Tarin sets ShieldGet once he has handed his item
+# over, Tarin.bfevfl Event31): location -> data.py constant name, or the flag itself
+EVENT_FLAGS = {'tarin': 'ShieldGet', 'washed-up': 'BEACH_LOOSE_FLAG', 'woods-loose': 'WOODS_LOOSE_FLAG',
+               'dream-shrine-left': 'DREAM_SHRINE_FLAG', 'taltal-rooster-cave': 'ROOSTER_CAVE_FLAG',
+               'mermaid-cave': 'MERMAID_CAVE_FLAG', 'goriya-trader': 'GORIYA_FLAG', 'mamu': 'MAMU_FLAG',
+               'manbo': 'MANBO_FLAG'}
 LEVELS = {'basic': ['basic'], 'advanced': ['basic', 'advanced'], 'glitched': ['basic', 'advanced', 'glitched'],
           'hell': ['basic', 'advanced', 'glitched', 'hell'], 'none': ['basic']}
 
@@ -62,6 +71,8 @@ def kind_of(name, v, shell_spots=()):
     """The tracker's filter kind of a check (one each). Shellsanity spots (shell_spots.tsv) count as seashells."""
     if name.startswith('bush-'):
         return 'bush'
+    if re.match(r'rock-\d\d[A-P]-', name):  # (not LAS's rock-maze)
+        return 'rock'
     if re.match(r'dig-\d\d[A-P]-\d\d$', name):
         return 'dig'
     if name.startswith('pot-') or re.match(r'D\d-pot-', name):
@@ -97,6 +108,8 @@ def dungeon_entrances(seed_dir, settings):
                     if not m:
                         break
                     ent[m.group(1)] = m.group(2)
+    if settings.get('mix-dungeon-entrances'):  # (house / cave door ids too: entrance_data; a dungeon door into a house: none)
+        return dict(ent or {})
     return {k: (ent or {}).get(k, k) for k in ENTRANCE_KEYS}
 
 
@@ -194,8 +207,11 @@ def name_checks(checks, romfs):
         place = PLACE[a] if 0 <= a < len(PLACE) else ''
         b = boxes.get(a)
         where = direction((x - b[0]) / max(1.0, b[2] - b[0]), (z - b[1]) / max(1.0, b[3] - b[1])) if b else ''
-        numbered = c['k'] in ('bush', 'dig', 'pot') and re.match(r'(bush|dig|pot)-', c['n'])
-        if numbered and c['k'] == 'pot' and c.get('lv') not in (None, 'Field'):
+        numbered = c['k'] in ('bush', 'dig', 'pot', 'rock') and re.match(r'(bush|dig|pot|rock)-', c['n'])
+        apple = re.match(r'apple-tree-\d\d[A-P]-(\d)$', c['n'])
+        if apple:
+            name = display_name(c['n'], 'apple', place, f'{where}, {apple.group(1)} of 3' if where else f'{apple.group(1)} of 3')
+        elif numbered and c['k'] == 'pot' and c.get('lv') not in (None, 'Field'):
             name = f"Pot in {house(c['lv'])}"
         elif numbered:
             name = display_name(c['n'], c['k'], place, where)
@@ -219,7 +235,38 @@ def condition(node, levels):
     return ' | '.join(f'({p})' for p in parts) if parts else ''
 
 
-def build(seed_dir, romfs):
+# shops whose wares the player sees on walking in: check name prefix -> the GlobalFlags set on the first visit
+SEEN_AT = {'shop-slot': 'UI_FieldMapIcon_Shop', 'trendy-prize': 'UI_FieldMapIcon_GameShop'}
+NOT_PROGRESS = ('stone-beak', 'compass', 'map')  # (as seed_hints.py: dungeon items that open nothing)
+
+
+def seen_rows(checks, logic, flags, placements):
+    """(check, visit flag, 1 = its item helps progress) for the shop / Trendy Game checks. An item helps progress when
+    some logic condition reads it (or it is an instrument / Triforce piece) and it isn't junk."""
+    import hint_sheet as hs
+    import playthrough
+    word = re.compile(r'[A-Za-z0-9][A-Za-z0-9\-\[\]]*')
+    read = set(playthrough.INSTRUMENTS) | {hs.TRIFORCE}
+    for v in logic.values():
+        for k, c in v.items():
+            if k.startswith('condition-') and isinstance(c, str):
+                read.update(re.sub(r'\[\d+\]$', '', w) for w in word.findall(c))
+
+    def useful(item):
+        b = hs.base_item(item)
+        if hs.JUNK.match(b) or b.startswith(tuple(p + '-' for p in NOT_PROGRESS)):
+            return False
+        return b in read
+    out = []
+    for c in checks:
+        for pre, fl in SEEN_AT.items():
+            if c['n'].startswith(pre) and fl in flags:
+                item = placements.get(c['n'])
+                out.append((c['n'], flags[fl], 1 if item is None or useful(item) else 0))  # (unknown: keep it)
+    return out
+
+
+def build(seed_dir, romfs, placements=None):
     _las()
     import yaml
     from RandomizerCore.Tools import leb, oead_tools
@@ -257,9 +304,9 @@ def build(seed_dir, romfs):
         return None
 
     # where interiors are: level -> door cell, and LAS location -> door (entrance_data `inside`)
-    level_cell, loc_door_cell = {}, {}
+    level_cell, loc_door_cell, door_cell = {}, {}, {}
     for d in ed['doors']:
-        c = cell_of_field(d['field_room'])
+        c = door_cell[d['id']] = cell_of_field(d['field_room'])
         level_cell.setdefault(d['dest_level'], c)
         for it in d.get('inside') or []:
             loc_door_cell[it['location']] = c
@@ -284,8 +331,9 @@ def build(seed_dir, romfs):
     door_of = {}
     for door, inside in dungeon_entrances(seed_dir, settings).items():
         lv_door, lv_in = ENTRANCE_KEYS.get(door), ENTRANCE_KEYS.get(inside)
-        if lv_door and lv_in and level_cell.get(lv_door):
-            door_of[dkey[lv_in]] = level_cell[lv_door]
+        cell = level_cell.get(lv_door) if lv_door else door_cell.get(door)  # (mixed: a house / cave door's own cell)
+        if lv_in and cell:
+            door_of[dkey[lv_in]] = cell
 
     def group(dk):
         if dk not in gidx:
@@ -302,7 +350,8 @@ def build(seed_dir, romfs):
             c = ln.rstrip('\n').split('\t')
             if len(c) >= 3:
                 layout[(c[0], c[1])] = c[2]
-                rooms_at.setdefault(c[2], []).append((c[0], c[1]))
+                if c[3:4] != ['copy']:  # (a room's second copy holds no checks: dungeon_gen._even_stubs)
+                    rooms_at.setdefault(c[2], []).append((c[0], c[1]))
     shifts = {}
     p = os.path.join(seed_dir, 'dungeon_map.tsv')
     if os.path.exists(p):
@@ -335,7 +384,16 @@ def build(seed_dir, romfs):
         shell_pos = {c[0]: (float(c[5]), float(c[7])) for c in rows
                      if c[3] == 'Field' and len(c) > 7 and re.match(r'-?[\d.]+$', c[5]) and re.match(r'-?[\d.]+$', c[7])}
         shell_flags = {c[0]: int(c[12]) for c in rows if len(c) > 12 and c[12].lstrip('-').isdigit()}
-    absent = set(settings.get('absent-locations', ()))  # (rooms the dungeon shuffle left out: not in the game)
+    ap = os.path.join(seed_dir, 'apple_trees.tsv')  # (Applesanity: on the tree's screen, tools/rando/apple_trees.py)
+    if os.path.exists(ap):
+        rows = [c for c in (ln.rstrip('\n').split('\t') for ln in open(ap)) if len(c) > 7 and not c[0].startswith('#')]
+        shell_rooms_apples = {c[0]: (c[3], c[4]) for c in rows}
+        shell_pos.update({c[0]: (float(c[5]), float(c[7])) for c in rows})
+    else:
+        shell_rooms_apples = {}
+    # not checks: rooms the dungeon shuffle left out (not in the game) and excluded locations (junk only: fishing,
+    # Dampe... when not included, Seashell Mansion rewards past the seashell setting)
+    absent = set(settings.get('absent-locations', ())) | set(settings.get('excluded-locations', ()))
     for name, v in logic.items():
         if v.get('type') != 'item' or name.startswith('starting-') or name in absent:
             continue
@@ -343,11 +401,13 @@ def build(seed_dir, romfs):
         room, level = lr.get('room'), lr.get('level')
         if not room and name in shell_rooms:  # (Secret Seashell spots: their room, tools/rando/seashell_spots.py)
             level, room = shell_rooms[name]
+        if not room and name in shell_rooms_apples:
+            level, room = shell_rooms_apples[name]
         g = -1
         cell = None
         dg = (None, None)
-        if name.startswith('pot-') or re.match(r'D\d-pot-', name) or name.startswith('bush-'):
-            continue  # pots and bushes come from pots.tsv / bushes.tsv below
+        if name.startswith(('pot-', 'bush-')) or re.match(r'D\d-pot-|rock-\d\d[A-P]-', name):
+            continue  # pots, bushes and rocks come from pots.tsv / bushes.tsv / rocks.tsv below
         m = re.match(r'dig-(\d\d)([A-P])-(\d\d)$', name)
         if m:  # digsanity: on its screen; collected = flag 24576 + tile id (tools/rando/digs.py)
             row, col, tile = int(m.group(1)), ord(m.group(2)) - 65, int(m.group(3))
@@ -381,6 +441,8 @@ def build(seed_dir, romfs):
         try:
             if name in check_flags:
                 pass
+            elif name in EVENT_FLAGS:
+                flag = flags.get(getattr(las_data, EVENT_FLAGS[name], EVENT_FLAGS[name]), -1)
             elif name in getattr(las_data, 'HEART_FLAGS', {}):
                 flag = flags.get(las_data.HEART_FLAGS[name], -1)
             elif name in underwater.SHELL_FLAGS:  # (the sunken seashells' own flags: tools/rando/underwater.py)
@@ -406,7 +468,9 @@ def build(seed_dir, romfs):
     tsv = os.path.join(seed_dir, 'pots.tsv')
     if os.path.exists(tsv):
         by_level = {}
-        for p in pots_mod.scan(romfs, leb):
+        import eagle_tower  # (room shuffle: the tower starts collapsed - 02E's pots are checks, 06E's aren't)
+        for p in pots_mod.scan(romfs, leb, eagle_tower.MISSABLE_ROOMS_COLLAPSED if eagle_tower.collapsed(settings)
+                               else pots_mod.MISSABLE_ROOMS):
             by_level.setdefault(p['level'], []).append(p)
         names = {}
         for lv, ps in by_level.items():
@@ -449,8 +513,24 @@ def build(seed_dir, romfs):
             lv, x, y, z, fl = line.split()[:5]  # (bushes.tsv rows may carry more: pots.write_tsv)
             n = names.get((round(float(x), 2), round(float(z), 2)))
             cell = n and cell_of_field('Field_' + n.split('-')[1])
-            if n in logic and cell:
+            if n in logic and n not in absent and cell:
                 checks.append({'n': n, 'x': cell[0], 'y': cell[1], 'g': -1, 'flag': int(fl), 'k': 'bush',
+                               'a': logic[n].get('region') or '', 'wx': float(x), 'wz': float(z)})
+    # rocksanity (rocks.tsv, the same rows): on the rock's Field screen (rock-<screen>-<n>)
+    tsv = os.path.join(seed_dir, 'rocks.tsv')
+    if os.path.exists(tsv):
+        import rocks as rocks_mod
+        names = {}
+        for r in rocks_mod.scan(romfs, leb):
+            a = next((a for a in room_file(r['room']).actors if a.key == r['key']), None)
+            if a:
+                names[(round(a.posX, 2), round(a.posZ, 2))] = rocks_mod.location_name(r)
+        for line in open(tsv):
+            lv, x, y, z, fl = line.split()[:5]
+            n = names.get((round(float(x), 2), round(float(z), 2)))
+            if n in logic and n not in absent:
+                cell = cell_of_field('Field_' + n.split('-')[1])
+                checks.append({'n': n, 'x': cell[0], 'y': cell[1], 'g': -1, 'flag': int(fl), 'k': 'rock',
                                'a': logic[n].get('region') or '', 'wx': float(x), 'wz': float(z)})
     for dk in sorted(set(DUNGEONS.values())):
         if any(c.get('d') == dk for c in checks):
@@ -471,13 +551,17 @@ def build(seed_dir, romfs):
             except Exception:
                 shifts[key] = (0.0, 0.0)
     rooms = [{'level': lv, 'cell': c, 'room': r, 'shift': shifts.get((lv, c), (0, 0))} for (lv, c), r in sorted(layout.items())]
+    if placements is None:  # (rebuilding an existing seed: what the walkthrough knows)
+        sp = os.path.join(seed_dir, 'spheres.json')
+        placements = {loc: item for sphere in json.load(open(sp)) for loc, item in sphere} if os.path.exists(sp) else {}
+    seen = seen_rows(checks, logic, flags, placements)
     out = {'settings': {k: 1 for k, v in settings.items() if v is True}, 'nodes': nodes, 'checks': checks,
            'groups': groups, 'rooms': rooms, 'logic': settings.get('logic', 'basic'),
            'off': sorted(k for k, v in settings.items() if v is False)}
-    with open(os.path.join(seed_dir, 'tracker.json'), 'w') as f:
+    with open(os.path.join(seed_dir, 'tracker.json'), 'w', newline='\n') as f:
         json.dump(out, f)
     # same data as tab-separated lines for the runtime (no JSON parser there)
-    with open(os.path.join(seed_dir, 'tracker.tsv'), 'w') as f:
+    with open(os.path.join(seed_dir, 'tracker.tsv'), 'w', newline='\n') as f:  # (LF on Windows too)
         f.write('V\t2\n')
         for k in out['settings']:
             f.write(f'S\t{k}\n')
@@ -495,6 +579,8 @@ def build(seed_dir, romfs):
                     f"\t{c.get('d') or '-'}\t{c.get('dc') or '-'}\t{c.get('ar', -1)}\t{c.get('dn') or '-'}\t{c.get('sp') or '-'}\n")
         for r in rooms:
             f.write(f"R\t{r['level']}\t{r['cell']}\t{r['room']}\t{r['shift'][0]:g}\t{r['shift'][1]:g}\n")
+        for name, fl, prog in seen:
+            f.write(f"H\t{name}\t{fl}\t{prog}\n")
     return len(checks), len(groups)
 
 

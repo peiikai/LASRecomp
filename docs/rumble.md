@@ -56,7 +56,7 @@ under optimized builds.
 Validated on Windows x86-64/Vulkan with an Xbox controller. The user confirmed
 in-game rumble with a wired connection. Wireless did not vibrate in this setup;
 standalone SDL and XInput tests also failed to produce perceptible vibration,
-so its cause remains unresolved. Metal and Linux were not built or tested.
+so its cause remains unresolved. CI runs the SDL bridge test (`tools/test_rumble.c`) on macOS, Windows and Linux.
 
 ## References
 
