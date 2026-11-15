@@ -1382,20 +1382,14 @@ void vk_exec_init(void) {
     // constant buffers from memory every time. Turnip loads them into its constant file in a per-draw preamble, which
     // push constants shorten (the field's main lit pass on an Adreno 643: 7.52 -> 6.66 ms, preamble 386 -> 304
     // instructions). LARECOMP_VK_INLINE_C1 / LARECOMP_VK_PUSH_CB =1 / =0 override.
+    // The push constants, not on Qualcomm's own driver (#779: Adreno X2-90, Windows driver E17.52.12.00). With words in
+    // both stages most of the picture was black; with fragment words alone (LARECOMP_VK_PUSH_VS=0) the world drew but
+    // the file select's text didn't. Without them everything drew. c1 inlined stays on: those runs had it.
     maxwell_glsl_push = g_vk.props.vendorID == 0x13B5 || g_vk.props.vendorID == 0x5143;  // (Arm, Qualcomm)
+    maxwell_glsl_push_cb = g_vk.driver_id != VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
     const char *pe = getenv("LARECOMP_VK_PUSH_CB");
-    LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push) ? "on" : "off",
-        pe ? "LARECOMP_VK_PUSH_CB" : "default for this GPU");
-    // ...in vertex shaders too, except on Qualcomm's own driver: with words in both stages (the fragment shader's in a
-    // push constant block at a nonzero offset, after the vertex shader's) most of the picture was black (#779: Adreno
-    // X2-90, Windows driver E17.52.12.00). Fragment words alone, from offset 0, drew right there. Which of the two the
-    // driver gets wrong isn't known. LARECOMP_VK_PUSH_VS=1 / =0 overrides.
-    maxwell_glsl_push_vs = g_vk.driver_id != VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
-    {
-        const char *ve = getenv("LARECOMP_VK_PUSH_VS");
-        LOG("[vk] vertex shader push constants %s (%s)\n", (ve ? atoi(ve) != 0 : maxwell_glsl_push_vs) ? "on" : "off",
-            ve ? "LARECOMP_VK_PUSH_VS" : maxwell_glsl_push_vs ? "default for this GPU" : "Qualcomm's driver");
-    }
+    LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push && maxwell_glsl_push_cb) ? "on" : "off",
+        pe ? "LARECOMP_VK_PUSH_CB" : maxwell_glsl_push_cb ? "default for this GPU" : "Qualcomm's driver");
     {   // fragment quad xor shuffles through derivatives (shader.h maxwell_glsl_quad_deriv) where the driver has no subgroup
         // operations in fragment shaders: Turnip on Adreno 6xx lists compute only, and the shaders' subgroupShuffleXor
         // hung the GPU in Marin and Tarin's house (the lit pass behind the depth prepass; Retroid Pocket 5, Adreno 650).
