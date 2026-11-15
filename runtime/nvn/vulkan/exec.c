@@ -2955,8 +2955,66 @@ static void alias_draw_check(void) {
     if (writes || is_dst) alias_before_write(d, 0, writes ? "depth write" : "dst bound");
 }
 
+// (debug) LARECOMP_VK_SHADOW_PROBE=<frame>: the depth images draws from that frame on read with a compare (shadow maps),
+// read back once each (up to 8) before the draw: their size, format, depth range and a 10-bin histogram, with the sampler's
+// compare function. On Qualcomm's own driver (#779) every compare read as shadowed whatever the format or filter:
+// this tells a shadow map that holds nothing (all at the clear value) from one the compare reads wrong.
+static void shadow_probe(Prog *pr) {
+    static int64_t at = -2;
+    if (at == -2) { const char *e = getenv("LARECOMP_VK_SHADOW_PROBE"); at = e ? atoll(e) : -1; }
+    if (at < 0 || renderer_present_count() < (uint64_t)at) return;
+    static NvnTexture *done[8];
+    static int ndone;
+    ShaderInfo *infos[2] = {pr->vi, pr->fi};
+    for (int sg = 0; sg < 2; sg++)
+        for (int i = 0; i < (infos[sg] ? infos[sg]->ntex : 0); i++) {
+            ShaderTexture *st_ = &infos[sg]->tex[i];
+            if (!st_->shadow || ndone == 8) continue;
+            NvnTexture *t = shader_texture_object(sg, st_);
+            if (t && naliases) t = alias_read(t);
+            TexBackend *b = t ? vk_tex(t, true) : NULL;
+            bool seen = false;
+            for (int k = 0; k < ndone; k++) seen |= done[k] == t;
+            if (seen || !b || !b->image || !(b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) || b->samples != 1) continue;
+            done[ndone++] = t;
+            int slot = ((int)st_->handle_offset - 0x20) / 8;
+            uint64_t h = slot >= 0 && slot < 32 ? st.tex[sg][slot] : 0;
+            uint32_t tsc = (uint32_t)(h >> 20) & 0xFFF;
+            NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+            uint32_t bpt = b->format == VK_FORMAT_D16_UNORM || b->format == VK_FORMAT_D16_UNORM_S8_UINT ? 2 : 4;
+            uint64_t n = (uint64_t)b->width * b->height;
+            vk_end_pass();
+            VkSpan out = vk_readback(n * bpt);
+            VkCommandBuffer cb = vk_cmd();
+            vk_full_barrier(cb);
+            VkBufferImageCopy c = {.bufferOffset = out.off, .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                                   .imageExtent = {b->width, b->height, 1}};
+            rec_CmdCopyImageToBuffer(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
+            renderer_flush();
+            bool flt = b->format == VK_FORMAT_D32_SFLOAT || b->format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+            double lo = 1e30, hi = -1e30, sum = 0;
+            uint32_t bins[10] = {0};
+            for (uint64_t k = 0; k < n; k++) {
+                double v = bpt == 2 ? ((const uint16_t *)out.ptr)[k] / 65535.0
+                         : flt ? ((const float *)out.ptr)[k] : (((const uint32_t *)out.ptr)[k] & 0xFFFFFF) / 16777215.0;
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+                sum += v;
+                int bi = (int)(v * 10);
+                bins[bi < 0 ? 0 : bi > 9 ? 9 : bi]++;
+            }
+            LOG("[vk] shadow probe frame %llu t%d (stage %d, fs %016llx): %p %ux%u nvn fmt %#x vk fmt %d, depth %.6f..%.6f mean %.6f, "
+                "tenths %u %u %u %u %u %u %u %u %u %u; sampler compare %u func %u min %u mag %u\n",
+                (unsigned long long)renderer_present_count(), i, sg, (unsigned long long)g_cur_fs_hash, (void *)t, b->width, b->height, t->format,
+                b->format, lo, hi, n ? sum / n : 0, bins[0], bins[1], bins[2], bins[3], bins[4], bins[5], bins[6], bins[7], bins[8],
+                bins[9], sd ? sd->compare_mode : 0, sd ? sd->compare_func : 0, sd ? sd->min_filter : 0, sd ? sd->mag_filter : 0);
+            st.rt_dirty = true;
+        }
+}
+
 static void resolve_feedback(Prog *pr) {
     nfeedback = 0;
+    shadow_probe(pr);
     static int off = -1;
     if (off < 0) off = getenv("LARECOMP_NO_FEEDBACK") != NULL;
     if (off) return;
