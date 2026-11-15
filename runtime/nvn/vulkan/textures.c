@@ -1086,17 +1086,58 @@ VkImageView vk_dummy_view(int textype) {
 // cleared to 1.0: the farthest depth, so a less / less-equal compare reads it as lit (no shadow), as an empty shadow
 // map would. D32_SFLOAT where it can be compared, else D16_UNORM. 3D (no shadow form) and 1D (depth 1D images are not
 // required) types keep the colour dummy.
-bool vk_format_depth_compare(VkFormat f) {
+static VkFormatFeatureFlags2 optimal_features(VkFormat f) {
     static VkFormat fs[16];
-    static int8_t ok[16];
+    static VkFormatFeatureFlags2 feat[16];
     static int n;
-    for (int i = 0; i < n; i++) if (fs[i] == f) return ok[i];
+    for (int i = 0; i < n; i++) if (fs[i] == f) return feat[i];
     VkFormatProperties3 p3 = {.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
     VkFormatProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &p3};
     vkGetPhysicalDeviceFormatProperties2(g_vk.phys, f, &p2);
-    bool r = (p3.optimalTilingFeatures & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT) != 0;
-    if (n < 16) { fs[n] = f; ok[n++] = r; }
-    return r;
+    if (n < 16) { fs[n] = f; feat[n++] = p3.optimalTilingFeatures; }
+    return p3.optimalTilingFeatures;
+}
+
+bool vk_format_depth_compare(VkFormat f) {
+    return (optimal_features(f) & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT) != 0;
+}
+
+// A linear (or linear-mip) sampler on a format without SAMPLED_IMAGE_FILTER_LINEAR is undefined
+// (VUID-vkCmdDraw-magFilter-04553, -mipmapMode-04770). Depth formats are where drivers leave it out: on Qualcomm's own
+// driver (#779, Adreno X2-90) every shadow compare read as shadowed, and the scene lost its sun and shadows; with the
+// compare off (LARECOMP_NO_SHADOW=1) it drew lit. Such a depth image is sampled through a nearest twin of the game's
+// sampler instead (exec.c texture_info): shadow edges get harder, but they are there. LARECOMP_VK_DEPTH_NEAREST=1: every depth sample nearest; =0: never (the sampler as the game set it).
+static VkSampler nearest_twin(NvnSamplerDesc *d) {
+    static struct { VkSampler from, to; } map[64];
+    static int n;
+    VkSampler from = vk_sampler(d);
+    for (int i = 0; i < n; i++) if (map[i].from == from) return map[i].to;
+    NvnSamplerDesc c = *d;
+    c.backend = NULL;
+    c.mag_filter = 0;
+    c.min_filter = c.min_filter == 1 ? 0 : c.min_filter >= 2 ? 2 : c.min_filter;  // nearest, nearest mip nearest
+    c.max_aniso = 1;
+    VkSampler to = vk_sampler(&c);  // (samplers are never destroyed: the handles stay valid as keys)
+    if (n < 64) { map[n].from = from; map[n++].to = to; }
+    return to;
+}
+
+VkSampler vk_depth_sampler(NvnSamplerDesc *d, VkFormat f) {
+    static int force = -2;
+    if (force == -2) { const char *e = getenv("LARECOMP_VK_DEPTH_NEAREST"); force = e ? atoi(e) != 0 : -1; }
+    bool linear = d->mag_filter == 1 || d->min_filter == 1 || d->min_filter >= 3;
+    if (!linear || force == 0) return vk_sampler(d);
+    bool can = (optimal_features(f) & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT) != 0;
+    static VkFormat logged[8];
+    static int nlogged;
+    bool seen = false;
+    for (int i = 0; i < nlogged; i++) seen |= logged[i] == f;
+    if (!seen && nlogged < 8) {
+        logged[nlogged++] = f;
+        LOG("[vk] depth format %d sampled with a linear filter: the driver %s it%s\n", f, can ? "filters" : "can't filter",
+            force == 1 ? ", nearest anyway (LARECOMP_VK_DEPTH_NEAREST)" : can ? "" : ", nearest instead");
+    }
+    return can && force != 1 ? vk_sampler(d) : nearest_twin(d);
 }
 
 // t's sampled image can be read with a depth compare (a depth image of a comparable format)
@@ -1104,6 +1145,9 @@ bool vk_tex_depth_compare(NvnTexture *t) {
     TexBackend *b = t ? (TexBackend *)t->backend : NULL;
     return b && (b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) && vk_format_depth_compare(b->format);
 }
+
+static VkFormat dummy_depth_format;
+VkFormat vk_dummy_depth_format(void) { return dummy_depth_format; }
 
 VkImageView vk_dummy_depth_view(int textype) {
     static TexBackend dummies[10];
@@ -1114,16 +1158,15 @@ VkImageView vk_dummy_depth_view(int textype) {
     if (vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY && vt != VK_IMAGE_VIEW_TYPE_CUBE &&
         vt != VK_IMAGE_VIEW_TYPE_CUBE_ARRAY)
         return vk_dummy_view(textype);
-    static VkFormat df;
-    if (!df) {
-        df = vk_format_depth_compare(VK_FORMAT_D32_SFLOAT) ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM;
-        LOG("[vk] shadow slot dummy: 1x1 %s cleared to 1.0\n", df == VK_FORMAT_D32_SFLOAT ? "D32_SFLOAT" : "D16_UNORM");
+    if (!dummy_depth_format) {
+        dummy_depth_format = vk_format_depth_compare(VK_FORMAT_D32_SFLOAT) ? VK_FORMAT_D32_SFLOAT : VK_FORMAT_D16_UNORM;
+        LOG("[vk] shadow slot dummy: 1x1 %s cleared to 1.0\n", dummy_depth_format == VK_FORMAT_D32_SFLOAT ? "D32_SFLOAT" : "D16_UNORM");
     }
     bool cube = vt == VK_IMAGE_VIEW_TYPE_CUBE || vt == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
     uint32_t layers = cube ? 6 : 1;
     TexBackend *b = &dummies[textype];
     VkImageCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .flags = cube ? VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT : 0,
-                            .imageType = VK_IMAGE_TYPE_2D, .format = df, .extent = {1, 1, 1}, .mipLevels = 1,
+                            .imageType = VK_IMAGE_TYPE_2D, .format = dummy_depth_format, .extent = {1, 1, 1}, .mipLevels = 1,
                             .arrayLayers = layers, .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
                             .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT};
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
@@ -1141,11 +1184,11 @@ VkImageView vk_dummy_depth_view(int textype) {
                            .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT};
     VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
     rec_CmdPipelineBarrier2(cb, &di);
-    b->format = df;
+    b->format = dummy_depth_format;
     b->levels = 1;
     b->layers = layers;
     b->aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
-    views[textype] = vk_image_view(b, vt, df, 0, 1, 0, layers, IDENTITY, VK_IMAGE_ASPECT_DEPTH_BIT);
+    views[textype] = vk_image_view(b, vt, dummy_depth_format, 0, 1, 0, layers, IDENTITY, VK_IMAGE_ASPECT_DEPTH_BIT);
     if (!views[textype]) views[textype] = vk_dummy_view(textype);
     return views[textype];
 }

@@ -5816,9 +5816,14 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             nvn_dead_slot_sampled(e, tic);
         }
     }
-    if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+    NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+    if (sd) smp = vk_sampler(sd);
     if (st_->shadow)
         shadow_slot_check(stage, st_, i, h, tic, ent, ent && ent->tex ? (naliases ? alias_read(ent->tex) : ent->tex) : NULL, &view);
+    // depth formats a driver can't filter linearly: textures.c vk_depth_sampler (an alias has its source's format)
+    TexBackend *db = ent && ent->tex ? (TexBackend *)ent->tex->backend : NULL;
+    if (sd && st_->shadow && vk_dummy_depth_format() && view == vk_dummy_depth_view(st_->type)) smp = vk_depth_sampler(sd, vk_dummy_depth_format());
+    else if (sd && view && db && (db->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) smp = vk_depth_sampler(sd, db->format);
     if (!view) view = vk_dummy_view(st_->type);
     if (!smp) smp = vk_default_sampler(true);
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};
