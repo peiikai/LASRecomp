@@ -14,6 +14,8 @@ typedef struct {
 // unknown), win_ms the window step's - the game's image drawn into the window (upscale, SMAA) and the menu (< 0:
 // unknown / not counted)
 void output_scale(double dw, double dh, bool reshape_allowed, double now, double game_ms, double win_ms, OutScale *o);
+// The render scale the settings give a dw x dh window, without a frame (the start screen; Dynamic: its top)
+void output_scale_estimate(double dw, double dh, bool reshape_allowed, double *sx, double *sy);
 double output_scale_dynamic_factor(void);
 // Dynamic resolution for the frame pacer (pace.c "Resolution first"): 0 off (a fixed resolution, or pinned for a test),
 // 1 on with nothing lower to try (at its floor, the Minimum resolution; or holding a frame rate itself: 60 out of reach),

@@ -1158,6 +1158,39 @@ void output_scale_log(unsigned long long frame, double dw, double dh, const OutS
     psx = o->sx, psy = o->sy, pdw = dw, pdh = dh;
 }
 
+// The render height for a mode, in units of the Switch's 1080 lines (Match display for Dynamic: its own steps come on top)
+static double mode_height(int mode, double dw, double dh, bool reshape, double fit) {
+    if (mode >= 1 && mode <= 8) return mode == 1 && g_gpu_integrated ? 720 / 1080.0 : mode;
+    double h = reshape ? dh / 1080.0 : fit;  // Match display
+    if (mode == RES_Q75) h *= 0.75;
+    else if (mode == RES_Q25) h *= 0.25;
+    else if (mode == RES_Q50) h *= 0.5;
+    return h;
+}
+
+// The allocation scale for render height h and shape, capped to the GPU's texture limit
+static void alloc_scale(double h, double shape, double *ax, double *ay) {
+    h = fmax(h, 0.1);  // (.25x of a small window)
+    *ax = h * shape, *ay = h;
+    double cap = fmin(MAX_TEX / (1920.0 * *ax), MAX_TEX / (1080.0 * *ay));
+    if (cap < 1.0) { *ax *= cap; *ay *= cap; }
+}
+
+// The render scale the settings give a dw x dh window, worked out without a frame: the start screen's Video tab, which
+// shows the size before the game draws anything (renderer_get_scale is 1x until the first frame). Dynamic: its top.
+void output_scale_estimate(double dw, double dh, bool reshape_allowed, double *sx, double *sy) {
+    if (!(dw > 0) || !(dh > 0)) { *sx = *sy = 1; return; }
+    double fit = fmin(dw / 1920.0, dh / 1080.0), shape = (dw / dh) / (16.0 / 9.0);
+    const char *e = getenv("LARECOMP_WIDE_TEST");
+    if (e && atof(e) > 0) shape = atof(e);
+    bool reshape = reshape_allowed && fabs(shape - 1.0) > 0.005;
+    if (!reshape) shape = 1.0;
+    int mode = g_settings.dyn_res ? RES_DYNAMIC : g_settings.res_mode;
+    double h = getenv("LARECOMP_SCALE") && atof(getenv("LARECOMP_SCALE")) > 0 ? atof(getenv("LARECOMP_SCALE"))
+                                                                               : mode_height(mode, dw, dh, reshape, fit);
+    alloc_scale(h, shape, sx, sy);
+}
+
 void output_scale(double dw, double dh, bool reshape_allowed, double now, double game_ms, double win_ms, OutScale *o) {
     double fit = fmin(dw / 1920.0, dh / 1080.0);
     static double forced = -1, wide_test = -1;
@@ -1182,9 +1215,8 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
     }
     p_mode = mode, p_ups = g_settings.upscaler, p_aa = g_settings.antialias, p_fps = settings_fps_target();
     if (forced > 0) h = forced;
-    else if (mode >= 1 && mode <= 8) h = mode == 1 && g_gpu_integrated ? 720 / 1080.0 : mode;
     else {
-        h = reshape ? dh / 1080.0 : fit;  // Match display
+        h = mode_height(mode, dw, dh, reshape, fit);
         if (mode == RES_DYNAMIC) {
             static double pinned = -1;
             if (pinned < 0) pinned = getenv("LARECOMP_DYN_TEST") ? atof(getenv("LARECOMP_DYN_TEST")) : 0;
@@ -1192,14 +1224,9 @@ void output_scale(double dw, double dh, bool reshape_allowed, double now, double
             else { dyn_update(now, game_ms, win_ms, h * 1080); dyn = g_dyn; }
             g_dyn_active = pinned <= 0;
         }
-        else if (mode == RES_Q75) h *= 0.75;
-        else if (mode == RES_Q25) h *= 0.25;
-        else if (mode == RES_Q50) h *= 0.5;
     }
-    h = fmax(h, 0.1);  // (.25x of a small window)
-    double ax = h * shape, ay = h;
-    double cap = fmin(MAX_TEX / (1920.0 * ax), MAX_TEX / (1080.0 * ay));
-    if (cap < 1.0) { ax *= cap; ay *= cap; }
+    double ax, ay;
+    alloc_scale(h, shape, &ax, &ay);
     o->ax = ax; o->ay = ay;
     o->sx = ax * dyn; o->sy = ay * dyn; o->shape = shape;
     g_render_w = (int)lround(1920.0 * o->sx), g_render_h = (int)lround(1080.0 * o->sy);
