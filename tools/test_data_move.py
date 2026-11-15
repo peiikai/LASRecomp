@@ -17,8 +17,9 @@ flags = []
 deps = os.environ.get('DEPS')  # (a prefix with SDL3, as for make DEPS=)
 if deps:
     flags = [f'-I{deps}/include', f'-L{deps}/lib', f'-Wl,-rpath,{deps}/lib', '-lSDL3']
-elif shutil.which('pkg-config') and subprocess.run(['pkg-config', '--exists', 'sdl3']).returncode == 0:
-    flags = shlex.split(subprocess.run(['pkg-config', '--cflags', '--libs', 'sdl3'], capture_output=True, text=True,
+# MSYS2's pkgconf 3.0.11 installs pkg-config without .exe, which shutil.which can't find on Windows; pkgconf.exe stays
+elif (pc := shutil.which('pkg-config') or shutil.which('pkgconf')) and subprocess.run([pc, '--exists', 'sdl3']).returncode == 0:
+    flags = shlex.split(subprocess.run([pc, '--cflags', '--libs', 'sdl3'], capture_output=True, text=True,
                                        check=True).stdout)
 elif sys.platform == 'darwin':
     brew = subprocess.run(['brew', '--prefix'], capture_output=True, text=True).stdout.strip() or '/opt/homebrew'
