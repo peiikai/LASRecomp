@@ -102,7 +102,8 @@ bool opt_nav_step(int dir) {
 }
 static std::unordered_map<ImGuiID, int> g_ids;  // this page's rows so far, by id (two rows with one label)
 static bool g_held;  // the last row's left / right has been held a while (steppers go faster)
-static bool g_click_silent;  // this frame's click did nothing (a finger on a ◀ value ▶ row's body): no decide sound
+static bool g_click_silent;  // no decide sound for this frame's click: it did nothing (a finger on a ◀ value ▶ row's
+                             // body) or stepped an arrow (step_sfx plays that)
 static bool g_off_press;     // this frame's click / A / Enter was on a greyed-out row: it does nothing, so no sound
 void opt_indent(int step) { g_indent = g_indent + step < 0 ? 0 : g_indent + step; }
 
@@ -325,7 +326,7 @@ static int row(const char *label, const std::string &value_en, bool changed, con
         float rx = right - aw, lx = rx - gap - ImGui::CalcTextSize(value.c_str()).x - gap - aw;
         dl->AddTriangleFilled(ImVec2(lx, cy), ImVec2(lx + aw, cy - aw * 0.75f), ImVec2(lx + aw, cy + aw * 0.75f), ac);
         dl->AddTriangleFilled(ImVec2(rx + aw, cy), ImVec2(rx, cy - aw * 0.75f), ImVec2(rx, cy + aw * 0.75f), ac);
-        if (clicked && !off && arrow_under) step = arrow_under;
+        if (clicked && !off && arrow_under) step = arrow_under, g_click_silent = true;  // (step_sfx's sound, not decide)
         right = rx - gap;
     }
     if (chevron) {  // ">", drawn (as the arrows above)
@@ -399,9 +400,10 @@ void opt_child_end(void) {
     dl->PopClipRect();
 }
 
-// a value stepped with left / right: the cursor sound (A / click: menu_sfx_frame's decide)
+// a value stepped with left / right or its arrows: the tab sound, as the values scroll sideways like the tabs (user
+// 2026-11-14; A / a click on the row: menu_sfx_frame's decide)
 static void step_sfx(int step) {
-    if (step == 1 || step == -1) menu_sfx_play(MENU_SFX_CURSOR);
+    if (step == 1 || step == -1) menu_sfx_play(MENU_SFX_TAB);
 }
 
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc) {
