@@ -1382,10 +1382,14 @@ void vk_exec_init(void) {
     // constant buffers from memory every time. Turnip loads them into its constant file in a per-draw preamble, which
     // push constants shorten (the field's main lit pass on an Adreno 643: 7.52 -> 6.66 ms, preamble 386 -> 304
     // instructions). LARECOMP_VK_INLINE_C1 / LARECOMP_VK_PUSH_CB =1 / =0 override.
+    // The push constants, not on Qualcomm's own driver (#779: Adreno X2-90, Windows driver E17.52.12.00). With words in
+    // both stages most of the picture was black; with fragment words alone (LARECOMP_VK_PUSH_VS=0) the world drew but
+    // the file select's text didn't. Without them everything drew. c1 inlined stays on: those runs had it.
     maxwell_glsl_push = g_vk.props.vendorID == 0x13B5 || g_vk.props.vendorID == 0x5143;  // (Arm, Qualcomm)
+    maxwell_glsl_push_cb = g_vk.driver_id != VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
     const char *pe = getenv("LARECOMP_VK_PUSH_CB");
-    LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push) ? "on" : "off",
-        pe ? "LARECOMP_VK_PUSH_CB" : "default for this GPU");
+    LOG("[vk] constant-buffer push constants %s (%s)\n", (pe ? atoi(pe) != 0 : maxwell_glsl_push && maxwell_glsl_push_cb) ? "on" : "off",
+        pe ? "LARECOMP_VK_PUSH_CB" : maxwell_glsl_push_cb ? "default for this GPU" : "Qualcomm's driver");
     {   // fragment quad xor shuffles through derivatives (shader.h maxwell_glsl_quad_deriv) where the driver has no subgroup
         // operations in fragment shaders: Turnip on Adreno 6xx lists compute only, and the shaders' subgroupShuffleXor
         // hung the GPU in Marin and Tarin's house (the lit pass behind the depth prepass; Retroid Pocket 5, Adreno 650).
@@ -1407,6 +1411,11 @@ void vk_exec_init(void) {
         const char *te = getenv("LARECOMP_VK_TINT_BRANCH");
         maxwell_glsl_tint_branch = te ? atoi(te) != 0 : g_vk.props.vendorID == 0x5143 || g_vk.props.vendorID == 0x13B5;
         LOG("[vk] recolour variants %s (%s)\n", maxwell_glsl_tint_branch ? "on" : "off", te ? "LARECOMP_VK_TINT_BRANCH" : "default for this GPU");
+    }
+    {   // (debug, #779) shadow lookups compared in the shader instead of by the sampler: translate.c glsl_sample
+        const char *e = getenv("LARECOMP_VK_SOFT_SHADOW");
+        maxwell_glsl_soft_shadow = e && atoi(e) != 0;
+        if (maxwell_glsl_soft_shadow) LOG("[vk] shadow lookups compared in the shader (LARECOMP_VK_SOFT_SHADOW)\n");
     }
     // fmin / fmax / saturate as the GPU's min / max / clamp (shader.h maxwell_glsl_fast_minmax) by default on Android,
     // where the fork it comes from measured it on Adreno (Turnip and Qualcomm's driver: the lit pass 1717 -> 1637
@@ -2951,8 +2960,66 @@ static void alias_draw_check(void) {
     if (writes || is_dst) alias_before_write(d, 0, writes ? "depth write" : "dst bound");
 }
 
+// (debug) LARECOMP_VK_SHADOW_PROBE=<frame>: the depth images draws from that frame on read with a compare (shadow maps),
+// read back once each (up to 8) before the draw: their size, format, depth range and a 10-bin histogram, with the sampler's
+// compare function. On Qualcomm's own driver (#779) every compare read as shadowed whatever the format or filter:
+// this tells a shadow map that holds nothing (all at the clear value) from one the compare reads wrong.
+static void shadow_probe(Prog *pr) {
+    static int64_t at = -2;
+    if (at == -2) { const char *e = getenv("LARECOMP_VK_SHADOW_PROBE"); at = e ? atoll(e) : -1; }
+    if (at < 0 || renderer_present_count() < (uint64_t)at) return;
+    static NvnTexture *done[8];
+    static int ndone;
+    ShaderInfo *infos[2] = {pr->vi, pr->fi};
+    for (int sg = 0; sg < 2; sg++)
+        for (int i = 0; i < (infos[sg] ? infos[sg]->ntex : 0); i++) {
+            ShaderTexture *st_ = &infos[sg]->tex[i];
+            if (!st_->shadow || ndone == 8) continue;
+            NvnTexture *t = shader_texture_object(sg, st_);
+            if (t && naliases) t = alias_read(t);
+            TexBackend *b = t ? vk_tex(t, true) : NULL;
+            bool seen = false;
+            for (int k = 0; k < ndone; k++) seen |= done[k] == t;
+            if (seen || !b || !b->image || !(b->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) || b->samples != 1) continue;
+            done[ndone++] = t;
+            int slot = ((int)st_->handle_offset - 0x20) / 8;
+            uint64_t h = slot >= 0 && slot < 32 ? st.tex[sg][slot] : 0;
+            uint32_t tsc = (uint32_t)(h >> 20) & 0xFFF;
+            NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+            uint32_t bpt = b->format == VK_FORMAT_D16_UNORM || b->format == VK_FORMAT_D16_UNORM_S8_UINT ? 2 : 4;
+            uint64_t n = (uint64_t)b->width * b->height;
+            vk_end_pass();
+            VkSpan out = vk_readback(n * bpt);
+            VkCommandBuffer cb = vk_cmd();
+            vk_full_barrier(cb);
+            VkBufferImageCopy c = {.bufferOffset = out.off, .imageSubresource = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1},
+                                   .imageExtent = {b->width, b->height, 1}};
+            rec_CmdCopyImageToBuffer(cb, b->image, VK_IMAGE_LAYOUT_GENERAL, out.buf, 1, &c);
+            renderer_flush();
+            bool flt = b->format == VK_FORMAT_D32_SFLOAT || b->format == VK_FORMAT_D32_SFLOAT_S8_UINT;
+            double lo = 1e30, hi = -1e30, sum = 0;
+            uint32_t bins[10] = {0};
+            for (uint64_t k = 0; k < n; k++) {
+                double v = bpt == 2 ? ((const uint16_t *)out.ptr)[k] / 65535.0
+                         : flt ? ((const float *)out.ptr)[k] : (((const uint32_t *)out.ptr)[k] & 0xFFFFFF) / 16777215.0;
+                if (v < lo) lo = v;
+                if (v > hi) hi = v;
+                sum += v;
+                int bi = (int)(v * 10);
+                bins[bi < 0 ? 0 : bi > 9 ? 9 : bi]++;
+            }
+            LOG("[vk] shadow probe frame %llu t%d (stage %d, fs %016llx): %p %ux%u nvn fmt %#x vk fmt %d, depth %.6f..%.6f mean %.6f, "
+                "tenths %u %u %u %u %u %u %u %u %u %u; sampler compare %u func %u min %u mag %u\n",
+                (unsigned long long)renderer_present_count(), i, sg, (unsigned long long)g_cur_fs_hash, (void *)t, b->width, b->height, t->format,
+                b->format, lo, hi, n ? sum / n : 0, bins[0], bins[1], bins[2], bins[3], bins[4], bins[5], bins[6], bins[7], bins[8],
+                bins[9], sd ? sd->compare_mode : 0, sd ? sd->compare_func : 0, sd ? sd->min_filter : 0, sd ? sd->mag_filter : 0);
+            st.rt_dirty = true;
+        }
+}
+
 static void resolve_feedback(Prog *pr) {
     nfeedback = 0;
+    shadow_probe(pr);
     static int off = -1;
     if (off < 0) off = getenv("LARECOMP_NO_FEEDBACK") != NULL;
     if (off) return;
@@ -5816,9 +5883,15 @@ static void texture_info(int stage, ShaderInfo *si, int i, VkDescriptorImageInfo
             nvn_dead_slot_sampled(e, tic);
         }
     }
-    if (h && st.spool && tsc < (uint32_t)st.spool->count) smp = vk_sampler(&((NvnSamplerDesc *)st.spool->entries)[tsc]);
+    NvnSamplerDesc *sd = h && st.spool && tsc < (uint32_t)st.spool->count ? &((NvnSamplerDesc *)st.spool->entries)[tsc] : NULL;
+    if (sd) smp = vk_sampler(sd);
     if (st_->shadow)
         shadow_slot_check(stage, st_, i, h, tic, ent, ent && ent->tex ? (naliases ? alias_read(ent->tex) : ent->tex) : NULL, &view);
+    // depth formats a driver can't filter linearly: textures.c vk_depth_sampler (an alias has its source's format)
+    TexBackend *db = ent && ent->tex ? (TexBackend *)ent->tex->backend : NULL;
+    bool plain = st_->shadow && maxwell_glsl_soft_shadow;  // (the shader compares: translate.c glsl_sample)
+    if (sd && st_->shadow && vk_dummy_depth_format() && view == vk_dummy_depth_view(st_->type)) smp = vk_depth_sampler(sd, vk_dummy_depth_format(), plain);
+    else if (sd && view && db && (db->aspect & VK_IMAGE_ASPECT_DEPTH_BIT)) smp = vk_depth_sampler(sd, db->format, plain);
     if (!view) view = vk_dummy_view(st_->type);
     if (!smp) smp = vk_default_sampler(true);
     *out = (VkDescriptorImageInfo){smp, view, VK_IMAGE_LAYOUT_GENERAL};
@@ -6906,6 +6979,24 @@ static void draw_(CmdRec *r, bool indexed) {
             if (composite) wx_scene_w = t0->width, wx_scene_h = t0->height;  // (the snow cover: the scene pass's size)
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
+        }
+        // the pause screen's backdrop (its blurred 192x108 copy of the scene, over the whole window): a composite drawn
+        // before it this frame is under it - the save screen draws the world behind it (runtime/hle/mirror.c)
+        if (!composite && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) && r->x[2] <= 6 &&
+            pr->fi->ntex == 1 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height) {
+            extern void mirror_scene_covered(void);
+            NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
+            if (t0 && t0->width == 192 && t0->height == 108) mirror_scene_covered();
+        }
+        // a fill over the whole screen (blended, untextured or a copy of the screen - a 16:9 render target): how much of
+        // the world and HUD it hides (runtime/hle/mirror.c)
+        if (!composite && (st.color_state[0] & 1) && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) &&
+            r->x[2] <= 6) {
+            extern void mirror_layout_fill(const float *u, uint64_t size);
+            NvnTexture *t0 = pr->fi->ntex ? shader_texture_object(1, &pr->fi->tex[0]) : NULL;
+            if (!pr->fi->ntex || (t0 && (t0->flags & 8) && t0->width * 9 == t0->height * 16))
+                mirror_layout_fill((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         }
         wx_composite = composite;
         if (mirror_draw(composite)) {

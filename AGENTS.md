@@ -37,9 +37,11 @@
   - Refer to them only as the player's own extracted game files. Don't write about how they are obtained, in code,
     comments, docs, commits or pull requests.
 
-- **Branch.** `main` holds the last release and is not where work happens. Base your work on the highest-numbered
-  `beta_<n>` branch and open the pull request against it. Check that branch first: the change you have in mind may
-  already be there.
+- **Branch.** `main` holds the last release and is not where work happens. Base your work on `develop` and open the
+  pull request against it (a fix for a released version: `release/<major>.<minor>`). Name the branch
+  `type/short-name`: `fix/<issue>-<name>`, `feature/<name>`, `docs/<name>`, `ci/<name>` or `chore/<name>`. Check the
+  base branch first: the change you have in mind may already be there. Releases are tagged `v<major>.<minor>.<patch>`
+  (`v0.6.0` is Beta 6).
 
 - **Fix the cause, not the symptom.**
   - Before changing code, find why it happens: the faulting instruction, the value that went wrong and who wrote

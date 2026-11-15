@@ -407,6 +407,10 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     ImGui::Dummy(ImVec2(0, 6 * scale));
     opt_toggle("Useful items only", &useful_only, false, NULL);
     if (f.linked) opt_toggle("Hide checked", &hide_done, false, NULL);
+    // B / Esc go back too, but a mouse has neither: without this row it could only leave by the X (user 2026-11-14)
+    ImGui::Dummy(ImVec2(0, 6 * scale));
+    opt_button_next();
+    bool back = opt_action("Back", "", NULL);
 #if PLAT_TOUCH
     ImGui::EndChild();  // (##left_list)
 #endif
@@ -441,5 +445,5 @@ int spoiler_view_draw(const std::string &seed, float scale) {
     }
     in_right = opt_in_right();
     opt_split_end();
-    return ret;
+    return back ? 0 : ret;
 }

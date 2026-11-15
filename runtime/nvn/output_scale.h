@@ -15,6 +15,10 @@ typedef struct {
 // unknown / not counted)
 void output_scale(double dw, double dh, bool reshape_allowed, double now, double game_ms, double win_ms, OutScale *o);
 double output_scale_dynamic_factor(void);
+// Dynamic resolution for the frame pacer (pace.c "Resolution first"): 0 off (a fixed resolution, or pinned for a test),
+// 1 on with nothing lower to try (at its floor, the Minimum resolution; or holding a frame rate itself: 60 out of reach),
+// 2 on and above it (a step down is still possible)
+int output_scale_dynamic_state(void);
 // The size the game's frames are drawn at now (pixels: the render scale x 1920x1080); the FPS counter shows it with Dynamic
 void output_scale_render_size(int *w, int *h);
 double output_scale_dynamic_hold_fps(void);
