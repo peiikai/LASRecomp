@@ -24,11 +24,12 @@ void menu_sfx_play_ex(int id, float gain, float rate, float lowpass, float from,
 // The start screen's game folder (its romfs/ holds the sounds) until the game's own is set (g_romfs_dir).
 void menu_sfx_set_game_dir(const char *dir);
 // After an ImGui frame of the menu (its thread, before ImGui::Render): the controller's cursor moving plays the cursor
-// sound, A / Enter / a click on something the decide sound, B / Esc (back_ok) the cancel sound.
+// sound, A / Enter / a click on something that opens or does something the decide sound (a value row's step plays the
+// tab sound instead: option_rows.mm), B / Esc (back_ok) the cancel sound.
 void menu_sfx_frame(bool back_ok);
 // The item just drawn is a menu tab: a click or A on it plays the tab sound (as L / R), not decide. Each frame.
 void menu_sfx_tab_item(void);
-// This frame's mouse press plays no decide sound: it steps a value, which plays its own (the tab sound)
+// This frame's press plays no decide sound: it steps a value, which plays its own (the tab sound)
 void menu_sfx_click_silent(void);
 // Nothing played for a while: the stream pauses (menu_sfx_frame calls it).
 void menu_sfx_idle_check(void);
