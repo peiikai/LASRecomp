@@ -28,6 +28,8 @@ void menu_sfx_set_game_dir(const char *dir);
 void menu_sfx_frame(bool back_ok);
 // The item just drawn is a menu tab: a click or A on it plays the tab sound (as L / R), not decide. Each frame.
 void menu_sfx_tab_item(void);
+// This frame's mouse press plays no decide sound: it steps a value, which plays its own (the tab sound)
+void menu_sfx_click_silent(void);
 // Nothing played for a while: the stream pauses (menu_sfx_frame calls it).
 void menu_sfx_idle_check(void);
 // The test hook (LARECOMP_MENU_SFX_TEST=1, main.c): load the sounds now (LARECOMP_NO_AUDIO too) and log each one.
