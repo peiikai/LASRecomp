@@ -279,6 +279,20 @@ int update_status(double *frac, char *msg, int n) {
     return st;
 }
 
+// What this process passed down to its own relaunches (the same version): the new version starts as a fresh launch,
+// its own session log with its own "[info]" header (runtime/main.c, runtime/platform/windows.c)
+static void fresh_launch_env(void) {
+    static const char *const vars[] = {"LASRECOMP_LOG_FILE", "LASRECOMP_INFO_LOGGED", "LARECOMP_REEXEC", "LARECOMP_REEXEC_WHY"};
+    for (const char *v : vars) {
+#ifdef _WIN32
+        _putenv_s(v, "");
+        SetEnvironmentVariableA(v, NULL);
+#else
+        unsetenv(v);
+#endif
+    }
+}
+
 static void restart_app(const std::string &dir, const std::string &appimage_name) {
     if (getenv("LARECOMP_UPDATE_NO_RESTART")) { fprintf(stderr, "[update] not restarting (test)\n"); fflush(stderr); end_process(); }
     fflush(stdout), fflush(stderr);
@@ -290,10 +304,7 @@ static void restart_app(const std::string &dir, const std::string &appimage_name
     wchar_t wpath[1100], wcmd[1200];
     MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath, 1100);
     MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(), -1, wcmd, 1200);
-    // (a new session log for the new version: LASRECOMP_LOG_FILE would make it append to this one's, as a relaunch
-    //  of the same version does - runtime/platform/windows.c)
-    _putenv_s("LASRECOMP_LOG_FILE", "");
-    SetEnvironmentVariableA("LASRECOMP_LOG_FILE", NULL);
+    fresh_launch_env();
     STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi;
@@ -310,6 +321,7 @@ static void restart_app(const std::string &dir, const std::string &appimage_name
         setsid();
         // (the new AppImage's runtime sets its own; these name the old one's mount)
         unsetenv("APPIMAGE"), unsetenv("APPDIR"), unsetenv("ARGV0");
+        fresh_launch_env();
         if (const char *owd = getenv("OWD")) { if (chdir(owd) != 0) {} }
         unsetenv("OWD");
         execl(path.c_str(), path.c_str(), (char *)NULL);
