@@ -715,9 +715,13 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     // a screenshot each tells which of the lookup's inputs is off. On the Adreno all four drew evenly dim, like 1:
     // the reference is finite and in 0..1 and no lookup reads 1.0, yet every one reads a depth at or below it.
     // =6..10 draw a value itself as the light: the depth read (6), the reference (7), the lookup's x (8), y (9) and
-    // layer over the layer count (10), to be set side by side with the same runs on NVIDIA.)
+    // layer over the layer count (10), to be set side by side with the same runs on NVIDIA. On the Adreno 6-9 all drew
+    // half lit, the depth read and the reference alike: every surface's reference at its own depth or just behind it,
+    // as when the shadow pass's polygon offset is missing. =11 / =12 compare with 0.002 / 0.01 more bias: lit again
+    // with shadows there means the casters' depths in the map are too near.)
     static const char *const tests[] = {"float((R) < (D))", "float(isnan(R) || isinf(R))", "float((R) > 1.0f)",
-                                        "float((R) < 0.0f)", "float((D) >= 1.0f)", "(D)", "(R)", "(U)", "(V)", "(L)"};
+                                        "float((R) < 0.0f)", "float((D) >= 1.0f)", "(D)", "(R)", "(U)", "(V)", "(L)",
+                                        "float((R) - 0.002f < (D))", "float((R) - 0.01f < (D))"};
     if (soft) {
         int nt = (int)(sizeof tests / sizeof *tests);
         int m = maxwell_glsl_soft_shadow >= 1 && maxwell_glsl_soft_shadow <= nt ? maxwell_glsl_soft_shadow - 1 : 0;

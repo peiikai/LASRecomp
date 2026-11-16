@@ -7225,8 +7225,19 @@ static void draw_(CmdRec *r, bool indexed) {
         if (f[0] && sd && output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0))
             f[0] *= output_scale_shadow_slope();
         if (equal_tol) { f[1] -= 8; on = true; }  // (see the EQUAL comment above: a few depth ulps nearer)
-        if (ss_need(SS_DBE, ss.dbe == (VkBool32)on)) { ss.dbe = on; rec_CmdSetDepthBiasEnable(cb, on); }
-        if (ss_need(SS_DB, !memcmp(ss.db, f, sizeof f))) { memcpy(ss.db, f, sizeof f); rec_CmdSetDepthBias(cb, f[1], f[2], f[0]); }
+        bool set_e = ss_need(SS_DBE, ss.dbe == (VkBool32)on), set_b;
+        if (set_e) { ss.dbe = on; rec_CmdSetDepthBiasEnable(cb, on); }
+        set_b = ss_need(SS_DB, !memcmp(ss.db, f, sizeof f));
+        if (set_b) { memcpy(ss.db, f, sizeof f); rec_CmdSetDepthBias(cb, f[1], f[2], f[0]); }
+        // (debug, #779) LARECOMP_VK_BIAS_LOG=1: the polygon offset of the first draws into the shadow map, and whether
+        // it was recorded or left to the state filter (on Qualcomm and AMD the map read as if it had none)
+        static int blog = -1, nblog;
+        if (blog < 0) blog = getenv("LARECOMP_VK_BIAS_LOG") && atoi(getenv("LARECOMP_VK_BIAS_LOG"));
+        if (blog && nblog < 24 && sd && output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0)) {
+            nblog++;
+            LOG("[vk] shadow map draw %d: polygon offset %s (game %d), slope %g units %g clamp %g; enable %s, values %s\n", nblog,
+                on ? "on" : "off", (st.poly[3] & 4) != 0, f[0], f[1], f[2], set_e ? "recorded" : "kept", set_b ? "recorded" : "kept");
+        }
     }
 
     // ---- textures first (their scales feed the widescreen decision and the rscale table), then the viewport
