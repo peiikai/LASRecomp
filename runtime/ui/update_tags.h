@@ -44,7 +44,7 @@ static inline std::string tag_label(const std::string &t, bool with_word) {
 
 // Rolling builds are never on the normal releases: each kind sits on one rolling pre-release named after it, its files
 // named LAS.Recomp-<kind>-<YYYYMMDDHHMM>-<commit>-<platform>.<ext>. Kinds: "experimental" (experimental platforms,
-// .github/workflows/experimental.yml) and "nightly" (every platform from develop, .github/workflows/nightly.yml).
+// from the retired experimental.yml) and "nightly" (every platform from develop, .github/workflows/nightly.yml).
 // The newest stamp of that kind for this platform (e.g. "linux-aarch64"), found in the releases JSON; 0: none.
 static inline long long newest_rolling(const std::string &body, const std::string &kind, const std::string &platform) {
     const std::string key = "LAS.Recomp-" + kind + "-";

@@ -119,7 +119,7 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // players move to it.
 #define LARECOMP_VERSION "v0.6.0"
 #define LARECOMP_TEST_OF "v0.6.0"
-// Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
+// Experimental builds (the retired experimental.yml set these; Experimental moved to nightly): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
 // Nightly builds (.github/workflows/nightly.yml sets this): the build's time (YYYYMMDDHHMM, UTC; 0: not a nightly).
