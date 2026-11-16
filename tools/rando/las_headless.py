@@ -14,6 +14,21 @@ import re
 import sys
 import types
 
+# Game files copied from a Mac to a drive that isn't its own (an SD card, exFAT) carry a hidden ._<name> beside each
+# file. They aren't the game's, but every folder listing here took them for its files: the room shuffle read
+# ._Lv07EagleTower.bntx as a dungeon's textures and failed. One filter for every listing (tools/rando and LAS-Randomizer).
+_listdir = os.listdir
+
+
+def _listdir_game(path='.'):
+    names = _listdir(path)
+    if names and isinstance(names[0], bytes):
+        return [f for f in names if not (f.startswith(b'._') or f == b'.DS_Store')]
+    return [f for f in names if not (f.startswith('._') or f == '.DS_Store')]
+
+
+os.listdir = _listdir_game
+
 if os.environ.get('LARECOMP_RANDO_SCRATCH'):  # (Android: the app's internal storage - see shuffle_dungeon_rooms)
     import tempfile
     tempfile.tempdir = os.environ['LARECOMP_RANDO_SCRATCH']
