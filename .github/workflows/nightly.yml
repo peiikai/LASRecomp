@@ -78,9 +78,23 @@ jobs:
               echo "- Linux: \`linux-x86_64.AppImage\`, \`linux-aarch64.AppImage\`"
               echo "- Android: \`android.apk\`, installed as its own app, LAS Recomp Nightly, beside the release one"
               echo "- iPhone and iPad: \`iOS.laskit\`, made into the app with a nightly desktop build of the same date"
+              # Changes: the pull requests merged since the previous round, newest round first, with the earlier
+              # rounds' lists kept (the last 30), so a player several nightlies behind sees everything in the start
+              # screen's update dialog. Each round starts with a "nightly-changes: <stamp>" line; the dialog shows the
+              # rounds newer than its own build (runtime/ui/update_notes.h).
+              CHANGES=
               if [ -n "$RSHA" ]; then
-                MERGES=$(gh api "repos/$GH_REPO/compare/$RSHA...$SHA" --jq '.commits[] | select(.parents | length > 1) | .commit.message | split("\n") | .[0]' 2>/dev/null | sed -n 's/^Merge pull request \(#[0-9]*\).*/\1/p' | tr '\n' ' ' || true)
-                [ -n "$MERGES" ] && { echo; echo "New since the previous nightly: $MERGES"; }
+                CHANGES=$(gh api "repos/$GH_REPO/compare/$RSHA...$SHA" --jq '.commits[] | select(.parents | length > 1) | .commit.message | capture("^Merge pull request #(?<n>[0-9]+)[^\n]*\n\n(?<t>[^\n]+)") | "- \(.t) (#\(.n))"' 2>/dev/null | tac || true)
+              fi
+              OLD=$(awk '/^<!-- nightly-changes: [0-9][0-9]* -->$/ { n++ } n && n < 30 && !/^To report a problem/' <<< "$BODY" | sed '/^<!-- nightly-round:/,$d')
+              if [ -n "$CHANGES" ] || [ -n "$OLD" ]; then
+                echo; echo "## Changes"; echo
+                if [ -n "$CHANGES" ]; then
+                  echo "<!-- nightly-changes: $STAMP -->"
+                  echo "**$(date -u -d "${STAMP::8}" '+%Y-%m-%d')**"; echo
+                  echo "$CHANGES"; echo
+                fi
+                [ -n "$OLD" ] && echo "$OLD"
               fi
               echo
               echo "To report a problem, open an [issue]($URL/issues), say it's a nightly and which date, and attach the log (\`lasrecomp.log\` in the data folder)."
@@ -283,6 +297,9 @@ jobs:
           bad=$(find "$D" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
                 find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
           [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+      - name: Update manifest
+        env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.plan.outputs.version }}' }
+        run: tools/update_manifest.sh "$VERSION" windows build/dist/*-windows.zip "build/dist/LAS Recomp"
       - name: Publish
         shell: bash  # (Git Bash: gh is on its PATH, not MSYS2's)
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
@@ -349,6 +366,9 @@ jobs:
           bad=$(find "$D" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
                 find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
           [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+      - name: Update manifest
+        env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.plan.outputs.version }}' }
+        run: tools/update_manifest.sh "$VERSION" windows-arm64 build/dist/*-windows-arm64.zip "build/dist/LAS Recomp"
       - name: Publish
         shell: bash  # (Git Bash: gh is on its PATH, not MSYS2's)
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
@@ -404,6 +424,9 @@ jobs:
           find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
             if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
           done
+      - name: Update manifest
+        env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.plan.outputs.version }}' }
+        run: tools/update_manifest.sh "$VERSION" linux-${{ matrix.arch }} build/dist/*-linux-${{ matrix.arch }}.AppImage
       - name: Publish
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-linux-${{ matrix.arch }}.AppImage linux-${{ matrix.arch }}.AppImage
