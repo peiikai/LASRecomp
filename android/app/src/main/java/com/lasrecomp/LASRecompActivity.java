@@ -538,6 +538,10 @@ public class LASRecompActivity extends SDLActivity {
         return out;
     }
 
+    // A Mac's hidden files beside the game's: ._<name> (a file's metadata on a drive that isn't the Mac's own, such as an
+    // SD card) and .DS_Store. Not the game's, so not copied: the seed generator read ._Lv07EagleTower.bntx as a dungeon.
+    private static boolean macJunk(String name) { return name.startsWith("._") || name.equals(".DS_Store"); }
+
     private static Doc child(List<Doc> kids, String name) {
         for (Doc d : kids) if (d.name.equals(name)) return d;
         return null;
@@ -554,6 +558,7 @@ public class LASRecompActivity extends SDLActivity {
         if (found[1] == null && rc != null && rc.isDir()) found[1] = dir;
         for (Doc k : kids) {
             String n = k.name.toLowerCase();
+            if (macJunk(k.name)) continue;
             if (n.endsWith(".xci") || n.endsWith(".nsp") || n.endsWith(".nca") || n.endsWith(".nsz") || n.endsWith(".xcz"))
                 unusable = true;
         }
@@ -563,7 +568,7 @@ public class LASRecompActivity extends SDLActivity {
 
     private long treeBytes(Uri tree, Doc dir) {
         long n = 0;
-        for (Doc k : children(tree, dir.id)) n += k.isDir() ? treeBytes(tree, k) : k.size;
+        for (Doc k : children(tree, dir.id)) n += macJunk(k.name) ? 0 : k.isDir() ? treeBytes(tree, k) : k.size;
         return n;
     }
 
@@ -574,6 +579,7 @@ public class LASRecompActivity extends SDLActivity {
         byte[] buf = new byte[1 << 20];
         for (Doc k : children(tree, dir.id)) {
             if (nativeImportCancelled()) return false;
+            if (macJunk(k.name)) continue;
             File dst = new File(to, k.name);
             if (k.isDir()) {
                 if (!copyTree(tree, k, dst)) return false;
