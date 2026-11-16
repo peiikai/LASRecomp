@@ -50,8 +50,9 @@ extern "C" int32_t rt_damage(int32_t dmg, int32_t shift) {
 // Mode keeps the game's own flag.)
 extern "C" void difficulty_frame(void) {}
 
-// General tab: the menus' and the game's language, text speed, the Hero Mode icon and the speedrun timer - settings
-// that change how the game is shown, not how it plays (user, 2026-11-11). The start screen's System tab stays apart.
+// General tab: the menus' and the game's language, text speed, where the HUD sits, the Hero Mode icon and the speedrun
+// timer - settings that change how the game is shown, not how it plays (user, 2026-11-11). The start screen's System tab
+// stays apart.
 extern "C" void input_apply_background(void);  // hle/input.c
 
 extern "C" void general_draw(float scale) {
@@ -94,6 +95,13 @@ extern "C" void general_draw(float scale) {
                                   "Controllers keep working while another window is in front. macOS may ask for Input "
                                   "Monitoring permission."))
         input_apply_background(), settings_save();
+    {   // (issue #817: ultrawide monitors; phones and tablets had it at the edges always, now their default)
+        static const char *const pos[] = {LN("Centered"), LN("At edges")};
+        if (g_settings.aspect != ASPECT_UNLOCKED) opt_disable_next(), opt_needs_next("Aspect ratio", "Unlocked");
+        if (opt_choice("HUD", &g_settings.hud_pos, pos, 2, PLAT_TOUCH ? HUD_EDGES : HUD_CENTERED,
+                       "Where the hearts, items and rupees sit when the screen isn't 16:9."))
+            settings_save();
+    }
     if (opt_toggle("Hide Hero Mode icon", &g_settings.hide_hero_icon, false,
                    "Hides the Hero Mode emblem in the corner of the screen while playing a Hero Mode file."))
         settings_save();

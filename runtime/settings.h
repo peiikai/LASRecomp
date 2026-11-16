@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
+enum { HUD_CENTERED = 0, HUD_EDGES = 1 };
 enum { RES_MATCH = 0, /* 1..8 = 1x..8x */ RES_DYNAMIC = 9 /* output_scale.c's mode while dyn_res is on */, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12 };
 // (11 was 67% of the display: larecomp.ini "67%" now loads as RES_Q75)
 enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */ };
@@ -70,6 +71,8 @@ typedef struct {
     bool hookshot_8way;  // the hookshot fires along the nearest of 8 directions (for 360-degree movement): runtime/hle/hookshot.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
     bool hide_hero_icon; // no Hero Mode icon on the HUD
+    int hud_pos;         // HUD_*: windows not 16:9 (Aspect ratio Unlocked): the game's HUD in the centred 16:9 box, or at
+                         // the window's edges (runtime/hle/hud_corners.c). Default: centred, at the edges on phones and tablets
     bool pause_unfocused; // the game stops while its window isn't in front (runtime/hle/vi.c)
     bool remember_window; // the window opens at the size it was closed at (runtime/paths.c rt_window_remember)
     int window_w, window_h; // that size, in points (0: none saved yet)

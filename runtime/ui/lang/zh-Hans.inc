@@ -2157,3 +2157,7 @@
 {"Update can't change the app's files here. Use Download.", "此处无法通过更新修改应用文件。请使用下载。"},
 {"Update", "更新"},
 {"Download", "下载"},
+{"HUD", "HUD"},
+{"Centered", "居中"},
+{"At edges", "屏幕边缘"},
+{"Where the hearts, items and rupees sit when the screen isn't 16:9.", "屏幕不是16:9时，心、道具和卢比显示的位置。"},

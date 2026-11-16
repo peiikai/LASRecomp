@@ -2157,3 +2157,7 @@
 {"Update can't change the app's files here. Use Download.", "ここではアップデートでアプリのファイルを変更できません。ダウンロードを使ってください。"},
 {"Update", "アップデート"},
 {"Download", "ダウンロード"},
+{"HUD", "HUD"},
+{"Centered", "中央"},
+{"At edges", "画面の端"},
+{"Where the hearts, items and rupees sit when the screen isn't 16:9.", "画面が16:9でないとき、ハートやアイテム、ルピーを表示する位置です。"},
