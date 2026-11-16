@@ -129,6 +129,11 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Self-updater (manifest, signature, swap and rollback)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
+          build/test-update
+          tools/test_update_e2e.sh
       - name: Controller rumble (HID bridge to SDL, fake gamepad)
         run: |
           clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_rumble.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-rumble
@@ -265,6 +270,11 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Self-updater (manifest, signature, swap and rollback)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
+          build/test-update
+          tools/test_update_e2e.sh
       - name: Controller rumble (HID bridge to SDL, fake gamepad)
         run: |
           clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_rumble.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-rumble
@@ -351,6 +361,11 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Self-updater (manifest, signature, swap and rollback)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
+          build/test-update
+          tools/test_update_e2e.sh
       - name: Controller rumble (HID bridge to SDL, fake gamepad)
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_rumble.c -lSDL3 -o build/test-rumble
@@ -507,6 +522,10 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Self-updater (manifest, signature, swap and rollback; Windows file rules)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update.exe
+          build/test-update.exe
       - name: Movie extractor lifecycle regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe
@@ -611,6 +630,10 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Self-updater (manifest, signature, swap and rollback; Windows file rules)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update.exe
+          build/test-update.exe
       - name: Movie extractor lifecycle regression
         run: |
           clang -pthread -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe
