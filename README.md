@@ -47,6 +47,10 @@ These are the minimums during the beta and may change as development continues.
 | RAM | 8 GB |
 | Storage | About 15 GB free |
 
+> [!NOTE]
+> Some Qualcomm (Adreno) GPU drivers have many bugs, even on newer phones. If you see graphical issues, try a Turnip
+> driver (Settings > System, see the GPU driver row above) before you open an issue report.
+
 > [!TIP]
 > We recommend turning on Dynamic resolution and choosing an FPS target. The resolution then adjusts to what your device
 > can handle, and drops when the chip heats up and slows down, which most phones and tablets do over longer play.
