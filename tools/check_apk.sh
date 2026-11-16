@@ -2,7 +2,7 @@
 # tools/check_apk.sh <apk>: the APK holds only what the app ships - the runtime, SDL, shaderc, FFmpeg, the shipped fonts
 # and icon with their licences, and the game code builder in assets/gen.zip (Python's library, the bindings, zig's
 # lib/, the generator and the headers, and the seed generator: tools/rando, LAS-Randomizer's code and data), checked
-# file by file. Nothing of the game. (.github/workflows/ci.yml, experimental.yml)
+# file by file. Nothing of the game. (.github/workflows/ci.yml, release.yml, nightly.yml)
 set -eu
 APK=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
