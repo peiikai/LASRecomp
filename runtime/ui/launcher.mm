@@ -1027,7 +1027,6 @@ static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip)
 // Something the player should know before playing (iPhone: the data folder offloaded to iCloud), in the menus' look
 // with an OK - it was a system alert (user 2026-11-11). Main thread.
 static std::string g_notice;
-static bool g_notice_offload;
 static void notice_popup(float s) {
     float sc = s * 720.0f / 1080.0f;
     if (!g_notice.empty() && !ImGui::IsPopupOpen("##notice")) ImGui::OpenPopup("##notice");
@@ -1043,11 +1042,6 @@ static void notice_popup(float s) {
     ImGui::SetItemDefaultFocus();
     if (ImGui::Button(L("OK"), ImVec2(240 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
         ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
-        if (g_notice_offload) {
-            g_notice_offload = false;
-            g_settings.cloud_offload_seen = true;
-            settings_save();
-        }
         g_notice.clear();
         ImGui::CloseCurrentPopup();
     }
@@ -2484,17 +2478,12 @@ extern "C" void launcher_run(const char *root) {
                              g_settings.cloud_kept ? " (kept there)" : "", rt_data_root());
         if (g_cloud_name) {
             PlatCloudState cloud = plat_cloud_offloaded(rt_data_root());
-            if (cloud == PLAT_CLOUD_OFFLOADED && !g_settings.cloud_offload_seen) {
-                g_notice_offload = true;
+            if (cloud == PLAT_CLOUD_OFFLOADED) {
                 char here[400];
                 snprintf(here, sizeof here, L(NOT_HERE), g_cloud_name);
                 g_notice = std::string(here) + "\n\n" + L(KEEP_DOWNLOADED);
             } else if (cloud == PLAT_CLOUD_INCOMPLETE) {
                 fprintf(stderr, "[cloud] could not verify local availability in %s\n", rt_data_root());
-            } else if (cloud == PLAT_CLOUD_AVAILABLE && g_settings.cloud_offload_seen) {
-                // A later offload is a new condition once a complete scan finds everything local.
-                g_settings.cloud_offload_seen = false;
-                settings_save();
             }
         }
     }

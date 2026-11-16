@@ -90,7 +90,6 @@ typedef struct {
     bool aspect_asked;   // the start screen's one-time "authentic 16:9 or unlocked?" question was answered
     bool menu_tip_seen;  // the start screen's one-time "how to open the menu" note was shown (first PLAY ever)
     bool cloud_kept;     // the start screen's cloud drive warning (OneDrive, iCloud Drive) was answered with Keep here
-    bool cloud_offload_seen;  // the offloaded-files notice was acknowledged during the current offload
     // cheats (runtime/ui/cheats.mm), applied every frame while a save is loaded
     bool cheat_hearts;   // health kept full
     bool cheat_ammo;     // bombs / arrows / magic powder kept full (for the bags Link owns)

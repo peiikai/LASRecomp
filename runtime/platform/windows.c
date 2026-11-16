@@ -1057,9 +1057,11 @@ static PlatCloudState cloud_root_state(wchar_t *path) {
         if (wcslen(path) < 7 || path[5] != L':' || path[6] != L'\\') return PLAT_CLOUD_INCOMPLETE;
         if (!path[7]) {
             DWORD attr = GetFileAttributesW(path);
-            if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY) ||
-                (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return PLAT_CLOUD_INCOMPLETE;
-            return attr & CLOUD_RECALL ? PLAT_CLOUD_OFFLOADED : PLAT_CLOUD_AVAILABLE;
+            if (attr == INVALID_FILE_ATTRIBUTES) return PLAT_CLOUD_INCOMPLETE;
+            // RECALL_ON_OPEN is only meaningful in directory enumeration data.
+            if (attr & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_OFFLINE)) return PLAT_CLOUD_OFFLOADED;
+            if (!(attr & FILE_ATTRIBUTE_DIRECTORY) || (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return PLAT_CLOUD_INCOMPLETE;
+            return PLAT_CLOUD_AVAILABLE;
         }
         first = path + 7;
     }
@@ -1071,9 +1073,10 @@ static PlatCloudState cloud_root_state(wchar_t *path) {
         HANDLE h = valid ? FindFirstFileExW(path, FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0) : INVALID_HANDLE_VALUE;
         if (end) *end = L'\\';
         if (h == INVALID_HANDLE_VALUE) return PLAT_CLOUD_INCOMPLETE;
-        FindClose(h);
-        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || cloud_skip_reparse(&fd)) return PLAT_CLOUD_INCOMPLETE;
+        bool closed = FindClose(h);
         if (fd.dwFileAttributes & CLOUD_RECALL) return PLAT_CLOUD_OFFLOADED;
+        if (!closed || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || cloud_skip_reparse(&fd))
+            return PLAT_CLOUD_INCOMPLETE;
         if (!end) return PLAT_CLOUD_AVAILABLE;
         part = end + 1;
     }
@@ -1106,9 +1109,10 @@ PlatCloudState plat_cloud_offloaded(const char *dir) {
         }
         do {
             const wchar_t *name = fd.cFileName;
-            if (!wcscmp(name, L".") || !wcscmp(name, L"..") || cloud_skip_reparse(&fd)) continue;
+            if (!wcscmp(name, L".") || !wcscmp(name, L"..")) continue;
+            // An unknown tag can still carry recall attributes. Never descend through it.
             if (fd.dwFileAttributes & CLOUD_RECALL) { state = PLAT_CLOUD_OFFLOADED; break; }
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || cloud_skip_reparse(&fd)) continue;
 
             size_t count = l + wcslen(name) + 1;
             if (count > CLOUD_PATH_MAX) { state = PLAT_CLOUD_INCOMPLETE; continue; }
@@ -1126,7 +1130,7 @@ PlatCloudState plat_cloud_offloaded(const char *dir) {
             stack[top++] = sub;
         } while (FindNextFileW(h, &fd));
         if (state != PLAT_CLOUD_OFFLOADED && GetLastError() != ERROR_NO_MORE_FILES) state = PLAT_CLOUD_INCOMPLETE;
-        FindClose(h);
+        if (!FindClose(h) && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
     }
     while (top) free(stack[--top]);
     free(stack);

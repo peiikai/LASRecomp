@@ -6,7 +6,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <execinfo.h>
-#include <fts.h>
+#include <fcntl.h>
 #include <ftw.h>
 #include <limits.h>
 #include <mach-o/dyld.h>
@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/attr.h>
 #include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -211,11 +212,86 @@ const char *plat_cloud_synced(const char *dir) {
     return cloud_restore_policy(policy) && synced ? "iCloud Drive" : NULL;
 }
 
+// ATTR_CMN_OBJTYPE uses Darwin's enum vtype. The iOS SDK does not ship sys/vnode.h.
+enum { CLOUD_VREG = 1, CLOUD_VDIR = 2 };
+
+// The returned-attributes bitmap and per-entry error precede the requested attributes.
+typedef struct {
+    uint32_t length;
+    attribute_set_t returned;
+    uint32_t error;
+    attrreference_t name;
+    fsobj_type_t type;
+    uint32_t flags;
+} CloudEntry;
+
+// Apple's fts can swallow errors after a partial directory read. Read the same metadata in batches,
+// handle both syscall and entry errors, and open child directories relative to the parent descriptor.
+static PlatCloudState cloud_scan_dir(int parent, const char *name, size_t remaining) {
+    int fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return PLAT_CLOUD_INCOMPLETE;
+    enum { BUFFER_SIZE = 4096 };
+    char *buffer = malloc(BUFFER_SIZE);
+    if (!buffer) { close(fd); return PLAT_CLOUD_INCOMPLETE; }
+    const attrgroup_t fields = ATTR_CMN_NAME | ATTR_CMN_OBJTYPE | ATTR_CMN_FLAGS;
+    struct attrlist request = {
+        .bitmapcount = ATTR_BIT_MAP_COUNT,
+        .commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | fields,
+    };
+    PlatCloudState state = PLAT_CLOUD_AVAILABLE;
+    while (state != PLAT_CLOUD_OFFLOADED) {
+        int count = getattrlistbulk(fd, &request, buffer, BUFFER_SIZE, FSOPT_PACK_INVAL_ATTRS);
+        if (count <= 0) {
+            if (count < 0) state = PLAT_CLOUD_INCOMPLETE;
+            break;
+        }
+        size_t offset = 0;
+        for (int i = 0; i < count; i++) {
+            CloudEntry entry;
+            if (BUFFER_SIZE - offset < sizeof entry) { state = PLAT_CLOUD_INCOMPLETE; break; }
+            const char *record = buffer + offset;
+            memcpy(&entry, record, sizeof entry);
+            if (entry.length < sizeof entry || entry.length > BUFFER_SIZE - offset) {
+                state = PLAT_CLOUD_INCOMPLETE;
+                break;
+            }
+            offset += entry.length;
+            if (((entry.returned.commonattr & ATTR_CMN_ERROR) && entry.error) ||
+                (entry.returned.commonattr & fields) != fields) {
+                state = PLAT_CLOUD_INCOMPLETE;
+                continue;
+            }
+            if ((entry.type == CLOUD_VDIR || entry.type == CLOUD_VREG) && (entry.flags & SF_DATALESS)) {
+                state = PLAT_CLOUD_OFFLOADED;
+                break;
+            }
+            if (entry.type != CLOUD_VDIR) continue;
+
+            int64_t name_offset = (int64_t)offsetof(CloudEntry, name) + entry.name.attr_dataoffset;
+            size_t length = entry.name.attr_length;  // includes NUL, which budgets for the path separator
+            if (name_offset < (int64_t)sizeof entry || name_offset > entry.length || !length ||
+                length > entry.length - (size_t)name_offset || length > remaining) {
+                state = PLAT_CLOUD_INCOMPLETE;
+                continue;
+            }
+            const char *child_name = record + name_offset;
+            if (child_name[length - 1] != '\0') { state = PLAT_CLOUD_INCOMPLETE; continue; }
+            if (!strcmp(child_name, ".") || !strcmp(child_name, "..")) continue;
+            PlatCloudState child = cloud_scan_dir(fd, child_name, remaining - length);
+            if (child != PLAT_CLOUD_AVAILABLE) state = child;
+            if (state == PLAT_CLOUD_OFFLOADED) break;
+        }
+    }
+    free(buffer);
+    if (close(fd) != 0 && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    return state;
+}
+
 // SF_DATALESS reports APFS materialization, not sync status or availability on other file systems. A
-// downloaded directory can still contain dataless files. Inspect directories before fts enumerates them.
+// downloaded directory can still contain dataless files. Inspect each directory before enumerating it.
 PlatCloudState plat_cloud_offloaded(const char *dir) {
     if (!dir || !*dir) return PLAT_CLOUD_INCOMPLETE;
-    // A trailing slash would make pathname resolution follow a root symlink even with FTS_PHYSICAL.
+    // A trailing slash or "/." would make pathname resolution follow a root symlink.
     char path[PATH_MAX];
     size_t len = strlen(dir);
     if (len >= sizeof path) return PLAT_CLOUD_INCOMPLETE;
@@ -229,37 +305,11 @@ PlatCloudState plat_cloud_offloaded(const char *dir) {
     int policy = cloud_no_materialize();
     if (policy < 0) return PLAT_CLOUD_INCOMPLETE;
 
-    char *paths[] = {path, NULL};
-    FTS *f = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
     PlatCloudState state = PLAT_CLOUD_INCOMPLETE;
-    if (f) {
-        state = PLAT_CLOUD_AVAILABLE;
-        for (;;) {
-            errno = 0;
-            FTSENT *e = fts_read(f);
-            if (!e) {
-                if (errno) state = PLAT_CLOUD_INCOMPLETE;
-                break;
-            }
-            if (e->fts_level == FTS_ROOTLEVEL && e->fts_info != FTS_D && e->fts_info != FTS_DP) {
-                state = PLAT_CLOUD_INCOMPLETE;
-                break;
-            }
-            switch (e->fts_info) {
-            case FTS_D:
-            case FTS_F:
-                if (e->fts_statp->st_flags & SF_DATALESS) state = PLAT_CLOUD_OFFLOADED;
-                break;
-            case FTS_DC:
-            case FTS_DNR:
-            case FTS_ERR:
-            case FTS_NS:
-                state = PLAT_CLOUD_INCOMPLETE;
-                break;
-            }
-            if (state == PLAT_CLOUD_OFFLOADED) break;
-        }
-        if (fts_close(f) != 0 && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    struct stat st;
+    if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        state = st.st_flags & SF_DATALESS ? PLAT_CLOUD_OFFLOADED
+                                         : cloud_scan_dir(AT_FDCWD, path, sizeof path - len - 1);
     }
     if (!cloud_restore_policy(policy) && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
     return state;
