@@ -1045,6 +1045,13 @@ static bool cloud_skip_reparse(const WIN32_FIND_DATAW *fd) {
     return (fd->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && !cloud_placeholder(fd->dwReserved0);
 }
 
+// The first item found offloaded, by path: a report's log then says which one.
+static void cloud_log_offloaded(const wchar_t *path) {
+    char u[3300];
+    if (!WideCharToMultiByte(CP_UTF8, 0, path, -1, u, sizeof u, NULL, NULL)) snprintf(u, sizeof u, "?");
+    fprintf(stderr, "[cloud] not on the device: %s\n", u);
+}
+
 // Check ancestors before looking up their children: an exact-name query also enumerates its parent.
 static PlatCloudState cloud_root_state(wchar_t *path) {
     wchar_t *first;
@@ -1086,7 +1093,11 @@ PlatCloudState plat_cloud_offloaded(const char *dir) {
     wchar_t *root = cloud_path_utf8(dir);
     if (!root) return PLAT_CLOUD_INCOMPLETE;
     PlatCloudState state = cloud_root_state(root);
-    if (state != PLAT_CLOUD_AVAILABLE) { free(root); return state; }
+    if (state != PLAT_CLOUD_AVAILABLE) {
+        if (state == PLAT_CLOUD_OFFLOADED) cloud_log_offloaded(root);  // (the folder itself, or one above it)
+        free(root);
+        return state;
+    }
 
     size_t cap = 64, top = 0;
     wchar_t **stack = malloc(cap * sizeof *stack);
@@ -1111,7 +1122,12 @@ PlatCloudState plat_cloud_offloaded(const char *dir) {
             const wchar_t *name = fd.cFileName;
             if (!wcscmp(name, L".") || !wcscmp(name, L"..")) continue;
             // An unknown tag can still carry recall attributes. Never descend through it.
-            if (fd.dwFileAttributes & CLOUD_RECALL) { state = PLAT_CLOUD_OFFLOADED; break; }
+            if (fd.dwFileAttributes & CLOUD_RECALL) {
+                if (l + wcslen(name) < CLOUD_PATH_MAX) wcscpy(pattern + l, name);  // (the scan ends here: over the "*")
+                cloud_log_offloaded(pattern);
+                state = PLAT_CLOUD_OFFLOADED;
+                break;
+            }
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || cloud_skip_reparse(&fd)) continue;
 
             size_t count = l + wcslen(name) + 1;

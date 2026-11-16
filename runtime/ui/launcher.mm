@@ -2477,13 +2477,15 @@ extern "C" void launcher_run(const char *root) {
         if (g_cloud_name) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_cloud_name,
                              g_settings.cloud_kept ? " (kept there)" : "", rt_data_root());
         if (g_cloud_name) {
+            uint64_t t0 = plat_now_ns();
             PlatCloudState cloud = plat_cloud_offloaded(rt_data_root());
+            fprintf(stderr, "[cloud] %s (%.0f ms)\n", cloud == PLAT_CLOUD_OFFLOADED ? "some files are not on the device"
+                    : cloud == PLAT_CLOUD_INCOMPLETE ? "could not verify local availability" : "every file is on the device",
+                    (plat_now_ns() - t0) / 1e6);
             if (cloud == PLAT_CLOUD_OFFLOADED) {
                 char here[400];
                 snprintf(here, sizeof here, L(NOT_HERE), g_cloud_name);
                 g_notice = std::string(here) + "\n\n" + L(KEEP_DOWNLOADED);
-            } else if (cloud == PLAT_CLOUD_INCOMPLETE) {
-                fprintf(stderr, "[cloud] could not verify local availability in %s\n", rt_data_root());
             }
         }
     }

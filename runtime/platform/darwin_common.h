@@ -188,8 +188,10 @@ bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPT
 static int cloud_no_materialize(void) {
     int policy = getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD);
     if (policy < 0 || setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD,
-                                      IOPOL_MATERIALIZE_DATALESS_FILES_OFF) != 0)
+                                      IOPOL_MATERIALIZE_DATALESS_FILES_OFF) != 0) {
+        fprintf(stderr, "[cloud] could not set materialization policy: %s\n", strerror(errno));
         return -1;
+    }
     return policy;
 }
 
@@ -224,6 +226,24 @@ typedef struct {
     fsobj_type_t type;
     uint32_t flags;
 } CloudEntry;
+
+// The entry's name in its record, length with its NUL; NULL when the record doesn't hold one.
+static const char *cloud_entry_name(const char *record, const CloudEntry *entry, size_t *length) {
+    int64_t at = (int64_t)offsetof(CloudEntry, name) + entry->name.attr_dataoffset;
+    size_t n = entry->name.attr_length;
+    if (at < (int64_t)sizeof *entry || at > entry->length || !n || n > entry->length - (size_t)at ||
+        record[at + (int64_t)n - 1] != '\0')
+        return NULL;
+    *length = n;
+    return record + at;
+}
+
+// The first item found offloaded, by path: a report's log then says which one.
+static void cloud_log_offloaded(int dir, const char *name) {
+    char path[PATH_MAX];
+    if (fcntl(dir, F_GETPATH, path) != 0) snprintf(path, sizeof path, "?");
+    fprintf(stderr, "[cloud] not on the device: %s/%s\n", path, name ? name : "?");
+}
 
 // Apple's fts can swallow errors after a partial directory read. Read the same metadata in batches,
 // handle both syscall and entry errors, and open child directories relative to the parent descriptor.
@@ -261,21 +281,16 @@ static PlatCloudState cloud_scan_dir(int parent, const char *name, size_t remain
                 state = PLAT_CLOUD_INCOMPLETE;
                 continue;
             }
+            size_t length = 0;  // includes NUL, which budgets for the path separator
+            const char *child_name = cloud_entry_name(record, &entry, &length);
             if ((entry.type == CLOUD_VDIR || entry.type == CLOUD_VREG) && (entry.flags & SF_DATALESS)) {
+                cloud_log_offloaded(fd, child_name);
                 state = PLAT_CLOUD_OFFLOADED;
                 break;
             }
             if (entry.type != CLOUD_VDIR) continue;
 
-            int64_t name_offset = (int64_t)offsetof(CloudEntry, name) + entry.name.attr_dataoffset;
-            size_t length = entry.name.attr_length;  // includes NUL, which budgets for the path separator
-            if (name_offset < (int64_t)sizeof entry || name_offset > entry.length || !length ||
-                length > entry.length - (size_t)name_offset || length > remaining) {
-                state = PLAT_CLOUD_INCOMPLETE;
-                continue;
-            }
-            const char *child_name = record + name_offset;
-            if (child_name[length - 1] != '\0') { state = PLAT_CLOUD_INCOMPLETE; continue; }
+            if (!child_name || length > remaining) { state = PLAT_CLOUD_INCOMPLETE; continue; }
             if (!strcmp(child_name, ".") || !strcmp(child_name, "..")) continue;
             PlatCloudState child = cloud_scan_dir(fd, child_name, remaining - length);
             if (child != PLAT_CLOUD_AVAILABLE) state = child;
@@ -308,6 +323,7 @@ PlatCloudState plat_cloud_offloaded(const char *dir) {
     PlatCloudState state = PLAT_CLOUD_INCOMPLETE;
     struct stat st;
     if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (st.st_flags & SF_DATALESS) fprintf(stderr, "[cloud] not on the device: %s\n", path);
         state = st.st_flags & SF_DATALESS ? PLAT_CLOUD_OFFLOADED
                                          : cloud_scan_dir(AT_FDCWD, path, sizeof path - len - 1);
     }
