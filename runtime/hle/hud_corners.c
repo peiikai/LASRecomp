@@ -1,8 +1,9 @@
 // Every platform: how shown the game's own X / Y item buttons are (hud_xy_alpha, for the D-pad items' cross), and with
 // D-pad = Items the rupee count moved left, out from under that cross (rupee_dx).
 //
-// Phones and tablets: with Aspect ratio = Unlocked and a window wider or taller than 16:9, the game's HUD goes to the real
-// screen corners instead of the centred 16:9 box, in every room so it never jumps at a door; and optionally its X / Y item
+// With Aspect ratio = Unlocked, General > HUD = At edges (the default on phones and tablets; ultrawide monitors: issue
+// #817) and a window wider or taller than 16:9, the game's HUD goes to the real screen corners instead of the centred
+// 16:9 box, in every room so it never jumps at a door. Phones and tablets: optionally its X / Y item
 // buttons are hidden while the on-screen controls (which show those items) are up.
 //
 // Game thread (rt_hud_corners_tick, from the HUD's state update, HUD_HEARTS_SITE, x0 = the HUD): each group pane under
@@ -177,21 +178,27 @@ void rt_hud_corners_tick(uint64_t hud) {
         find_panes(hud);
     }
     if (g_pane[RUPEE]) set_xy(RUPEE, g_authored[RUPEE] + rupee_dx(), *(const float *)(uintptr_t)(g_pane[RUPEE] + 0x34));
-#if PLAT_TOUCH
     float f = widescreen_factor();
     bool in = game_in_play() && world_on_screen();
-    bool want = in && g_settings.aspect == ASPECT_UNLOCKED && (f > 1.01f || f < 0.99f) && !ENV("LARECOMP_NO_HUD_CORNERS");
+    bool want = in && g_settings.aspect == ASPECT_UNLOCKED && (f > 1.01f || f < 0.99f) && !ENV("LARECOMP_NO_HUD_CORNERS") &&
+                (g_settings.hud_pos == HUD_EDGES || ENV("LARECOMP_HUD_EDGES"));
+#if PLAT_TOUCH
     bool hide = in && (g_settings.touch_hide_xy_hud || ENV("LARECOMP_HIDE_XY_HUD")) && touch_visible();
+#else
+    bool hide = false;
+#endif
     if (!want && !hide && !g_moved) {
         bool any = false;
         for (unsigned i = 0; i < NPANES; i++) any |= g_hid[i];
-        if (!any) { g_active = false, g_left = g_right = 0; return; }
+        if (!any) { g_active = false, g_left = g_right = g_up = 0; return; }
     }
     float l = 0, r = 0, up = 0;
-    if (want && f < 1) up = 360 * (1 / f - 1);  // (a tablet: the band's spare height above it)
+    if (want && f < 1) up = 360 * (1 / f - 1);  // (a tablet, or a tall window: the band's spare height above it)
     else if (want) {
-        float il, ir;
+        float il = 0, ir = 0;
+#if PLAT_TOUCH
         menu_safe_insets(&il, &ir);  // (the camera cutout: on one side only in landscape)
+#endif
         float span = 1280 * f;       // layout units across the window
         l = 640 * (f - 1) - il * span, r = 640 * (f - 1) - ir * span;
         if (l < 0) l = 0;
@@ -213,7 +220,6 @@ void rt_hud_corners_tick(uint64_t hud) {
         else if (!hide && g_hid[i]) *fl |= 1, g_hid[i] = false;
     }
     g_moved = want, g_active = want, g_left = l, g_right = r, g_up = up;
-#endif
 }
 
 // ---- render thread

@@ -2157,3 +2157,7 @@
 {"Update can't change the app's files here. Use Download.", "Bijwerken kan de bestanden van de app hier niet wijzigen. Gebruik Downloaden."},
 {"Update", "Bijwerken"},
 {"Download", "Downloaden"},
+{"HUD", "HUD"},
+{"Centered", "Midden"},
+{"At edges", "Aan de randen"},
+{"Where the hearts, items and rupees sit when the screen isn't 16:9.", "Waar de hartjes, voorwerpen en roepies staan als het scherm niet 16:9 is."},

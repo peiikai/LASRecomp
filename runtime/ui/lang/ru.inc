@@ -2157,3 +2157,7 @@
 {"Update can't change the app's files here. Use Download.", "Обновить не может изменить файлы приложения здесь. Используйте Скачать."},
 {"Update", "Обновить"},
 {"Download", "Скачать"},
+{"HUD", "HUD"},
+{"Centered", "По центру"},
+{"At edges", "По краям"},
+{"Where the hearts, items and rupees sit when the screen isn't 16:9.", "Где показаны сердца, предметы и рупии, если экран не 16:9."},

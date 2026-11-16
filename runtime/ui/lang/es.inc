@@ -2157,3 +2157,7 @@
 {"Update can't change the app's files here. Use Download.", "Actualizar no puede cambiar aquí los archivos de la app. Usa Descargar."},
 {"Update", "Actualizar"},
 {"Download", "Descargar"},
+{"HUD", "HUD"},
+{"Centered", "Centrado"},
+{"At edges", "En los bordes"},
+{"Where the hearts, items and rupees sit when the screen isn't 16:9.", "Dónde aparecen los corazones, los objetos y las rupias cuando la pantalla no es 16:9."},

@@ -2157,3 +2157,7 @@
 {"Update can't change the app's files here. Use Download.", "여기서는 업데이트로 앱 파일을 바꿀 수 없습니다. 다운로드를 사용하세요."},
 {"Update", "업데이트"},
 {"Download", "다운로드"},
+{"HUD", "HUD"},
+{"Centered", "가운데"},
+{"At edges", "화면 가장자리"},
+{"Where the hearts, items and rupees sit when the screen isn't 16:9.", "화면이 16:9가 아닐 때 하트, 아이템, 루피가 표시되는 위치입니다."},

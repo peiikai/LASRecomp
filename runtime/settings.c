@@ -47,6 +47,7 @@ const char *touch_control_name(int i) {
 
 Settings g_settings = {
     .aspect = ASPECT_UNLOCKED,
+    .hud_pos = PLAT_TOUCH ? HUD_EDGES : HUD_CENTERED,  // (phones and tablets: as before the setting, clear of the thumbs)
     .dyn_min = 540,
     .fullscreen = false,
     .volume = 1.0f,
@@ -310,6 +311,7 @@ void settings_load(void) {
         else if (!strcmp(key, "move_360")) g_settings.move_360 = atoi(val) != 0;
         else if (!strcmp(key, "hookshot_8way")) g_settings.hookshot_8way = atoi(val) != 0;
         else if (!strcmp(key, "blur_removal")) g_settings.blur_removal = atoi(val) != 0;
+        else if (!strcmp(key, "hud")) g_settings.hud_pos = !strcmp(val, "edges") ? HUD_EDGES : HUD_CENTERED;
         else if (!strcmp(key, "hide_hero_icon")) g_settings.hide_hero_icon = atoi(val) != 0;
         else if (!strcmp(key, "pause_unfocused")) g_settings.pause_unfocused = atoi(val) != 0;
         else if (!strcmp(key, "remember_window")) g_settings.remember_window = atoi(val) != 0;
@@ -407,6 +409,7 @@ void settings_save(void) {
 #endif
     fprintf(f, "# LAS Recomp settings (edited from the in-game menu: F1, Esc, or Minus+Plus on a controller)\n");
     fprintf(f, "aspect = %s\n", g_settings.aspect == ASPECT_ORIGINAL ? "original" : "unlocked");
+    fprintf(f, "hud = %s\n", g_settings.hud_pos == HUD_EDGES ? "edges" : "centered");
     fprintf(f, "fullscreen = %d\n", g_settings.fullscreen);
     fprintf(f, "volume = %.2f\n", g_settings.volume);
     fprintf(f, "audio_output = %s\n", k_audio_out_keys[g_settings.audio_out == AUDIO_OUT_51]);
