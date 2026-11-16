@@ -712,19 +712,26 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     else if (lod_kind == 1) snprintf(e, sizeof e, "textureLod(t%d, %s%s, %s)", slot, P, ex, lod);
     else snprintf(e, sizeof e, "texture(t%d, %s%s, %s)", slot, P, ex, lod);
     // (=2..5: lit only where the reference is NaN / infinite, above 1, below 0, or the depth read is the cleared 1.0 -
-    // a screenshot each tells which of the lookup's inputs is off)
+    // a screenshot each tells which of the lookup's inputs is off. On the Adreno all four drew evenly dim, like 1:
+    // the reference is finite and in 0..1 and no lookup reads 1.0, yet every one reads a depth at or below it.
+    // =6..10 draw a value itself as the light: the depth read (6), the reference (7), the lookup's x (8), y (9) and
+    // layer over the layer count (10), to be set side by side with the same runs on NVIDIA.)
     static const char *const tests[] = {"float((R) < (D))", "float(isnan(R) || isinf(R))", "float((R) > 1.0f)",
-                                        "float((R) < 0.0f)", "float((D) >= 1.0f)"};
+                                        "float((R) < 0.0f)", "float((D) >= 1.0f)", "(D)", "(R)", "(U)", "(V)", "(L)"};
     if (soft) {
-        int m = maxwell_glsl_soft_shadow >= 1 && maxwell_glsl_soft_shadow <= 5 ? maxwell_glsl_soft_shadow - 1 : 0;
-        char r[700], d[2100];
+        int nt = (int)(sizeof tests / sizeof *tests);
+        int m = maxwell_glsl_soft_shadow >= 1 && maxwell_glsl_soft_shadow <= nt ? maxwell_glsl_soft_shadow - 1 : 0;
+        char r[700], d[2100], u[2100], v[2100], l[700];
         snprintf(r, sizeof r, "(%s)", dref);
         snprintf(d, sizeof d, "(%s).x", e);
+        snprintf(u, sizeof u, "(%s).x", P);
+        if (n >= 2) snprintf(v, sizeof v, "(%s).y", P); else strcpy(v, "0.0f");
+        if (layer) snprintf(l, sizeof l, "(float(%s) / float(tsize%d(0).z))", layer, slot); else strcpy(l, "0.0f");
         char body[3000] = "";
         for (const char *q = tests[m]; *q; q++) {
-            if (*q == 'R') strcat(body, r);
-            else if (*q == 'D') strcat(body, d);
-            else { size_t k = strlen(body); body[k] = *q; body[k + 1] = 0; }
+            const char *tok = *q == 'R' ? r : *q == 'D' ? d : *q == 'U' ? u : *q == 'V' ? v : *q == 'L' ? l : NULL;
+            if (tok) { if (strlen(body) + strlen(tok) < sizeof body) strcat(body, tok); }
+            else { size_t k = strlen(body); if (k + 1 < sizeof body) { body[k] = *q; body[k + 1] = 0; } }
         }
         sprintf(out, "vec4(%s)", body);
     }
