@@ -298,6 +298,7 @@ none of their files are used):
 - [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - Windows and Linux renderer (MIT)
 - [Monocypher](https://monocypher.org) by Loup Vaillant and contributors - checks the signature of updates on Windows and
   Linux (CC0, `third_party/monocypher/LICENCE.md`)
+- [Sparkle](https://sparkle-project.org) - the macOS app's updater (MIT, `Contents/Resources/Sparkle-LICENSE.txt` in the app)
 - [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and Diego
   Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
 - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) - the Windows and Linux upscaler
@@ -350,7 +351,7 @@ LAS Recomp's own code (the recompiler tools, the runtime, the randomizer additio
 Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically, and statically in the iOS app), the
 Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions; its C library headers keep their own
 licenses), the iOS kit's Mach-O linker (LLD as built by the Rust project: Apache 2.0 with LLVM exceptions), miniz
-(MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), and the generator helpers' bundled libraries listed under Credits (oead / evfl / Keystone in the seed
+(MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), Sparkle (MIT: the macOS updater), and the generator helpers' bundled libraries listed under Credits (oead / evfl / Keystone in the seed
 generator and Unicorn in the game code generator are under the GPL, versions in the table below: each helper is a separate program the game runs, and its
 sources are this repository plus those projects' published sources). The iOS app is the exception: iOS runs no helper
 processes, so it embeds CPython and the seed generator's packages - oead, evfl and Keystone (GPL 2.0+ / GPL 2.0),

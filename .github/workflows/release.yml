@@ -150,10 +150,18 @@ jobs:
             if nm "$f" 2>/dev/null | grep ' _\{0,1\}f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
           done
           ls -la build/dist
+      # Sparkle's feed for the macOS app (tools/sparkle_appcast.sh; none without the key)
+      - name: Sparkle feed
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: tools/sparkle_appcast.sh "$TAG" build/dist/*-macOS.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: build/dist/*.dmg
+          path: |
+            build/dist/*.dmg
+            build/dist/appcast-*.xml
           if-no-files-found: error
           compression-level: 0  # (already compressed)
 
@@ -483,7 +491,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
-          mkdir ../manifests && mv update-*.txt ../manifests/ 2>/dev/null || true  # (the self-updater's, beside the files)
+          mkdir ../manifests && mv update-*.txt appcast-*.xml ../manifests/ 2>/dev/null || true  # (the updaters', beside the files)
           ls -la . ../manifests
           [ "$(ls | wc -l)" = 6 ] || { echo "::error::expected 6 files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
@@ -493,12 +501,12 @@ jobs:
                         *) echo "::error::unknown file $f"; exit 1 ;; esac
             [[ " $PLATFORMS " == *" $p "* ]] || { echo "built, not shipped: $f"; rm "$f"; }
           done
-          for m in ../manifests/update-*.txt; do  # (a manifest goes up only with its platform's file)
+          for m in ../manifests/*; do  # (a manifest or feed goes up only with its platform's file)
             [ -f "$m" ] || continue
-            plat=$(basename "$m" .txt); plat=${plat#update-}
-            ls ./*-"$plat".zip ./*-"$plat".AppImage >/dev/null 2>&1 || rm "$m"
+            plat=$(basename "$m"); plat=${plat#update-}; plat=${plat#appcast-}; plat=${plat%.*}
+            ls ./*-"$plat".zip ./*-"$plat".AppImage ./*-"$plat".dmg >/dev/null 2>&1 || rm "$m"
           done
-          MANIFESTS=(); for m in ../manifests/update-*.txt; do [ -f "$m" ] && MANIFESTS+=("$m"); done
+          MANIFESTS=(); for m in ../manifests/*; do [ -f "$m" ] && MANIFESTS+=("$m"); done
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)
             gh release view "$TAG" --json body -q .body | grep -v '^> The download files are being built' > ../body.md || true
             { cat ../body.md; echo; echo "| File | sha256 |"; echo "|---|---|"

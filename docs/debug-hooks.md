@@ -160,6 +160,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_UPDATE_KEY` | 64 hex | With `LARECOMP_UPDATE_URL`: the public key manifests are checked with (a test key; `tools/update_sign.cpp keygen`). |
 | `LARECOMP_UPDATE_APP` | folder | Windows: the app folder Update replaces files in (default: the exe's). Linux updates `$APPIMAGE`. |
 | `LARECOMP_UPDATE_NO_RESTART` | `1` | After Update installs (or rolls back), quit instead of starting the app again. |
+| `LARECOMP_SPARKLE_FEED` | URL | macOS: Sparkle reads this appcast instead of the build's, and runs even in builds whose channel has no Update yet. |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics

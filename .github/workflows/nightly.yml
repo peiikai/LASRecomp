@@ -175,6 +175,9 @@ jobs:
           find "$A" -type f \( -perm +111 -o -name '*.dylib' -o -name '*.so' \) | while read -r f; do
             if nm "$f" 2>/dev/null | grep ' _\{0,1\}f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
           done
+      - name: Sparkle feed
+        env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}' }
+        run: tools/sparkle_appcast.sh nightly build/dist/*-macOS.dmg
       - name: Publish
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-macOS.dmg macOS.dmg

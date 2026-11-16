@@ -164,6 +164,7 @@ extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (
 
 #include "update_notes.h"  // tag_rank, tag_label; the update dialog's changelog
 #include "update.h"
+#include "sparkle.h"
 
 static std::string g_update_tag;   // a newer release's tag (g_update_lock)
 static std::string g_update_json;  // the releases list it came from (the dialog's changelog)
@@ -1069,11 +1070,21 @@ static std::string g_update_notes, g_update_title;
 // (the updater's steps, for the translation tables: runtime/update.cpp sets them in English)
 static const char *const UPDATE_STEPS[] = {LN("Checking the update"), LN("Downloading"), LN("Checking the download"),
                                            LN("Unpacking"), LN("Installing")};
+// this build's channel has Update at all: nightlies, and releases once LARECOMP_UPDATE_RELEASES is on (never test builds)
+static bool update_channel_on(void) {
+    if (PLAT_TOUCH) return false;
+    return LARECOMP_NIGHTLY_STAMP || (LARECOMP_UPDATE_RELEASES && strncmp(LARECOMP_VERSION, "test-", 5));
+}
 static bool update_button_shown(const std::string &tag) {
     (void)UPDATE_STEPS;
-    if (PLAT_TOUCH || !(LARECOMP_SELF_UPDATE)) return false;
-    if (!LARECOMP_NIGHTLY_STAMP && !LARECOMP_UPDATE_RELEASES) return false;
+    if (!update_channel_on() && !getenv("LARECOMP_SPARKLE_FEED")) return false;
+#if defined(__APPLE__) && !PLAT_IOS
+    (void)tag;
+    return sparkle_available();  // (Sparkle finds the newest of its channel itself)
+#else
+    if (!LARECOMP_SELF_UPDATE) return false;
     return LARECOMP_NIGHTLY_STAMP ? tag == "nightly" : tag_rank(tag) >= 0;
+#endif
 }
 static void update_open(const std::string &tag) {
     pthread_mutex_lock(&g_update_lock);
@@ -1143,9 +1154,9 @@ static void update_dialog(float s) {
     update_notes_draw(sc);
     ImGui::EndChild();
     ImGui::Spacing();
-    bool updater = update_button_shown(tag);
+    bool updater = update_button_shown(tag), sparkle = updater && sparkle_available();
     const char *why = NULL;
-    bool can = updater && update_available(&why);
+    bool can = updater && (sparkle || update_available(&why));
     if (updater && !can && st == UPDATE_IDLE) {
         static std::string logged;
         if (logged != tag) logged = tag, fprintf(stderr, "[launcher] Update off here: %s\n", why ? why : "?");
@@ -1167,8 +1178,8 @@ static void update_dialog(float s) {
             ImGui::BeginDisabled(!can);
             ImGui::SetItemDefaultFocus();
             if (ImGui::Button(L("Update"), bw)) {
-                long long own = LARECOMP_NIGHTLY_STAMP;
-                update_start(tag.c_str(), LARECOMP_PLATFORM, own);
+                if (sparkle) sparkle_check_now(), g_update_open = false, ImGui::CloseCurrentPopup();  // (its own window)
+                else update_start(tag.c_str(), LARECOMP_PLATFORM, LARECOMP_NIGHTLY_STAMP);
             }
             ImGui::EndDisabled();
             ImGui::SameLine();
@@ -2494,6 +2505,12 @@ extern "C" void launcher_run(const char *root) {
     uint64_t loop_t0 = SDL_GetTicks(), last_frame = loop_t0, bg_gap = 0, bg_frames = 0;
     bool bg_logged = false;
     update_reached_start_screen();  // (a new version after an update got this far: it's kept. runtime/update.h)
+    {   // macOS: Sparkle, with its one check of this launch (not again after a "Title screen" reboot)
+        static bool sparkle_once;
+        if (!sparkle_once && (update_channel_on() || getenv("LARECOMP_SPARKLE_FEED")) && !getenv("LARECOMP_NO_UPDATE_CHECK"))
+            sparkle_start(true);
+        sparkle_once = true;
+    }
     // (test) LARECOMP_UPDATE_OPEN=1: the update dialog opens as soon as the check found one; =update: and Update is
     // pressed
     const char *upd_open_env = getenv("LARECOMP_UPDATE_OPEN");

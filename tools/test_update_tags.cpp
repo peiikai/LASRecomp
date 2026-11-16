@@ -68,6 +68,12 @@ int main(void) {
         CHECK(bundle_cmp(t, bundle_build("beta_5.3")) > 0 && bundle_cmp(t, bundle_build("beta_5.4")) < 0,
               "test build of beta_5.4: %s between 5.3 and 5.4", t.c_str());
         CHECK(bundle_build("test-foo").empty() && bundle_build("alpha_3").empty(), "no build number without a release");
+        // nightlies: each round above the last (Sparkle's feed), all between the release before and the one previewed
+        std::string n1 = bundle_build("nightly-202611161000-abc1234", "v0.7.0"), n2 = bundle_build("nightly-202611171000-def5678", "v0.7.0");
+        CHECK(n1 == "699.1.202611161000", "nightly build number: %s", n1.c_str());
+        CHECK(bundle_cmp(n2, n1) > 0 && bundle_cmp(n1, bundle_build("v0.6.9")) > 0 && bundle_cmp(n2, bundle_build("v0.7.0")) < 0,
+              "nightlies in order: %s %s", n1.c_str(), n2.c_str());
+        CHECK(bundle_build("nightly-2026-abc", "v0.7.0").empty(), "bad nightly stamp");
     }
     const char *never[] = {"alpha_3", "test-388-grass", "beta_0", "beta_5.0", "v0.0.1", "v1.0", "v0.6.0-rc1", "beta_5.3x",
                            "ci-test-1", "", "v", "beta_", "experimental", "experimental-202610302315-abc1234", "nightly",
