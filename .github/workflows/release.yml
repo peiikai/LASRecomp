@@ -156,10 +156,18 @@ jobs:
             if nm "$f" 2>/dev/null | grep ' _\{0,1\}f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
           done
           ls -la build/dist
+      # Sparkle's feed for the macOS app (tools/sparkle_appcast.sh; none without the key)
+      - name: Sparkle feed
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: tools/sparkle_appcast.sh "$TAG" build/dist/*-macOS.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: build/dist/*.dmg
+          path: |
+            build/dist/*.dmg
+            build/dist/appcast-*.xml
           if-no-files-found: error
           compression-level: 0  # (already compressed)
 
@@ -225,10 +233,16 @@ jobs:
                 find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
           [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
           ls -la build/dist
+      # the self-updater's signed manifest (tools/update_manifest.sh; none without the key: Download only)
+      - name: Update manifest
+        env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.check.outputs.version }}' }
+        run: tools/update_manifest.sh "$VERSION" windows build/dist/*-windows.zip "build/dist/LAS Recomp"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: build/dist/*.zip
+          path: |
+            build/dist/*.zip
+            build/dist/update-*.txt
           if-no-files-found: error
           compression-level: 0
 
@@ -439,10 +453,15 @@ jobs:
             if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
           done
           ls -la build/dist
+      - name: Update manifest
+        env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.check.outputs.version }}' }
+        run: tools/update_manifest.sh "$VERSION" linux-${{ matrix.arch }} build/dist/*-linux-${{ matrix.arch }}.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
-          path: build/dist/*.AppImage
+          path: |
+            build/dist/*.AppImage
+            build/dist/update-*.txt
           if-no-files-found: error
           compression-level: 0
 
@@ -548,7 +567,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
-          ls -la
+          mkdir ../manifests && mv update-*.txt appcast-*.xml ../manifests/ 2>/dev/null || true  # (the updaters', beside the files)
+          ls -la . ../manifests
           N=6; [ "$ARM64" = true ] && N=7
           [ "$(ls | wc -l)" = $N ] || { echo "::error::expected $N files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
@@ -559,11 +579,17 @@ jobs:
                         *) echo "::error::unknown file $f"; exit 1 ;; esac
             [[ " $PLATFORMS " == *" $p "* ]] || { echo "built, not shipped: $f"; rm "$f"; }
           done
+          for m in ../manifests/*; do  # (a manifest or feed goes up only with its platform's file)
+            [ -f "$m" ] || continue
+            plat=$(basename "$m"); plat=${plat#update-}; plat=${plat#appcast-}; plat=${plat%.*}
+            ls ./*-"$plat".zip ./*-"$plat".AppImage ./*-"$plat".dmg >/dev/null 2>&1 || rm "$m"
+          done
+          MANIFESTS=(); for m in ../manifests/*; do [ -f "$m" ] && MANIFESTS+=("$m"); done
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)
             gh release view "$TAG" --json body -q .body | grep -v '^> The download files are being built' > ../body.md || true
             { cat ../body.md; echo; echo "| File | sha256 |"; echo "|---|---|"
               for f in *; do echo "| \`${f// /.}\` | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"; done; } > ../notes.md
-            gh release upload "$TAG" --clobber *
+            gh release upload "$TAG" --clobber * "${MANIFESTS[@]}"
             gh release edit "$TAG" --notes-file ../notes.md
             gh release view "$TAG" --json url,assets -q '.url, (.assets[] | "\(.name) \(.size)")'
             exit 0
@@ -584,9 +610,9 @@ jobs:
           if DRAFT=$(gh release view "$TAG" --json isDraft -q .isDraft 2>/dev/null); then
             [ "$DRAFT" = true ] || { echo "::error::release $TAG is already published: not touched"; exit 1; }
             gh release edit "$TAG" --draft --target "$SHA" --notes-file ../notes.md "${PRE[@]}"
-            gh release upload "$TAG" --clobber *
+            gh release upload "$TAG" --clobber * "${MANIFESTS[@]}"
           else
-            gh release create "$TAG" --draft --target "$SHA" --title "$TAG" --notes-file ../notes.md "${PRE[@]}" *
+            gh release create "$TAG" --draft --target "$SHA" --title "$TAG" --notes-file ../notes.md "${PRE[@]}" * "${MANIFESTS[@]}"
           fi
           gh release view "$TAG" --json url,isDraft,assets -q '.url, .isDraft, (.assets[] | "\(.name) \(.size)")'
 

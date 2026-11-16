@@ -16,6 +16,7 @@
 #include "hle.h"
 #include "kernel.h"
 #include "rando.h"
+#include "update.h"
 
 const char *g_romfs_dir;
 
@@ -324,6 +325,8 @@ int main(int argc, char **argv) {
 #else
     setvbuf(stderr, NULL, _IOLBF, 0);
 #endif
+    update_boot();  // (an update's swap that was cut off, or a new version that never reached the start screen: the
+                    //  old one back, and started instead of this process. runtime/update.h)
     const char *root = "extracted";  // (in the data root)
     // LARECOMP_NO_LAUNCHER=1 (tools/game_slot.sh sets it for every test run): never the start screen - it can
     // delete game files, and a test's extracted/ may be a link to someone else's. Where it would come up (a forced
@@ -368,6 +371,7 @@ int main(int argc, char **argv) {
             launcher_run(root);
         }
         boot(root);
+        update_reached_start_screen();  // (--play skips the start screen: the game booting counts the same)
         int kind = ui_run();  // window and input on the main thread; returns when a reboot is requested
         teardown();
         title = kind == RT_REBOOT_TITLE;

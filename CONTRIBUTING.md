@@ -132,6 +132,9 @@ items picked up anywhere, floor key spots included, get a message naming their d
 
 `python tools/test_text_speed.py` checks the Text speed hooks (Normal, Fast, Instant) without game data.
 
+The updater: `tools/test_update.cpp` (manifest, signature, the swap and its rollback; build line at its top) and
+`tools/test_update_e2e.sh` (download, check, swap and restart against a local web server), without game data or network.
+
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.
 On Windows, also run `python tools/test_windows_processes.py` to check independent

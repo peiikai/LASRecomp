@@ -154,6 +154,14 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_MENU_BAR` | entry number | Open the menu bar alone, its cursor on that entry: `0` Settings, `1` Cosmetics, `2` Randomizer, `3` Warp, `4` Save Editor, `5` Cheats, `6` Reset, `7` Quit, `8` the close button. |
 | `LARECOMP_TOUCH_SHOW_INPUT` | 0 / 1 | iPhone, iPad and Android: show scripted input (`LARECOMP_INPUT`) on the touch controls, the buttons lit and the stick moved. |
 | `LARECOMP_UPDATE_TAGS` | `tag,tag,...` | The update check sees these release tags instead of asking GitHub (no network). |
+| `LARECOMP_UPDATE_JSON` | file | The update check reads this saved releases list instead of asking GitHub (the update dialog's changelog too). |
+| `LARECOMP_UPDATE_OPEN` | `1` / `update` | The update dialog opens as soon as the update check finds one; `update` also presses Update. |
+| `LARECOMP_UPDATE_URL` | URL | Update downloads `<URL>/<tag>/update-<platform>.txt` and the file it names from here instead of GitHub (`http://127.0.0.1:...`, `file:///...`). |
+| `LARECOMP_UPDATE_KEY` | 64 hex | With `LARECOMP_UPDATE_URL`: the public key manifests are checked with (a test key; `tools/update_sign.cpp keygen`). |
+| `LARECOMP_UPDATE_APP` | folder | Windows: the app folder Update replaces files in (default: the exe's). Linux updates `$APPIMAGE`. |
+| `LARECOMP_UPDATE_NO_RESTART` | `1` | After Update installs (or rolls back), quit instead of starting the app again. |
+| `LARECOMP_SPARKLE_FEED` | URL | macOS: Sparkle reads this appcast instead of the build's, and runs even in builds whose channel has no Update yet. |
+| `LARECOMP_SPARKLE_AUTOINSTALL` | `1` | macOS: an update Sparkle downloaded installs at once and the app restarts, as its Install and Relaunch button does (no window to click). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
