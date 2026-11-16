@@ -39,7 +39,7 @@ static inline std::string tag_label(const std::string &t, bool with_word) {
     return with_word ? "Version " + v : v;
 }
 
-// Experimental builds (Linux aarch64, later Windows on ARM: .github/workflows/experimental.yml) are never on the normal
+// Experimental builds (Linux aarch64, Windows on ARM: the retired experimental.yml; now nightly) are never on the normal
 // releases: they sit on one rolling pre-release, "experimental", named LAS.Recomp-experimental-<YYYYMMDDHHMM>-<commit>-
 // <platform>.<ext>. The newest stamp there for this platform (e.g. "linux-aarch64"), found in the releases JSON; 0: none.
 static inline long long newest_experimental(const std::string &body, const std::string &platform) {

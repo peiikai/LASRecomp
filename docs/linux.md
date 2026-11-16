@@ -2,9 +2,9 @@
 
 Status: builds and runs the game on Vulkan (with your own game files) on x86-64, checked before
 each release by `make smoketest`. aarch64 is **experimental**: tested on a few ARM boards; reports welcome (see the end). `make appimage` / `make appimages`
-package the AppImages. The latest aarch64 one is on the rolling
-[Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) pre-release
-(`.github/workflows/experimental.yml`); releases from 1.0.0 on carry only the x86-64 one.
+package the AppImages. The latest aarch64 one is also on the rolling
+[nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) pre-release
+(`.github/workflows/nightly.yml`); releases from 1.0.0 on carry only the x86-64 one.
 
 ## Running the AppImage
     chmod +x LAS.Recomp-<version>-linux-x86_64.AppImage
