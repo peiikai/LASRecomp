@@ -767,18 +767,28 @@ ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) { return prw(fd, (v
 // ---- child processes
 typedef struct { HANDLE process, job; } WinProcess;
 
-// Control Flow Guard off for one child (plat_spawn_no_cfg), as a process mitigation policy: it wins over the
-// system-wide Exploit protection setting, which the exe's header (tools/pe_no_cfg.py) does not (#337)
+// Control Flow Guard and user-mode shadow stacks off for one child (plat_spawn_no_cfg), as process mitigation
+// policies: they win over the system-wide Exploit protection settings, which the exe's header (tools/pe_no_cfg.py)
+// does not. unicorn (the generator's jump tables) leaves the code it generated with longjmp from a setjmp that saved
+// no frame, and VCRUNTIME140's longjmp stops the process (0xC0000409) for that when CFG is on (#337); with a shadow
+// stack it would unwind instead (RtlUnwindEx), through generated code that has no unwind data. Under x64 emulation
+// on ARM (Windows 11 26H1) the generator still ended there with both off, so it now replaces unicorn's setjmp and
+// longjmp with its own (tools/win_longjmp.py, #779).
 #ifndef PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY
 #define PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY 0x00020007
 #endif
 #ifndef PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF
 #define PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF (0x00000002ull << 40)
 #endif
+#ifndef PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF
+#define PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF (0x00000002ull << 28)
+#endif
 
 // no_cfg: NULL = a plain start; else *no_cfg = 0 when the child runs with CFG off, or the error that prevented it
-// (then it is started without the policy)
-static PlatProc spawn_child(const char *const argv[], const char *log_path, bool append_log, unsigned long *no_cfg) {
+// (then it is started without the policy). *no_ss likewise for shadow stacks: a Windows that doesn't take that
+// policy gets CFG off alone.
+static PlatProc spawn_child(const char *const argv[], const char *log_path, bool append_log, unsigned long *no_cfg,
+                            unsigned long *no_ss) {
     static __thread char cmd[32768];
     cmd[0] = 0;
     for (int i = 0; argv[i]; i++) append_arg(cmd, sizeof cmd, argv[i]);
@@ -800,29 +810,36 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
     const wchar_t *app = GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
     BOOL ok = FALSE;
     if (no_cfg) {
-        *no_cfg = ERROR_NOT_SUPPORTED;
-        STARTUPINFOEXW six = {.StartupInfo = si};
-        six.StartupInfo.cb = sizeof six;
-        DWORD64 policy[2] = {PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF, 0};
-        SIZE_T size = 0;
-        InitializeProcThreadAttributeList(NULL, 1, 0, &size);
-        six.lpAttributeList = size ? (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size) : NULL;
-        if (!six.lpAttributeList || !InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &size)) {
-            *no_cfg = six.lpAttributeList ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
-            free(six.lpAttributeList);
-            six.lpAttributeList = NULL;
-        } else if (!UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, policy,
-                                              sizeof policy, NULL, NULL)) {
-            *no_cfg = GetLastError();
-        } else {
-            ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE,
-                                CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
-                                &six.StartupInfo, &pi);
-            *no_cfg = ok ? 0 : GetLastError();  // (older Windows: ERROR_INVALID_PARAMETER; or a policy refuses it)
-        }
-        if (six.lpAttributeList) {
-            DeleteProcThreadAttributeList(six.lpAttributeList);
-            free(six.lpAttributeList);
+        *no_cfg = *no_ss = ERROR_NOT_SUPPORTED;
+        // first both policies, then CFG alone (a Windows without shadow stack support may refuse the second word)
+        for (int both = 1; both >= 0 && !ok; both--) {
+            STARTUPINFOEXW six = {.StartupInfo = si};
+            six.StartupInfo.cb = sizeof six;
+            DWORD64 policy[2] = {PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF,
+                                 both ? PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF : 0};
+            unsigned long e;
+            SIZE_T size = 0;
+            InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+            six.lpAttributeList = size ? (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size) : NULL;
+            if (!six.lpAttributeList || !InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &size)) {
+                e = six.lpAttributeList ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
+                free(six.lpAttributeList);
+                six.lpAttributeList = NULL;
+            } else if (!UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                                                  policy, sizeof policy, NULL, NULL)) {
+                e = GetLastError();
+            } else {
+                ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE,
+                                    CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+                                    &six.StartupInfo, &pi);
+                e = ok ? 0 : GetLastError();  // (older Windows: ERROR_INVALID_PARAMETER; or a policy refuses it)
+            }
+            if (six.lpAttributeList) {
+                DeleteProcThreadAttributeList(six.lpAttributeList);
+                free(six.lpAttributeList);
+            }
+            if (both) *no_ss = e;
+            if (ok || !both) *no_cfg = e;
         }
     }
     if (!ok) ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
@@ -855,13 +872,15 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
 }
 
 PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
-    return spawn_child(argv, log_path, append_log, NULL);
+    return spawn_child(argv, log_path, append_log, NULL, NULL);
 }
 
-PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error) {
-    unsigned long e = 0;
-    PlatProc p = spawn_child(argv, log_path, append_log, &e);
+PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,
+                           unsigned long *shadow_stack_error) {
+    unsigned long e = 0, ss = 0;
+    PlatProc p = spawn_child(argv, log_path, append_log, &e, &ss);
     if (error) *error = e;
+    if (shadow_stack_error) *shadow_stack_error = ss;
     return p;
 }
 

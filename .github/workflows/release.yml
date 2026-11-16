@@ -12,13 +12,15 @@
 #   platforms: test builds (test-*, ci-test-*) only - the platforms the fix targets and wants feedback from, e.g.
 #     -f platforms=windows or -f platforms=macos,linux: every platform is still built (a compile check), only those
 #     files go on the test build. Releases always ship every platform.
+#     windows-arm64 (Windows on ARM) is for test builds only and only built when named: it isn't a release platform
+#     (it ships on the nightly page, nightly.yml), e.g. -f platforms=windows-arm64,linux-aarch64.
 # Dry run of this workflow itself: a tag starting with ci-test- may differ from LARECOMP_VERSION (the files keep its
 # name); its draft is a prerelease, as for test-<name> builds.
 # Also on a release published on GitHub (its tag = LARECOMP_VERSION at the tagged commit): the files are built and
 # attached to it, with a "being built" line on top of its notes meanwhile and the sha256 table under them after. A
 # release that already has files (a draft this workflow made, then published) is left alone.
 # Linux aarch64 stays on these releases through Beta 6 (so players on older aarch64 builds still get offered an update);
-# from 1.0.0 it is only on the rolling "experimental" pre-release (experimental.yml).
+# from 1.0.0 it is only on the nightly page (nightly.yml).
 name: Release
 on:
   release:
@@ -33,7 +35,7 @@ on:
         required: false
         default: ''
       platforms:
-        description: 'Test builds only: the platforms the fix targets (macos, windows, linux, linux-aarch64, android, ios; comma list). Empty: all'
+        description: 'Test builds only: the platforms the fix targets (macos, windows, linux, linux-aarch64, android, ios, windows-arm64; comma list). Empty: all but windows-arm64'
         required: false
         default: ''
 permissions:
@@ -50,6 +52,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       skip: ${{ steps.v.outputs.skip }}
       platforms: ${{ steps.v.outputs.platforms }}
+      arm64: ${{ steps.v.outputs.arm64 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,8 +68,8 @@ jobs:
         run: |
           # (a published release that already has its files: made by a dispatched run - nothing to do)
           if [ "$(jq length <<< "$ASSETS")" != 0 ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$TAG already has files"; exit 0; fi
-          # (experimental.yml's own releases)
-          if [[ $TAG == experimental* || $TAG == test-arm-* ]]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$TAG: experimental.yml"; exit 0; fi
+          # (the old rolling experimental release and test-arm-* test builds, from the retired experimental.yml)
+          if [[ $TAG == experimental* || $TAG == test-arm-* ]]; then echo "skip=true" >> "$GITHUB_OUTPUT"; echo "$TAG: not a release.yml build"; exit 0; fi
           [[ $TAG =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::tag '$TAG': letters, digits, . _ - only"; exit 1; }
           SHA=$(git rev-parse HEAD)
           VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
@@ -87,8 +90,11 @@ jobs:
           if [ -z "${PLATFORMS// /}" ]; then PLATFORMS="macos windows linux linux-aarch64 android ios"
           elif [[ $TAG != test-* && $TAG != ci-test-* ]]; then echo "::error::platforms: only for test builds; a release ships all"; exit 1; fi
           for p in $PLATFORMS; do
-            case $p in macos|windows|linux|linux-aarch64|android|ios) ;; *) echo "::error::platform '$p': macos, windows, linux, linux-aarch64, android or ios"; exit 1 ;; esac
+            case $p in macos|windows|linux|linux-aarch64|android|ios|windows-arm64) ;;
+                       *) echo "::error::platform '$p': macos, windows, linux, linux-aarch64, android, ios or windows-arm64"; exit 1 ;; esac
           done
+          # (Windows on ARM: built only for a test build that names it)
+          if [[ " $PLATFORMS " == *" windows-arm64 "* ]]; then echo "arm64=true" >> "$GITHUB_OUTPUT"; fi
           echo "platforms=$(echo $PLATFORMS)" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -222,6 +228,74 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
+          path: build/dist/*.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  # Windows on ARM (MSYS2 CLANGARM64): only for a test build that names windows-arm64 (it ships on the nightly page)
+  windows-arm64:
+    needs: check
+    if: needs.check.outputs.skip != 'true' && needs.check.outputs.arm64 == 'true'
+    runs-on: windows-11-arm
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - name: LF line endings, as tools/setup_windows.ps1 sets for clones
+        shell: pwsh
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      # the generator helpers are frozen from a python.org-style CPython 3.12 (MSYS2's Python has no oead wheel)
+      - uses: actions/setup-python@v5
+        id: py
+        with:
+          python-version: '3.12'
+          architecture: x64  # (as nightly.yml: the x64 Python, emulated, for the generator helpers)
+      # MSYS2 CLANGARM64, as nightly.yml's Windows on ARM build
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANGARM64
+          update: true
+          install: make git curl tar xz diffutils zip unzip
+          pacboy: clang:p lld:p sdl3:p vulkan-devel:p shaderc:p spirv-tools:p pkgconf:p vulkan-memory-allocator:p
+      - name: Deps cache
+        id: deps
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: deps-windows-arm64-${{ hashFiles('tools/build_deps_windows.sh') }}
+      - name: Deps (LGPL FFmpeg)
+        run: make deps-windows
+      - uses: actions/cache/save@v4
+        if: steps.deps.outputs.cache-hit != 'true'
+        with:
+          path: |
+            build/deps-win
+            !build/deps-win/src
+          key: ${{ steps.deps.outputs.cache-primary-key }}
+      - name: Generator helpers
+        run: |
+          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
+          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+      - name: Compiler for the player's machine
+        run: tools/fetch_zig.sh
+      # (make dist: the exe holds no game code, no GPL codec libraries)
+      - name: Release zip
+        run: make -j"$(nproc)" dist
+      - name: No game files or generated C
+        run: |
+          D="build/dist/LAS Recomp"
+          bad=$(find "$D" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$D" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$D" -name 'lasgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          ls -la build/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-arm64
           path: build/dist/*.zip
           if-no-files-found: error
           compression-level: 0
@@ -373,7 +447,7 @@ jobs:
           compression-level: 0
 
   # (a release published on GitHub: a line on top of its notes while the files build)
-  # the Android app (as experimental.yml's android job) as a release build: this release's LARECOMP_VERSION, no
+  # the Android app as a release build: this release's LARECOMP_VERSION, no
   # experimental stamp (its update check takes the normal releases), signed with the published APKs' key (the
   # repository's secrets ANDROID_KEYSTORE_B64 / ANDROID_KEYSTORE_PASSWORD: it installs over an experimental build)
   android:
@@ -415,7 +489,7 @@ jobs:
           [ -n "$KEYSTORE_B64" ] && [ -n "$LARECOMP_KEYSTORE_PASSWORD" ] || { echo "::error::the signing key secrets are not set"; exit 1; }
           export LARECOMP_KEYSTORE=$RUNNER_TEMP/lasrecomp.keystore
           echo "$KEYSTORE_B64" | base64 -d > "$LARECOMP_KEYSTORE"
-          # (Android's version code only grows: minutes since 2026-01-01, as experimental.yml's)
+          # (Android's version code only grows: minutes since 2026-01-01)
           export LARECOMP_VERSION_CODE=$(( ($(date -u +%s) - $(date -u -d 20260101 +%s)) / 60 ))
           (cd android && ./gradlew assembleRelease --console=plain)
           rm -f "$LARECOMP_KEYSTORE"
@@ -452,8 +526,9 @@ jobs:
           gh release edit "$TAG" --notes-file new.md
 
   release:
-    needs: [check, macos, windows, linux, android, ios]
-    if: needs.check.outputs.skip != 'true'
+    needs: [check, macos, windows, windows-arm64, linux, android, ios]
+    # (windows-arm64 is skipped unless a test build names it: a skipped job doesn't hold the draft back, a failed one does)
+    if: always() && needs.check.result == 'success' && needs.check.outputs.skip != 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-24.04
     permissions:
       contents: write  # (only here: the draft release)
@@ -468,16 +543,19 @@ jobs:
           EVENT: ${{ github.event_name }}
           SHA: ${{ needs.check.outputs.sha }}
           PLATFORMS: ${{ needs.check.outputs.platforms }}
+          ARM64: ${{ needs.check.outputs.arm64 }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
           ls -la
-          [ "$(ls | wc -l)" = 6 ] || { echo "::error::expected 6 files"; exit 1; }
+          N=6; [ "$ARM64" = true ] && N=7
+          [ "$(ls | wc -l)" = $N ] || { echo "::error::expected $N files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
           for f in *; do
             case $f in *-macOS.dmg) p=macos ;; *-windows.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
                         *-linux-aarch64.AppImage) p=linux-aarch64 ;; *-iOS.laskit) p=ios ;; *-android.apk) p=android ;;
+                        *-windows-arm64.zip) p=windows-arm64 ;;
                         *) echo "::error::unknown file $f"; exit 1 ;; esac
             [[ " $PLATFORMS " == *" $p "* ]] || { echo "built, not shipped: $f"; rm "$f"; }
           done
@@ -514,7 +592,7 @@ jobs:
 
   # (a release published on GitHub whose build failed: the "being built" line says so instead)
   failed:
-    needs: [check, macos, windows, linux, android, ios, release]
+    needs: [check, macos, windows, windows-arm64, linux, android, ios, release]
     if: failure() && github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:
