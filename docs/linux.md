@@ -2,9 +2,10 @@
 
 Status: builds and runs the game on Vulkan (with your own game files) on x86-64, checked before
 each release by `make smoketest`. aarch64 is **experimental**: tested on a few ARM boards; reports welcome (see the end). `make appimage` / `make appimages`
-package the AppImages. The latest aarch64 one is also on the rolling
+package the AppImages. The aarch64 one is on the rolling
 [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) pre-release
-(`.github/workflows/nightly.yml`); releases from 1.0.0 on carry only the x86-64 one.
+(`.github/workflows/nightly.yml`). A release's aarch64 file is a copy of the newest nightly one, so players on an
+older release build move to the nightlies; from then on the game offers newer nightlies only.
 
 ## Running the AppImage
     chmod +x LAS.Recomp-<version>-linux-x86_64.AppImage
@@ -112,8 +113,7 @@ files or fonts.
 - Pages: 4K and 16K kernels (Asahi) work; 64K-page kernels (some ARM servers) are not supported.
 
 ## Testing on ARM (aarch64): what to report
-The aarch64 AppImage is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental)
-page. It has been tested on a few ARM boards (RK3588 with a Mali GPU), so reports from other hardware
+The aarch64 AppImage is on the [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) page. It has been tested on a few ARM boards (RK3588 with a Mali GPU), so reports from other hardware
 (Asahi Linux, Snapdragon laptops, Raspberry Pi 5 and other boards) are welcome. Please include:
 
 1. **Distribution and kernel**: `cat /etc/os-release | head -3; uname -r; getconf PAGESIZE`

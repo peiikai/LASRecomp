@@ -18,7 +18,7 @@ native Windows, macOS, Linux, Android and iOS application.
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
 > - Android - arm64, Vulkan graphics backend
 > - iPhone and iPad - arm64, Metal graphics backend (sideloaded: see [iPhone and iPad](#iphone-and-ipad))
-> - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
+> - Linux aarch64 (ARM) - **experimental**: on the [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
 
 ## System requirements
