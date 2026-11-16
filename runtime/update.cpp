@@ -33,7 +33,7 @@ extern "C" const char *larecomp_version(void);  // runtime/ui/launcher.mm (LAREC
 // The public half of the key that signs every manifest (the UPDATE_SIGNING_KEY secret; tools/update_sign.cpp). The
 // same key signs the macOS updates for Sparkle (SUPublicEDKey in tools/bundle_macos.sh, base64 there). Never change
 // it: builds out there only accept manifests signed by this one.
-#define UPDATE_PUBLIC_KEY "0000000000000000000000000000000000000000000000000000000000000000"
+#define UPDATE_PUBLIC_KEY "ff5d19bca25dab8d425793da6cdcd9736ed27b306b9e166f15dbf027fd8f7942"
 #define DOWNLOAD_URL "https://github.com/peiikai/LASRecomp/releases/download"
 
 // Where the app is: the folder whose files the manifest lists (Windows), or the AppImage's folder and its name
