@@ -33,6 +33,15 @@ static id g_controller;
     const char *f = getenv("LARECOMP_SPARKLE_FEED");
     return f && *f ? [NSString stringWithUTF8String:f] : nil;
 }
+// (test) LARECOMP_SPARKLE_AUTOINSTALL=1: an update downloaded in the background installs at once, as Sparkle's
+// "Install and Relaunch" does (the app is asked to quit, then started again), with no window to click
+- (BOOL)updater:(id)updater willInstallUpdateOnQuit:(id)item immediateInstallationBlock:(void (^)(void))install {
+    (void)updater, (void)item;
+    if (!getenv("LARECOMP_SPARKLE_AUTOINSTALL")) return NO;
+    fprintf(stderr, "[sparkle] installing now (test)\n");
+    install();
+    return YES;
+}
 @end
 static LASSparkleDelegate *g_delegate;
 
