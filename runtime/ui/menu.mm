@@ -651,6 +651,10 @@ static void drain_events(ImGuiIO &io) {
 }
 
 extern "C" void renderer_get_scale(float *sx, float *sy);
+extern "C" bool widescreen_allowed(void);  // runtime/hle/widescreen.c
+// The settings pages are drawn in game (tabs_body's in_game): on the start screen no frame has been drawn yet, so the
+// renderer's scale is still 1x and the Resolution row works its size out from the settings and the window instead
+static bool g_tabs_in_game;
 extern "C" int input_pad_family(void);  // runtime/hle/input.c
 extern "C" double output_scale_dynamic_factor(void);
 #ifdef __APPLE__
@@ -744,7 +748,12 @@ static void tab_display(void) {
             if (res_mode[i] == g_default_res_mode) rdef = i;
         }
         float sx, sy;
-        renderer_get_scale(&sx, &sy);
+        if (g_tabs_in_game) renderer_get_scale(&sx, &sy);
+        else {
+            double ex, ey;
+            output_scale_estimate(g_win_px_w, g_win_px_h, widescreen_allowed(), &ex, &ey);
+            sx = (float)ex, sy = (float)ey;
+        }
         char d[1024];  // (in the menus' language already: the row leaves it as it is)
         snprintf(d, sizeof d,
                  g_gpu_integrated
@@ -1455,6 +1464,7 @@ extern "C" float menu_page_corner(int tab, float scale) {
 // first tab, game files and fonts, drawn by launcher.mm). only: one page alone, without the tab bar (the in-game menu
 // bar's pages but Settings).
 static void tabs_body(float scale, bool in_game, void (*prelaunch)(float), int only = -1000) {
+    g_tabs_in_game = in_game;
     // (id: the page; -1 = Prelaunch)
     struct Tab { const char *name; int id; bool on; };
     Tab tabs[12];
