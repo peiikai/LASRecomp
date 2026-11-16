@@ -31,7 +31,7 @@ bool maxwell_glsl_structured;  // static stacks + structured control flow by def
 bool maxwell_glsl_fast_minmax;  // the GPU's min / max / clamp for fmin / fmax / saturate (exec.c: Android)
 bool maxwell_glsl_push;  // c1 inlined + push constants by default (exec.c: Mali, Adreno)
 bool maxwell_glsl_tint_branch;  // the recolour code behind a specialization constant (exec.c: Adreno, Mali)
-bool maxwell_glsl_soft_shadow;  // (debug, exec.c LARECOMP_VK_SOFT_SHADOW) shadow lookups compared in the shader: see glsl_sample
+int maxwell_glsl_soft_shadow;  // (debug, exec.c LARECOMP_VK_SOFT_SHADOW) shadow lookups compared in the shader: see glsl_sample
 bool maxwell_glsl_quad_deriv;  // fragment quad xor shuffles through derivatives (exec.c: no subgroups in fragment shaders)
 const uint8_t *maxwell_const_data;
 uint32_t maxwell_const_size;
@@ -711,7 +711,23 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     if (lod_kind == 0) snprintf(e, sizeof e, "texture(t%d, %s%s)", slot, P, ex);
     else if (lod_kind == 1) snprintf(e, sizeof e, "textureLod(t%d, %s%s, %s)", slot, P, ex, lod);
     else snprintf(e, sizeof e, "texture(t%d, %s%s, %s)", slot, P, ex, lod);
-    if (soft) sprintf(out, "vec4(float((%s) < (%s).x))", dref, e);
+    // (=2..5: lit only where the reference is NaN / infinite, above 1, below 0, or the depth read is the cleared 1.0 -
+    // a screenshot each tells which of the lookup's inputs is off)
+    static const char *const tests[] = {"float((R) < (D))", "float(isnan(R) || isinf(R))", "float((R) > 1.0f)",
+                                        "float((R) < 0.0f)", "float((D) >= 1.0f)"};
+    if (soft) {
+        int m = maxwell_glsl_soft_shadow >= 1 && maxwell_glsl_soft_shadow <= 5 ? maxwell_glsl_soft_shadow - 1 : 0;
+        char r[700], d[2100];
+        snprintf(r, sizeof r, "(%s)", dref);
+        snprintf(d, sizeof d, "(%s).x", e);
+        char body[3000] = "";
+        for (const char *q = tests[m]; *q; q++) {
+            if (*q == 'R') strcat(body, r);
+            else if (*q == 'D') strcat(body, d);
+            else { size_t k = strlen(body); body[k] = *q; body[k + 1] = 0; }
+        }
+        sprintf(out, "vec4(%s)", body);
+    }
     else if (t->shadow) sprintf(out, "vec4(%s)", e);
     else strcpy(out, e);
 }

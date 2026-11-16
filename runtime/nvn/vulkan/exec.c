@@ -1410,8 +1410,8 @@ void vk_exec_init(void) {
     }
     {   // (debug, #779) shadow lookups compared in the shader instead of by the sampler: translate.c glsl_sample
         const char *e = getenv("LARECOMP_VK_SOFT_SHADOW");
-        maxwell_glsl_soft_shadow = e && atoi(e) != 0;
-        if (maxwell_glsl_soft_shadow) LOG("[vk] shadow lookups compared in the shader (LARECOMP_VK_SOFT_SHADOW)\n");
+        maxwell_glsl_soft_shadow = e ? atoi(e) : 0;
+        if (maxwell_glsl_soft_shadow) LOG("[vk] shadow lookups compared in the shader (LARECOMP_VK_SOFT_SHADOW=%d)\n", maxwell_glsl_soft_shadow);
     }
     // fmin / fmax / saturate as the GPU's min / max / clamp (shader.h maxwell_glsl_fast_minmax) by default on Android,
     // where the fork it comes from measured it on Adreno (Turnip and Qualcomm's driver: the lit pass 1717 -> 1637

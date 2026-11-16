@@ -144,7 +144,7 @@ extern bool maxwell_glsl_quad_deriv;
 // RECOLOUR (false unless the pipeline is built for it, exec.c): unused, its code still cost Turnip on an Adreno 650 40%
 // of the house's lit pass. The backend's default (exec.c: Adreno, Mali); LARECOMP_VK_TINT_BRANCH overrides.
 extern bool maxwell_glsl_tint_branch;
-extern bool maxwell_glsl_soft_shadow;  // (debug) shadow lookups compared in the shader (exec.c: LARECOMP_VK_SOFT_SHADOW)
+extern int maxwell_glsl_soft_shadow;  // (debug) shadow lookups compared in the shader (exec.c: LARECOMP_VK_SOFT_SHADOW)
 #define RECOLOUR_SPEC_ID 100
 // The stage's compiler constants (c1: the bytes after its code), set by the caller around maxwell_translate (under its
 // lock). GLSL with LARECOMP_VK_INLINE_C1=1: statically indexed c1 reads become literals (no buffer load).
