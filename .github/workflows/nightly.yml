@@ -7,6 +7,7 @@
 # soon as it is built (tools/nightly_publish.sh), so a slow or failed platform never holds the others back.
 # Catch-up: every 3 hours the current round's missing platforms (a failed job, or no macOS runner free) are built
 # again, from the same commit with the same version, until every platform has its file.
+# GitHub drops scheduled triggers at times: if the 10:00 one never ran, the first catch-up after it starts the round.
 #
 # The round (its stamp and commit) is kept in the release's notes, as a "nightly-round:" line.
 # By hand: gh workflow run nightly.yml [-f new_round=false]   (new_round: start a round now if develop moved)
@@ -59,6 +60,12 @@ jobs:
           RSTAMP=$(awk '{print $2}' <<< "$ROUND"); RSHA=$(awk '{print $3}' <<< "$ROUND")
           NEW=false
           if [ "$SCHEDULE" = '0 10 * * *' ] || { [ "$EVENT" = workflow_dispatch ] && [ "$NEW_ROUND" = true ]; }; then
+            [ "$DEV" != "$RSHA" ] && NEW=true
+          fi
+          # GitHub sometimes drops a scheduled trigger: if today's 10:00 one never started a round, the first
+          # catch-up after 10:00 UTC starts it instead.
+          SLOT=$(date -u +%Y%m%d)1000
+          if [ "$EVENT" = schedule ] && [ "$(date -u +%Y%m%d%H%M)" -ge "$SLOT" ] && [ "${RSTAMP:-0}" -lt "$SLOT" ]; then
             [ "$DEV" != "$RSHA" ] && NEW=true
           fi
           [ -z "$RSHA" ] && NEW=true  # (the first round)
