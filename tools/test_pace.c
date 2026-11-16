@@ -30,7 +30,8 @@ uint64_t rq_render_cpu_ns(void) { return render_cpu_ns; }
 int64_t pace_gpu_ns(void) { return (int64_t)gpu_total_ns; }
 int game_in_play(void) { return 1; }
 bool world_on_screen(void) { return true; }
-const char *game_level_name(void) { return "Field"; }
+static const char *level = "Field";
+const char *game_level_name(void) { return level; }
 uint64_t game_camera_zone(void) { return zone; }
 void slow_frame_present(uint64_t now, uint64_t gcpu) { (void)now, (void)gcpu; }
 // Dynamic resolution's state for pace.c "Resolution first" (output_scale.c): 0 off, 1 at its floor, 2 above it. The
@@ -250,6 +251,18 @@ static void igpu_downclock_heavy(double t, int n, Frame *f) {
 static int igpu_tries_back_off(int holds, int backs, double held_s, double lc, bool end, double secs) {
     return backs >= 1 && backs <= 3 && end && held_s > secs - 12;
 }
+// ... the heavy one in a cave for 40 s (its tries back off), then out to the field, which fits 60 at full clock (14.5
+// ms, 23 held; its load's tail holds it): the cave's backoff doesn't carry over - the field's try comes after 10 s
+static void igpu_cave_then_field(double t, int n, Frame *f) {
+    static bool out;
+    if (t >= 40 && !out) out = true, pace_hitch("a level load"), f->stall = 120;
+    level = t < 40 ? "Cave" : "Field", zone = t < 40 ? 1 : 2;
+    f->cpu = 2 + noise(0.5), f->wait = 6, f->stall = f->stall > 0 ? f->stall : 0;
+    f->gpu = t < 40 ? (pace_is_slow() ? 26 : 19) + noise(1) : (pace_is_slow() ? 23 : t < 42.5 ? 22 : 14.5) + noise(1);
+}
+static int igpu_field_back_soon(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return backs >= 2 && !end && lc > 40 && lc < 55;
+}
 
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
@@ -308,13 +321,15 @@ static const Case cases[] = {
      40, igpu_downclock, igpu_back},
     {"#811: integrated GPU 19 ms at 60, 26 ms at 30: its tries at 60 fail and back off, ends held", 120,
      igpu_downclock_heavy, igpu_tries_back_off},
+    {"#811: that GPU in a cave for 40 s (tries fail, backing off), then a field that fits 60: back at 60 soon", 90,
+     igpu_cave_then_field, igpu_field_back_soon},
 };
 
 static int run(const Case *c) {
     memset(game_mgr, 0, sizeof game_mgr);
     game_mgr[0x4e3] = 1;  // (the game allows its 30 fps mode)
     pace_test_game_mgr = (uint64_t)(uintptr_t)game_mgr;
-    rng = 9, zone = 0;
+    rng = 9, zone = 0, level = "Field";
     vsyncs();
     int holds = 0, backs = 0, n = 0;
     double start = t_ns / 1e9, held_since = -1, held_s = 0, last_change = 0;

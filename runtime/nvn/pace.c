@@ -104,7 +104,8 @@
 // clocks down at half load - and stayed at 30 until a restart, which ran the same dungeon at 60). Without Dynamic
 // resolution nothing else looks for 60 from there. So once the CPU has had clear headroom for PACE_TRY_FRAMES (10 s at
 // 30) times the backoff while only the GPU's time keeps the hold, 60 gets a try (with a hitch's grace), whose frames
-// measure the GPU at 60: frames that don't fit hold again, backing off (the next try waits twice as long, up to 16x).
+// measure the GPU at 60: frames that don't fit hold again, backing off (the next try in that level waits twice as long,
+// up to 16x; in another level, 10 s again).
 // A try that failed with the GPU over the limit at 60 and not slower at 30 (gpu60: a GPU that keeps its clock) isn't
 // tried again in that scene - its time at 30 is its time at 60.
 // LARECOMP_PACE=0: off (the game's own choice, flips and all).
@@ -260,15 +261,24 @@ static void spike_test(void) {
 
 // The scene a frame shows, for the way back to 60 (see above): 0 when it isn't gameplay (no save in play, or no world on
 // screen: the pause menu, title, file select), else the level and camera zone, hashed.
+static uint64_t level_hash(void) {
+    extern const char *game_level_name(void);  // hle/widescreen.c
+    uint64_t h = 1469598103934665603ull;  // (FNV-1a)
+    for (const char *c = game_level_name(); *c; c++) h = (h ^ (uint8_t)*c) * 1099511628211ull;
+    return h;
+}
 static uint64_t pace_scene(void) {
     extern int game_in_play(void);              // hle/warp.c
     extern bool world_on_screen(void);          // hle/mirror.c
-    extern const char *game_level_name(void);   // hle/widescreen.c
     extern uint64_t game_camera_zone(void);     // hle/widescreen.c
     if (!game_in_play() || !world_on_screen()) return 0;
-    uint64_t h = 1469598103934665603ull;  // (FNV-1a)
-    for (const char *c = game_level_name(); *c; c++) h = (h ^ (uint8_t)*c) * 1099511628211ull;
-    h = (h ^ game_camera_zone()) * 1099511628211ull;
+    uint64_t h = (level_hash() ^ game_camera_zone()) * 1099511628211ull;
+    return h ? h : 1;
+}
+// The level alone (pace_scene without the camera zone; 0: no gameplay)
+static uint64_t pace_level(void) {
+    if (!pace_scene()) return 0;
+    uint64_t h = level_hash();
     return h ? h : 1;
 }
 
@@ -327,8 +337,8 @@ void pace_frame(void) {
     static double gpu_back = -1;  // the GPU time per frame (gpu_avg) at that return (-1: not timed)
     static int try_n;             // held gameplay frames with clear CPU headroom while only the GPU's time holds (see above)
     static bool trying;           // (the return to 60 was such a try: a hold right after it learns its GPU time at 60)
-    static double try_gpu60 = -1; // the GPU time per frame at 60 when a try failed (-1: none), and its scene
-    static uint64_t try_scene;
+    static double try_gpu60 = -1; // the GPU time per frame at 60 when a try failed (-1: none), its scene and level
+    static uint64_t try_scene, try_level, try_from;  // (try_from: the level a try at 60 started in)
     static double avg;  // cost (ms at 60 fps), moving average (~20 frames)
     static uint64_t last_tcpu, last_rcpu;
     extern uint64_t rq_render_cpu_ns(void);  // rqueue.c: the render thread's CPU time so far (0: no render thread)
@@ -508,9 +518,10 @@ void pace_frame(void) {
         try_back = false, try_n = 0;
         char g[48] = "";
         // (a try at 60 from a hold for the GPU's time, failed - within 20 s, as the backoff: what the GPU took at 60. A
-        // hold long after a try that worked can be a level load's tail, which says nothing about the GPU at 60)
-        if (trying && gpu_avg >= 0 && now - back_at < 20000000000ull) {
-            try_gpu60 = gpu_avg, try_scene = pace_scene();
+        // hold long after a try that worked can be a level load's tail, which says nothing about the GPU at 60 - as is
+        // one in another level: #811's try in a cave, then held by the field's load)
+        if (trying && gpu_avg >= 0 && now - back_at < 20000000000ull && pace_level() == try_from) {
+            try_gpu60 = gpu_avg, try_scene = pace_scene(), try_level = pace_level();
             snprintf(g, sizeof g, ", gpu %.1f ms a frame at 60", gpu_avg);
         }
         trying = false;
@@ -547,6 +558,10 @@ void pace_frame(void) {
         // GPU over the limit at 60 and no slower at 30. (Not counted off gameplay: the pause menu neither counts nor resets.)
         bool gpu_known = try_gpu60 >= gpu_lim && sc == try_scene && gpu_avg <= try_gpu60 + PACE_GPU_DOWNCLOCK_MS;
         if (sc) try_n = avg < 11.0 && peak < 14.5f && !gpu_fits && !gpu_known && !pace_target_30() ? try_n + 1 : 0;
+        // (the backoff came from tries that failed in one level - #811: a cave at 1440p, 22-25 ms a frame at 60 - and
+        // says nothing about another: there the try waits PACE_TRY_FRAMES alone. The camera zone doesn't count, or a
+        // field that is too heavy everywhere would try again at each zone)
+        int try_wait = try_gpu60 >= 0 && sc && pace_level() != try_level ? 1 : backoff;
         if (clear >= clear_n || calm >= 150 * backoff) {
             char g[32];
             if (gpu_avg >= 0) snprintf(g, sizeof g, ", gpu %.1f ms", gpu_avg);
@@ -557,10 +572,12 @@ void pace_frame(void) {
             pace_slow = trying = false, nover = nbusy = ncpu = 0, back_at = now, try_back = false, gpu_back = gpu_avg;
             memset(over, 0, sizeof over);
             memset(recent, 0, sizeof recent);
-        } else if (try_n >= PACE_TRY_FRAMES * backoff) {
+        } else if (try_n >= PACE_TRY_FRAMES * try_wait) {
             LOG("[pace] %d gameplay frames with clear CPU headroom (%.1f ms a frame at 60 on average), the GPU %.1f ms a frame "
-                "at 30 (its clock may be down there): trying 60%s\n", try_n, avg, gpu_avg, backoff > 1 ? " (backing off)" : "");
+                "at 30 (its clock may be down there): trying 60%s\n", try_n, avg, gpu_avg,
+                try_wait > 1 ? " (backing off)" : backoff > 1 ? " (a level away from the failed try)" : "");
             pace_slow = late_hold = false, back_at = now, try_back = false, gpu_back = gpu_avg, trying = true;
+            try_from = pace_level();
             clear = calm = cpu_clear = try_n = 0, gpu_said = 0;
             nover = nbusy = ncpu = 0;
             memset(over, 0, sizeof over);
