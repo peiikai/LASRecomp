@@ -63,6 +63,11 @@ static void manifest_tests() {
     t[t.size() - 3] = t[t.size() - 3] == '0' ? '1' : '0';
     CHECK(!upd_parse_manifest(t, g_pk, &r, &why), "a changed signature");
     CHECK(!upd_parse_manifest(good.substr(0, good.size() / 2), g_pk, &r, &why), "truncated");
+    {   // written through a Windows text stream (CR LF lines): refused, and said so
+        std::string crlf;
+        for (char c : good) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+        CHECK(!upd_parse_manifest(crlf, g_pk, &r, &why) && why == "CR LF line ends", "CR LF: %s", why.c_str());
+    }
     CHECK(!upd_parse_manifest("", g_pk, &r, &why), "empty");
     CHECK(!upd_parse_manifest(good + "file 1 " + sha_of("x") + " extra\n", g_pk, &r, &why), "a line after the signature");
     // signed, but wrong inside: every one refused

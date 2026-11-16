@@ -114,6 +114,8 @@ static inline bool upd_safe_path(const std::string &p) {
 static inline bool upd_parse_manifest(const std::string &text, const uint8_t pub[32], UpdManifest *m, std::string *why) {
     *m = UpdManifest();
     auto fail = [&](const char *w) { if (why) *why = w; return false; };
+    // (a manifest written through a Windows text stream: every line ends in CR LF, which the signature doesn't cover)
+    if (text.find('\r') != std::string::npos) return fail("CR LF line ends");
     size_t sig = text.rfind("\nsignature ");
     if (sig == std::string::npos) return fail("no signature");
     std::string sighex = text.substr(sig + 11);

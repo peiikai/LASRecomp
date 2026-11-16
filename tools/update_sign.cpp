@@ -11,6 +11,10 @@
 //   update_sign verify <manifest> <public key hex>  checks a manifest (exit 0: good)
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -78,6 +82,9 @@ static bool read_file(const char *path, std::string *out) {
 }
 
 int main(int argc, char **argv) {
+#ifdef _WIN32
+    _setmode(_fileno(stdout), _O_BINARY);  // (the manifest goes out as signed: LF lines, never CR LF)
+#endif
     std::string cmd = argc > 1 ? argv[1] : "";
     if (cmd == "keygen" && argc == 3) {
         uint8_t seed[32], sk[64], pk[32];

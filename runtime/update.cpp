@@ -290,6 +290,10 @@ static void restart_app(const std::string &dir, const std::string &appimage_name
     wchar_t wpath[1100], wcmd[1200];
     MultiByteToWideChar(CP_UTF8, 0, path.c_str(), -1, wpath, 1100);
     MultiByteToWideChar(CP_UTF8, 0, cmd.c_str(), -1, wcmd, 1200);
+    // (a new session log for the new version: LASRECOMP_LOG_FILE would make it append to this one's, as a relaunch
+    //  of the same version does - runtime/platform/windows.c)
+    _putenv_s("LASRECOMP_LOG_FILE", "");
+    SetEnvironmentVariableA("LASRECOMP_LOG_FILE", NULL);
     STARTUPINFOW si = {};
     si.cb = sizeof si;
     PROCESS_INFORMATION pi;
