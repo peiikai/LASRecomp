@@ -28,12 +28,17 @@ static char g_log_path[1024];
 static void log_to_file_in_app(void) {
     char exe[1024];
     uint32_t sz = sizeof exe;
-    if (isatty(STDERR_FILENO) || _NSGetExecutablePath(exe, &sz) != 0 || !strstr(exe, ".app/Contents/MacOS/")) return;
+    if (!g_cli && (isatty(STDERR_FILENO) || _NSGetExecutablePath(exe, &sz) != 0 || !strstr(exe, ".app/Contents/MacOS/")))
+        return;  // (a command-line run logs from anywhere: plat_cli_begin)
     char dir[900];
     if (!rt_data_root_early(dir, sizeof dir)) return;  // (runtime/paths.h: the data folder, wherever it was moved)
     mkdir(dir, 0755);
     session_log_open(dir, g_log_path, sizeof g_log_path);
 }
+
+void plat_cli_begin(void) { cli_keep_stderr(); }
+bool plat_cli_write(const char *s, size_t n) { return cli_write(s, n, g_log_path[0] != 0); }
+bool plat_cli_tty(void) { return g_cli_isatty && g_log_path[0]; }
 
 void plat_system_info(PlatSysInfo *si) {
     char ver[32], machine[32] = "";

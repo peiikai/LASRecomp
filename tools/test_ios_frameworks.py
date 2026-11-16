@@ -43,7 +43,7 @@ def check(cond, what):
 def run(platform='iPhoneOS'):
     with tempfile.TemporaryDirectory() as root:
         app = fixture(root)
-        args = [sys.executable, fw.__file__, app, 'com.example.las', '16.0']
+        args = [sys.executable, fw.__file__, app, 'com.example.las', '16.4']
         if platform != 'iPhoneOS':
             args += ['--platform', platform]
         out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
@@ -63,7 +63,7 @@ def run(platform='iPhoneOS'):
             check(os.path.isfile(binary) and open(binary, 'rb').read() == rel.encode(), f'{mod}: the binary moved')
             with open(os.path.join(app, 'Frameworks', mod + '.framework', 'Info.plist'), 'rb') as p:
                 info = plistlib.load(p)
-            check(info['CFBundleExecutable'] == mod and info['MinimumOSVersion'] == '16.0', f'{mod}: Info.plist')
+            check(info['CFBundleExecutable'] == mod and info['MinimumOSVersion'] == '16.4', f'{mod}: Info.plist')
             check(info['CFBundleSupportedPlatforms'] == [platform], f"{mod}: platforms {info['CFBundleSupportedPlatforms']}")
             check(info['CFBundleIdentifier'] == 'com.example.las.' + mod.replace('_', '-'), f"{mod}: id {info['CFBundleIdentifier']}")
             check('_' not in info['CFBundleIdentifier'], f'{mod}: underscore in the bundle id')

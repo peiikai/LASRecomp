@@ -1370,7 +1370,10 @@ static void compose(id<MTLCommandBuffer> cb, NvnTexture *t, id<MTLTexture> dst, 
     extern uint64_t g_gpu_interp_ns;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {  // (the upscale / scaling draw and the menu: the window's part)
         uint64_t ns = renderer_gpu_busy(done, true);
-        if (!update) __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED);  // (an in-between's)
+        if (!update) {  // (an in-between's)
+            __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED);
+            interp_compose_gpu(ns / 1e6);
+        }
     }];
     if (update) {
         // Next frame's render resolution follows the window: the 1920x1080 image scaled to fit.
@@ -1378,7 +1381,7 @@ static void compose(id<MTLCommandBuffer> cb, NvnTexture *t, id<MTLTexture> dst, 
         widescreen_frame_end(frame);
         extern void widescreen_set_factor(float f);
         extern bool widescreen_allowed(void);
-        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution")
+        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Resolution")
         // GPU busy time since the last frame (renderer.m renderer_gpu_busy: the union of the command buffers' spans): the
         // game's command buffers and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before).
         // With frame interpolation the frame's in-betweens are in it too - their replays in the game's part (they scale
@@ -1671,6 +1674,7 @@ enum { K_GAME, K_MID, K_REPEAT };
 #define NSLOT 16
 static id<MTLTexture> sl_tex[NSLOT];
 static uint64_t sl_at[NSLOT], sl_frame[NSLOT];
+static float sl_uv[NSLOT][4];  // (the game image's place in the slot's image, for the menu: not the bars beside it)
 static int sl_state[NSLOT], sl_kind[NSLOT], sl_readers[NSLOT];
 static int ip_shown = -1;  // the slot on screen (the presenter's latest)
 // LARECOMP_INTERP_TRACE=1 (debug): a line for each image shown and anything out of the ordinary on its way to the
@@ -1718,8 +1722,9 @@ static int slot_claim(NSUInteger w, NSUInteger h, bool force) {
 
 static void slot_commit(id<MTLCommandBuffer> cb, int i, uint64_t at, uint64_t frame, int kind) {
     sl_at[i] = at, sl_frame[i] = frame, sl_kind[i] = kind;
+    double w = sl_tex[i].width, h = sl_tex[i].height;
+    sl_uv[i][0] = (float)(pl_vx / w), sl_uv[i][1] = (float)(pl_vy / h), sl_uv[i][2] = (float)(pl_vw / w), sl_uv[i][3] = (float)(pl_vh / h);
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
-        if (kind == K_MID) interp_compose_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3);
         if (done.error) LOG("[trace] image's command buffer error (slot %d, frame %llu): %s\n", i, (unsigned long long)frame,
                             done.error.localizedDescription.UTF8String);
         if (trace_on() && plat_now_ns() > at)
@@ -1741,10 +1746,29 @@ static void slots_drop(void) {  // (the presenter stops / restarts: nothing old 
 
 // ---- what reached the screen (presented handlers): images per second, their spacing
 static pthread_mutex_t st_mx = PTHREAD_MUTEX_INITIALIZER;
+// The FPS counter's number with frame interpolation on: different images on screen per second (game frames and
+// in-betweens, not repeats), over half-second windows. The overlay itself is drawn on every vsync, so its own rate
+// would be the display's.
+static _Atomic double ip_fps_val;
+static _Atomic uint64_t ip_fps_when;  // (plat_now_ns of the last window; 0: none)
+double ui_interp_fps(void) {
+    uint64_t w = atomic_load(&ip_fps_when);
+    if (!atomic_load(&ip_on) || !w || plat_now_ns() - w > 1000000000ull) return -1;
+    return atomic_load(&ip_fps_val);
+}
 static void ip_presented(double t, double target, int kind) {
-    static double last, win0, sum, sum2, dmin = 1e9, dmax, late, period_ms;
-    static uint64_t nd, shown[3], dropped, even;
+    static double last, win0, sum, sum2, dmin = 1e9, dmax, late, period_ms, f_t0;
+    static uint64_t nd, shown[3], dropped, even, f_n;
     pthread_mutex_lock(&st_mx);
+    if (t > 0) {
+        if (!f_t0 || t < f_t0) f_t0 = t, f_n = 0;
+        if (kind != K_REPEAT) f_n++;
+        if (t - f_t0 >= 0.5) {
+            atomic_store(&ip_fps_val, f_n / (t - f_t0));
+            atomic_store(&ip_fps_when, plat_now_ns());
+            f_t0 = t, f_n = 0;
+        }
+    }
     if (t <= 0) dropped++;
     else {
         if (last > 0 && t > last) {
@@ -1845,6 +1869,8 @@ static void ip_tick(uint64_t tp) {
     sl_readers[best]++;
     id<MTLTexture> src = sl_tex[best];
     uint64_t frame = sl_frame[best];
+    float scene_uv[4];
+    memcpy(scene_uv, sl_uv[best], sizeof scene_uv);
     pthread_mutex_unlock(&sl_mx);
 
     // the window's next image (up to 3 in flight: waits for one to come off screen at most)
@@ -1911,8 +1937,9 @@ static void ip_tick(uint64_t tp) {
         [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
         [enc endEncoding];
         if (!pass) {
-            static const float whole[4] = {0, 0, 1, 1};  // (the menu's copy of the game image: this slot's own image)
-            menu_set_scene(from, whole);
+            // (the menu's copy of the game image: this slot's, the game's part of it - the whole image held the black
+            // bars of a 16:9 game on a 32:9 display, and the open menu's glare guard took the scene for dark: a shade darker)
+            menu_set_scene(from, scene_uv);
             pthread_mutex_lock(&menu_mx);
             menu_render(dev, cb, dst);
             pthread_mutex_unlock(&menu_mx);
@@ -1989,10 +2016,10 @@ static void ip_tick(uint64_t tp) {
     }
     int b = best;
     [cb addCompletedHandler:^(id<MTLCommandBuffer> done) {
-        (void)done;
         pthread_mutex_lock(&sl_mx);
         sl_readers[b]--;
         pthread_mutex_unlock(&sl_mx);
+        if (done.GPUEndTime > done.GPUStartTime) interp_present_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3);  // (the budget)
     }];
     if (shot) {
         id<MTLTexture> s = shot;
@@ -2265,24 +2292,8 @@ static bool ip_present(NvnTexture *t, uint64_t frame, bool repeat) {
     int mids = 0;
     for (int i = 0; i < n; i++) mids += sh[i].t != 1.0f;
     // The GPU's time goes to the game's frames first: in-betweens only in what a game frame leaves of its interval
-    // (the game's own GPU time, pace.c; an in-between's, replay and compose). Made anyway, they held the game at 30
-    // (5120x1440 on an M3 Max: the game 13 ms a frame, an in-between 7 + 3 ms) - three in-betweens of a 30 fps game
-    // instead of the game's own 60. Too few fit: spread evenly over the interval. LARECOMP_INTERP_GPU_BUDGET=0: all made.
-    int allowed = mids;
-    {
-        static int budget_on = -1;
-        if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
-        extern double pace_gpu_frame_ms(void);
-        double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
-        double D = s1 > s0 ? (s1 - s0) / 1e6 : 16.667;
-        if (D < 16.667) D = 16.667;
-        if (D > 50) D = 50;
-        if (budget_on && game >= 0 && img > 0) {
-            double left = 0.9 * D - game;
-            allowed = left > 0 ? (int)(left / img) : 0;
-            if (allowed > mids) allowed = mids;
-        }
-    }
+    // (interp.c interp_gpu_allowed). Too few fit: spread evenly over the interval.
+    int allowed = interp_gpu_allowed(mids, s1 > s0 ? (s1 - s0) / 1e6 : 16.667);
     if (mids && interp_replay_lock()) {
         int mid_i = 0;
         float nsx, nsy, nax = g_al_x, nay = g_al_y;
@@ -2432,6 +2443,17 @@ void ui_window_init(void) {
     SDL_MetalView view = SDL_Metal_CreateView(window);
     layer = (__bridge CAMetalLayer *)SDL_Metal_GetLayer(view);
     dev = MTLCreateSystemDefaultDevice();
+    // The game's textures are mostly BC (metal_format): on iOS every Apple9 GPU (A17 Pro, M3) and newer has it, an
+    // Apple7 / Apple8 one (A14-A16, M1, M2) only some (Metal Feature Set Tables), older ones none. Say so instead of
+    // failing at the first texture. Not on macOS: every Mac it runs on has them. Not in the Simulator
+    // either: its GPU has no BC on any Mac, and only the start screen runs there (tools/test_ios_sim.sh).
+    if (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !dev.supportsBCTextureCompression && !getenv("LARECOMP_NO_BC_CHECK")) {
+        static const char msg[] = "This iPhone or iPad can't run LAS Recomp: its graphics chip has no support for the "
+                                  "game's texture formats (BC).";
+        fprintf(stderr, "FATAL: %s (the GPU has no BC texture formats)\n", msg);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, window);
+        exit(1);
+    }
     settings_resolve_defaults(false);  // (Apple GPUs keep MetalFX as the default upscaler)
     layer.device = dev;
     layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
@@ -2506,14 +2528,36 @@ static void quick_action_in_game(void) {
 }
 #endif
 
+// The device's thermal state (NSProcessInfo): logged at start and at every change, and handed to Dynamic resolution
+// (output_scale_thermal: its step lines, and its heat rules at serious / critical). A phone that warms up throttles its
+// GPU - the same scene costs more minutes in (an iPhone 15 Pro held 1.00 at 60 fps for 78 s, then never again) - and the
+// log couldn't say so.
+static volatile int g_thermal = -1;
+static const char *thermal_name(int s) {
+    return s == NSProcessInfoThermalStateNominal ? "nominal" : s == NSProcessInfoThermalStateFair ? "fair" :
+           s == NSProcessInfoThermalStateSerious ? "serious" : s == NSProcessInfoThermalStateCritical ? "critical" : "unknown";
+}
+static void thermal_note(void) {
+    g_thermal = (int)NSProcessInfo.processInfo.thermalState;
+    LOG("[thermal] %s\n", thermal_name(g_thermal));
+    output_scale_thermal(g_thermal);  // (Dynamic's heat rules: NSProcessInfoThermalStateNominal .. Critical are 0 .. 3)
+}
+static void thermal_watch(void) {
+    thermal_note();
+    [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoThermalStateDidChangeNotification object:nil queue:nil
+                                                usingBlock:^(NSNotification *n) { (void)n; thermal_note(); }];
+}
+
 int ui_run(void) {
     // The emulated vsync/timer threads need precise sleeps; App Nap timer coalescing
     // otherwise stretches 16ms sleeps to ~100ms whenever the window isn't frontmost.
     static id activity;
-    if (!activity)
+    if (!activity) {
         activity = [[NSProcessInfo processInfo]
             beginActivityWithOptions:NSActivityUserInitiated | NSActivityLatencyCritical
                               reason:@"Game emulation"];
+        thermal_watch();
+    }
     ui_window_init();
     atomic_store(&ui_ready, true);
     for (;;) {

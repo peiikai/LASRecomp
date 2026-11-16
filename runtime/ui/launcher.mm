@@ -117,15 +117,21 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "beta_6"
-#define LARECOMP_TEST_OF "beta_6"
-// Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
+#define LARECOMP_VERSION "v0.6.0"
+#define LARECOMP_TEST_OF "v0.6.0"
+// Experimental builds (the retired experimental.yml set these; Experimental moved to nightly): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
+// Nightly builds (.github/workflows/nightly.yml sets this): the build's time (YYYYMMDDHHMM, UTC; 0: not a nightly).
+// They only look for a newer nightly build of their own platform, never a release or an experimental build.
+#define LARECOMP_NIGHTLY_STAMP 0LL
+// Update in the update dialog (runtime/update.h; macOS: Sparkle): nightlies have it; release builds only once this
+// is 1, after it has worked on nightlies for a while on every platform. Until then they offer Download only.
+#define LARECOMP_UPDATE_RELEASES 0
 // An experimental platform that joins the normal releases: from this release on, its experimental builds offer it
 // (and any later one) ahead of a newer experimental build. Android ships in Beta 6.
 #ifdef __ANDROID__
-#define LARECOMP_EXPERIMENTAL_UNTIL "beta_6"
+#define LARECOMP_EXPERIMENTAL_UNTIL "v0.6.0"
 #else
 #define LARECOMP_EXPERIMENTAL_UNTIL ""
 #endif
@@ -133,6 +139,8 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 #define LARECOMP_PLATFORM "windows-arm64"
 #elif defined(_WIN32)
 #define LARECOMP_PLATFORM "windows"
+#elif PLAT_IOS
+#define LARECOMP_PLATFORM "iOS"  // (its file: the iOS kit, LAS.Recomp-<version>-iOS.laskit)
 #elif defined(__APPLE__)
 #define LARECOMP_PLATFORM "macOS"
 #elif defined(__ANDROID__)
@@ -154,14 +162,24 @@ extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (
 #define RELEASES_URL "https://api.github.com/repos/peiikai/LASRecomp/releases?per_page=100"
 #define RELEASE_PAGE "https://github.com/peiikai/LASRecomp/releases/tag/"
 
-#include "update_tags.h"  // tag_rank, tag_label
+#include "update_notes.h"  // tag_rank, tag_label; the update dialog's changelog
+#include "update.h"
+#include "sparkle.h"
 
-static std::string g_update_tag;  // a newer release's tag (g_update_lock)
+static std::string g_update_tag;   // a newer release's tag (g_update_lock)
+static std::string g_update_json;  // the releases list it came from (the dialog's changelog)
 static pthread_mutex_t g_update_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static void *update_thread(void *) {
     std::string body;
-    if (const char *t = getenv("LARECOMP_UPDATE_TAGS")) {  // (test) "beta_2,v1.0.0": these releases, no network
+    if (const char *t = getenv("LARECOMP_UPDATE_JSON")) {  // (test) a saved releases list instead of GitHub's
+        if (FILE *f = fopen(t, "rb")) {
+            char buf[8192];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof buf, f)) > 0) body.append(buf, n);
+            fclose(f);
+        }
+    } else if (const char *t = getenv("LARECOMP_UPDATE_TAGS")) {  // (test) "beta_2,v1.0.0": these releases, no network
         for (const char *p = t; *p;) {
             const char *c = strchr(p, ',');
             std::string t(p, c ? c - p : strlen(p));  // (LAS.Recomp-*: an asset name)
@@ -216,8 +234,10 @@ static void *update_thread(void *) {
     }
     std::string best;
     // the newest release above this rank (a test build ranks just below the release it previews; other test builds
-    // rank -1: never offered). An experimental build only takes the release its platform joins (or a later one).
-    long long best_rank = LARECOMP_EXPERIMENTAL_STAMP ? (LARECOMP_EXPERIMENTAL_UNTIL[0] ? tag_rank(LARECOMP_EXPERIMENTAL_UNTIL) - 1 : LLONG_MAX)
+    // rank -1: never offered). An experimental build only takes the release its platform joins (or a later one); a nightly
+    // build takes no release at all, only a newer nightly.
+    long long best_rank = LARECOMP_NIGHTLY_STAMP ? LLONG_MAX
+                        : LARECOMP_EXPERIMENTAL_STAMP ? (LARECOMP_EXPERIMENTAL_UNTIL[0] ? tag_rank(LARECOMP_EXPERIMENTAL_UNTIL) - 1 : LLONG_MAX)
                         : strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
     for (size_t at = 0; best_rank < LLONG_MAX && (at = body.find("\"tag_name\"", at)) != std::string::npos;) {
         size_t q1 = body.find('"', body.find(':', at) + 1), q2 = q1 == std::string::npos ? q1 : body.find('"', q1 + 1);
@@ -228,9 +248,11 @@ static void *update_thread(void *) {
     }
     if (LARECOMP_EXPERIMENTAL_STAMP && best.empty() && newest_experimental(body, LARECOMP_PLATFORM) > LARECOMP_EXPERIMENTAL_STAMP)
         best = "experimental";
+    if (LARECOMP_NIGHTLY_STAMP && newest_nightly(body, LARECOMP_PLATFORM) > LARECOMP_NIGHTLY_STAMP) best = "nightly";
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);
     g_update_tag = best;
+    if (!best.empty()) g_update_json.swap(body);
     pthread_mutex_unlock(&g_update_lock);
     return NULL;
 }
@@ -846,29 +868,6 @@ static void cloud_keep(void) {
     fprintf(stderr, "[launcher] %s warning: kept here\n", g_cloud_name);
 }
 
-#if PLAT_IOS
-// iOS: signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but iOS
-// ends it at a much lower footprint. Shown on the start screen until OK, every launch (runtime/platform/ios.c).
-static bool g_memory_ok_seen;
-static void memory_notice(float s, float w) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
-    ImGui::BeginChild("##memory", ImVec2(w, 0), ImGuiChildFlags_AlwaysUseWindowPadding | ImGuiChildFlags_AutoResizeY,
-                      ImGuiWindowFlags_NavFlattened);
-    ImGui::PopStyleVar(2);
-    ImGui::PopStyleColor();
-    ImGui::PushTextWrapPos(0);
-    ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  Installed without the increased memory limit"));
-    ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s",
-                       L("iOS may close the game when it needs more memory. Sign the app again with the Increased "
-                         "Memory Limit entitlement turned on."));
-    ImGui::PopTextWrapPos();
-    ImGui::Dummy(ImVec2(0, 4 * s));
-    if (ImGui::Button(L("OK"))) g_memory_ok_seen = true;
-    ImGui::EndChild();
-}
-#endif
 
 
 // ------------------------------------------------------------------ the user's own Nintendo fonts (not shipped)
@@ -1081,6 +1080,142 @@ static void notice_popup(float s) {
     ImGui::PopFont();
     ImGui::EndPopup();
 }
+// ------------------------------------------------------------------ update dialog
+// The start screen's update link opens it: what's new since this build, then Update (this platform updates itself:
+// runtime/update.h; macOS: Sparkle), Download (the release page: always there, also if Update ever fails) and Back.
+// Phones and tablets: no Update. Release builds: no Update until LARECOMP_UPDATE_RELEASES.
+static bool g_update_open;
+static std::string g_update_notes, g_update_title;
+// (the updater's steps, for the translation tables: runtime/update.cpp sets them in English)
+static const char *const UPDATE_STEPS[] = {LN("Checking the update"), LN("Downloading"), LN("Checking the download"),
+                                           LN("Unpacking"), LN("Installing")};
+// this build's channel has Update at all: nightlies, and releases once LARECOMP_UPDATE_RELEASES is on (never test builds)
+static bool update_channel_on(void) {
+    if (PLAT_TOUCH) return false;
+    return LARECOMP_NIGHTLY_STAMP || (LARECOMP_UPDATE_RELEASES && strncmp(LARECOMP_VERSION, "test-", 5));
+}
+static bool update_button_shown(const std::string &tag) {
+    (void)UPDATE_STEPS;
+    if (!update_channel_on() && !getenv("LARECOMP_SPARKLE_FEED")) return false;
+#if defined(__APPLE__) && !PLAT_IOS
+    (void)tag;
+    return sparkle_available();  // (Sparkle finds the newest of its channel itself)
+#else
+    if (!LARECOMP_SELF_UPDATE) return false;
+    return LARECOMP_NIGHTLY_STAMP ? tag == "nightly" : tag_rank(tag) >= 0;
+#endif
+}
+static void update_open(const std::string &tag) {
+    pthread_mutex_lock(&g_update_lock);
+    std::vector<ReleaseInfo> rel = json_releases(g_update_json);
+    pthread_mutex_unlock(&g_update_lock);
+    if (tag == "nightly") {
+        g_update_notes = nightly_changelog(rel, LARECOMP_NIGHTLY_STAMP);
+        g_update_title = tag_label("nightly", false);
+    } else {
+        long long own = strncmp(LARECOMP_VERSION, "test-", 5) ? tag_rank(LARECOMP_VERSION) : tag_rank(LARECOMP_TEST_OF) - 1;
+        g_update_notes = tag_rank(tag) >= 0 ? release_changelog(rel, own, tag) : "";
+        g_update_title = tag_label(tag, false);
+    }
+    g_update_open = true;
+}
+// the changelog: headings in the title colour, list items with a bullet, the rest as paragraphs
+static void update_notes_draw(float sc) {
+    const PlasticTheme &th = plastic_theme();
+    if (g_update_notes.empty()) {
+        ImGui::TextColored(plastic_col(th.text_dim), "%s", L("No details for this update."));
+        return;
+    }
+    ImGui::PushTextWrapPos(0);
+    for (size_t at = 0; at <= g_update_notes.size();) {
+        size_t nl = g_update_notes.find('\n', at);
+        if (nl == std::string::npos) nl = g_update_notes.size();
+        std::string l = g_update_notes.substr(at, nl - at);
+        at = nl + 1;
+        size_t h = 0;
+        while (h < l.size() && l[h] == '#') h++;
+        if (l.empty()) ImGui::Dummy(ImVec2(0, 6 * sc));
+        else if (h && h < l.size() && l[h] == ' ') {
+            if (h == 1) ImGui::PushFont(g_font_menu);
+            ImGui::TextColored(plastic_col(th.title), "%s", md_inline(l.substr(h + 1)).c_str());
+            if (h == 1) ImGui::PopFont();
+        } else if (l.size() > 2 && (l[0] == '-' || l[0] == '*') && l[1] == ' ') {
+            ImGui::Bullet();
+            ImGui::TextUnformatted(md_inline(l.substr(2)).c_str());
+        } else ImGui::TextUnformatted(md_inline(l).c_str());
+    }
+    ImGui::PopTextWrapPos();
+}
+static void update_dialog(float s) {
+    float sc = s * 720.0f / 1080.0f;
+    pthread_mutex_lock(&g_update_lock);
+    std::string tag = g_update_tag;
+    pthread_mutex_unlock(&g_update_lock);
+    if (g_update_open && !ImGui::IsPopupOpen("##update")) ImGui::OpenPopup("##update");
+    ImVec2 ds = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(ds.x * 0.5f, ds.y * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(fminf(ds.x * 0.9f, 1300 * sc), 0));
+    if (!ImGui::BeginPopupModal("##update", NULL, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    const PlasticTheme &th = plastic_theme();
+    double frac = -1;
+    char msg[256] = "";
+    int st = update_status(&frac, msg, sizeof msg);
+    bool running = st == UPDATE_RUNNING || st == UPDATE_DONE;
+    ImGui::PushFont(g_font_small);
+    ImGui::PushFont(g_font_menu);
+    ImGui::TextColored(plastic_col(th.title), "%s", L("Update available"));
+    ImGui::PopFont();
+    ImGui::TextColored(plastic_col(th.text_dim), "%s", g_update_title.c_str());  // (the release's name stays English)
+    ImGui::Spacing();
+    ImGui::BeginChild("##notes", ImVec2(0, fminf(ds.y * 0.55f, 900 * sc)), ImGuiChildFlags_FrameStyle);
+    update_notes_draw(sc);
+    ImGui::EndChild();
+    ImGui::Spacing();
+    bool updater = update_button_shown(tag), sparkle = updater && sparkle_available();
+    const char *why = NULL;
+    bool can = updater && (sparkle || update_available(&why));
+    if (updater && !can && st == UPDATE_IDLE) {
+        static std::string logged;
+        if (logged != tag) logged = tag, fprintf(stderr, "[launcher] Update off here: %s\n", why ? why : "?");
+        ImGui::TextColored(plastic_col(th.text_dim), "%s", L("Update can't change the app's files here. Use Download."));
+    }
+    if (running) {
+        ImGui::TextUnformatted(st == UPDATE_DONE ? L("Restarting...") : L(msg));
+        plastic_progress_bar(st == UPDATE_DONE ? 1.0f : frac < 0 ? 0.0f : (float)frac, ImVec2(-1, 0), NULL, sc);
+    } else if (st == UPDATE_FAILED) ImGui::TextColored(plastic_col(th.warn), "%s", L(msg));
+    ImGui::Spacing();
+    bool esc = ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+    ImVec2 bw(300 * sc, 0);
+    if (running) {
+        ImGui::BeginDisabled(st == UPDATE_DONE);
+        if (ImGui::Button(L("Cancel"), bw) || esc) update_cancel();
+        ImGui::EndDisabled();
+    } else {
+        if (updater) {
+            ImGui::BeginDisabled(!can);
+            ImGui::SetItemDefaultFocus();
+            if (ImGui::Button(L("Update"), bw)) {
+                if (sparkle) sparkle_check_now(), g_update_open = false, ImGui::CloseCurrentPopup();  // (its own window)
+                else update_start(tag.c_str(), LARECOMP_PLATFORM, LARECOMP_NIGHTLY_STAMP);
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+        }
+        if (!updater || !can) ImGui::SetItemDefaultFocus();
+        if (ImGui::Button(L("Download"), bw)) SDL_OpenURL((RELEASE_PAGE + tag).c_str());
+        ImGui::SameLine();
+        if (ImGui::Button(L("Back"), bw) || esc) g_update_open = false, ImGui::CloseCurrentPopup();
+    }
+    ImGui::PopFont();
+    ImGui::EndPopup();
+    if (st == UPDATE_DONE) {  // (one frame of "Restarting..." first)
+        static int frames;
+        if (++frames > 2) settings_save(), update_restart();
+    }
+}
+
 // First PLAY ever, before the menu note: authentic 16:9 or the unlocked (fill the window) aspect ratio.
 static bool aspect_prompt(float s) {
     bool done = false;
@@ -1550,12 +1685,14 @@ static bool launcher_pad_event(const SDL_Event &e) {
                 if (now != held[i]) { held[i] = now; io.AddKeyEvent(keys[i], now); }
             }
         }
+        // (pressed or not, no analog value: ImGui scrolls the window under the cursor by it - the column moved with the
+        // selection, user 2026-11-13; the right stick scrolls: option_rows.mm stick_scroll)
         if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, v < -0.3f ? -v : 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, v > 0.3f ? v : 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, v < -0.3f ? -v : 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, v > 0.3f ? v : 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, 0);
+            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTY) {  // (scrolls a right column of plain text: option_rows.mm)
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickUp, v < -0.1f, v < 0 ? -v : 0);
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, v > 0.1f, v > 0 ? v : 0);
@@ -2388,8 +2525,28 @@ extern "C" void launcher_run(const char *root) {
     const char *play_at_env = getenv("LARECOMP_LAUNCHER_PLAY_AT"), *skip_at_env = getenv("LARECOMP_LAUNCHER_SKIP_AT");
     uint64_t loop_t0 = SDL_GetTicks(), last_frame = loop_t0, bg_gap = 0, bg_frames = 0;
     bool bg_logged = false;
+    update_reached_start_screen();  // (a new version after an update got this far: it's kept. runtime/update.h)
+    {   // macOS: Sparkle, with its one check of this launch (not again after a "Title screen" reboot)
+        static bool sparkle_once;
+        if (!sparkle_once && (update_channel_on() || getenv("LARECOMP_SPARKLE_FEED")) && !getenv("LARECOMP_NO_UPDATE_CHECK"))
+            sparkle_start(true);
+        sparkle_once = true;
+    }
+    // (test) LARECOMP_UPDATE_OPEN=1: the update dialog opens as soon as the check found one; =update: and Update is
+    // pressed
+    const char *upd_open_env = getenv("LARECOMP_UPDATE_OPEN");
     for (;;) {
         uint64_t now = SDL_GetTicks();
+        if (upd_open_env && !g_update_open) {
+            pthread_mutex_lock(&g_update_lock);
+            std::string t = g_update_tag;
+            pthread_mutex_unlock(&g_update_lock);
+            if (!t.empty()) {
+                update_open(t);
+                if (!strcmp(upd_open_env, "update") && update_button_shown(t)) update_start(t.c_str(), LARECOMP_PLATFORM, LARECOMP_NIGHTLY_STAMP);
+                upd_open_env = NULL;
+            }
+        }
         if (g_bg_prep) bg_frames++, bg_gap = std::max(bg_gap, now - last_frame);
         else if (!bg_logged && bg_frames) {  // (how the start screen kept up meanwhile)
             bg_logged = true;
@@ -2668,6 +2825,7 @@ extern "C" void launcher_run(const char *root) {
                 if (g_refocus == RANDO) ImGui::SetKeyboardFocusHere(), g_refocus = MAIN;
                 int arrow = 0;
                 bool rando_pressed;
+                const int choice0 = choice;  // (a step plays the tab sound, as a ◀ value ▶ row's: below)
 #if PLAT_TOUCH
                 rando_pressed = phone_pick_row(L("RANDOMIZER"), pick, choice, n, status.empty(),
                                                status.empty() && !waiting && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId),
@@ -2704,6 +2862,8 @@ extern "C" void launcher_run(const char *root) {
                                           name_end);  // (the choice keeps its colour when hovered: a seed white, "New
                                                       //  Seed" vanilla cream; the arrows stay white)
                 ImGui::SetWindowFontScale(1.0f);
+                // (the press on an arrow: no decide sound, the step plays its own)
+                if (arrow && hov && ImGui::IsMouseClicked(0)) menu_sfx_click_silent();
                 if (rando_pressed && arrow && ImGui::IsMouseReleased(0)) {  // (a mouse click on an arrow: a step, to the ends)
                     choice = std::max(0, std::min(choice + arrow, n - 1));
                     rando_pressed = false;
@@ -2720,6 +2880,7 @@ extern "C" void launcher_run(const char *root) {
                     for (ImGuiKey k : {ImGuiKey_LeftArrow, ImGuiKey_RightArrow, ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight})
                         ImGui::SetKeyOwner(k, own);
                 }
+                if (choice != choice0) menu_sfx_play(MENU_SFX_TAB);
                 static int logged = -1;
                 if (choice != logged)
                     logged = choice, fprintf(stderr, "[launcher] randomizer row: %s\n", choice ? seeds[choice - 1].c_str() : "New Seed");
@@ -3095,6 +3256,15 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::SetCursorPosX(x0);
                 ImGui::TextDisabled("%s", busy ? L("Set up the game files to play.") : status_hint(status));
             }
+#if PLAT_IOS
+            // signed without the increased-memory-limit entitlement (a signer that drops it): the game may start, but
+            // iOS ends it at a much lower footprint (runtime/platform/ios.c). A line under the status, docs/ios.md says
+            // what to do
+            if (plat_ios_memory_entitled() == 0) {
+                ImGui::SetCursorPosX(x0);
+                ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  Installed without the increased memory limit"));
+            }
+#endif
             if (g_cloud > 0 && !g_settings.cloud_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
@@ -3102,13 +3272,6 @@ extern "C" void launcher_run(const char *root) {
                 if (r == 1) cloud_keep();
                 else if (r == 2) choose_data_folder();
             }
-#if PLAT_IOS
-            else if (!g_memory_ok_seen && plat_ios_memory_entitled() == 0) {  // (the same place, when there is no cloud warning)
-                float w = fminf(ds.x * 0.42f, 560 * s);
-                ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
-                memory_notice(s, w);
-            }
-#endif
             if (const char *f = getenv("LARECOMP_LAUNCHER_FONT")) {  // (test) which typeface this window shows
                 const char *b = strrchr(f, '/');
                 ImGui::GetWindowDrawList()->AddText(ImVec2(ImGui::GetWindowPos().x + 20 * s, ImGui::GetWindowPos().y + 16 * s),
@@ -3152,7 +3315,7 @@ extern "C" void launcher_run(const char *root) {
                         dl->AddLine(ImVec2(lp.x, lp.y + lsz.y), ImVec2(lp.x + lsz.x, lp.y + lsz.y), col, 1.5f * s);
                         ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                     }
-                    if (click) SDL_OpenURL((RELEASE_PAGE + upd).c_str());
+                    if (click) update_open(upd);
                 }
             }
             ImGui::PopFont();
@@ -3163,6 +3326,7 @@ extern "C" void launcher_run(const char *root) {
                 menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
                 data_folder_popup(s);
                 notice_popup(s);
+                update_dialog(s);
                 plastic_widgets(false), menu_style_end();
             }
             ImGui::End();

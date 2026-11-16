@@ -3,6 +3,7 @@
 // entries copied as they are (runtime/zipfile.h) plus the library.
 #include "iosexport.h"
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,14 +97,43 @@ static bool ios_dir(const char *game_dir, char *out, size_t n, char *why, size_t
     return true;
 }
 
+// The command's lines: to stderr (the session log) and to the terminal or pipe it was started from (plat_cli_write).
+// On a terminal the progress rewrites one line; elsewhere it's one line per percent.
+static int g_cli_inplace;  // the progress line's length on the terminal (0: none open)
+
+static void cli_say(bool progress, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void cli_say(bool progress, const char *fmt, ...) {
+    char line[1400], out[1600];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n >= (int)sizeof line) n = (int)sizeof line - 1;
+    fprintf(stderr, "%s\n", line);
+    if (progress && plat_cli_tty()) {
+        int pad = g_cli_inplace > n ? g_cli_inplace - n : 0;  // (spaces over a longer earlier line)
+        int m = snprintf(out, sizeof out, "\r%s%*s", line, pad, "");
+        plat_cli_write(out, (size_t)(m < (int)sizeof out ? m : (int)sizeof out - 1));
+        g_cli_inplace = n;
+        return;
+    }
+    int m = snprintf(out, sizeof out, "%s%s\n", g_cli_inplace ? "\n" : "", line);
+    if (plat_cli_write(out, (size_t)(m < (int)sizeof out ? m : (int)sizeof out - 1))) g_cli_inplace = 0;
+}
+
 static void cli_progress(double f, const char *step) {
     static int last = -1;
     int pct = (int)(f * 100);
-    if (pct != last) { last = pct; fprintf(stderr, "[gamebuild] %3d%% %s\n", pct, step); }
+    if (pct != last) { last = pct; cli_say(true, "[gamebuild] %3d%% %s", pct, step); }
 }
 // `lasrecomp --build-ios <kit.laskit> [game files]` (runtime/main.c): the export as the start screen does it, to
-// ~/Downloads or LARECOMP_IOS_OUT=<path>.
+// ~/Downloads or LARECOMP_IOS_OUT=<path>. Exit status 0 when the .ipa was written.
 bool iosexport_run_cli(const char *kit, const char *game_dir) {
+    if (!*kit) {
+        cli_say(false, "usage: lasrecomp --build-ios <kit.laskit> [game files folder]");
+        return false;
+    }
     char why[512], out[1100];
     const char *e = getenv("LARECOMP_IOS_OUT");
     if (e && *e) snprintf(out, sizeof out, "%s", e);
@@ -111,7 +141,8 @@ bool iosexport_run_cli(const char *kit, const char *game_dir) {
     int cores = plat_cpu_count();  // (0 where there's no affinity mask: the machine's count)
     if (cores < 1) cores = SDL_GetNumLogicalCPUCores();
     IosExportOpts o = {cli_progress, NULL, cores > 1 ? cores : 1, kit, out};
-    if (!iosexport_run(game_dir, &o, why, sizeof why)) { fprintf(stderr, "[iosexport] %s\n", why); return false; }
+    if (!iosexport_run(game_dir, &o, why, sizeof why)) { cli_say(false, "[iosexport] failed: %s", why); return false; }
+    cli_say(false, "[iosexport] wrote %s", out);
     return true;
 }
 
@@ -126,6 +157,13 @@ void iosexport_default_path(char *out, size_t n) {
     snprintf(out, n, "%s" SEP "Downloads" SEP "LAS Recomp-%s-iOS.ipa", home && *home ? home : ".", larecomp_version());
 }
 
+// One 0-1 across the whole export: the game code build (its own 0-1) fills the first BUILD_SHARE, the .ipa the rest.
+#define BUILD_SHARE 0.95
+static void (*g_outer_progress)(double, const char *);
+static void build_progress(double f, const char *step) {
+    if (g_outer_progress) g_outer_progress(f * BUILD_SHARE, step);
+}
+
 bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size_t why_size) {
     uint64_t t0 = plat_now_ns();
     ZipReader *kit = kit_open(o->kit, why, why_size);
@@ -133,15 +171,18 @@ bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size
 
     // 1. the game code library for iOS (<data root>/cache/ios-build/lasgame-ios.dylib; its own build cache)
     char dir[1100];
-    GameBuildOpts b = {o->progress, o->jobs, o->cancelled, GAMEBUILD_IOS, kit};
-    if (!ios_dir(game_dir, dir, sizeof dir, why, why_size) || !gamebuild_run(dir, &b, why, why_size)) {
+    g_outer_progress = o->progress;
+    GameBuildOpts b = {o->progress ? build_progress : NULL, o->jobs, o->cancelled, GAMEBUILD_IOS, kit};
+    bool built = ios_dir(game_dir, dir, sizeof dir, why, why_size) && gamebuild_run(dir, &b, why, why_size);
+    g_outer_progress = NULL;
+    if (!built) {
         zip_close(kit);
         return false;
     }
 
     // 2. the .ipa: the kit's Payload/ entries as they are (no recompression) +
     //    Payload/LAS Recomp.app/Frameworks/LASGame.framework/{LASGame,LASGame.id}
-    if (o->progress) o->progress(0.97, "Writing the .ipa...");
+    if (o->progress) o->progress(BUILD_SHARE, "Writing the .ipa...");
     char tmp[1200], lib[1100], id[1100], zwhy[256];
     snprintf(tmp, sizeof tmp, "%s.tmp", o->out_ipa);
     snprintf(lib, sizeof lib, "%s" SEP "lasgame-ios.dylib", dir);
@@ -157,6 +198,7 @@ bool iosexport_run(const char *game_dir, const IosExportOpts *o, char *why, size
         if (strncmp(e.name, "Payload/", 8) != 0) continue;
         ok = zip_add_from(w, kit, i);
         copied++;
+        if (o->progress) o->progress(BUILD_SHARE + (1 - BUILD_SHARE) * 0.9 * (i + 1) / n, "Writing the .ipa...");
     }
     // (the framework's folder and Info.plist are in the kit already: tools/bundle_ios.sh SKELETON=1)
     const char *fw = "Payload/LAS Recomp.app/Frameworks/LASGame.framework";

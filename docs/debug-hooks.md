@@ -5,7 +5,7 @@ scripted test runs, screenshots, warps, logging, and A/B switches for renderer a
 startup or at first use, so set them before launching. Hooks that take a frame number act at that presented frame
 (the count starts at 0 when the app starts and goes on across in-game reboots).
 
-This page follows the current development branch (`beta_<n>`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
+This page follows the current development branch (`develop`), so a few hooks may be missing from older releases. It lists the hooks a contributor is likely to need. It is not complete: the full list is in the code
 (`grep -rn 'getenv("LARECOMP_\|ENV("LARECOMP_' runtime/`), and the comment next to each read explains it.
 
 Unless a row says otherwise, "1" means any value turns the hook on, and "0 / 1" means the value is read as a number
@@ -129,7 +129,7 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal`, `frame_interp`, `powerup_music` (0 / 1), `dpad_mode` (0-2), `text_speed` (0-2), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
+| `LARECOMP_SETTING_AT` | `frame:key=value,...` | Change an in-game menu setting at that frame. Keys: `move_360`, `blur_removal`, `frame_interp`, `powerup_music` (0 / 1), `dpad_mode` (0-2), `text_speed` (0-2), `shadows` (0-5: Off, 0.5x, Default, 2x, 3x, 4x), `enemy_colours` (0-2), `screen_filter` (0-3), and the colour rows `tunic`, `hearts`, `hair`, `shield`, `skin`, `leaves`, `grass`, `sand` (palette name or `#RRGGBB`). |
 | `LARECOMP_COSMETICS` | `frame:tunic:hearts,...` | Set the tunic and heart colours (palette name or `#RRGGBB`) at that frame. |
 | `LARECOMP_DAMAGE` | multiplier, or `ohko` | Override the damage taken setting. |
 | `LARECOMP_WALK_SPEED` | multiplier | Override the walk speed setting. |
@@ -142,12 +142,26 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_ESCAPE` | 0 / 1 | Force the Escape Bottle on or off (also in vanilla). |
 | `LARECOMP_HINT_SHEET` | 0 / 1 | Force the Hint Sheet on or off. |
 | `LARECOMP_ENEMY_RANDOM` | 0 | Turn a seed's enemy randomizer off. |
+| `LARECOMP_NICE_BOMBS` | 0 | Keep the game's one bomb at a time in a randomizer seed. |
 | `LARECOMP_WEATHER` | `off`, `rain`, `snow`, `storm`, `blizzard`, `random` | Override the weather setting. |
 | `LARECOMP_WEATHER_CYCLE` | 0 / 1 | Turn the weather cycle on. |
-| `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link, as the randomizer option will. |
-| `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link, as the randomizer option will. |
+| `LARECOMP_WEATHER_CYCLE_START` | `rain`, `snow`, `storm`, `blizzard` | A new weather cycle starts with this weather, 20 seconds before the next change. |
+| `LARECOMP_WEATHER_CYCLE_SPEED` | multiplier | Run the weather cycle's clock this many times faster. |
+| `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link outside a Weather Cycle seed too. |
+| `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link outside a Weather Cycle seed too. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |
-| `LARECOMP_MENU_TAB` | tab number | The tab the overlay menu opens on (`3`: the menu bar's Randomizer, `5` its Cheats, `7` its Cosmetics). |
+| `LARECOMP_MENU_TAB` | page number | The page the overlay menu opens on: `2` Save Editor, `3` Randomizer, `4` Warp, `5` Cheats, `7` Cosmetics, `9` Quit, `10` Reset. Other numbers open Settings on that tab (`0` Video, `1` Audio, `6` Gameplay, `8` Controls, `11` General). |
+| `LARECOMP_MENU_BAR` | entry number | Open the menu bar alone, its cursor on that entry: `0` Settings, `1` Cosmetics, `2` Randomizer, `3` Warp, `4` Save Editor, `5` Cheats, `6` Reset, `7` Quit, `8` the close button. |
+| `LARECOMP_TOUCH_SHOW_INPUT` | 0 / 1 | iPhone, iPad and Android: show scripted input (`LARECOMP_INPUT`) on the touch controls, the buttons lit and the stick moved. |
+| `LARECOMP_UPDATE_TAGS` | `tag,tag,...` | The update check sees these release tags instead of asking GitHub (no network). |
+| `LARECOMP_UPDATE_JSON` | file | The update check reads this saved releases list instead of asking GitHub (the update dialog's changelog too). |
+| `LARECOMP_UPDATE_OPEN` | `1` / `update` | The update dialog opens as soon as the update check finds one; `update` also presses Update. |
+| `LARECOMP_UPDATE_URL` | URL | Update downloads `<URL>/<tag>/update-<platform>.txt` and the file it names from here instead of GitHub (`http://127.0.0.1:...`, `file:///...`). |
+| `LARECOMP_UPDATE_KEY` | 64 hex | With `LARECOMP_UPDATE_URL`: the public key manifests are checked with (a test key; `tools/update_sign.cpp keygen`). |
+| `LARECOMP_UPDATE_APP` | folder | Windows: the app folder Update replaces files in (default: the exe's). Linux updates `$APPIMAGE`. |
+| `LARECOMP_UPDATE_NO_RESTART` | `1` | After Update installs (or rolls back), quit instead of starting the app again. |
+| `LARECOMP_SPARKLE_FEED` | URL | macOS: Sparkle reads this appcast instead of the build's, and runs even in builds whose channel has no Update yet. |
+| `LARECOMP_SPARKLE_AUTOINSTALL` | `1` | macOS: an update Sparkle downloaded installs at once and the app restarts, as its Install and Relaunch button does (no window to click). |
 | `LARECOMP_FONT` | font file | Use this file for the system fonts the game asks for (.ttf, .otf, .ttc, .bfttf). |
 
 ## Logging and diagnostics
@@ -166,6 +180,9 @@ All of these write to the log (`lasrecomp.log` in the data folder, or the run's 
 | `LARECOMP_LOG_FLAGS` | 1 | Log event flag changes in the loaded save. |
 | `LARECOMP_LOG_INTERVAL` | 1 | Log each change of the game's present interval (its 60 / 30 fps mode). |
 | `LARECOMP_LOG_DYNRES` | 1 | Log every dynamic resolution decision, not only the steps. |
+| `LARECOMP_LOG_WEATHER` | 1 | Log the weather cycle's clock stopping and going on. |
+| `LARECOMP_LOG_TRACKER` | 1 | Log the Tracker's state for each check, and what the ones out of reach still need, once after each update. |
+| `LARECOMP_METAL_HUD` | 1 | Mac, iPhone and iPad. Set by the app itself when it starts with the Metal HUD setting on; not needed by hand. |
 | `LARECOMP_FNPROF` | `from:to` (frames) | Sample which game functions run between those frames, to `build/fnprof.txt`. `0:<to>` starts at process start. |
 | `LARECOMP_DEBUG_FRAME` | frame | Dump that frame's render passes to `build/pass_NNN.png` and log its draws (F9 does the same for the next frame). |
 | `LARECOMP_DEBUG_FRAMES` | count | With `LARECOMP_DEBUG_FRAME` (Vulkan): dump that many frames in a row. |
@@ -200,6 +217,8 @@ These work on both Metal and Vulkan unless noted.
 | `LARECOMP_NO_FRAME_CLEAR` | 1 (Vulkan: 0 / 1) | Don't clear scene render targets at their first use each frame. On Vulkan the default is no clears on integrated GPUs. |
 | `LARECOMP_TEX_FULLHASH` | 1 | Hash every texture in full each time instead of the faster partial checks. |
 | `LARECOMP_NO_WIDESCREEN` | 1 | Turn the widescreen view off (16:9 framing everywhere). |
+| `LARECOMP_HUD_EDGES` | 1 | The game's HUD at the window's edges, as General > HUD = At edges. |
+| `LARECOMP_NO_HUD_CORNERS` | 1 | Keep the game's HUD in the centred 16:9 box, whatever General > HUD says. |
 | `LARECOMP_NO_PAUSE_FILL` | 1 | Keep the pause screen's backdrop in the 16:9 box on other window shapes (the game shows around it). |
 | `LARECOMP_WIDE_TEST` | ratio | Pretend the window has this shape, relative to 16:9 (e.g. `1.3125` for 21:9). |
 

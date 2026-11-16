@@ -109,6 +109,7 @@ int plat_thread_realtime_check(uint64_t period_ns);  // (the calling thread, aft
 int plat_cpu_count(void);  // logical cores this process may run on (its affinity mask); 0 if unknown
 void plat_thread_guest(int prio);  // a guest thread's host scheduling class from its Switch priority (lower = more urgent)
 uint64_t plat_thread_cpu_ns(void);  // the calling thread's CPU time so far (user + system; diagnostics)
+uint64_t plat_mem_used_bytes(void);  // this process's memory in use (0: unknown; Show advanced information)
 // The calling thread is one of the frame's critical threads: on Windows, no power throttling (EcoQoS) for it and, on a
 // hybrid CPU, a preference for the performance cores (selected CPU sets); on Linux with big and little cores (arm64
 // big.LITTLE, Intel hybrid), its affinity limited to the big ones. LARECOMP_PCORE=0: off. Elsewhere a no-op.
@@ -128,6 +129,13 @@ static inline void plat_thread_default_core(void) {}
 
 // ---- process
 void plat_init(void);                                // first thing in main()
+// Command-line runs (`--build-ios`, runtime/main.c), before plat_init: the terminal or pipe the command was started
+// from is kept for plat_cli_write (Windows: the parent's console, attached), and the session log opens even from a
+// terminal, so the command's lines can go to both.
+void plat_cli_begin(void);
+// Text for that terminal or pipe. false: there is none apart from stderr (stderr is it, or there's nowhere).
+bool plat_cli_write(const char *s, size_t n);
+bool plat_cli_tty(void);  // plat_cli_write reaches a terminal (one progress line can be rewritten in place)
 // The machine, for the log's first "[info]" line (runtime/main.c): nothing that identifies the player (no user name,
 // no paths). Fields left empty / 0 when unknown.
 typedef struct {
@@ -152,9 +160,12 @@ int plat_proc_wait(PlatProc p, bool block);  // exit code, or -1 while still run
 #define PLAT_PROC_SIGNALED 256               // + N: ended by signal N instead of exiting (not on Windows)
 #define PLAT_PROC_FAST_FAIL 512              // Windows: ended by a security check (0xC0000409, e.g. Control Flow Guard)
 #ifdef _WIN32
-// plat_spawn with Control Flow Guard off for the child (the generator: unicorn's longjmp fails CFG's check, #337).
-// *error: 0 = started that way; else why not (then it was started normally, or not at all if that failed too)
-PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error);
+// plat_spawn with Control Flow Guard and shadow stacks off for the child (the generator: unicorn's longjmp fails
+// CFG's check, #337, and can't unwind with a shadow stack; tools/win_longjmp.py, #779).
+// *error: 0 = started with CFG off; else why not (then it was started normally, or not at all if that failed too).
+// *shadow_stack_error: the same for shadow stacks (when only that is refused, it was started with CFG off alone).
+PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,
+                           unsigned long *shadow_stack_error);
 #endif
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf

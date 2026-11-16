@@ -22,7 +22,6 @@ extern "C" {
 #include "../settings.h"
 int input_pad_family(void);              // runtime/hle/input.c
 SDL_JoystickID input_active_pad(void);   // runtime/hle/input.c: the controller the game reads (0: none yet)
-void input_apply_background(void);
 #if PLAT_TOUCH
 bool touch_edit_available(void);  // mobile/touch_controls.mm (the on-screen controls)
 void touch_edit_begin(void);
@@ -224,6 +223,8 @@ static void configure_inputs(float scale) {
     }
     // (the cursor or the mouse on a row with a description: it shows on the right instead of the bindings)
     bool desc_right = !PLAT_TOUCH && (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;  // (phones: in its card)
+    // B / Esc go back too, but a mouse has neither: without this row it could only leave by another tab
+    bool back = opt_action("Back", "", NULL);
     opt_split();
     if (desc_right) {
         opt_desc_text();
@@ -294,6 +295,7 @@ static void configure_inputs(float scale) {
         else if (g_cat == CAT_MENU) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
     }
     opt_split_end();
+    if (back) bind_capture_cancel(), g_sub = false, g_focus = FOCUS_CONFIGURE, g_in_right = false, msg[0] = 0;
 }
 
 // ------------------------------------------------------------------ the tab
@@ -336,10 +338,6 @@ extern "C" void controls_tab_draw(float scale) {
         g_sub = true, g_focus = FOCUS_DEVICE, g_in_right = false;
     }
     take_focus(FOCUS_CONFIGURE);
-    if (!PLAT_TOUCH && opt_toggle("Allow background inputs", &g_settings.bg_input, false,
-                   "Controllers keep working while another window is in front. macOS may ask for Input Monitoring "
-                   "permission."))
-        input_apply_background();
 
     opt_section("Movement");
     {
@@ -348,9 +346,11 @@ extern "C" void controls_tab_draw(float scale) {
     }
     opt_toggle("360-degree movement", &g_settings.move_360, false,
                "Link walks in the exact direction of the stick instead of snapping to 8 directions.");
-    if (!g_settings.move_360) opt_disable_next();
+    opt_child_begin(g_settings.move_360);
+    if (!g_settings.move_360) opt_disable_next(), opt_needs_next("360-degree movement");
     opt_toggle("Hookshot aims in 8 directions", &g_settings.hookshot_8way, false,
                "The hookshot fires straight along the nearest of 8 directions, even with 360-degree movement.");
+    opt_child_end();
 
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "Controller vibration.");
@@ -358,9 +358,11 @@ extern "C" void controls_tab_draw(float scale) {
         static const char *const pct[] = {LN("25%"), LN("50%"), LN("75%"), LN("100%")};
         int i = g_settings.rumble_strength / 25 - 1;
         if (i < 0 || i > 3) i = 3;
-        if (!g_settings.rumble) opt_disable_next();
+        opt_child_begin(g_settings.rumble);
+        if (!g_settings.rumble) opt_disable_next(), opt_needs_next("Rumble");
         if (opt_choice("Intensity", &i, pct, 4, 3, "How strong the vibration is.", false))
             g_settings.rumble_strength = (i + 1) * 25;
+        opt_child_end();
     }
     opt_toggle("Controller light", &g_settings.controller_light, true, "The light bar shows Link's health.");
     {
@@ -372,14 +374,16 @@ extern "C" void controls_tab_draw(float scale) {
                    "Which button icons the game shows. Auto matches the controller you have plugged in.");
     }
     {
-        static const char *const names[] = {LN("Nintendo layout"), LN("Bottom button")};
-        opt_choice("Confirm button", &g_settings.menu_confirm, names, 2, MENU_CONFIRM_CONTROLLER,
-                   "Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, "
-                   "Bottom button uses the bottom one like Xbox and PlayStation.");
+        // One choice for the game and our menus: two separate ones let the bottom button confirm in our menus while
+        // it was the Switch's B in the game
+        static const char *const names[] = {LN("Switch"), LN("Xbox / PlayStation")};
+        int i = g_settings.face_by_label;
+        if (opt_choice("Button layout", &i, names, 2, 0,
+                       "Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation "
+                       "swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. "
+                       "Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected."))
+            g_settings.face_by_label = i != 0;
     }
-    opt_toggle("Buttons match labels", &g_settings.face_by_label, false,
-               "On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom "
-               "button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.");
 
     opt_end();
 }

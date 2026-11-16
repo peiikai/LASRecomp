@@ -4,6 +4,7 @@
 // takes gpu ms (pipelined: the frame is ready at the later of the two), then it is shown at the next vsync (60 Hz). Held,
 // pace.c's own cadence waits out the second vsync. Time is simulated (plat_now_ns / plat_sleep_until_ns), so a case
 // of minutes runs in milliseconds.
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -24,18 +25,24 @@ static void vsyncs(void) { g_vsync_count = t_ns / VSYNC_NS, g_vsync_ns = g_vsync
 uint64_t plat_now_ns(void) { return t_ns; }
 void plat_sleep_until_ns(uint64_t t) { if (t > t_ns) t_ns = t; vsyncs(); }
 uint64_t plat_thread_cpu_ns(void) { return cpu_ns; }
-uint64_t rq_render_cpu_ns(void) { return 0; }
+static uint64_t render_cpu_ns;  // (render20_dyn: the render thread's CPU time; 0: no render thread)
+uint64_t rq_render_cpu_ns(void) { return render_cpu_ns; }
 int64_t pace_gpu_ns(void) { return (int64_t)gpu_total_ns; }
 int game_in_play(void) { return 1; }
 bool world_on_screen(void) { return true; }
 const char *game_level_name(void) { return "Field"; }
 uint64_t game_camera_zone(void) { return zone; }
 void slow_frame_present(uint64_t now, uint64_t gcpu) { (void)now, (void)gcpu; }
+// Dynamic resolution's state for pace.c "Resolution first" (output_scale.c): 0 off, 1 at its floor, 2 above it. The
+// case sets it (0 unless it says: a fixed resolution)
+static int dyn_state;
+int output_scale_dynamic_state(void) { return dyn_state; }
 
 // ---- cases
 // cpu: the game thread's CPU time; wait: its waits that count as busy (for the render thread, the GPU's previous
-// frame: the play log's machine was ~13 ms busy a frame with 3-6 ms of CPU); stall: a one-off busy stall (ms)
-typedef struct { double cpu, gpu, stall, wait; } Frame;
+// frame: the play log's machine was ~13 ms busy a frame with 3-6 ms of CPU); stall: a one-off busy stall (ms);
+// fence: a wait for a GPU behind by more than a frame (busy, in the game's own 30 fps mode too; not while held)
+typedef struct { double cpu, gpu, stall, wait, fence; } Frame;
 typedef struct {
     const char *name;
     double secs;
@@ -97,7 +104,8 @@ static void edge(double t, int n, Frame *f) {
 // backing off, the 10 ms GPU limit). user_res_change: at 25 s the user lowers the resolution (the setting, and the
 // render scale change it makes), GPU 11.5 ms after: back at 60 within a few seconds (it stayed at 30 outdoors: 11.5 ms
 // is over the backoff's 10 ms). dynres_steps: Dynamic's own steps instead (a render scale change every 2 s, GPU 18 /
-// 16 ms), then 11.5 ms from 25 s: the backoff stays, and so does the hold.
+// 16 ms), then 11.5 ms from 25 s: the backoff stays - no return within a few seconds as after the user's change, only
+// the enough way back's 10 s at 30 (2x) later.
 static void backoff_phases(double t, Frame *f) {
     f->cpu = 4.5 + noise(1), f->stall = 0, f->wait = 8;
     f->gpu = (t < 4 ? 20 : t < 10 ? 9 : 20) + noise(1);
@@ -120,6 +128,103 @@ static void dynres_steps(double t, int n, Frame *f) {
     if (t >= 25) f->gpu = 11.5 + noise(1);
 }
 
+// An iPad Pro M4 at a fixed full resolution (its log): CPU ~7.5 ms, GPU 11.3 ms, a steady 60 - then two bursts of
+// frames shown late a few seconds apart (a heavy field area loading, frame generation's present latency on top): a
+// late-frame hold, back on headroom, held again within 20 s (backing off), and GPU 11.3 ms from then on. It stayed at
+// 30 for minutes (the backoff's 10 ms GPU limit, which a fixed resolution never reaches): it must get back and stay.
+static void ipad_fixed(double t, int n, Frame *f) {
+    f->cpu = 5 + noise(1), f->gpu = 11.3 + noise(1), f->stall = 0, f->wait = 8.5;
+    bool burst = (t > 3 && t < 4.5) || (t > 14 && t < 15.5);
+    if (burst) f->gpu = 20 + noise(2);
+}
+static int ipad_back(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 2 && backs == 2 && !end && lc < 35;  // (back within the backed-off wait, then 60 for the rest)
+}
+// The same iPad, later in its log: at 60 the GPU takes 11 ms a frame for a few seconds, then 15-16 (the game thread
+// waiting for its frames: busy), held by busy time; held at 30 it takes 11.8 ms, under the 15 ms limit, so the clear
+// way back - 2 s times a backoff capped at 4x - ended every hold: 60 / 30 every 18 s for 8 minutes. The returns must
+// back off (the enough way back: up to 80 s between tries).
+static void ipad_busy(double t, int n, Frame *f) {
+    static double at_60_since;
+    bool held = pace_is_slow();
+    if (held) at_60_since = t;
+    bool heavy = !held && t - at_60_since > 4;
+    f->cpu = 4.5 + noise(1), f->wait = 6, f->stall = 0;
+    f->gpu = held ? 11.8 + noise(0.5) : heavy ? 16.5 + noise(1.5) : 11 + noise(1);
+    f->fence = heavy ? 13 + noise(3) : 0;
+}
+static int ipad_backs_off(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return backs <= 4 && end && secs - lc > 30;  // (fewer tries each longer apart; the last hold lasting)
+}
+
+// An iPhone 15 Pro (2556x1179, MetalFX, 2026-11-14 log t=57-90): GPU 11.5-13 ms a frame at 60, the game thread ~4 ms. A
+// scene moment makes a few frames late (0.4 s at GPU 19 ms), Dynamic steps the render scale down, and the paced GPU's
+// clock drops: GPU 30-45 ms a frame for ~2.3 s (frames 50-66 ms, "game 27-39 ms against 13 on time"), then 11.5 again -
+// every 12 s here. The second of grace left the last 1.3 s of each fallout in the count (35 of 60 over, median 33) and
+// the game was held at 30 for 10 s each time, then a probe for 60 started it over. Must never hold.
+static void iphone_fallout(double t, int n, Frame *f) {
+    f->cpu = 4 + noise(1), f->gpu = 11.5 + noise(1), f->stall = 0, f->wait = 8.5;
+    double k = fmod(t, 12.0);
+    if (t > 3 && k < 0.4) f->gpu = 19 + noise(1);
+    else if (t > 3 && k < 2.7) {
+        static int last_k = -1;
+        int kk = (int)(t / 12.0);
+        if (kk != last_k) last_k = kk, pace_hitch("a render scale change");
+        f->gpu = 38 + noise(7);
+    }
+}
+// A GPU that doesn't fit 60 at any factor (25 ms a frame): Dynamic steps the render scale down every second from the
+// start to its floor (six steps), each a render scale change. The grace after a change lasts while frames are late,
+// but not for good: held within a few seconds of the last step, and for the rest.
+static void overload_steps(double t, int n, Frame *f) {
+    f->cpu = 4 + noise(1), f->gpu = 25 + noise(1), f->stall = 0, f->wait = 8.5;
+    static int last_k = -1;
+    int k = (int)t;
+    if (t < 6 && k != last_k) last_k = k, pace_hitch("a render scale change");
+}
+static int held_soon(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 1 && backs == 0 && end && lc < 12;  // (the last step at 5 s: held by 12 s, for the rest)
+}
+
+// A render scale change every 4.5 s at Dynamic's floor: frames on time for 1.5 s after it (settled), then GPU 20 ms to
+// the next. The settled grace stayed open to 4 s for any late frame after it (the iPhone log: one change "left out"
+// eight times), so 2.5 s of each heavy stretch were left out and the rest too bunched to hold. Settled is over: held.
+static void settle_then_heavy(double t, int n, Frame *f) {
+    static int last_k = -1;
+    int k = (int)(t / 4.5);
+    double in = t - k * 4.5;
+    if (k != last_k) last_k = k, pace_hitch("a render scale change");
+    f->cpu = 4 + noise(1), f->stall = 0, f->wait = 8.5, f->gpu = in < 1.5 ? 11 + noise(1) : 20 + noise(1);
+    dyn_state = 1;
+}
+static int held_any(int holds, int backs, double held_s, double lc, bool end, double secs) { return holds >= 1 && end; }
+
+// Resolution first (pace.c): with Dynamic resolution on and above its floor, the GPU's late frames are Dynamic's to fix -
+// never held, however late (Dynamic steps down meanwhile; here the GPU stays at 20 ms to show the pacer leaves it alone)
+static void gpu20_dyn(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = 2; }
+// ... at its floor (the Minimum resolution: nothing lower) and still 20 ms: held, as with Dynamic off
+static void gpu20_dyn_floor(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = 1; }
+// ... reaching its floor 5 s in (its steps took the factor down meanwhile): held within a second or two of that
+static void gpu20_dyn_reaches_floor(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = t < 5 ? 2 : 1; }
+static int held_at_floor(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 1 && backs == 0 && end && lc >= 5 && lc < 8;
+}
+// The CPU the limit (the game thread 20 ms a frame) with Dynamic above its floor: held at any factor - no resolution
+// helps the CPU. By CPU time, not busy time:
+static void cpu20_dyn(double t, int n, Frame *f) { cpu20(t, n, f), dyn_state = 2; }
+// ... the game thread busy because it waits on a GPU a frame behind (the iPad's busy frames: fence 13 ms, CPU 4.5):
+// the GPU's, left to Dynamic
+static void gpu_fence_dyn(double t, int n, Frame *f) {
+    f->cpu = 4.5 + noise(1), f->wait = 6, f->stall = 0, f->gpu = 16.5 + noise(1.5), f->fence = 13 + noise(3);
+    dyn_state = 2;
+}
+// The render thread the limit (its CPU 20 ms a frame, the game thread 4): held at any factor
+static void render20_dyn(double t, int n, Frame *f) {
+    f->cpu = 4 + noise(1), f->gpu = 8 + noise(1), f->stall = 0, f->wait = 16;  // (waiting for the render thread: busy)
+    render_cpu_ns += (uint64_t)((20 + noise(1)) * 1e6);
+    dyn_state = 2;
+}
+
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
 
@@ -138,7 +243,7 @@ static int res_released(int holds, int backs, double held_s, double lc, bool end
     return holds == 2 && backs == 2 && !end && lc >= 25 && lc < 28;  // (back at 60 within a few seconds of the change)
 }
 static int backoff_kept(int holds, int backs, double held_s, double lc, bool end, double secs) {
-    return holds == 2 && backs == 1 && end && lc < 25;  // (held again, and still held after the steps and the light part)
+    return holds == 2 && backs == 2 && !end && lc >= 33 && lc < 40;  // (held again; back only after the backed-off wait)
 }
 
 static const Case cases[] = {
@@ -154,6 +259,23 @@ static const Case cases[] = {
      res_released},
     {"Dynamic's own steps: held backing off, scale steps at GPU 16-18 ms, then GPU 11.5 ms (backoff kept)", 45,
      dynres_steps, backoff_kept},
+    {"iPad at a fixed resolution: late-frame hold, a failed return (backing off), then GPU 11.3 ms for good", 60,
+     ipad_fixed, ipad_back},
+    {"iPad at a fixed resolution, busy-frame holds: GPU 11.8 ms held, 15-16 ms at 60 after a few seconds (must back off)",
+     150, ipad_busy, ipad_backs_off},
+    {"iPhone: a late moment, Dynamic's step down, the paced GPU's fallout (GPU 30-45 ms for 2.3 s) every 12 s", 60,
+     iphone_fallout, never_held},
+    {"a GPU at 25 ms a frame, Dynamic stepping to its floor (a scale change a second for 6 s): held soon after, for good",
+     40, overload_steps, held_soon},
+    {"a scale change every 4.5 s, settled for 1.5 s then GPU 20 ms (at the floor): the settled grace stays over, held",
+     40, settle_then_heavy, held_any},
+    {"resolution first: GPU 20 ms, Dynamic above its floor: left to Dynamic, never held", 60, gpu20_dyn, never_held},
+    {"resolution first: GPU 20 ms, Dynamic at its floor: held", 60, gpu20_dyn_floor, held_after},
+    {"resolution first: GPU 20 ms, Dynamic reaches its floor at 5 s: held then", 60, gpu20_dyn_reaches_floor, held_at_floor},
+    {"resolution first: the game thread 20 ms of CPU, Dynamic above its floor: held (the CPU's)", 60, cpu20_dyn, held_after},
+    {"resolution first: the game thread busy waiting on the GPU (fence 13 ms, CPU 4.5), Dynamic above its floor: never held",
+     60, gpu_fence_dyn, never_held},
+    {"resolution first: the render thread 20 ms of CPU, Dynamic above its floor: held (the CPU's)", 60, render20_dyn, held_after},
 };
 
 static int run(const Case *c) {
@@ -177,6 +299,7 @@ static int run(const Case *c) {
         uint64_t t0 = t_ns;
         cpu_ns += (uint64_t)(cpu * 1e6);
         if (!held && !game30) cpu += f.wait;  // (at 30 the GPU's last frame is long done: logged held, 3-6 ms busy)
+        if (!held) cpu += f.fence;
         t_ns += (uint64_t)(cpu * 1e6);
         uint64_t ready = t0 + (uint64_t)((f.gpu > cpu ? f.gpu : cpu) * 1e6);
         gpu_total_ns += (uint64_t)(f.gpu * 1e6);

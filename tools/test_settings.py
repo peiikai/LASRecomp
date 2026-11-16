@@ -57,13 +57,15 @@ with tempfile.TemporaryDirectory() as directory:
     # likewise the resolution: Match display until the player picks one (also on integrated GPUs); a saved one is kept
     for lines, mode, saved in [(['resolution = auto'], 'res-auto', 'auto'), (['volume = 1'], 'res-auto', 'auto'),
                                (['resolution = match'], 'res-chosen', 'match'), (['resolution = 1x'], 'res-chosen', '1x'),
-                               (['resolution = 75%'], 'res-chosen', '75%'), (['resolution = dynamic'], 'res-chosen', 'dynamic')]:
+                               (['resolution = 75%'], 'res-chosen', '75%'), (['resolution = dynamic'], 'res-chosen', 'match')]:
         ini = directory / 'test.ini'
         ini.write_text('\n'.join(lines) + '\n')
         env = dict(os.environ, LARECOMP_SETTINGS=str(ini))
         env.pop('LARECOMP_INTEGRATED', None)
         subprocess.run([str(exe), mode], env=env, check=True, capture_output=True)
         assert f'resolution = {saved}\n' in ini.read_text(), (lines, ini.read_text())
+        # (Dynamic was a resolution in older files: it's its own toggle now, over Match display)
+        assert f'dynamic_resolution = {int(lines == ["resolution = dynamic"])}\n' in ini.read_text(), (lines, ini.read_text())
         count += 1
     # Shadows (issue #602): Default unless the file says 0.5x, 2x, 3x, 4x or off ("high" from earlier test builds is 2x)
     for lines, saved in [([], 'default'), (['shadows = default'], 'default'), (['shadows = 2x'], '2x'), (['shadows = 3x'], '3x'),

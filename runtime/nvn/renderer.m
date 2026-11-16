@@ -14,6 +14,7 @@
 #include "maxwell/shader.h"
 #include "nvn.h"
 #include "renderer.h"
+#include "hud_stats.h"
 #include "pace.h"
 #include "interp.h"
 #include "shader_prep.h"
@@ -284,6 +285,20 @@ static inline double now_ms(void) { return (double)clock_gettime_nsec_np(CLOCK_U
                                slow_note_build("pipeline", (uint64_t)((now_ms() - t0_) * 1e6)); r_; })
 
 static uint64_t stat_counters_gpu;  // timing counters given the GPU's time (the game's 30 / 60 fps choice)
+// Show advanced information (hud_stats.h): the counters above add up here each time renderer_stats empties them
+static uint64_t hud_draws, hud_passes, hud_dispatches, hud_compiles;
+static double hud_compile_ms;
+void renderer_hud(RendererHud *r) {
+    extern int g_tex_live;
+    extern uint64_t g_tex_live_bytes;
+    r->draws = hud_draws + stat_draws, r->passes = hud_passes + stat_passes, r->dispatches = hud_dispatches + stat_dispatches;
+    r->compiles = hud_compiles + (uint64_t)stat_compiles, r->compile_ms = hud_compile_ms + stat_compile_ms;
+    r->textures = g_tex_live, r->texture_bytes = g_tex_live_bytes;
+    r->gpu_bytes = dev ? (uint64_t)dev.currentAllocatedSize : 0;
+    static char name[128];
+    if (!name[0] && dev) snprintf(name, sizeof name, "%s", dev.name.UTF8String);
+    r->gpu_name = name, r->backend = "Metal";
+}
 const char *renderer_stats(void) {
     static int dumps;
     if (dumps++ < 3) {
@@ -301,6 +316,8 @@ const char *renderer_stats(void) {
              g_tex_live, g_tex_live_bytes / 1048576.0, g_views_live, (unsigned long)(g_snap_copies ? g_snap_copies.count : 0), (unsigned long long)stat_vcopy, stat_vcopy_bytes / 1024.0, foot / 1048576.0, stat_wait_by[0] / 24e3, (unsigned long long)stat_wait_n[0], stat_wait_by[1] / 24e3, (unsigned long long)stat_wait_n[1], stat_wait_by[2] / 24e3, (unsigned long long)stat_wait_n[2], (unsigned long long)stat_clears_as_load, (unsigned long long)stat_clear_passes,
              (unsigned long long)stat_counters_gpu, pace_is_slow() ? "30" : "60", (unsigned long long)pace_frames_over());
     stat_counters_gpu = 0;
+    hud_draws += stat_draws, hud_passes += stat_passes, hud_dispatches += stat_dispatches;  // (renderer_hud's totals)
+    hud_compiles += stat_compiles, hud_compile_ms += stat_compile_ms;
     stat_compiles = 0;
     stat_feedback_copies = 0;
     stat_compile_ms = 0;
@@ -659,7 +676,7 @@ void renderer_submit(void) {
             // (frame interpolation's replays count as the game's work: Dynamic budgets the frame and its in-betweens)
             uint64_t ns = renderer_gpu_busy(done, false);
             stat_gpu_s += ns / 1e9;
-            if (replay) { interp_replay_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
+            if (replay) { interp_replay_gpu(ns / 1e6); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
             if (done.error) LOG("[metal] command buffer error: %s\n", done.error.localizedDescription.UTF8String);
         }];
         [c commit];
@@ -4228,6 +4245,24 @@ static void draw_one(CmdRec *r, bool indexed) {
             if (composite) wx_scene_w = t0->width, wx_scene_h = t0->height;  // (the snow cover: the scene pass's size)
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
+        }
+        // the pause screen's backdrop (its blurred 192x108 copy of the scene, over the whole window): a composite drawn
+        // before it this frame is under it - the save screen draws the world behind it (runtime/hle/mirror.c)
+        if (!composite && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) && r->x[2] <= 6 &&
+            pr->fi->ntex == 1 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height) {
+            extern void mirror_scene_covered(void);
+            NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
+            if (t0 && t0->width == 192 && t0->height == 108) mirror_scene_covered();
+        }
+        // a fill over the whole screen (blended, untextured or a copy of the screen - a 16:9 render target): how much of
+        // the world and HUD it hides (runtime/hle/mirror.c)
+        if (!composite && (st.color_state[0] & 1) && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) &&
+            r->x[2] <= 6) {
+            extern void mirror_layout_fill(const float *u, uint64_t size);
+            NvnTexture *t0 = pr->fi->ntex ? shader_texture_object(1, &pr->fi->tex[0]) : NULL;
+            if (!pr->fi->ntex || (t0 && (t0->flags & 8) && t0->width * 9 == t0->height * 16))
+                mirror_layout_fill((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         }
         wx_composite = composite;
         if (mirror_draw(composite)) {  // (the vertex flip mirrors a composite drawn with uvs, the fragment one a

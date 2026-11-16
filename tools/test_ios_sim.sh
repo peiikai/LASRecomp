@@ -5,14 +5,13 @@
 # Documents/lasrecomp.log from the app's data container: `[py] selftest ok` must be there (every native package
 # imported and exercised) and, with no game files in the simulator, `[py] generator skipped`. SIM_ROMFS=<romfs dir>
 # links that romfs into the app's Documents first, and then the generator's two runs and their comparison are
-# required too (as on a device). A screenshot of the start screen goes to build/ios-sim/start-screen.png. The game
-# itself is not run in the simulator (its GPU is the Mac's; the macOS build covers the game code).
+# required too (as on a device). The game itself is not run in the simulator (its GPU is the Mac's; the macOS build
+# covers the game code).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 APP=${1:-build/ios-sim/LAS Recomp.app}
 NAME=${2:-${SIM_DEVICE:-LAS Recomp test}}
 BUNDLE_ID=$(plutil -extract CFBundleIdentifier raw -o - "$APP/Info.plist")
-OUT=$(dirname "$APP")
 
 UDID=$(xcrun simctl list devices available -j | python3 -c '
 import json, sys
@@ -47,7 +46,6 @@ for i in $(seq 1 60); do
     sleep 2
     [ -f "$LOG" ] && grep -q "^\[py\] \(generator skipped\|second run\|generator exit [1-9]\|working directory MOVED\|selftest FAILED\|second-run compare FAILED\)" "$LOG" && break
 done
-xcrun simctl io "$UDID" screenshot "$OUT/start-screen.png" >/dev/null 2>&1 || true
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" 2>/dev/null || true
 [ -f "$LOG" ] || { echo "no $LOG"; exit 1; }
 grep "^\[py\]\|FATAL\|Traceback" "$LOG" || true

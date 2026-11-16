@@ -14,10 +14,19 @@ typedef struct {
 // unknown), win_ms the window step's - the game's image drawn into the window (upscale, SMAA) and the menu (< 0:
 // unknown / not counted)
 void output_scale(double dw, double dh, bool reshape_allowed, double now, double game_ms, double win_ms, OutScale *o);
+// The render scale the settings give a dw x dh window, without a frame (the start screen; Dynamic: its top)
+void output_scale_estimate(double dw, double dh, bool reshape_allowed, double *sx, double *sy);
 double output_scale_dynamic_factor(void);
+// Dynamic resolution for the frame pacer (pace.c "Resolution first"): 0 off (a fixed resolution, or pinned for a test),
+// 1 on with nothing lower to try (at its floor, the Minimum resolution; or holding a frame rate itself: 60 out of reach),
+// 2 on and above it (a step down is still possible)
+int output_scale_dynamic_state(void);
 // The size the game's frames are drawn at now (pixels: the render scale x 1920x1080); the FPS counter shows it with Dynamic
 void output_scale_render_size(int *w, int *h);
 double output_scale_dynamic_hold_fps(void);
+// The device's thermal state (metal.m: NSProcessInfo, at start and at every change): 0 nominal, 1 fair, 2 serious, 3
+// critical. Dynamic's heat rules on a paced GPU go by it (serious and critical); tools/test_dynres.c sets it
+void output_scale_thermal(int state);
 // The scale of the game's ambient occlusion targets (metal.m / vulkan/textures.c tex_ao) at allocation scale `al`: 1 =
 // the Switch's size, up to 2 (Video tab "Ambient occlusion"). 0: LARECOMP_AO_SCALED=1, they follow the render scale.
 float output_scale_ao(float al);

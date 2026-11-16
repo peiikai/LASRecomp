@@ -11,7 +11,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: ['main', 'beta_*']
+    branches: ['main', 'develop', 'release/**', 'beta_*']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,7 +21,7 @@ concurrency:  # (a newer push to the same branch / PR replaces a run still going
 
 jobs:
   # Docs-only changes (Markdown anywhere, the docs/ screenshots; not docs/icon/, which the builds use) need no build:
-  # every job below is skipped then, and a skipped job passes the beta_* ruleset's required checks. Anything else, a
+  # every job below is skipped then, and a skipped job passes the protected branches' required checks. Anything else, a
   # manual run or a new branch runs them all.
   changes:
     runs-on: ubuntu-24.04
@@ -129,6 +129,11 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Self-updater (manifest, signature, swap and rollback)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
+          build/test-update
+          tools/test_update_e2e.sh
       - name: Controller rumble (HID bridge to SDL, fake gamepad)
         run: |
           clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_rumble.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-rumble
@@ -265,6 +270,11 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Self-updater (manifest, signature, swap and rollback)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
+          build/test-update
+          tools/test_update_e2e.sh
       - name: Controller rumble (HID bridge to SDL, fake gamepad)
         run: |
           clang -std=gnu11 -O2 -I"$HOME/sdl3/include" tools/test_rumble.c -L"$HOME/sdl3/lib" -Wl,-rpath,"$HOME/sdl3/lib" -lSDL3 -lm -o build/test-rumble
@@ -351,6 +361,11 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Self-updater (manifest, signature, swap and rollback)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
+          build/test-update
+          tools/test_update_e2e.sh
       - name: Controller rumble (HID bridge to SDL, fake gamepad)
         run: |
           clang -std=gnu11 -O2 -I"$(brew --prefix sdl3)/include" -L"$(brew --prefix sdl3)/lib" tools/test_rumble.c -lSDL3 -o build/test-rumble
@@ -459,12 +474,6 @@ jobs:
           key: ${{ steps.deps-sim.outputs.cache-primary-key }}
       - name: Simulator app, the embedded Python's self-test in it
         run: make -j"$(sysctl -n hw.ncpu)" ios-sim-test
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ios-simulator-start-screen
-          path: build/ios-sim/start-screen.png
-          if-no-files-found: ignore
 
   windows:
     needs: changes
@@ -513,6 +522,10 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Self-updater (manifest, signature, swap and rollback; Windows file rules)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update.exe
+          build/test-update.exe
       - name: Movie extractor lifecycle regression
         run: |
           clang -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe
@@ -576,6 +589,18 @@ jobs:
         uses: ./.github/actions/ios-gamebuild-test
         with:
           shell: msys2 {0}
+      # (the game code generator's unicorn, as lasgen is built: an x64 python.org Python; last, so its PATH
+      # change touches no step above)
+      - uses: actions/setup-python@v5
+        id: uc-py
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: unicorn's longjmp in the generator (#779)
+        shell: pwsh
+        run: |
+          & '${{ steps.uc-py.outputs.python-path }}' -m pip install -q unicorn==2.1.4
+          & '${{ steps.uc-py.outputs.python-path }}' tools/test_win_longjmp.py
 
   # Windows on ARM (experimental builds): the same app build and Windows tests natively on an ARM64 runner, MSYS2
   # CLANGARM64 as tools/setup_windows.ps1 sets it up there. Left out: the x86 SIMD rounding test (-mfma) and the shader
@@ -617,6 +642,10 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Self-updater (manifest, signature, swap and rollback; Windows file rules)
+        run: |
+          clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update.exe
+          build/test-update.exe
       - name: Movie extractor lifecycle regression
         run: |
           clang -pthread -std=gnu11 -O1 tools/test_movie_extractor.c -lavformat -lavcodec -lavutil -lswscale -o build/test-movie-extractor.exe
@@ -659,6 +688,18 @@ jobs:
         uses: ./.github/actions/ios-gamebuild-test
         with:
           shell: msys2 {0}
+      # (the game code generator's unicorn, as lasgen is built: an x64 python.org Python, under x64 emulation here; last, so its PATH
+      # change touches no step above)
+      - uses: actions/setup-python@v5
+        id: uc-py
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: unicorn's longjmp in the generator (#779)
+        shell: pwsh
+        run: |
+          & '${{ steps.uc-py.outputs.python-path }}' -m pip install -q unicorn==2.1.4
+          & '${{ steps.uc-py.outputs.python-path }}' tools/test_win_longjmp.py
 
   # Android (arm64): the app (android/, libmain.so with the moving guest window) builds with the NDK, and the APK holds
   # only the runtime, SDL, shaderc and the shipped fonts and icon - nothing of the game, whose code is built on the

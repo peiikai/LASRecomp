@@ -14,10 +14,12 @@ android {
     ndkVersion = "30.0.16248370"
 
     defaultConfig {
-        applicationId = "com.lasrecomp.android"
+        // (nightly builds: .github/workflows/nightly.yml installs them as their own app, beside the release one)
+        applicationId = System.getenv("LARECOMP_APPLICATION_ID") ?: "com.lasrecomp.android"
+        manifestPlaceholders["appLabel"] = System.getenv("LARECOMP_APP_LABEL") ?: "LAS Recomp"
         minSdk = 30
         targetSdk = 36
-        // (experimental builds: .github/workflows/experimental.yml sets the build's version and a code that grows)
+        // (release.yml and nightly.yml set the build's version and a code that grows)
         versionCode = System.getenv("LARECOMP_VERSION_CODE")?.toInt() ?: 1
         versionName = System.getenv("LARECOMP_VERSION_NAME") ?: "0.1-dev"
         ndk {
@@ -25,7 +27,7 @@ android {
         }
     }
 
-    // The published APKs' key (.github/workflows/experimental.yml, from the repository's secrets): Android installs an
+    // The published APKs' key (.github/workflows/release.yml and nightly.yml, from the repository's secrets): Android installs an
     // update only over an app signed with the same key. Without it, the release build is unsigned.
     signingConfigs {
         System.getenv("LARECOMP_KEYSTORE")?.let { ks ->

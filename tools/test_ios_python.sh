@@ -61,10 +61,11 @@ echo "$(wc -l < "$W/ios-files.txt" | tr -d ' ') files from the device"
 echo '{"seed": "pytest", "create-spoiler": true}' > "$W/request.json"
 (cd tools/rando && PYTHONHASHSEED=0 "../../$PY" las_headless.py "$PWD/../../$ROMFS" "../../$W/mac" "../../$W/request.json" > "../../$W/mac-generate.log" 2>&1)
 
-# compare (generate.log and request.json: the device's own paths; spoiler_view.txt's first line names the folder)
+# compare (generate.log and request.json: the device's own paths; spoiler_view.txt's first line names the folder, and
+# spoiler.html is that file as a page)
 fail=0
 while IFS= read -r rel; do
-    case "$rel" in generate.log|request.json) continue ;; esac
+    case "$rel" in generate.log|request.json|spoiler.html) continue ;; esac  # (spoiler.html: spoiler_view.txt as a page, names the folder)
     if [ ! -f "$W/mac/$rel" ]; then echo "only on the device: $rel"; fail=1
     elif [ "$rel" = spoiler_view.txt ]; then
         cmp -s <(tail -n +2 "$W/mac/$rel") <(tail -n +2 "$W/ios/$rel") || { echo "DIFF $rel"; fail=1; }

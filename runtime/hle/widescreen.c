@@ -225,6 +225,12 @@ uint64_t game_camera_zone(void) {
     return current_zone(lo, hi, &id) ? LD64(LD64(GA(SDK_SYSTEM_OBJECT)) + 0x680) : 0;
 }
 
+// The camera zone's id (a dungeon room, an interior; Show advanced information's "where you are"); false: none
+bool game_camera_zone_id(uint32_t *id) {
+    float lo[3], hi[3];
+    return current_zone(lo, hi, id);
+}
+
 // Horizontal crop (uv of the wide image): ROOM_CROP for a room wider than one screen (u0..u1), ROOM_BOX for a
 // single-screen room (16:9 box), ROOM_FULL when the zone doesn't match the camera (no box: the game's camera clamps
 // for the wide view, so a 16:9 box around a stale zone's centre cut Link out - user 2026-10-09), ROOM_KEEP when
