@@ -718,10 +718,15 @@ static void glsl_sample(Ctx *c, char *out, int slot, const char *const *co, cons
     // layer over the layer count (10), to be set side by side with the same runs on NVIDIA. On the Adreno 6-9 all drew
     // half lit, the depth read and the reference alike: every surface's reference at its own depth or just behind it,
     // as when the shadow pass's polygon offset is missing. =11 / =12 compare with 0.002 / 0.01 more bias: lit again
-    // with shadows there means the casters' depths in the map are too near.)
+    // with shadows there means the casters' depths in the map are too near. On the Adreno both stayed dim (and the
+    // game's offset reaches the driver: LARECOMP_VK_BIAS_LOG), so the reference is behind the depth read by more than
+    // any bias. =13 / =14 draw contour lines of the depth read / the reference (50 per unit), =15 their difference
+    // (mid grey where equal, dark where the reference is behind): the lines' shapes tell whether the lookup lands on
+    // the right part of the map.)
     static const char *const tests[] = {"float((R) < (D))", "float(isnan(R) || isinf(R))", "float((R) > 1.0f)",
                                         "float((R) < 0.0f)", "float((D) >= 1.0f)", "(D)", "(R)", "(U)", "(V)", "(L)",
-                                        "float((R) - 0.002f < (D))", "float((R) - 0.01f < (D))"};
+                                        "float((R) - 0.002f < (D))", "float((R) - 0.01f < (D))", "fract((D) * 50.0f)",
+                                        "fract((R) * 50.0f)", "clamp(0.5f + ((D) - (R)) * 20.0f, 0.0f, 1.0f)"};
     if (soft) {
         int nt = (int)(sizeof tests / sizeof *tests);
         int m = maxwell_glsl_soft_shadow >= 1 && maxwell_glsl_soft_shadow <= nt ? maxwell_glsl_soft_shadow - 1 : 0;
