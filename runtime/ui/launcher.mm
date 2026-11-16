@@ -770,9 +770,7 @@ static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *
 // ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on macOS / iOS)
 // A data root inside a synced folder uploads every game file to the player's cloud drive: a warning on the start
 // screen with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep
-// here (settings.cloud_kept). Checked once per launch on the current data root (plat_cloud_synced); the size in
-// the background: the data root's own once set up, before that the picked game files (or a typical copy) plus what
-// the setup adds. LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
+// here (settings.cloud_kept). LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
 #define GAME_FILES_GB 6.3   // exefs + romfs, as players bring them
 #define SETUP_ADDS_GB 0.4   // the built game code and its kept pieces (0.23, a beta_5 setup), shader caches
 static const char *g_cloud_name;           // the service's name (the English text names it); NULL: not synced
@@ -796,42 +794,9 @@ static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %
                                        "download as the game reads them, so it may be very slow or close.");
 static const char *const CLOUD_OWN = "OneDrive";
 #endif
-static int g_cloud = -1;                   // -1: not checked yet
-static std::atomic<double> g_cloud_gb{-1}; // the estimate (-1: not known yet)
-static std::atomic<int> g_cloud_job;
-static std::string g_cloud_for = "\x02";   // what the estimate is for: "" set up, "\x01" nothing picked, else the folder
-
-static void *cloud_size_thread(void *arg) {
-    std::string *src = (std::string *)arg;
-    int job = g_cloud_job;
-    double gb;
-    if (src->empty()) gb = rt_tree_size(rt_data_root()) / 1e9;
-    else {
-        std::string exefs, romfs;
-        bool unusable = false;
-        if (*src != "\x01") find_game(*src, exefs, romfs, unusable);
-        gb = (exefs.empty() || romfs.empty() ? GAME_FILES_GB : (rt_tree_size(exefs.c_str()) + rt_tree_size(romfs.c_str())) / 1e9)
-             + SETUP_ADDS_GB;
-    }
-    if (job == g_cloud_job) g_cloud_gb = gb;
-    delete src;
-    return NULL;
-}
-
 // The warning, w wide at the cursor (the start screen's upper right; before the setup, under the System rows).
 // 1: Keep here pressed, 2: Choose another folder (offered when the data folder can be changed and nothing is running)
-static int cloud_notice(float s, float w, bool ready) {
-    std::string src;
-    pthread_mutex_lock(&g_lock);
-    src = ready ? "" : g_src.empty() ? "\x01" : g_src;
-    pthread_mutex_unlock(&g_lock);
-    if (src != g_cloud_for) {  // (set up, or another folder picked: estimate again)
-        g_cloud_for = src, g_cloud_job++;
-        pthread_t th;
-        if (pthread_create(&th, NULL, cloud_size_thread, new std::string(src)) == 0) pthread_detach(th);
-    }
-    double gb = g_cloud_gb;
-    if (gb < 0) return 0;
+static int cloud_notice(float s, float w) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
@@ -842,7 +807,8 @@ static int cloud_notice(float s, float w, bool ready) {
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_cloud_name);
     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your %s."),
-                       fmax(1.0, gb), g_cloud_name);
+                       // A typical setup avoids another enumeration of potentially offloaded folders.
+                       GAME_FILES_GB + SETUP_ADDS_GB, g_cloud_name);
 #ifdef __APPLE__
     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
 #endif
@@ -1061,6 +1027,7 @@ static bool g_tip_test;  // (LARECOMP_LAUNCHER_SHOT=<frame>:tip)
 // Something the player should know before playing (iPhone: the data folder offloaded to iCloud), in the menus' look
 // with an OK - it was a system alert (user 2026-11-11). Main thread.
 static std::string g_notice;
+static bool g_notice_offload;
 static void notice_popup(float s) {
     float sc = s * 720.0f / 1080.0f;
     if (!g_notice.empty() && !ImGui::IsPopupOpen("##notice")) ImGui::OpenPopup("##notice");
@@ -1075,8 +1042,15 @@ static void notice_popup(float s) {
     ImGui::Spacing();
     ImGui::SetItemDefaultFocus();
     if (ImGui::Button(L("OK"), ImVec2(240 * sc, 0)) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
-        g_notice.clear(), ImGui::CloseCurrentPopup();
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        if (g_notice_offload) {
+            g_notice_offload = false;
+            g_settings.cloud_offload_seen = true;
+            settings_save();
+        }
+        g_notice.clear();
+        ImGui::CloseCurrentPopup();
+    }
     ImGui::PopFont();
     ImGui::EndPopup();
 }
@@ -2500,19 +2474,28 @@ extern "C" void launcher_run(const char *root) {
         fprintf(stderr, "[launcher] delete %.1f GB: %s -> %s\n", gb, ok ? "ok" : "refused", status.c_str());
         if (!status.empty()) { g_bg = 0; page = SETUP; }
     }
-    if (g_cloud < 0) {  // (once per launch: a "Title screen" reboot keeps it)
+    static bool cloud_checked;
+    if (!cloud_checked) {  // (once per launch: a "Title screen" reboot keeps it)
+        cloud_checked = true;
         if (PLAT_IOS) fprintf(stderr, "[launcher] data folder shown as: %s\n", data_root_shown().c_str());
         const char *t = getenv("LARECOMP_TEST_ONEDRIVE");
         g_cloud_name = t ? (atoi(t) != 0 ? "OneDrive" : NULL) : plat_cloud_synced(rt_data_root());
-        g_cloud = g_cloud_name != NULL;
-        if (g_cloud) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_cloud_name,
+        if (g_cloud_name) fprintf(stderr, "[launcher] the data folder is synced by %s%s: %s\n", g_cloud_name,
                              g_settings.cloud_kept ? " (kept there)" : "", rt_data_root());
-        if (g_cloud && plat_cloud_offloaded(rt_data_root())) {
-            char msg[700];
-            char here[400];  // (the service by name, as the "synced by" warning says it)
-            snprintf(here, sizeof here, L(NOT_HERE), g_cloud_name);
-            snprintf(msg, sizeof msg, "%s\n\n%s", here, L(KEEP_DOWNLOADED));
-            g_notice = msg;  // (notice_popup: in the menus' look)
+        if (g_cloud_name) {
+            PlatCloudState cloud = plat_cloud_offloaded(rt_data_root());
+            if (cloud == PLAT_CLOUD_OFFLOADED && !g_settings.cloud_offload_seen) {
+                g_notice_offload = true;
+                char here[400];
+                snprintf(here, sizeof here, L(NOT_HERE), g_cloud_name);
+                g_notice = std::string(here) + "\n\n" + L(KEEP_DOWNLOADED);
+            } else if (cloud == PLAT_CLOUD_INCOMPLETE) {
+                fprintf(stderr, "[cloud] could not verify local availability in %s\n", rt_data_root());
+            } else if (cloud == PLAT_CLOUD_AVAILABLE && g_settings.cloud_offload_seen) {
+                // A later offload is a new condition once a complete scan finds everything local.
+                g_settings.cloud_offload_seen = false;
+                settings_save();
+            }
         }
     }
     // the shader preparation of every later start: in the background (first setups and updates do theirs above)
@@ -3180,9 +3163,9 @@ extern "C" void launcher_run(const char *root) {
                     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(CHANGED_HINT));
                     ImGui::PopTextWrapPos();
                 }
-                if (!ready && g_cloud > 0 && !g_settings.cloud_kept) {  // (before the copy is the time to move)
+                if (!ready && g_cloud_name && !g_settings.cloud_kept) {  // (before the copy is the time to move)
                     ImGui::Dummy(ImVec2(0, 14 * sc));
-                    int r = cloud_notice(1.5f * sc, ImGui::GetContentRegionAvail().x, false);
+                    int r = cloud_notice(1.5f * sc, ImGui::GetContentRegionAvail().x);
                     if (r == 1) cloud_keep();
                     else if (r == 2) choose_data_folder();
                 }
@@ -3265,10 +3248,10 @@ extern "C" void launcher_run(const char *root) {
                 ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), "%s", L("!  Installed without the increased memory limit"));
             }
 #endif
-            if (g_cloud > 0 && !g_settings.cloud_kept) {
+            if (g_cloud_name && !g_settings.cloud_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
-                int r = cloud_notice(s, w, status.empty());
+                int r = cloud_notice(s, w);
                 if (r == 1) cloud_keep();
                 else if (r == 2) choose_data_folder();
             }

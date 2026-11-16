@@ -93,13 +93,23 @@ with tempfile.TemporaryDirectory() as directory:
         assert f'text_speed = {value}\n' in ini.read_text(), (lines, ini.read_text())
         count += 1
     # The cloud drive warning's Keep here: older files name it onedrive_kept; it is saved as cloud_kept.
-    for lines, value in [([], 0), (['onedrive_kept = 1'], 1), (['onedrive_kept = 0'], 0), (['cloud_kept = 1'], 1)]:
+    for lines, value in [
+        ([], 0), (['onedrive_kept = 1'], 1), (['onedrive_kept = 0'], 0), (['cloud_kept = 1'], 1),
+        (['cloud_kept = 0', 'onedrive_kept = 1'], 0), (['onedrive_kept = 0', 'cloud_kept = 1'], 1),
+    ]:
         ini = directory / 'test.ini'
         ini.write_text('\n'.join(lines) + '\n')
         subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
                        check=True, capture_output=True)
         saved = ini.read_text()
         assert f'cloud_kept = {value}\n' in saved and 'onedrive_kept' not in saved, (lines, saved)
+        count += 1
+    for initial, value in [('', 0), ('cloud_offload_seen = 1\n', 1)]:
+        ini = directory / 'test.ini'
+        ini.write_text(initial)
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'cloud_offload_seen = {value}\n' in ini.read_text()
         count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'

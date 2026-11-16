@@ -8,6 +8,7 @@
 #include <execinfo.h>
 #include <fts.h>
 #include <ftw.h>
+#include <limits.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -19,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
@@ -180,51 +182,85 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
 
-// A folder in iCloud Drive: its files may not be on the device, and a write there is a sync. The start screen
-// warns, as it does for OneDrive on Windows. (Other providers - Google Drive, Dropbox - look just like On My iPhone
-// from here: all of them are folders under some app group's File Provider Storage; no warning for those.)
-const char *plat_cloud_synced(const char *dir) {
-    static char name[128];
-    CFURLRef u = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)dir, (CFIndex)strlen(dir), true);
-    if (!u) return NULL;
-    CFBooleanRef ubi = NULL;
-    bool synced = CFURLCopyResourcePropertyForKey(u, kCFURLIsUbiquitousItemKey, &ubi, NULL) && ubi && CFBooleanGetValue(ubi);
-    if (ubi) CFRelease(ubi);
-    if (synced) {
-        // (the key has no CoreFoundation name; it is NSURLUbiquitousItemContainerDisplayNameKey's own string)
-        CFStringRef shown = NULL;
-        if (!CFURLCopyResourcePropertyForKey(u, CFSTR("NSURLUbiquitousItemContainerDisplayNameKey"), &shown, NULL) || !shown
-            || !CFStringGetCString(shown, name, sizeof name, kCFStringEncodingUTF8) || !name[0])
-            snprintf(name, sizeof name, "iCloud Drive");
-        if (shown) CFRelease(shown);
-    }
-    CFRelease(u);
-    return synced ? name : NULL;
+// TN3150: even a metadata query can materialize a dataless parent. Apply the policy only on this thread
+// and only while probing, so the game's later reads retain their normal behavior.
+static int cloud_no_materialize(void) {
+    int policy = getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD);
+    if (policy < 0 || setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD,
+                                      IOPOL_MATERIALIZE_DATALESS_FILES_OFF) != 0)
+        return -1;
+    return policy;
 }
 
-// A file under dir (iCloud) the system has offloaded: the game would wait for each as it reads it. Read from the
-// file system's own mark (SF_DATALESS), entry by entry. No folder answers for its files: a folder's
-// NSURLUbiquitousItemDownloadingStatusKey stays Current with files in it offloaded, with Keep Downloaded set on it
-// too (macOS then brings an offloaded file back, 20 to 60 s later). The same key read per file names the same
-// files as the mark, but takes seconds (4800 entries: 6 to 7.6 s against 20 ms on an iPhone 15 Pro, 5.5 s against
-// 13 ms on macOS 26).
-bool plat_cloud_offloaded(const char *dir) {
-    uint64_t t0 = plat_now_ns();
-    char *paths[] = {(char *)dir, NULL};
-    FTS *f = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
-    if (!f) return false;
-    int n = 0;
-    bool off = false;
-    for (FTSENT *e; !off && (e = fts_read(f));) {
-        if (e->fts_info == FTS_DP) continue;
-        n++;
-        // (a folder with the mark hasn't its list here either: listing it would be a download)
-        if ((e->fts_info == FTS_F || e->fts_info == FTS_D) && (e->fts_statp->st_flags & SF_DATALESS)) {
-            fprintf(stderr, "[cloud] not on the device: %s\n", e->fts_path);
-            off = true;
-        }
+static bool cloud_restore_policy(int policy) {
+    if (setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, policy) == 0) return true;
+    fprintf(stderr, "[cloud] could not restore materialization policy: %s\n", strerror(errno));
+    return false;
+}
+
+const char *plat_cloud_synced(const char *dir) {
+    if (!dir || !*dir) return NULL;
+    int policy = cloud_no_materialize();
+    if (policy < 0) return NULL;
+    CFURLRef u = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)dir, (CFIndex)strlen(dir), true);
+    CFBooleanRef ubi = NULL;
+    bool synced = u && CFURLCopyResourcePropertyForKey(u, kCFURLIsUbiquitousItemKey, &ubi, NULL)
+                    && ubi && CFBooleanGetValue(ubi);
+    if (ubi) CFRelease(ubi);
+    if (u) CFRelease(u);
+    return cloud_restore_policy(policy) && synced ? "iCloud Drive" : NULL;
+}
+
+// SF_DATALESS reports APFS materialization, not sync status or availability on other file systems. A
+// downloaded directory can still contain dataless files. Inspect directories before fts enumerates them.
+PlatCloudState plat_cloud_offloaded(const char *dir) {
+    if (!dir || !*dir) return PLAT_CLOUD_INCOMPLETE;
+    // A trailing slash would make pathname resolution follow a root symlink even with FTS_PHYSICAL.
+    char path[PATH_MAX];
+    size_t len = strlen(dir);
+    if (len >= sizeof path) return PLAT_CLOUD_INCOMPLETE;
+    while (len > 1) {
+        if (dir[len - 1] == '/') len--;
+        else if (dir[len - 1] == '.' && dir[len - 2] == '/') len--;
+        else break;
     }
-    fts_close(f);
-    fprintf(stderr, "[cloud] %d entries checked in %.0f ms\n", n, (plat_now_ns() - t0) / 1e6);
-    return off;
+    memcpy(path, dir, len);
+    path[len] = 0;
+    int policy = cloud_no_materialize();
+    if (policy < 0) return PLAT_CLOUD_INCOMPLETE;
+
+    char *paths[] = {path, NULL};
+    FTS *f = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
+    PlatCloudState state = PLAT_CLOUD_INCOMPLETE;
+    if (f) {
+        state = PLAT_CLOUD_AVAILABLE;
+        for (;;) {
+            errno = 0;
+            FTSENT *e = fts_read(f);
+            if (!e) {
+                if (errno) state = PLAT_CLOUD_INCOMPLETE;
+                break;
+            }
+            if (e->fts_level == FTS_ROOTLEVEL && e->fts_info != FTS_D && e->fts_info != FTS_DP) {
+                state = PLAT_CLOUD_INCOMPLETE;
+                break;
+            }
+            switch (e->fts_info) {
+            case FTS_D:
+            case FTS_F:
+                if (e->fts_statp->st_flags & SF_DATALESS) state = PLAT_CLOUD_OFFLOADED;
+                break;
+            case FTS_DC:
+            case FTS_DNR:
+            case FTS_ERR:
+            case FTS_NS:
+                state = PLAT_CLOUD_INCOMPLETE;
+                break;
+            }
+            if (state == PLAT_CLOUD_OFFLOADED) break;
+        }
+        if (fts_close(f) != 0 && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    }
+    if (!cloud_restore_policy(policy) && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    return state;
 }

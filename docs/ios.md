@@ -177,9 +177,11 @@ What is still open or worth knowing. Fixed items are in git history.
 
 ### Data folder
 
-- An iCloud Drive data folder gets a warning and a system box at launch when files are offloaded; a read of an
-  offloaded file waits for its download (menu sounds 7.4 s instead of 10 ms). No `NSFileCoordinator` around the
-  game's reads, and other providers (Google Drive, Dropbox) aren't told apart from On My iPhone.
+- An iCloud Drive data folder gets a warning and a launch notice when an item is offloaded. The metadata scan
+  shares macOS's APFS SF_DATALESS check and inspects directories before listing them. A downloaded directory can
+  still contain offloaded files. The flag describes materialization at scan time and cannot tell whether another
+  file system will fetch data. The game's later reads can still wait for downloads (menu sounds 7.4 s instead of
+  10 ms). Other providers (Google Drive, Dropbox) aren't told apart from On My iPhone.
 - A move in the background freezes with the app (no `beginBackgroundTask`). A move killed halfway is untested.
 
 ### From the Android port
