@@ -1,4 +1,4 @@
-# LAS Recomp build
+# ReAwakening (LAS Recomp) build
 # macOS: Homebrew clang/SDL3/FFmpeg, Metal renderer.
 # Windows: MSYS2 UCRT64 shell (see docs/BUILD-windows.md), clang + Vulkan renderer.
 # Linux: clang + Vulkan renderer, x86-64 or aarch64 (see docs/linux.md).
@@ -347,7 +347,7 @@ $(B)/rt/platform/windows_rc.o: runtime/platform/windows.rc docs/icon/icon.ico ru
 
 VERSION  := $(shell sed -n 's/^\#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
 
-# macOS: build/LAS Recomp.app, runs on macOS $(APP_MIN)+: the game rebuilt for that in build/mac15 against build/deps
+# macOS: build/ReAwakening.app, runs on macOS $(APP_MIN)+: the game rebuilt for that in build/mac15 against build/deps
 # (`make deps`: SDL3, LGPL FFmpeg, keystone, Python, from pinned sources), the generator helper when built
 # (`make rando-helper` after `make deps`), packaged by tools/bundle_macos.sh. No game files or fonts.
 APP_MIN  := 15.0
@@ -358,7 +358,7 @@ deps-ios:
 	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
 deps-ios-sim:
 	SIM=1 IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
-# iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-iOS.ipa, signed with TEAM_ID / PROFILE
+# iOS: build/ios/LAS Recomp.app and build/dist/ReAwakening-<version>-iOS.ipa, signed with TEAM_ID / PROFILE
 # (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
 ipa:
 	$(MAKE) PLATFORM=ios
@@ -368,7 +368,7 @@ app:
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
 	MACOS_MIN=$(APP_MIN) tools/bundle_macos.sh $(APP_B)/lasrecomp
 # The iOS app without game code (build/ios-skeleton/LAS Recomp.app), and the release's iOS kit around it
-# (build/dist/LAS Recomp-<version>-iOS.laskit: a zip with the app as Payload/, a linker for each desktop, the Darwin
+# (build/dist/ReAwakening-<version>-iOS.laskit: a zip with the app as Payload/, a linker for each desktop, the Darwin
 # headers), which the start screen on any desktop completes with the library it builds there (runtime/iosexport.c).
 # Needs `make deps-ios`; the kit needs the five linkers (tools/fetch_lld.sh for each LLD_TARGET).
 ios-skeleton:
@@ -384,11 +384,11 @@ ios-sim:
 ios-sim-test: ios-sim
 	tools/test_ios_sim.sh "build/ios-sim/LAS Recomp.app"
 
-# macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/LAS Recomp-<v>-macOS.dmg
+# macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/ReAwakening-<v>-macOS.dmg
 dmg: app
 	tools/make_dmg.sh
 
-# Windows: build/dist/LAS Recomp-<version>-windows.zip, top folder "LAS Recomp/": the exe, the seed generator
+# Windows: build/dist/ReAwakening-<version>-windows.zip, top folder "LAS Recomp/": the exe, the seed generator
 # helper (make rando-helper), what the start screen builds the game code with on the player's machine (make gen-helper,
 # tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the exe's import library)
 # and the DLLs they load (runs without MSYS2). No game code. The exe is a release build in $(WIN_B):
@@ -398,9 +398,12 @@ dmg: app
 # with build/deps-win/bin first (the FFmpeg DLL names are the same as MSYS2's GPL ones). vulkan-1.dll is left
 # out: every Vulkan driver installs the loader in System32. Saves, seeds and game files go next to the exe at run time.
 # Needs: Windows 10+ x64, a Vulkan 1.3 driver, an AVX2 CPU (GENARCH x86-64-v3; checked at startup).
-# ARM64 (experimental, from an MSYS2 CLANGARM64 shell): the same steps give LAS Recomp-<version>-windows-arm64.zip; its
+# ARM64 (experimental, from an MSYS2 CLANGARM64 shell): the same steps give ReAwakening-<version>-windows-arm64.zip; its
 # helpers are built with an x64 Python 3.12 (RANDO_PY=...: capstone / unicorn have no ARM64 Windows wheels) and run
 # under emulation, everything else is ARM64.
+# the zip itself: tools/dist_name.sh (ReAwakening-..., nightlies LAS Recomp-...); the folder inside stays "LAS Recomp"
+# (every shipped self-update unpacks that folder, runtime/update.cpp)
+DIST_NAME = $(if $(filter nightly-% experimental-%,$(VERSION)),LAS Recomp,ReAwakening)
 DIST     := build/dist/LAS Recomp
 WIN_B    := build/win-release
 # the zip's platform name, as the update check names it (runtime/ui/launcher.mm LARECOMP_PLATFORM)
@@ -424,6 +427,8 @@ dist:
 	cp docs/icon/icon_1024.png "$(DIST)/icon.png"
 	cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$(DIST)/"  # (start screen font, OFL)
 	cp third_party/fonts/Baloo2/OFL.txt "$(DIST)/Baloo2-OFL.txt"
+	cp third_party/fonts/HyliaSerif/HyliaSerifBeta-Regular.otf "$(DIST)/"  # (start screen title)
+	cp third_party/fonts/HyliaSerif/README.md "$(DIST)/HyliaSerif-README.md"
 	cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$(DIST)/"  # (last-resort fonts, free license)
 	cp third_party/fonts/DejaVu/LICENSE "$(DIST)/DejaVu-LICENSE.txt"
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
@@ -436,13 +441,13 @@ dist:
 	    case "$$(basename "$$(cygpath -u "$$USERPROFILE")")" in runner|runneradmin) h= ;; *) h=$$(cygpath -m "$$USERPROFILE") ;; esac; \
 	    ! grep -rlaiF -e "$(CURDIR)" -e "$$(cygpath -m '$(CURDIR)')" -e "$$(cygpath -w '$(CURDIR)')" \
 	        $${h:+-e "$$h" -e "$$(cygpath -w "$$h")"} "$(DIST)"; fi
-	cd build/dist && if command -v zip >/dev/null; then zip -qr "LAS Recomp-$(VERSION)-$(WINZIP).zip" "LAS Recomp"; \
-	    else /c/Windows/System32/tar.exe -a -cf "LAS Recomp-$(VERSION)-$(WINZIP).zip" "LAS Recomp"; fi
-	@echo "build/dist/LAS Recomp-$(VERSION)-$(WINZIP).zip"
+	cd build/dist && if command -v zip >/dev/null; then zip -qr "$(DIST_NAME)-$(VERSION)-$(WINZIP).zip" "LAS Recomp"; \
+	    else /c/Windows/System32/tar.exe -a -cf "$(DIST_NAME)-$(VERSION)-$(WINZIP).zip" "LAS Recomp"; fi
+	@echo "build/dist/$(DIST_NAME)-$(VERSION)-$(WINZIP).zip"
 
 # Seed generator as a standalone helper, so players need no Python: build/helper/rando-gen/ (rando-gen[.exe] +
 # _internal/), frozen by PyInstaller from tools/rando/rando_gen.spec in its own venv (build/rando-venv). Ship the
-# rando-gen folder next to the exe (Windows) or as "LAS Recomp.app"/Contents/Resources/rando-gen (runtime/ui/rando_tab.mm
+# rando-gen folder next to the exe (Windows) or as "ReAwakening.app"/Contents/Resources/rando-gen (runtime/ui/rando_tab.mm
 # generator_cmd). PyInstaller only builds for the OS it runs on.
 # macOS arm64: the relocatable Python 3.12 and keystone from `make deps` (macOS 11+ / 15+: the helper runs where the
 #   app does); without them Homebrew's python@3.12 and keystone (then only on the macOS they were built for). The
@@ -482,7 +487,7 @@ build/rando-venv/.ok: third_party/LAS-Randomizer/requirements.txt
 	$(RANDO_VPY) -m pip install -q -r third_party/LAS-Randomizer/requirements.txt pyinstaller==6.22.3
 	touch $@
 
-# Linux: build/dist/LAS Recomp-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04 containers (podman) with SDL3, LGPL
+# Linux: build/dist/ReAwakening-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04 containers (podman) with SDL3, LGPL
 # FFmpeg, shaderc and the seed generator helper inside; the Vulkan loader and GPU drivers are the system's.
 # `make appimage` (ARCH: this machine's, or aarch64 cross-compiled), `make appimages` both. See docs/linux.md.
 appimage:

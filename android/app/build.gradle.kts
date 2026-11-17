@@ -16,7 +16,7 @@ android {
     defaultConfig {
         // (nightly builds: .github/workflows/nightly.yml installs them as their own app, beside the release one)
         applicationId = System.getenv("LARECOMP_APPLICATION_ID") ?: "com.lasrecomp.android"
-        manifestPlaceholders["appLabel"] = System.getenv("LARECOMP_APP_LABEL") ?: "LAS Recomp"
+        manifestPlaceholders["appLabel"] = System.getenv("LARECOMP_APP_LABEL") ?: "ReAwakening"
         minSdk = 30
         targetSdk = 36
         // (release.yml and nightly.yml set the build's version and a code that grows)
@@ -85,6 +85,8 @@ val prepareLasRecomp by tasks.registering {
     val res = mapOf(
         "Baloo2-SemiBold.ttf" to "third_party/fonts/Baloo2/Baloo2-SemiBold.ttf",
         "Baloo2-OFL.txt" to "third_party/fonts/Baloo2/OFL.txt",
+        "HyliaSerifBeta-Regular.otf" to "third_party/fonts/HyliaSerif/HyliaSerifBeta-Regular.otf",
+        "HyliaSerif-README.md" to "third_party/fonts/HyliaSerif/README.md",
         "BIZUDPGothic-Regular.ttf" to "third_party/fonts/BIZUDPGothic/BIZUDPGothic-Regular.ttf",
         "BIZUDPGothic-OFL.txt" to "third_party/fonts/BIZUDPGothic/OFL.txt",
         "DejaVuSans.ttf" to "third_party/fonts/DejaVu/DejaVuSans.ttf",

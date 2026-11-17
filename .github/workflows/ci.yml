@@ -409,7 +409,7 @@ jobs:
           tools/fetch_zig.sh
           make -j"$(sysctl -n hw.ncpu)" app
       - name: Finished macOS app launches (dynamic-library loading)
-        run: python3 tools/smoke_macos_app.py "build/LAS Recomp.app"
+        run: python3 tools/smoke_macos_app.py "build/ReAwakening.app"
 
   # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
   # the iOS kit holds (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static

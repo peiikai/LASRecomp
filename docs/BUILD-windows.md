@@ -1,4 +1,4 @@
-# Building LAS Recomp on Windows (x86-64, and ARM64 experimental)
+# Building ReAwakening on Windows (x86-64, and ARM64 experimental)
 
 Status: part of main. Builds and runs the game on Vulkan (with your own game files); `make dist` packages the
 release zip.
@@ -38,7 +38,7 @@ Vulkan, shaderc DLLs).
     make rando-helper   # the seed generator without Python (build/helper/rando-gen)
     make gen-helper     # the game code generator without Python (build/helper/lasgen)
     tools/fetch_zig.sh  # the compiler the start screen builds the game code with (build/zig)
-    make dist           # -> build/dist/LAS Recomp-<version>-windows.zip (no game code inside)
+    make dist           # -> build/dist/ReAwakening-<version>-windows.zip (no game code inside)
 
 The zip's `LAS Recomp/` folder holds `lasrecomp.exe` (icon from `docs/icon/icon.ico`, via windres),
 `rando-gen/` and the MSYS2 DLLs. No installer: game files, saves, seeds and settings are kept next to the exe, so
@@ -58,7 +58,7 @@ above, except that the helpers need that Python passed in (there is no `py` laun
     make rando-helper RANDO_PY="$PY64"
     make gen-helper RANDO_PY="$PY64"
     tools/fetch_zig.sh  # (zig for aarch64-windows)
-    make dist           # -> build/dist/LAS Recomp-<version>-windows-arm64.zip
+    make dist           # -> build/dist/ReAwakening-<version>-windows-arm64.zip
 
 Everything in the zip is ARM64 except the two helpers (`lasgen`, `rando-gen`), which are x64. AArch64 FP/SIMD
 instructions stay inline assembly (`--simd asm`), as on the Mac. The ARM64 zip is not part of the normal releases.

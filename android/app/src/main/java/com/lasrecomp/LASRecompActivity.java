@@ -225,7 +225,7 @@ public class LASRecompActivity extends SDLActivity {
     private void showDriverError(String extra) {
         String msg = dlgText + (extra != null ? "\n\n" + extra : "");
         android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("LAS Recomp").setMessage(msg).setCancelable(false);
+            .setTitle("ReAwakening").setMessage(msg).setCancelable(false);
         if (snapdragon())  // (elsewhere no package can help: Close, or back to the phone's own driver)
             b.setPositiveButton("Choose a driver package", (d, w) -> {
                 Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);

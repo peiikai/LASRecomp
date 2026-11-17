@@ -1,5 +1,5 @@
 #!/bin/bash
-# make ipa: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-iOS.ipa from build/ios/lasrecomp and
+# make ipa: build/ios/LAS Recomp.app and build/dist/ReAwakening-<version>-iOS.ipa from build/ios/lasrecomp and
 # build/ios/lasgame.dylib. The app is laid out as on macOS: the executable holds no game code; the game code library
 # (built from your own game files) is the embedded Frameworks/LASGame.framework, signed with the app - iOS runs only
 # code signed inside the bundle, so the .ipa holds the game's code: for your own devices, never shared.
@@ -82,6 +82,8 @@ EOF
 cp docs/icon/icon_ios_1024.png "$APP/icon.png"
 cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$APP/"
 cp third_party/fonts/Baloo2/OFL.txt "$APP/Baloo2-OFL.txt"
+cp third_party/fonts/HyliaSerif/HyliaSerifBeta-Regular.otf "$APP/"
+cp third_party/fonts/HyliaSerif/README.md "$APP/HyliaSerif-README.md"
 # the game text's fonts (runtime/hle/pl.c: no readable system fonts on iOS, so BIZ UDPGothic serves first) and the
 # last-resort ones, as the desktop packages ship them
 cp third_party/fonts/BIZUDPGothic/BIZUDPGothic-Regular.ttf "$APP/"
@@ -122,11 +124,11 @@ cat > "$APP/Info.plist" <<EOF
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key><string>en</string>
-	<key>CFBundleDisplayName</key><string>LAS Recomp</string>
+	<key>CFBundleDisplayName</key><string>ReAwakening</string>
 	<key>CFBundleExecutable</key><string>lasrecomp</string>
 	<key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
-	<key>CFBundleName</key><string>LAS Recomp</string>
+	<key>CFBundleName</key><string>ReAwakening</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleShortVersionString</key><string>$SHORT</string>
 	<key>CFBundleVersion</key><string>1</string>
@@ -160,7 +162,7 @@ cat > "$APP/Info.plist" <<EOF
 		<key>UIApplicationShortcutItemTitle</key><string>Play Vanilla</string>
 		<key>UIApplicationShortcutItemIconSymbolName</key><string>play.fill</string>
 	</dict></array>
-	<key>NSLocalNetworkUsageDescription</key><string>LiveSplit: LAS Recomp connects to LiveSplit's Server on your computer to drive the timer.</string>
+	<key>NSLocalNetworkUsageDescription</key><string>LiveSplit: ReAwakening connects to LiveSplit's Server on your computer to drive the timer.</string>
 EOF
 cat >> "$APP/Info.plist" <<'EOF'
 </dict>
@@ -270,7 +272,8 @@ fi
 
 mkdir -p build/dist && rm -rf build/ios/Payload && mkdir build/ios/Payload
 cp -R "$APP" build/ios/Payload/
-IPA="build/dist/LAS Recomp-$VERSION-iOS.ipa"
+. tools/dist_name.sh
+IPA="build/dist/$(dist_name "$VERSION")-$VERSION-iOS.ipa"
 rm -f "$IPA"
 (cd build/ios && zip -qr "../../$IPA" Payload)
 rm -rf build/ios/Payload

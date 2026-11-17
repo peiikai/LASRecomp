@@ -41,7 +41,7 @@ static ZipReader *kit_open(const char *kit, char *why, size_t why_size) {
     char *v = i >= 0 ? zip_read(z, i, &size) : NULL;
     if (v) v[strcspn(v, "\r\n")] = 0;
     bool same = v && !strcmp(v, larecomp_version());
-    if (!same) snprintf(why, why_size, "this iOS kit is from %s, and this is LAS Recomp %s: choose the kit of the same release",
+    if (!same) snprintf(why, why_size, "this iOS kit is from %s, and this is ReAwakening %s: choose the kit of the same release",
                         v && *v ? v : "another release", larecomp_version());
     free(v);
     if (!same) { zip_close(z); return NULL; }
@@ -154,7 +154,7 @@ void iosexport_default_path(char *out, size_t n) {
 #else
     const char *home = getenv("HOME");
 #endif
-    snprintf(out, n, "%s" SEP "Downloads" SEP "LAS Recomp-%s-iOS.ipa", home && *home ? home : ".", larecomp_version());
+    snprintf(out, n, "%s" SEP "Downloads" SEP "ReAwakening-%s-iOS.ipa", home && *home ? home : ".", larecomp_version());
 }
 
 // One 0-1 across the whole export: the game code build (its own 0-1) fills the first BUILD_SHARE, the .ipa the rest.

@@ -1,6 +1,6 @@
 # Notes for agents
 
-- **What this is.** LAS Recomp statically recompiles the Switch release of *Link's Awakening* into a native app.
+- **What this is.** ReAwakening (formerly LAS Recomp; the code, files and folders still say lasrecomp) statically recompiles the Switch release of *Link's Awakening* into a native app.
   - `tools/gen.py` turns the game's executables into C, which is built on the player's machine from their own
     extracted game files.
   - A host stands in for the Switch OS and services (`runtime/kernel.c`, `loader.c`, `services/`).

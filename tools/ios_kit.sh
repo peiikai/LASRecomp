@@ -1,5 +1,5 @@
 #!/bin/bash
-# The iOS kit: build/dist/LAS Recomp-<version>-iOS.laskit, the one file a player downloads so that LAS Recomp on
+# The iOS kit: build/dist/ReAwakening-<version>-iOS.laskit, the one file a player downloads so that ReAwakening on
 # any desktop (the start screen's "Recomp for iOS", runtime/iosexport.c) turns their own game files into the iOS app.
 # It is a zip (read in place by the runtime, never unpacked by the player) holding:
 #   Payload/LAS Recomp.app/  the app without game code (tools/bundle_ios.sh SKELETON=1); the .ipa is these entries
@@ -40,9 +40,9 @@ case "$ZA" in
     *) tar -xJf "$ZA" -C "$STAGE/include" --strip-components 4 "$ZN/lib/libc/include/any-darwin-any" ;;
 esac
 cat > "$STAGE/README.txt" <<EOT
-LAS Recomp $VERSION - iOS kit
+ReAwakening $VERSION - iOS kit
 
-Not an app you can install, and nothing to unpack: LAS Recomp on your Mac, Linux or Windows machine (the start
+Not an app you can install, and nothing to unpack: ReAwakening on your Mac, Linux or Windows machine (the start
 screen's "Recomp for iOS") takes this file as it is, builds the game code from your own game files with the tools in
 it and saves an .ipa for your own sideloading tool and Apple ID (Impactor, SideStore, AltStore...). The app needs
 one entitlement, com.apple.developer.kernel.increased-memory-limit, which a free developer account grants; it is in
@@ -52,13 +52,14 @@ in the app's Documents through the Files app or Finder.
 Contents: Payload/LAS Recomp.app (the app without game code; what it embeds - SDL3, FFmpeg, CPython, the seed
 generator's packages, fonts - and their licence texts are in its LICENSES/ folder and next to the fonts), lld/ (the linker for each desktop OS, from Rust's
 rust-lld: Apache-2.0 with LLVM exception, lld/<os>/LICENSE.TXT), include/ (zig's Darwin C headers: MIT / Apple's
-APSL), libSystem.B.tbd (the link stub). LAS Recomp reads and writes the zip files with miniz (MIT,
+APSL), libSystem.B.tbd (the link stub). ReAwakening reads and writes the zip files with miniz (MIT,
 miniz-LICENSE.txt).
 EOT
 cp build/miniz/LICENSE "$STAGE/miniz-LICENSE.txt"
 echo "$VERSION" > "$STAGE/version.txt"
 mkdir -p build/dist
-OUT="build/dist/LAS Recomp-$VERSION-iOS.laskit"
+. tools/dist_name.sh
+OUT="build/dist/$(dist_name "$VERSION")-$VERSION-iOS.laskit"
 rm -f "$OUT"
 # (no symlinks in the app: an iOS install drops them; -y would keep any as entries) -X: no extra fields beyond the modes
 [ -z "$(find "$STAGE/Payload" -type l)" ] || { echo "symlinks in the app: $(find "$STAGE/Payload" -type l)"; exit 1; }

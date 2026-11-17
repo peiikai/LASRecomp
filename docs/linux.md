@@ -1,4 +1,4 @@
-# LAS Recomp on Linux (x86-64, aarch64)
+# ReAwakening on Linux (x86-64, aarch64)
 
 Status: builds and runs the game on Vulkan (with your own game files) on x86-64, checked before
 each release by `make smoketest`. aarch64 is **experimental**: tested on a few ARM boards; reports welcome (see the end). `make appimage` / `make appimages`
@@ -35,14 +35,14 @@ If the AppImage won't start with a FUSE error, install your distribution's `fuse
 
 ## Building from source
 Ubuntu / Debian packages (other distributions: the same libraries under their names). SDL3 must be 3.4 or newer
-(LAS Recomp loads and saves PNGs through it); where the distribution ships an older one (Debian 13 has 3.2), build SDL3
+(ReAwakening loads and saves PNGs through it); where the distribution ships an older one (Debian 13 has 3.2), build SDL3
 3.4 from source first - `tools/linux/build_deps.sh` builds the pinned version the AppImage uses (into
 `build/linux/<arch>/deps`).
 
     sudo apt install clang lld make pkg-config python3-venv libsdl3-dev libavformat-dev libavcodec-dev \
         libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev libvulkan-memory-allocator-dev glslc vulkan-tools
 
-For Chinese or Korean menus, also install a font for them (`fonts-noto-cjk`). LAS Recomp bundles fonts for Russian
+For Chinese or Korean menus, also install a font for them (`fonts-noto-cjk`). ReAwakening bundles fonts for Russian
 and Japanese only; without one, Chinese and Korean menu text shows as boxes.
 
 shaderc is linked the way its pkg-config file says (`libshaderc_shared` on Arch, Fedora, AOSC...); to choose
@@ -73,7 +73,7 @@ The randomizer from a source checkout uses LAS-Randomizer's own venv (Python 3.1
 Needs podman, and for the other arch's AppImage QEMU user emulation with binfmt (`sudo apt install podman qemu-user
 qemu-user-binfmt`).
 
-    make appimage                # this machine's arch -> build/dist/LAS Recomp-<version>-linux-<arch>.AppImage
+    make appimage                # this machine's arch -> build/dist/ReAwakening-<version>-linux-<arch>.AppImage
     make appimage ARCH=aarch64   # on x86-64: cross-compiled
     make appimages               # both
 

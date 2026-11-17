@@ -1,5 +1,5 @@
 #!/bin/bash
-# make appimage ARCH=<x86_64|aarch64>: build/dist/LAS Recomp-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04
+# make appimage ARCH=<x86_64|aarch64>: build/dist/ReAwakening-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04
 # containers (podman; tools/linux/Containerfile) so it runs on glibc 2.35+ distributions. On a host of the same arch
 # everything is built natively in that arch's container. An aarch64 AppImage on an x86-64 host: the amd64 container
 # cross-compiles against the arm64 image's root filesystem (build/linux/aarch64/sysroot), only the generator helpers

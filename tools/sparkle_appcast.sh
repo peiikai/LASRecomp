@@ -25,7 +25,7 @@ mkdir -p build
 "${CXX_UPDATE:-clang++}" -std=c++17 -O2 -Iruntime tools/update_sign.cpp -o build/update_sign
 SIG=$(build/update_sign sparkle "$DMG")
 LEN=$(wc -c < "$DMG" | tr -d ' ')
-NAME=$(basename "$DMG" | tr ' ' .)  # (GitHub stores "LAS Recomp-..." as "LAS.Recomp-...")
+NAME=$(basename "$DMG" | tr ' ' .)  # (GitHub stores spaces as dots: "LAS Recomp-..." as "LAS.Recomp-...")
 URL=https://github.com/peiikai/LASRecomp/releases/download/$REL/$NAME
 TITLE=$TAG
 # (a nightly's short version is 0.0.1: Sparkle's window names it by its date instead)
@@ -34,7 +34,7 @@ cat > "$OUT.part" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>LAS Recomp</title>
+    <title>ReAwakening</title>
     <item>
       <title>$TITLE</title>
       <pubDate>$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')</pubDate>

@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <string.h>
 #include <string>
 
 #include "i18n.h"
@@ -116,7 +117,9 @@ void ios_export_rows(bool ready, bool busy, SDL_Window *win) {
     // (the descriptions are put together here, each part through L(): the rows translate only whole literals)
     opt_section("Files");
     char kit_name[64];
-    snprintf(kit_name, sizeof kit_name, "LAS Recomp-%s-iOS.laskit", larecomp_version());
+    const char *v = larecomp_version();  // (nightly kits keep the LAS Recomp- name: tools/dist_name.sh)
+    bool rolling = !strncmp(v, "nightly-", 8) || !strncmp(v, "experimental-", 13);
+    snprintf(kit_name, sizeof kit_name, "%s-%s-iOS.laskit", rolling ? "LAS Recomp" : "ReAwakening", v);
     char kit_line[512];
     snprintf(kit_line, sizeof kit_line, L("The iOS kit of this release: %s from the release page (the app without game "
                                           "code, and the tools that build it on this machine). Used as it is: don't unpack it."), kit_name);

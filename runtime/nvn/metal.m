@@ -2428,7 +2428,7 @@ void ui_window_init(void) {
     if (getenv("LARECOMP_HIDDEN")) wflags |= SDL_WINDOW_HIDDEN;
     // (tests) LARECOMP_NO_ACTIVATE=1: a visible window that doesn't take the focus; LARECOMP_WINDOW_POS=<x>,<y>
     if (getenv("LARECOMP_NO_ACTIVATE")) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
-    window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+    window = SDL_CreateWindow("ReAwakening", win_w, win_h, wflags);
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
     if (getenv("LARECOMP_WINDOW_POS")) {
         int x = 0, y = 0;
@@ -2448,10 +2448,10 @@ void ui_window_init(void) {
     // failing at the first texture. Not on macOS: every Mac it runs on has them. Not in the Simulator
     // either: its GPU has no BC on any Mac, and only the start screen runs there (tools/test_ios_sim.sh).
     if (TARGET_OS_IPHONE && !TARGET_OS_SIMULATOR && !dev.supportsBCTextureCompression && !getenv("LARECOMP_NO_BC_CHECK")) {
-        static const char msg[] = "This iPhone or iPad can't run LAS Recomp: its graphics chip has no support for the "
+        static const char msg[] = "This iPhone or iPad can't run ReAwakening: its graphics chip has no support for the "
                                   "game's texture formats (BC).";
         fprintf(stderr, "FATAL: %s (the GPU has no BC texture formats)\n", msg);
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, window);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ReAwakening", msg, window);
         exit(1);
     }
     settings_resolve_defaults(false);  // (Apple GPUs keep MetalFX as the default upscaler)

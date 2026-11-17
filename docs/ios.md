@@ -6,16 +6,16 @@
 
 - iOS or iPadOS 16.4 or newer.
 - iPhone 15 Pro or newer, iPad Pro (2021) or newer, iPad Air (2022) or newer, or iPad mini (2024) or newer.
-- A Mac, Windows or Linux computer with LAS Recomp set up and your extracted game files.
+- A Mac, Windows or Linux computer with ReAwakening set up and your extracted game files.
 
 A device whose graphics chip lacks the game's texture formats stops at start with "This iPhone or iPad can't run
-LAS Recomp: its graphics chip has no support for the game's texture formats (BC)."
+ReAwakening: its graphics chip has no support for the game's texture formats (BC)."
 
 ### Making the app
 
-1. On your computer, download `LAS Recomp-<version>-iOS.laskit` from the same release as your LAS Recomp.
+1. On your computer, download `ReAwakening-<version>-iOS.laskit` from the same release as your ReAwakening.
 2. On the start screen, open Settings > System > Recomp for iOS..., choose the kit, then Export iOS app.
-3. The app is saved to your Downloads folder as `LAS Recomp-<version>-iOS.ipa`.
+3. The app is saved to your Downloads folder as `ReAwakening-<version>-iOS.ipa`.
 
 The .ipa holds the game code built from your own files. Don't share it.
 
@@ -26,7 +26,7 @@ can't help with the tools themselves, since they're made by others.
 
 #### Increased Memory Limit
 
-LAS Recomp asks iOS for more memory than a normal app gets. iOS only grants it when the tool that signs the app also
+ReAwakening asks iOS for more memory than a normal app gets. iOS only grants it when the tool that signs the app also
 turns on Increased Memory Limit for the app's App ID. Not every tool does. Without it, iOS may close the game when it
 needs more memory.
 
@@ -43,11 +43,11 @@ in `lasrecomp.log` also shows `increased-memory-limit yes` or `NO`.
 
 **If your sideloader didn't add Increased Memory Limit:** you can add it to the app's App ID once with GetMoreRam.
 SideStore with a free Apple account is one known case ([SideStore#1616](https://github.com/SideStore/SideStore/issues/1616)).
-1. Install LAS Recomp with your sideloader as usual, so its App ID exists.
+1. Install ReAwakening with your sideloader as usual, so its App ID exists.
 2. Sideload [GetMoreRam](https://github.com/hugeBlack/GetMoreRam) and sign in with the same Apple ID that your
    sideloader uses.
-3. In GetMoreRam, go to App IDs, tap Refresh, tap LAS Recomp's App ID, then Add Increased Memory Limit.
-4. Install LAS Recomp again with your sideloader. It updates in place, so your saves stay.
+3. In GetMoreRam, go to App IDs, tap Refresh, tap ReAwakening's App ID, then Add Increased Memory Limit.
+4. Install ReAwakening again with your sideloader. It updates in place, so your saves stay.
 
 The limit stays on the App ID, so it survives the weekly refresh. If the start-screen warning comes back, repeat
 steps 3 and 4. GetMoreRam takes one of a free account's three app slots, so delete it afterwards.
@@ -55,17 +55,17 @@ steps 3 and 4. GetMoreRam takes one of a free account's three app slots, so dele
 ### Your game files
 
 Copy your game files folder (with `exefs` and `romfs` in it) to the device:
-- Mac: connect it with a cable, select it in Finder's sidebar, open the Files tab and drag the folder onto LAS Recomp.
-- Windows: the same in the Apple Devices app (or iTunes), under Files > LAS Recomp.
+- Mac: connect it with a cable, select it in Finder's sidebar, open the Files tab and drag the folder onto ReAwakening.
+- Windows: the same in the Apple Devices app (or iTunes), under Files > ReAwakening.
 - USB-C drive: put the folder on the drive and plug it in.
-- iCloud Drive: upload the folder, then in the Files app move it to On My iPhone (or On My iPad). LAS Recomp won't
+- iCloud Drive: upload the folder, then in the Files app move it to On My iPhone (or On My iPad). ReAwakening won't
   use game files that are still on iCloud Drive.
 
 Open the app and choose that folder when it asks. Use the same game version as on your computer.
 
 ### Where things are
 
-Saves, seeds, settings and `lasrecomp.log` are in the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
+Saves, seeds, settings and `lasrecomp.log` are in the app's folder in Files (On My iPhone / On My iPad > ReAwakening).
 You can move them to another folder or a drive in Settings > System > Data folder. For a bug report, attach
 `lasrecomp.log` from that folder.
 

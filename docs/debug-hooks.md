@@ -1,6 +1,6 @@
 # Debug and test hooks
 
-LAS Recomp reads a set of `LARECOMP_*` environment variables. They are for development and testing, not for players:
+ReAwakening reads a set of `LARECOMP_*` environment variables. They are for development and testing, not for players:
 scripted test runs, screenshots, warps, logging, and A/B switches for renderer and timing code. Most are read once, at
 startup or at first use, so set them before launching. Hooks that take a frame number act at that presented frame
 (the count starts at 0 when the app starts and goes on across in-game reboots).

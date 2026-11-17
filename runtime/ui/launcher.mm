@@ -359,8 +359,8 @@ static std::string refused_main(const std::string &exefs) {
     return k == GAME_MAIN_NSO ? std::string(hex, 16) : std::string();
 }
 // (with the build ID's first 16 hex digits; without one, the line alone)
-static const char *const VERSION_HINT = LN("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game.");
-static const char *const VERSION_ID_HINT = LN("LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game. These game "
+static const char *const VERSION_HINT = LN("ReAwakening needs version 1.0.0, 1.0.1 or 1.1.0 of the game.");
+static const char *const VERSION_ID_HINT = LN("ReAwakening needs version 1.0.0, 1.0.1 or 1.1.0 of the game. These game "
                                               "files have build ID %s.");
 // (English, as the setup lines: shown() puts it in the menus' language)
 static std::string version_hint(const std::string &exefs) {
@@ -499,7 +499,7 @@ static void set_failure(int k, int have = -1, const char *reason = NULL) {
     static const char *const hint[] = {
         "",
         PICK_FOLDER_HINT,
-        LN("LAS Recomp needs the extracted exefs and romfs folders, not .xci, .nsp or .nca files."),
+        LN("ReAwakening needs the extracted exefs and romfs folders, not .xci, .nsp or .nca files."),
         LN("Make sure there's about 12 GB free and try again."),
         VERSION_HINT,
         LN("Some of the game's files are missing, usually from a copy or unzip that stopped partway. Copy them again "
@@ -729,7 +729,7 @@ static std::string picker_hint(const char *what) {
     fprintf(stderr, "[launcher] %s window: %s\n", what, err.c_str());
 #if defined(__linux__) && !defined(__ANDROID__)
     char b[256];  // (what: "folder" / "file")
-    snprintf(b, sizeof b, LN("LAS Recomp needs xdg-desktop-portal or zenity to open the %s window. Install one and try "
+    snprintf(b, sizeof b, LN("ReAwakening needs xdg-desktop-portal or zenity to open the %s window. Install one and try "
                              "again."), what);
     return b;
 #else
@@ -1252,7 +1252,7 @@ static bool menu_tip(float s) {
         static const char *const home[] = {LN("Home button"), LN("Xbox button"), LN("PlayStation button")};  // (bind_label_family)
         static const char *const pad[] = {LN("Minus + Plus"), LN("View + Menu"), LN("Create + Options")};
         ImGui::PushTextWrapPos(0);
-        ImGui::TextUnformatted(L("LAS Recomp has its own menu for settings, the randomizer, cosmetics and more."));
+        ImGui::TextUnformatted(L("ReAwakening has its own menu for settings, the randomizer, cosmetics and more."));
         ImGui::Spacing();
         int fam = bind_label_family() % 3;
         ImGui::Text(L("Open it in game with F1 or Esc, or press the %s or %s together on a controller."), L(home[fam]),
@@ -1980,7 +1980,7 @@ static void df_restart(void) {
     g_df = DF_RESTART;  // (no exec on iOS: the app ends on OK, the player opens it again)
 #else
     rt_paths_restart();
-    snprintf(g_df_err, sizeof g_df_err, "%s", LN("Couldn't restart LAS Recomp. Start it again to use the new folder."));
+    snprintf(g_df_err, sizeof g_df_err, "%s", LN("Couldn't restart ReAwakening. Start it again to use the new folder."));
     g_df = DF_FAILED;
 #endif
 }
@@ -2051,7 +2051,7 @@ static void data_folder_popup(float s) {
             ImGui::Spacing();
             close = ImGui::Button(L("OK"), bw) || esc;
         } else if (t.has_data) {
-            ImGui::TextUnformatted(L("This folder already has LAS Recomp data. Use it?"));
+            ImGui::TextUnformatted(L("This folder already has ReAwakening data. Use it?"));
             ImGui::Spacing();
             if (ImGui::Button(L("Use it"), bw) || g_df_auto_fresh) g_df_auto_fresh = false, use_it();
             ImGui::SameLine();
@@ -2100,7 +2100,7 @@ static void data_folder_popup(float s) {
         else if (r == -1) g_df = DF_FAILED;
         if (r != 0) g_df_cancelling = false;
     } else if (g_df == DF_RESTART) {
-        ImGui::TextUnformatted(L("LAS Recomp needs to restart to use the new folder. It closes now; open it again."));
+        ImGui::TextUnformatted(L("ReAwakening needs to restart to use the new folder. It closes now; open it again."));
         ImGui::Spacing();
         if (ImGui::Button(L("OK"), bw)) { fflush(stderr); exit(0); }
     } else {
@@ -2120,7 +2120,7 @@ static void data_folder_popup(float s) {
 // picked goes through the same question as on the desktop (move the data there, or start fresh).
 static void storage_rows(bool busy) {
     const char *fixed = rt_data_root_fixed() ? L(rt_data_root_fixed()) : NULL;
-    std::string d = std::string(L("Where LAS Recomp keeps game files, saves, seeds and settings.")) + "\n\n" +
+    std::string d = std::string(L("Where ReAwakening keeps game files, saves, seeds and settings.")) + "\n\n" +
                     data_root_shown() + (fixed ? std::string("\n\n") + fixed : "");
     opt_section("Storage");
 #ifdef __ANDROID__
@@ -2187,7 +2187,7 @@ static void driver_rows(void) {
     if (opt_action("Vulkan driver", used.empty() ? LN("Phone's own") : used.c_str(), d.c_str(), true))
         android_call("pickDriver");
     if (!want.empty() && opt_action("Use the phone's own driver", "", "Goes back to the phone's own Vulkan driver. "
-                                    "LAS Recomp restarts to use it.", true))
+                                    "ReAwakening restarts to use it.", true))
         android_call("useSystemDriver");
 }
 #endif
@@ -2214,12 +2214,12 @@ static void prelaunch_tab(float sc) {
 #else
     const char *show = LN("Show in Finder");
 #endif
-    if (opt_action(show, "", "Opens the folder with LAS Recomp's copy of the game files.")) reveal_folder(g_root);
+    if (opt_action(show, "", "Opens the folder with ReAwakening's copy of the game files.")) reveal_folder(g_root);
 #endif
     static bool shot_del = getenv("LARECOMP_LAUNCHER_SHOT") && strstr(getenv("LARECOMP_LAUNCHER_SHOT"), ":askdelete");
     if (shot_del) confirm_delete = true, shot_del = false;  // (test: :askdelete)
     if (!confirm_delete) {
-        if (opt_action("Delete game files", gbs, "Frees up the space LAS Recomp's copy of the game files uses. Your saves, "
+        if (opt_action("Delete game files", gbs, "Frees up the space ReAwakening's copy of the game files uses. Your saves, "
                        "seeds and settings stay.", true))
             confirm_delete = true;
     } else {
@@ -2236,7 +2236,7 @@ static void prelaunch_tab(float sc) {
             stop_background_prep();
             bool ok = rt_remove_game_files(g_root.c_str());  // (runtime/paths.c: only what the extraction made)
             game_files_changed();
-            set_job(ok ? LN("Game files deleted.") : LN("Couldn't delete the game files. They aren't in LAS Recomp's data folder."),
+            set_job(ok ? LN("Game files deleted.") : LN("Couldn't delete the game files. They aren't in ReAwakening's data folder."),
                     !ok);
             g_files_deleted = true, gb = -1, confirm_delete = false;
         }
@@ -2289,7 +2289,7 @@ static void load_fonts(void) {
     const char *fonts[] = {getenv("LARECOMP_LAUNCHER_FONT") ? getenv("LARECOMP_LAUNCHER_FONT") : "",  // (test)
                            own.c_str(), "fonts/nintendo_udsgr_std_003.ttf", "/System/Library/Fonts/Avenir Next.ttc",
                            "/System/Library/Fonts/Helvetica.ttc", "C:/Windows/Fonts/segoeui.ttf"};
-    // the menus' language's glyphs (i18n.h), and its script's font merged in; the title only says "LAS Recompiled"
+    // the menus' language's glyphs (i18n.h), and its script's font merged in; the title only says "ReAwakening"
     static const ImWchar title_ranges[] = {0x20, 0x7E, 0};
     for (const char *p : fonts) {
         if (g_font_menu || !*p || !file_exists(p)) continue;
@@ -2302,6 +2302,10 @@ static void load_fonts(void) {
         g_font_title = io.Fonts->AddFontFromFileTTF(p, 92 * (b2 ? 2.3f : 1), NULL, title_ranges);
     }
     if (!g_font_menu) g_font_small = g_font_menu = g_font_title = io.Fonts->AddFontDefault();
+    // the title in Hylia Serif (Omni Jacala, free, not for profit: third_party/fonts/HyliaSerif)
+    char hylia[1024];
+    if (rt_resource("HyliaSerifBeta-Regular.otf", "third_party/fonts/HyliaSerif/HyliaSerifBeta-Regular.otf", hylia, sizeof hylia))
+        if (ImFont *f = io.Fonts->AddFontFromFileTTF(hylia, 150, NULL, title_ranges)) g_font_title = f;
 }
 
 extern "C" void launcher_run(const char *root) {
@@ -2411,7 +2415,7 @@ extern "C" void launcher_run(const char *root) {
         if (pg && !strcmp(pg + 1, "tip")) g_settings.menu_tip_seen = false, g_tip_test = true;
         if (pg && !strcmp(pg + 1, "recompiling")) page = SETUP, g_build_frac = 0.42f, set_job(LN("Recompiling the game"));
         if (pg && !strcmp(pg + 1, "notice"))  // (the iPhone's iCloud notice, anywhere)
-            g_notice = std::string(L("Some of LAS Recomp's files aren't on this iPhone. They download as the game reads "
+            g_notice = std::string(L("Some of ReAwakening's files aren't on this iPhone. They download as the game reads "
                                      "them, so it may be very slow or close.")) + "\n\n" + L(KEEP_DOWNLOADED);
         if (pg && !strcmp(pg + 1, "aspect")) g_settings.aspect_asked = g_settings.menu_tip_seen = false, g_tip_test = true;
     }
@@ -2488,7 +2492,7 @@ extern "C" void launcher_run(const char *root) {
 #if PLAT_IOS
         if (g_onedrive && plat_ios_cloud_offloaded(rt_data_root())) {
             char msg[700];
-            snprintf(msg, sizeof msg, "%s\n\n%s", L("Some of LAS Recomp's files aren't on this iPhone. They download as the "
+            snprintf(msg, sizeof msg, "%s\n\n%s", L("Some of ReAwakening's files aren't on this iPhone. They download as the "
                                                   "game reads them, so it may be very slow or close."), L(KEEP_DOWNLOADED));
             g_notice = msg;  // (notice_popup: in the menus' look)
         }
@@ -2747,7 +2751,7 @@ extern "C" void launcher_run(const char *root) {
             ImGui::SetCursorPos(ImVec2(x0, 120 * s));
             ImGui::PushFont(g_font_title);
             if (page == MAIN) {  // gold to orange, shadowed (not behind the Settings / System windows)
-                const char *t = "LAS Recompiled";
+                const char *t = "ReAwakening";
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 text_fx(ImGui::GetWindowDrawList(), ImGui::GetFont(), ImGui::GetFontSize(), p, IM_COL32(255, 232, 120, 255),
                         IM_COL32(255, 138, 48, 255), t, 3 * s);
@@ -3047,11 +3051,11 @@ extern "C" void launcher_run(const char *root) {
                 };
                 // (the descriptions put together here in the menus' language: the row finds no English for them)
                 std::string src_d = L("Pick the folder with your extracted exefs and romfs from The Legend of Zelda: Link's "
-                                      "Awakening for Switch. LAS Recomp doesn't include the game.");
+                                      "Awakening for Switch. ReAwakening doesn't include the game.");
                 if (!src.empty()) src_d += std::string("\n\n") + L("Chosen:") + " " + folder_shown(src.c_str());
                 // the step that's running / its result, under the rows and in the Set up row's explanation
                 const std::string &job_line = job;
-                std::string ex_d = L("Copies the files LAS Recomp needs and recompiles the game from them. You only do this "
+                std::string ex_d = L("Copies the files ReAwakening needs and recompiles the game from them. You only do this "
                                      "once, and it takes a while.");
                 if (!job.empty()) ex_d += "\n\n" + shown(job) + (job_hint.empty() ? "" : ".\n" + shown(job_hint));
 
@@ -3099,7 +3103,7 @@ extern "C" void launcher_run(const char *root) {
                     snprintf(gb, sizeof gb, "%.1f GB", files_gb);
                     opt_section("Game files");
                     if (!g_confirm_delete) {
-                        if (opt_action("Delete game files", gb, "Frees up the space LAS Recomp's copy of the game files "
+                        if (opt_action("Delete game files", gb, "Frees up the space ReAwakening's copy of the game files "
                                        "uses. Your saves, seeds and settings stay.", true))
                             g_confirm_delete = true;
                         first_row();
@@ -3110,7 +3114,7 @@ extern "C" void launcher_run(const char *root) {
                             game_files_changed();
                             status = check_game_files(g_root);
                             if (ok) set_job(LN("Game files deleted."));
-                            else set_job(LN("Couldn't delete the game files. They aren't in LAS Recomp's data folder."), true);
+                            else set_job(LN("Couldn't delete the game files. They aren't in ReAwakening's data folder."), true);
                             if (!status.empty()) g_bg = 0;
                             g_confirm_delete = false, files_gb = -1;
                         }

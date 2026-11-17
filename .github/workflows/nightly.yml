@@ -83,7 +83,7 @@ jobs:
               echo
               echo "- macOS: \`macOS.dmg\`  - Windows: \`windows.zip\`  - Windows on ARM: \`windows-arm64.zip\`"
               echo "- Linux: \`linux-x86_64.AppImage\`, \`linux-aarch64.AppImage\`"
-              echo "- Android: \`android.apk\`, installed as its own app, LAS Recomp Nightly, beside the release one"
+              echo "- Android: \`android.apk\`, installed as its own app, ReAwakening Nightly, beside the release one"
               echo "- iPhone and iPad: \`iOS.laskit\`, made into the app with a nightly desktop build of the same date"
               # Changes: the pull requests merged since the previous round, newest round first, with the earlier
               # rounds' lists kept (the last 30), so a player several nightlies behind sees everything in the start
@@ -175,7 +175,7 @@ jobs:
         run: make -j"$(sysctl -n hw.ncpu)" dmg
       - name: No game code
         run: |
-          A="build/LAS Recomp.app"
+          A="build/ReAwakening.app"
           bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
                 find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
           [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
@@ -441,7 +441,7 @@ jobs:
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-linux-${{ matrix.arch }}.AppImage linux-${{ matrix.arch }}.AppImage
 
-  # its own app (com.lasrecomp.android.nightly, "LAS Recomp Nightly"): installs beside the release app, with its own
+  # its own app (com.lasrecomp.android.nightly, "ReAwakening Nightly"): installs beside the release app, with its own
   # data; signed with the published APKs' key
   android:
     needs: plan
@@ -484,7 +484,7 @@ jobs:
           LARECOMP_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           LARECOMP_VERSION_NAME: ${{ needs.plan.outputs.version }}
           LARECOMP_APPLICATION_ID: com.lasrecomp.android.nightly
-          LARECOMP_APP_LABEL: LAS Recomp Nightly
+          LARECOMP_APP_LABEL: ReAwakening Nightly
         run: |
           [ -n "$KEYSTORE_B64" ] && [ -n "$LARECOMP_KEYSTORE_PASSWORD" ] || { echo "::error::the signing key secrets are not set"; exit 1; }
           export LARECOMP_KEYSTORE=$RUNNER_TEMP/lasrecomp.keystore

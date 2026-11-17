@@ -564,10 +564,10 @@ bool plat_cli_tty(void) { return g_cli_isatty && g_log_path[0]; }
 static void require_cpu(void) {
     __builtin_cpu_init();
     if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") && __builtin_cpu_supports("bmi2")) return;
-    static const char msg[] = "LAS Recomp needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or "
+    static const char msg[] = "ReAwakening needs a CPU with AVX2 (Intel Haswell / 2013 or newer, AMD Excavator / Zen or "
                               "newer).";
     fprintf(stderr, "FATAL: %s\n", msg);
-    if (g_log_path[0]) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", msg, NULL);
+    if (g_log_path[0]) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ReAwakening", msg, NULL);
     exit(1);
 }
 #else
@@ -728,7 +728,7 @@ void plat_fatal_notice(void) {
         if (rt_fatal_is_driver() && android_driver_error_dialog(text)) return;
     }
 #endif
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", text, NULL);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "ReAwakening", text, NULL);
 }
 
 bool plat_module_name(uint64_t pc, char *out, size_t n) {

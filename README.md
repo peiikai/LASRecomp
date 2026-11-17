@@ -1,4 +1,6 @@
-# LAS Recomp
+<h1><img src="docs/title.svg" alt="ReAwakening" height="96"></h1>
+
+*Formerly LAS Recomp.*
 
 > [!IMPORTANT]
 > **This project was made almost exclusively with AI.** Nearly all of the code, tooling, reverse engineering and
@@ -8,7 +10,7 @@
 > in the controversy in relation to this project. You may simply ignore this project and its code.
 > As with anything on the internet, you run the code at your own discretion.
 
-**LAS Recomp** is a static recompilation of *The Legend of Zelda: Link's Awakening* (Nintendo Switch, 2019) into a
+**ReAwakening** is a static recompilation of *The Legend of Zelda: Link's Awakening* (Nintendo Switch, 2019) into a
 native Windows, macOS, Linux, Android and iOS application.
 
 > [!NOTE]
@@ -70,7 +72,7 @@ These are the minimums during the beta and may change as development continues.
 ![Mabe Village in a 21:9 window: the unlocked aspect ratio shows more of the island](docs/ultrawide.jpg)
 
 > [!NOTE]
-> **No game files are included.** LAS Recomp needs your own legally obtained copy of the extracted game files of
+> **No game files are included.** ReAwakening needs your own legally obtained copy of the extracted game files of
 > *Link's Awakening* **v1.0.0, v1.0.1 or v1.1.0**. When setting up, choose a folder that contains the `exefs`
 > and `romfs` folders, or their contents. Instructions on how to obtain these files will **NOT** be provided.
 > On first launch the app sets up what it needs, including the actual recompilation locally. No game files, assets or fonts are included.
@@ -99,27 +101,27 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 
 The iOS app is made on your computer from your own game files, then sideloaded.
 
-1. Set up LAS Recomp on a Mac, Windows or Linux computer as usual.
-2. From the same release, download `LAS Recomp-<version>-iOS.laskit`.
+1. Set up ReAwakening on a Mac, Windows or Linux computer as usual.
+2. From the same release, download `ReAwakening-<version>-iOS.laskit`.
 3. On the start screen, open Settings > System > Recomp for iOS..., choose the kit, then Export iOS app.
-   The app is saved to your Downloads folder as `LAS Recomp-<version>-iOS.ipa`.
+   The app is saved to your Downloads folder as `ReAwakening-<version>-iOS.ipa`.
 4. Install the .ipa with a sideloading tool such as SideStore, AltStore or Sideloadly. A free Apple account works,
-   but the app then has to be refreshed every 7 days. LAS Recomp only makes the .ipa. Installing it is up to you,
+   but the app then has to be refreshed every 7 days. ReAwakening only makes the .ipa. Installing it is up to you,
    and we can't help with these tools since they're made by others. The extra steps come from Apple's limits on
-   installing apps, not from LAS Recomp.
+   installing apps, not from ReAwakening.
 5. Copy your game files folder (with `exefs` and `romfs` in it) to the phone or iPad:
    - Mac: connect it with a cable, select it in Finder's sidebar, open the Files tab and drag the folder onto
-     LAS Recomp.
-   - Windows: the same in the Apple Devices app (or iTunes), under Files > LAS Recomp.
+     ReAwakening.
+   - Windows: the same in the Apple Devices app (or iTunes), under Files > ReAwakening.
    - USB-C drive: put the folder on the drive and plug it in (iPhone 15 or newer, USB-C iPads).
-   - iCloud Drive: upload the folder, then in the Files app move it to On My iPhone (or On My iPad). LAS Recomp
+   - iCloud Drive: upload the folder, then in the Files app move it to On My iPhone (or On My iPad). ReAwakening
      won't use game files that are still on iCloud Drive.
 6. Open the app and choose that folder when it asks for your game files. Use the same game version as the files
    on your computer.
 
 ### Increased Memory Limit
 
-LAS Recomp asks iOS for more memory than a normal app gets. iOS only grants it when the tool that signs the app also
+ReAwakening asks iOS for more memory than a normal app gets. iOS only grants it when the tool that signs the app also
 turns on Increased Memory Limit for the app's App ID. Not every tool does. Without it, iOS may close the game when it
 needs more memory, and the start screen says "Installed without the increased memory limit".
 
@@ -178,7 +180,7 @@ Python 3.12.
 4. Package: `make deps` (once: SDL3, FFmpeg, keystone and Python from pinned sources, built for macOS 15),
    `make rando-helper` (the seed generator as a standalone helper, so players need no Python), `make gen-helper` and
    `tools/fetch_zig.sh` (what the start screen builds the game code with), then `make app` ->
-   `build/LAS Recomp.app` (macOS 15+, Apple Silicon) and `make dmg` -> `build/dist/LAS Recomp-<version>-macOS.dmg`.
+   `build/ReAwakening.app` (macOS 15+, Apple Silicon) and `make dmg` -> `build/dist/ReAwakening-<version>-macOS.dmg`.
 
 ### Windows
 
@@ -193,7 +195,7 @@ that page.
    `make -j` -> `build/lasrecomp.exe`. Set up your game files (above), then `make gen` and `make -j` again.
 3. Run: `./build/lasrecomp.exe extracted`, from a shell with `C:\msys64\ucrt64\bin` on PATH (for the DLLs).
 4. Package: `make deps-windows` (once: LGPL FFmpeg), `make rando-helper RANDO_PY="<path to python.org Python 3.12>"`
-   (MSYS2's Python has no oead wheel), then `make dist` -> `build/dist/LAS Recomp-<version>-windows.zip`.
+   (MSYS2's Python has no oead wheel), then `make dist` -> `build/dist/ReAwakening-<version>-windows.zip`.
 
 ### Linux
 
@@ -204,7 +206,7 @@ Vulkan Memory Allocator from your distribution, Python 3.12. Packages, cross bui
 1. Build: `make -j` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j` again.
 2. Run: `./build/lasrecomp extracted`.
 3. Package: `make appimage` (this machine's arch; `ARCH=aarch64` cross-compiles) or `make appimages` (both) ->
-   `build/dist/LAS Recomp-<version>-linux-<arch>.AppImage`, built in Ubuntu 22.04 containers (podman). `make smoketest`
+   `build/dist/ReAwakening-<version>-linux-<arch>.AppImage`, built in Ubuntu 22.04 containers (podman). `make smoketest`
    checks the x86-64 AppImage before a release.
 
 Where files live (game files, saves, seeds, settings and logs):
@@ -212,7 +214,7 @@ Where files live (game files, saves, seeds, settings and logs):
 - Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
 - Linux: `~/.local/share/lasrecomp/`
 - Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
-- iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
+- iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > ReAwakening).
 - You can move it to another folder or drive in Settings > System > Data folder.
 - `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
@@ -229,7 +231,7 @@ Python 3. Details in [docs/android.md](docs/android.md).
 ### Resuming game-code builds
 
 If the game-code build is cancelled or interrupted, **Resume game code** continues where it stopped. It also resumes
-by itself the next time LAS Recomp starts. **System > Clear build cache** removes the build's leftover files
+by itself the next time ReAwakening starts. **System > Clear build cache** removes the build's leftover files
 without touching the installed game, your game files or your saves.
 
 ## Credits
@@ -297,6 +299,7 @@ none of their files are used):
 - [FFmpeg](https://ffmpeg.org) - movie playback (LGPL)
 - [Dear ImGui](https://github.com/ocornut/imgui) - overlay menu and start screen (MIT)
 - [Baloo 2](https://github.com/EkType/Baloo2) by Ek Type - the start screen's font (SIL Open Font License 1.1, `third_party/fonts/Baloo2/OFL.txt`)
+- [Hylia Serif](https://artsyomni.com/hyliaserif) by Omni Jacala - the start screen's title and this page's header (free, not for profit; `third_party/fonts/HyliaSerif/README.md`)
 - [BIZ UDPGothic](https://github.com/googlefonts/morisawa-biz-ud-gothic) by Morisawa - the game's text on Linux when you haven't imported the Switch fonts: a free font from the same universal-design gothic family as the Switch's UD Shin Go (SIL Open Font License 1.1, `third_party/fonts/BIZUDPGothic/OFL.txt`)
 - [DejaVu Sans](https://dejavu-fonts.github.io) - the in-game menu and button letters when no system font fits, and the game text's last resort (Bitstream Vera / DejaVu license, `third_party/fonts/DejaVu/LICENSE`)
 - [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - Windows and Linux renderer (MIT)
@@ -344,15 +347,15 @@ none of their files are used):
 
 ## Legal
 
-LAS Recomp is a fan project. It is not affiliated with, endorsed by or sponsored by Nintendo. *The Legend of Zelda*
+ReAwakening is a fan project. It is not affiliated with, endorsed by or sponsored by Nintendo. *The Legend of Zelda*
 and *Link's Awakening* are trademarks of Nintendo. No game files, game code, assets or fonts are included - not in
 this repository and not in release builds. You must provide your own legally obtained copy of the game files to play.
 
 ## License
 
-LAS Recomp's own code (the recompiler tools, the runtime, the randomizer additions) is open source under the
+ReAwakening's own code (the recompiler tools, the runtime, the randomizer additions) is open source under the
 [MIT License](LICENSE). Third-party components keep their own licenses: LAS-Randomizer (MIT), ported audio renderer code (MIT, see `third_party/`), Dear ImGui (MIT),
-Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically, and statically in the iOS app), the
+Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the Hylia Serif font (free, not for profit), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically, and statically in the iOS app), the
 Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions; its C library headers keep their own
 licenses), the iOS kit's Mach-O linker (LLD as built by the Rust project: Apache 2.0 with LLVM exceptions), miniz
 (MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), Sparkle (MIT: the macOS updater), and the generator helpers' bundled libraries listed under Credits (oead / evfl / Keystone in the seed
@@ -362,7 +365,7 @@ processes, so it embeds CPython and the seed generator's packages - oead, evfl a
 quicktex (LGPL 3), Pillow, PyYAML, appdirs - and links SDL 3 and FFmpeg (LGPL 2.1+) statically; the app's `LICENSES/`
 folder carries each one's licence text, its sources are this repository plus the versions in the table (the LGPL
 libraries can be relinked: `make deps-ios` builds them from source, `make ipa` the app), and the game code library it
-embeds is built from the player's own game files and never shared. The license covers LAS Recomp's code only - it grants
+embeds is built from the player's own game files and never shared. The license covers ReAwakening's code only - it grants
 nothing for Nintendo's game, which you must supply yourself.
 
 ### Source code of bundled third-party components
@@ -396,6 +399,7 @@ seed generator's packages are in the desktops' helper and inside the iOS app ali
 | GCC runtime: libgcc, libstdc++ (Windows) | 16.2.0 | GPL 3.0 with the GCC Runtime Library Exception | https://gcc.gnu.org/ |
 | winpthreads (Windows, mingw-w64) | 14.0.0 | MIT / BSD | https://www.mingw-w64.org/ |
 | Baloo 2 font (SemiBold) | 1.640 | SIL OFL 1.1 | https://github.com/EkType/Baloo2 |
+| Hylia Serif font (Beta) | 0.009 | Free, not for profit (no license file) | https://artsyomni.com/hyliaserif |
 | BIZ UDPGothic font (Regular, Linux) | 1.05 (Google Fonts) | SIL OFL 1.1 | https://github.com/googlefonts/morisawa-biz-ud-gothic, https://github.com/google/fonts/tree/main/ofl/bizudpgothic |
 | DejaVu Sans font (Book, Bold) | 2.37 | Bitstream Vera license (DejaVu changes public domain) | https://github.com/dejavu-fonts/dejavu-fonts/releases/tag/version_2_37 |
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |

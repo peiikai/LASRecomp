@@ -2095,7 +2095,7 @@ void ui_window_init(void) {
                                             getenv("LARECOMP_HOST_INPUT") || getenv("LARECOMP_BIND_TEST"));
         if (scripted) SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
     }
-    window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+    window = SDL_CreateWindow("ReAwakening", win_w, win_h, wflags);
 #ifdef __ANDROID__
     // opened with the screen locked / off: no surface to make the window on yet; it comes once the activity shows.
     // SDL_PumpEvents sleeps while the app is paused, so the 5 s count only time in the foreground, and a window that
@@ -2104,7 +2104,7 @@ void ui_window_init(void) {
         if (tries == 0) LOG("[vk] waiting for the Android window (%s)\n", SDL_GetError());
         SDL_PumpEvents();
         SDL_Delay(50);
-        window = SDL_CreateWindow("LAS Recomp", win_w, win_h, wflags);
+        window = SDL_CreateWindow("ReAwakening", win_w, win_h, wflags);
     }
 #endif
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());

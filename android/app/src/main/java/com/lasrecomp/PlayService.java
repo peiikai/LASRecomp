@@ -48,7 +48,7 @@ public class PlayService extends Service {
         PendingIntent pi = PendingIntent.getActivity(this, 1, open, PendingIntent.FLAG_IMMUTABLE);
         Notification n = new Notification.Builder(this, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_media_pause)
-            .setContentTitle("LAS Recomp is open")
+            .setContentTitle("ReAwakening is open")
             .setContentText("The game waits paused where you left it.")
             .setOngoing(true)
             .setContentIntent(pi)

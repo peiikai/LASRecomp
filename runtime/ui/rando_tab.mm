@@ -309,7 +309,7 @@ static std::string seed_id_decode(const char *text, GenOpts &o) {
     x.n = 0;
     int ver = (int)x.get(4);
     if (bits == SEED_ID_BITS ? ver != SEED_ID_VERSION : bits == SEED_ID_BITS_V4 ? ver != 4 : ver != 2 && ver != 3)
-        return LN("This ID is from another LAS Recomp version.");
+        return LN("This ID is from another ReAwakening version.");
     GenOpts t = o;
     t.rng = x.get(36);
     t.logic = (int)x.get(3); t.dungeon_items = (int)x.get(2); t.keysanity = (int)x.get(2); t.traps = (int)x.get(3);
@@ -1636,7 +1636,7 @@ extern "C" void rando_tab_draw(float scale) {
         static std::string id_msg;
         if (!g_opts.rng) g_opts.rng = new_rng();
         if (!opt_text_editing("Seed ID")) seed_id_encode(g_opts, idbuf, sizeof idbuf);
-        std::string d = L("Enter a shared seed ID to load its options. The same ID on the same LAS Recomp version always "
+        std::string d = L("Enter a shared seed ID to load its options. The same ID on the same ReAwakening version always "
                           "makes the same seed.");
         if (!id_msg.empty()) d += std::string("\n\n") + L(id_msg.c_str());
         if (opt_text("Seed ID", idbuf, sizeof idbuf, "", d.c_str())) {

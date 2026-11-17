@@ -75,7 +75,7 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
     char head[160], what[400];
     if (rt_romfs_files >= 0 && rt_romfs_files < ROMFS_FILES) {
         snprintf(head, sizeof head, "Your game files are incomplete");
-        snprintf(what, sizeof what, "LAS Recomp found %d of the game's %d files, and the game stopped when it needed "
+        snprintf(what, sizeof what, "ReAwakening found %d of the game's %d files, and the game stopped when it needed "
                  "one that's missing. Copy your game files again so none are missing, then set them up again on the "
                  "start screen (System).", rt_romfs_files, (int)ROMFS_FILES);
     } else if (has("doesn't fit its language")) {
@@ -84,16 +84,16 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
                  "patch), and the game stopped at a question it can't show that way. Set up unmodified game files on "
                  "the start screen (System). To play in another language, pick it in Settings (Language).");
     } else if (has("built for another version")) {
-        snprintf(head, sizeof head, "The game code was built for other game files or another version of LAS Recomp");
-        snprintf(what, sizeof what, "Start LAS Recomp again: the start screen rebuilds the game code for these game "
+        snprintf(head, sizeof head, "The game code was built for other game files or another version of ReAwakening");
+        snprintf(what, sizeof what, "Start ReAwakening again: the start screen rebuilds the game code for these game "
                  "files by itself.");
     } else if (has("unsupported version of the game")) {
         snprintf(head, sizeof head, "Wrong version of the game");
-        snprintf(what, sizeof what, "LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game. Set up those game "
+        snprintf(what, sizeof what, "ReAwakening needs version 1.0.0, 1.0.1 or 1.1.0 of the game. Set up those game "
                  "files on the start screen (System).");
     } else if (has("no font for the game's text")) {
         snprintf(head, sizeof head, "No font for the game's text");
-        snprintf(what, sizeof what, "Import the Switch fonts in Settings (Game font), or reinstall LAS Recomp - it "
+        snprintf(what, sizeof what, "Import the Switch fonts in Settings (Game font), or reinstall ReAwakening - it "
                  "comes with a font of its own.");
     } else if (rt_romfs_files >= ROMFS_FILES &&
                (rt_romfs_missing > 0 ||
@@ -105,7 +105,7 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
     } else if (has("get_terminate") || has("uncaught C++ exception")) {  // (the game threw: recompiled code can't
                                                                          // unwind; runtime/hle/warp.c rt_cxa_throw)
         snprintf(head, sizeof head, "The game ran into an error it couldn't recover from");
-        snprintf(what, sizeof what, "This is a bug in LAS Recomp, not a problem with your game files or PC. %s", report);
+        snprintf(what, sizeof what, "This is a bug in ReAwakening, not a problem with your game files or PC. %s", report);
     } else if (in_gpu_driver(g_pc)) {
         snprintf(head, sizeof head, "Your graphics driver crashed");
 #ifdef __ANDROID__
@@ -118,10 +118,10 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
     } else if (has("VK_") || has("Vulkan")) {
         snprintf(head, sizeof head, "Graphics driver error");
 #ifdef __ANDROID__
-        snprintf(what, sizeof what, "LAS Recomp needs a graphics driver with Vulkan 1.3. On Adreno GPUs a Turnip driver "
+        snprintf(what, sizeof what, "ReAwakening needs a graphics driver with Vulkan 1.3. On Adreno GPUs a Turnip driver "
                  "package can give it. If it keeps happening, please report it with the log file below.");
 #else
-        snprintf(what, sizeof what, "LAS Recomp needs a graphics driver with Vulkan 1.3: install the latest driver for "
+        snprintf(what, sizeof what, "ReAwakening needs a graphics driver with Vulkan 1.3: install the latest driver for "
                  "your GPU (NVIDIA, AMD or Intel). If it keeps happening, please report it with the log file below.");
 #endif
     } else if (has("out of memory") || has("cannot allocate") || has("alloc failed")) {
@@ -129,9 +129,9 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
         snprintf(what, sizeof what, "Close other programs and try again.");
     } else if (g_pc && rt_host_fn_name(g_pc, NULL)) {
         snprintf(head, sizeof head, "The game crashed");
-        snprintf(what, sizeof what, "This is a bug in LAS Recomp, not a problem with your game files or PC. %s", report);
+        snprintf(what, sizeof what, "This is a bug in ReAwakening, not a problem with your game files or PC. %s", report);
     } else {
-        snprintf(head, sizeof head, "LAS Recomp stopped because of an error");
+        snprintf(head, sizeof head, "ReAwakening stopped because of an error");
         snprintf(what, sizeof what, "%s", report);
     }
     fprintf(stderr, "[crash] %s\n", head);

@@ -262,7 +262,7 @@ def render(entries, total):
            "This is an automatic summary of the LAS Recomp log files attached to this issue. It only reads the logs, "
            "so a person will still look at the details.",
            "",
-           "For a new report, please attach `lasrecomp.log` from LAS Recomp's data folder (it always holds the latest "
+           "For a new report, please attach `lasrecomp.log` from ReAwakening's data folder (it always holds the latest "
            "run; `lasrecomp-backup-*.log` there are the earlier runs)."]
     for k, (src, r) in enumerate(entries):
         out += ["", f"#### {'Newest log' if k == 0 else 'Earlier log'}: {src}"]

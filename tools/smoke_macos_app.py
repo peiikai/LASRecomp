@@ -35,6 +35,6 @@ def check(app):
 
 if __name__ == '__main__':
     try:
-        check(sys.argv[1] if len(sys.argv) > 1 else 'build/LAS Recomp.app')
+        check(sys.argv[1] if len(sys.argv) > 1 else 'build/ReAwakening.app')
     except (OSError, subprocess.TimeoutExpired, RuntimeError) as error:
         sys.exit(f'macOS app smoke test failed: {error}')

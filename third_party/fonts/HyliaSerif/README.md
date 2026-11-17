@@ -1,0 +1,17 @@
+# Hylia Serif
+
+Hylia Serif Beta, version 0.009, by Omni Jacala: https://artsyomni.com/hyliaserif
+
+It is the start screen's title font.
+
+The author's terms, from the font's page:
+
+- It is free to download.
+- It must not be distributed for profit.
+- People who redistribute it are asked to tell the author (the contact page on the font's site).
+
+The download has no license file. The font file's copyright field is empty.
+
+This project is free, and the font ships unchanged.
+
+It is a fan-made typeface, not affiliated with Nintendo.

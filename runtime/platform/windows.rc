@@ -1,5 +1,28 @@
 // The .exe's icon (Makefile: windres -I docs/icon). ID 1: Explorer and the taskbar use the first icon resource.
 1 ICON "icon.ico"
-// The application manifest (RT_MANIFEST 24, ID 1): UTF-8 as the process code page - a game files folder, or LAS Recomp's
+// The application manifest (RT_MANIFEST 24, ID 1): UTF-8 as the process code page - a game files folder, or the program's
 // own folder, named with non-ASCII characters wasn't found (fopen and friends read paths in the system code page)
 1 24 "windows.manifest"
+// The version details Explorer, Task Manager and the taskbar show: the player-facing name. The file stays lasrecomp.exe
+// (every shipped self-update restarts that one, runtime/update.cpp).
+1 VERSIONINFO
+FILEVERSION 0,0,0,0
+PRODUCTVERSION 0,0,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "FileDescription", "ReAwakening"
+            VALUE "ProductName", "ReAwakening"
+            VALUE "InternalName", "lasrecomp"
+            VALUE "OriginalFilename", "lasrecomp.exe"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

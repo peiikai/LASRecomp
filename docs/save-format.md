@@ -180,7 +180,7 @@ Dungeon n uses record 2(n-1) (Tail Cave 0, Bottle Grotto 2, ...). The Color Dung
 
 ## Event flags (0x5DC0, 256 bytes) [V]
 
-`GlobalFlags.gsheet` flag n is bit n of this 2048-bit field. The game itself uses indices up to 1118; LAS Recomp's
+`GlobalFlags.gsheet` flag n is bit n of this 2048-bit field. The game itself uses indices up to 1118; ReAwakening's
 randomizer adds its own flags above those.
 
 ## Not found yet

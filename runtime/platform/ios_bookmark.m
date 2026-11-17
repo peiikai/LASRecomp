@@ -95,7 +95,7 @@ bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, 
         NSUInteger fps = [parts indexOfObject:@"File Provider Storage"];
         if (parts.count >= dparts.count && [[parts subarrayWithRange:NSMakeRange(0, dparts.count)] isEqualToArray:dparts]) {
             // (the app's Documents: Files shows it as a folder named after the app)
-            [shown addObject:NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?: @"LAS Recomp"];
+            [shown addObject:NSBundle.mainBundle.infoDictionary[@"CFBundleDisplayName"] ?: @"ReAwakening"];
             top = @"", from = dparts.count;
         } else if (fps != NSNotFound) {
             top = @"", from = fps + 1;
