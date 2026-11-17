@@ -247,7 +247,7 @@ static void configure_inputs(float scale) {
         opt_desc_text();
         g_in_right = false;
     } else {
-        Bind rows[BIND_UI_COUNT + 2];
+        Bind rows[16];  // (the most: the keyboard's Sticks, 10)
         int n = cat_rows(g_cat, g_dev_pad, rows);
         opt_section(k_cat_name[g_cat]);
         bool in_right = false;

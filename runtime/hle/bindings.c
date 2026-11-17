@@ -346,8 +346,8 @@ bool bind_capture_event(const SDL_Event *e) {
     case SDL_EVENT_GAMEPAD_BUTTON_UP:
         if (dev == BIND_DEV_PAD && cap_slot >= BIND_MENU_1 && cap_slot < BIND_UI_CONFIRM && e->gbutton.button == cap_first) {
             cap_dev = -1;  // (let go alone)
-            if (game_button(cap_first)) result(6, dev, cap_slot, -1);
-            else if (bind_ui_uses(cap_first)) result(9, dev, cap_slot, -1);  // (our menus' button would close them)  // (the menu would open instead of the game's button)
+            if (game_button(cap_first)) result(6, dev, cap_slot, -1);  // (the menu would open instead of the game's button)
+            else if (bind_ui_uses(cap_first)) result(9, dev, cap_slot, -1);  // (our menus' button would close them)
             else menu_assign(cap_slot - BIND_MENU_1, cap_first, -1);
         }
         return true;
@@ -377,9 +377,13 @@ bool bind_settings_load(const char *key, const char *val) {
             got[i] = (int8_t)h, have |= 1u << i;
         }
         if (have == (1u << BIND_UI_COUNT) - 1) {
-            bool ok = true;  // (no button twice, none that opens the menu alone: hand-edited)
-            for (int i = 0; i < BIND_UI_COUNT; i++)
+            // (no button twice, none that opens the menu alone: hand-edited; bind_settings_save writes the menu
+            // shortcuts first, so they're loaded by now)
+            bool ok = true;
+            for (int i = 0; i < BIND_UI_COUNT; i++) {
+                ok &= !bind_menu_single(got[i]);
                 for (int j = 0; j < i; j++) ok &= got[i] != got[j];
+            }
             if (ok) memcpy(g_bind_ui, got, sizeof g_bind_ui), g_bind_ui_custom = true;
             have = 0;
         }
