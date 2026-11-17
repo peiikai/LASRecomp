@@ -135,6 +135,10 @@ items picked up anywhere, floor key spots included, get a message naming their d
 The updater: `tools/test_update.cpp` (manifest, signature, the swap and its rollback; build line at its top) and
 `tools/test_update_e2e.sh` (download, check, swap and restart against a local web server), without game data or network.
 
+`python3 tools/test_spirv_varyings.py` checks the Vulkan backend's varying renumbering (on for Mesa drivers, for PanVK
+before 26.1) on synthetic SPIR-V pairs: a vertex, tessellation evaluation or geometry shader with a fragment shader,
+and the cases it must leave alone. It needs a C compiler and SPIRV-Tools.
+
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.
 On Windows, also run `python tools/test_windows_processes.py` to check independent
