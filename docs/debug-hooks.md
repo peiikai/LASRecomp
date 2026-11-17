@@ -31,7 +31,7 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_FORCE_LAUNCHER` | 1 | Show the start screen even when `LARECOMP_INPUT` is set (which normally skips it). |
 | `LARECOMP_LAUNCHER_AUTOPLAY` | 1, `once` | Press PLAY on the start screen at once. `once`: only the first time, so a "Title screen" reboot stays on the start screen. |
 | `LARECOMP_LAUNCHER_PLAY_AT` | seconds | Press PLAY on the start screen that many seconds in. |
-| `LARECOMP_LAUNCHER_KEYS` | `frame:key,...` | Press keys on the start screen at those frames (`left right up down enter esc`, controller `pl pr pu pd pa pb`). The log names the RANDOMIZER row's choice when it changes. |
+| `LARECOMP_LAUNCHER_KEYS` | `frame:key,...` | Press keys on the start screen at those frames (`left right up down enter esc`, controller `pl pr pu pd pa pb`, or `b.<button>` with a larecomp.ini button name such as `b.north` or `b.rtrigger`: a real controller event that goes through LAS Menu). The log names the RANDOMIZER row's choice when it changes. |
 | `LARECOMP_NO_UPDATE_CHECK` | 1 | Skip the update check on the start screen. |
 | `LARECOMP_INPUT` | script (see below) | Scripted controller input for player 1. Also skips the start screen and blocks your own input. |
 | `LARECOMP_NO_USER_INPUT` | 0 / 1 | Ignore keyboard, mouse and controllers. On by default when a scripted input hook is set; `0` lets your input through during a scripted run. |
