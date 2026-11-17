@@ -1652,6 +1652,11 @@ static bool launcher_pad_event(const SDL_Event &e) {
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
         float v = e.gaxis.value / 32767.0f;
+        {   // a LAS Menu action on a trigger (pad_nav.h)
+            ImGuiKey tk;
+            bool tdown;
+            if (ui_pad_trigger(e.gaxis.which, e.gaxis.axis, e.gaxis.value, &tk, &tdown)) io.AddKeyEvent(tk, tdown);
+        }
         // the left stick also works as the d-pad (ImGui moves between items with the d-pad only; the stick scrolls):
         // pressed past half way, released under 0.3
         if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
@@ -2669,7 +2674,8 @@ extern "C" void launcher_run(const char *root) {
             else io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
             ImGui_ImplSDL3_NewFrame();
             // (test) LARECOMP_LAUNCHER_KEYS=<frame>:<key>,...: that key pressed at that frame, let go 2 frames later.
-            // Keys: left right up down enter esc (keyboard), pl pr pu pd pa pb (controller d-pad, confirm, back)
+            // Keys: left right up down enter esc (keyboard), pl pr pu pd pa pb (controller d-pad, confirm, back), or
+            // b.<button> (larecomp.ini name: b.south, b.ltrigger...): a real controller button event, through LAS Menu
             if (static const char *keys = getenv("LARECOMP_LAUNCHER_KEYS"); keys) {
                 io.BackendFlags |= ImGuiBackendFlags_HasGamepad;  // (no controller needed for its presses)
                 static long kf;
@@ -2684,6 +2690,23 @@ extern "C" void launcher_run(const char *root) {
                         {"pl", ImGuiKey_GamepadDpadLeft}, {"pr", ImGuiKey_GamepadDpadRight}, {"pu", ImGuiKey_GamepadDpadUp},
                         {"pd", ImGuiKey_GamepadDpadDown}, {"pa", ImGuiKey_GamepadFaceDown}, {"pb", ImGuiKey_GamepadFaceRight}};
                     size_t len = strcspn(name + 1, ",");
+                    if (!strncmp(name + 1, "b.", 2)) {
+                        char bn[24];
+                        snprintf(bn, sizeof bn, "%.*s", (int)(len - 2 < sizeof bn ? len - 2 : sizeof bn - 1), name + 3);
+                        int h = bind_pad_from_name(bn);
+                        SDL_Event pe;
+                        SDL_zero(pe);
+                        if (h == PADB_LTRIGGER || h == PADB_RTRIGGER) {
+                            pe.type = SDL_EVENT_GAMEPAD_AXIS_MOTION, pe.gaxis.which = 0x7E57;
+                            pe.gaxis.axis = h == PADB_LTRIGGER ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+                            pe.gaxis.value = kf == at ? 32767 : 0;
+                        } else if (h >= 0) {
+                            pe.type = kf == at ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+                            pe.gbutton.which = 0x7E57, pe.gbutton.button = (Uint8)h, pe.gbutton.down = kf == at;
+                        }
+                        if (pe.type) SDL_PushEvent(&pe);
+                        continue;
+                    }
                     for (auto &m : map)
                         if (strlen(m.n) == len && !strncmp(name + 1, m.n, len)) io.AddKeyEvent(m.k, kf == at);
                 }

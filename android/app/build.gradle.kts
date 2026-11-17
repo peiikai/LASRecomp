@@ -123,7 +123,8 @@ val genZip by tasks.registering(Zip::class) {
     from(g.resolve("zig/lib")) { into("zig/lib") }
     from(g.resolve("zig/LICENSE-zig.txt")) { into("zig") }
     from(repo.resolve("tools")) {
-        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "chunk_bounds.py", "simd_c.py", "game_addresses.py")
+        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "chunk_bounds.py", "simd_c.py", "game_addresses.py",
+                "win_longjmp.py")  // (gen.py imports it everywhere; it only acts on Windows, #779)
         into("tools")
     }
     // the seed generator (runtime/ui/rando_tab.mm; gen.py reads tools/rando/patch_variants.json too): tools/rando and

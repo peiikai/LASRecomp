@@ -4,7 +4,9 @@
 // bindings; A on a binding waits for the new button / key (Esc or 5 s without a press cancels; a button already in
 // use swaps over); B goes back a step (bindings -> categories -> the tab). Open menu holds the controller's shortcuts for
 // this menu (one button or two together; X / Delete clears one, never the last) and the keyboard's F1 / Esc, which
-// can't be changed. Drawn in whichever ImGui context is current.
+// can't be changed. LAS Menu holds the buttons our menus use (pad_nav.h): the controller conventions until one is changed,
+// every action always on a button of its own (a button in use swaps over); the keyboard's are shown, fixed. Drawn in
+// whichever ImGui context is current.
 #include <SDL3/SDL.h>
 #include <math.h>
 #include <stdio.h>
@@ -32,9 +34,10 @@ void menu_toggle(void);  // menu.mm
 }
 
 // ------------------------------------------------------------------ Configure inputs: what's on it
-enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, CAT_MENU, N_CAT };
-static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad"), LN("Open menu")};
-static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad", "menu"};  // (LARECOMP_CONTROLS_SUB)
+enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, CAT_MENU, CAT_LAS, N_CAT };
+static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad"), LN("Open menu"),
+                                              LN("LAS Menu")};
+static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad", "menu", "lasmenu"};  // (LARECOMP_CONTROLS_SUB)
 
 // section: a header before this row; fixed: a key that can't be changed (slot -1)
 struct Bind { int slot; const char *label; const char *section; const char *fixed; };
@@ -64,10 +67,19 @@ static int cat_rows(int cat, bool pad, Bind *out) {
         if (pad) add(BIND_MENU_1, LN("Shortcut 1")), add(BIND_MENU_2, LN("Shortcut 2"));
         else out[n++] = {-1, LN("Shortcut 1"), NULL, "F1"}, out[n++] = {-1, LN("Shortcut 2"), NULL, "Esc"};
         break;
+    case CAT_LAS:  // (the keyboard's are fixed: Enter, Esc)
+        if (pad)
+            for (int a = BIND_UI_CONFIRM; a < BIND_UI_END; a++) add(a, bind_input_name(a));
+        else {
+            static const char *const fixed[][2] = {{LN("Confirm"), "Enter"}, {LN("Back"), "Esc"}};
+            for (auto &f : fixed) out[n++] = {-1, f[0], NULL, f[1]};
+        }
+        break;
     }
     return n;
 }
 static int slot_cat(int slot) {
+    if (slot >= BIND_UI_CONFIRM) return CAT_LAS;
     if (slot >= BIND_MENU_1) return CAT_MENU;
     Bind b[16];
     for (int c = 0; c < N_CAT; c++)
@@ -154,7 +166,10 @@ static void watch_results(int fam, char *msg, size_t cap) {
     seen = serial;
     msg[0] = 0;
     char lab[64];
-    if (kind == 2 && rother >= BIND_MENU_1)
+    if (kind == 2 && rother >= BIND_UI_CONFIRM)
+        snprintf(msg, cap, L("Swapped. %s is on %s now."), L(bind_input_name(rother)),
+                 L(bind_pad_label(g_bind_ui[rother - BIND_UI_CONFIRM], fam)));
+    else if (kind == 2 && rother >= BIND_MENU_1)
         snprintf(msg, cap, L("Swapped. Shortcut %d is %s now."), rother - BIND_MENU_1 + 1,
                  menu_label(rother - BIND_MENU_1, fam, lab, sizeof lab));
     else if (kind == 2)
@@ -162,6 +177,8 @@ static void watch_results(int fam, char *msg, size_t cap) {
                  L(rdev == BIND_DEV_PAD ? bind_pad_label(bind_pad_host(rother), fam) : bind_key_label(g_bind_key[rother])));
     if (kind == 6) snprintf(msg, cap, "%s", L("The game uses that button. Hold it with a second button."));
     if (kind == 7) snprintf(msg, cap, "%s", L("Keep at least one shortcut, so a controller can open this menu."));
+    if (kind == 9) snprintf(msg, cap, "%s", L("LAS Menu uses that button. Hold it with a second button."));
+    if (kind == 10) snprintf(msg, cap, "%s", L("That button opens this menu."));
     if (kind == 1 || kind == 2 || kind == 5 || kind == 8) settings_save();
 }
 
@@ -230,7 +247,7 @@ static void configure_inputs(float scale) {
         opt_desc_text();
         g_in_right = false;
     } else {
-        Bind rows[16];
+        Bind rows[16];  // (the most: the keyboard's Sticks, 10)
         int n = cat_rows(g_cat, g_dev_pad, rows);
         opt_section(k_cat_name[g_cat]);
         bool in_right = false;
@@ -244,17 +261,19 @@ static void configure_inputs(float scale) {
                 ImGui::PopID();
                 continue;
             }
-            bool waiting = cd == dev && cs == b.slot, menu = b.slot >= BIND_MENU_1;
+            bool waiting = cd == dev && cs == b.slot, las = b.slot >= BIND_UI_CONFIRM, menu = b.slot >= BIND_MENU_1 && !las;
             char val[64];
             if (waiting) snprintf(val, sizeof val, g_dev_pad ? L("Press a button...  %d") : L("Press a key...  %d"), (ms + 999) / 1000);
             else if (menu) menu_label(b.slot - BIND_MENU_1, fam, val, sizeof val);
+            else if (las) snprintf(val, sizeof val, "%s", bind_pad_label(bind_ui_host(b.slot), fam));
             else snprintf(val, sizeof val, "%s", g_dev_pad ? bind_pad_label(bind_pad_host(b.slot), fam) : bind_key_label(g_bind_key[b.slot]));
             // the same button / key on two inputs (a hand-edited larecomp.ini), or a game button that opens the menu: red
+            // (LAS Menu: never - every action has a button of its own)
             bool dup = false;
             if (menu) {
                 int a = g_bind_menu[b.slot - BIND_MENU_1][0];
                 for (int j = 0; j < BIND_PAD_COUNT; j++) dup |= g_bind_menu[b.slot - BIND_MENU_1][1] < 0 && bind_pad_host(j) == a && a >= 0;
-            } else {
+            } else if (!las) {
                 const int16_t *t = g_dev_pad ? g_bind_pad : g_bind_key;
                 for (int j = 0, m = g_dev_pad ? BIND_PAD_COUNT : BIND_KEY_COUNT; j < m; j++)
                     dup |= j != b.slot && t[j] == t[b.slot] && t[b.slot] > (g_dev_pad ? -1 : 0);
@@ -266,7 +285,10 @@ static void configure_inputs(float scale) {
             if (menu) {  // (its value is put together here, so already in the menus' language)
                 opt_shown_next();
                 hit = opt_action(L(b.label), val, NULL, true, waiting || !bind_is_default_slot(dev, b.slot));
-            } else hit = opt_action(b.label, val, NULL, true, waiting || !bind_is_default_slot(dev, b.slot));
+            } else if (las)
+                hit = opt_action(b.label, val, NULL, true,
+                                 waiting || bind_ui_host(b.slot) != bind_ui_convention(b.slot));
+            else hit = opt_action(b.label, val, NULL, true, waiting || !bind_is_default_slot(dev, b.slot));
             ImGui::PopID();
             if (i == 0) take_focus(FOCUS_RIGHT);
             if (ImGui::IsItemFocused()) in_right = true;
@@ -283,15 +305,24 @@ static void configure_inputs(float scale) {
             if (hit && menu && ImGui::IsKeyDown(ImGuiKey_GamepadFaceUp)) hit = false;  // (ImGui activates on it too)
             if (hit) {
                 if (waiting) bind_capture_cancel();
+                else if (las) msg[0] = 0, bind_ui_capture_begin(b.slot);
                 else { msg[0] = 0; bind_capture_begin(dev, b.slot); }
             }
         }
+        if (g_cat == CAT_LAS && g_dev_pad) {  // (at the bottom of the list: back to the controller's own conventions)
+            if (!g_bind_ui_custom) opt_disable_next();
+            if (opt_action("Reset to controller conventions", "", NULL)) {
+                bind_capture_cancel();
+                bind_ui_reset();
+            }
+            if (ImGui::IsItemFocused()) in_right = true;
+        }
         g_in_right = in_right;
-        if (cd == dev && cs >= BIND_MENU_1) ImGui::TextDisabled("%s", L("Press one button, or two together. Esc cancels."));
+        if (cd == dev && cs >= BIND_MENU_1 && cs < BIND_UI_CONFIRM) ImGui::TextDisabled("%s", L("Press one button, or two together. Esc cancels."));
         else if (cd == dev) ImGui::TextDisabled("%s", L("Esc cancels."));
         else if (msg[0]) ImGui::TextDisabled("%s", msg);
         else if (g_cat == CAT_MENU && g_dev_pad)
-            ImGui::TextDisabled(L("%s or Delete clears a shortcut."), L(bind_pad_label(SDL_GAMEPAD_BUTTON_NORTH, fam)));
+            ImGui::TextDisabled(L("%s or Delete clears a shortcut."), L(bind_pad_label(bind_ui_host(BIND_UI_OPTION), fam)));
         else if (g_cat == CAT_MENU) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
     }
     opt_split_end();
@@ -374,14 +405,14 @@ extern "C" void controls_tab_draw(float scale) {
                    "Which button icons the game shows. Auto matches the controller you have plugged in.");
     }
     {
-        // One choice for the game and our menus: two separate ones let the bottom button confirm in our menus while
-        // it was the Switch's B in the game
-        static const char *const names[] = {LN("Switch"), LN("Xbox / PlayStation")};
+        // One choice for the game and our menus, the same on every pad: two separate ones (or one that also looked at
+        // the pad's type or the icon style) let the bottom button confirm in one and go back in the other
+        static const char *const names[] = {LN("Right (Switch)"), LN("Bottom (Xbox / PlayStation)")};
         int i = g_settings.face_by_label;
-        if (opt_choice("Button layout", &i, names, 2, 0,
-                       "Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation "
-                       "swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. "
-                       "Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected."))
+        if (opt_choice("Confirm button", &i, names, 2, 0,
+                       "Which button is A in the game. LAS Recomp's menus use the same button to confirm, so Back is "
+                       "the same in both. Right: as on Switch. Bottom: as on Xbox and PlayStation. To set LAS Recomp's "
+                       "menu buttons yourself, use Configure inputs > LAS Menu."))
             g_settings.face_by_label = i != 0;
     }
 
