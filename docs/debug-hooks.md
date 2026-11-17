@@ -98,6 +98,7 @@ Comma-separated entries, each starting with a frame:
 
 | Variable | Values | What it does |
 |---|---|---|
+| `--load-save` / `LARECOMP_LOAD_SAVE` | `1`-`4` or a save file path | Boot straight into a save (see below). |
 | `LARECOMP_WARP_AT` | `frame:level:locator,...` (see below) | Warp to that level and spawn point at each frame. |
 | `LARECOMP_WARP_ON_LOAD` | `level:locator` | Warp once, about a second after a save is loaded. |
 | `LARECOMP_WARP_MENU_PICK` | text | Warp through the menu's warp tab to the first place whose name matches the text. |
@@ -111,6 +112,28 @@ Comma-separated entries, each starting with a frame:
 | `LARECOMP_RANDO_ID` | seed ID | Open the randomizer tab with that seed ID's options. |
 | `LARECOMP_RANDO_GEN_TEST` | `1` or `name[:seed ID]` | Generate a seed as soon as the randomizer tab is shown. |
 | `LARECOMP_RANDO_GEN` | file path | Use this seed generator program instead of the bundled one. |
+
+### Loading a save from the command line
+
+```sh
+./build/lasrecomp extracted --load-save 2                       # file 2 of the file select
+./build/lasrecomp extracted --load-save ~/Downloads/savedata0.bin   # a save file from elsewhere
+```
+
+Skips the start screen, the title and the file select, and loads the save the game's own way: it presses what a
+player would (A on the opening, L + R on the title, the file, A on "load this file?"), so the game lands where that
+save puts you, with its flags and its seed. Combine with `LARECOMP_WARP_ON_LOAD` to go somewhere from there.
+
+- `1`-`4`: the file as numbered on the file select (1-3 the diaries, 4 the autosave, `savedata0-3.bin`) in the save
+  folder of the game being started: the selected randomizer seed's, or the vanilla one (`LARECOMP_SAVE_DIR` and
+  `LARECOMP_RANDO_SEED` apply as usual).
+- A path: the file is copied (with its `.flagsx` file, if there is one) into a scratch save folder, `load_save/` in the
+  data folder, and loaded as file 1. The game saves there for the rest of the session, so your own saves are never
+  read or written. A path inside a seed's folder (`rando/<seed>/save/...`) plays that seed. For a save from someone
+  else's randomizer seed, put their seed folder in `rando/` and set `LARECOMP_RANDO_SEED`.
+- The file is checked first (size, version, checksums). A missing or damaged one gives one line in the log and on
+  the terminal, and the app starts as it would without the option.
+- `lasrecomp.log` lines start with `[loadsave]`: which file, and when it is in play.
 
 ### LARECOMP_WARP_AT format
 

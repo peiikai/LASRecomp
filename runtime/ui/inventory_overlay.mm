@@ -142,9 +142,11 @@ extern "C" uint32_t rt_items_nav_pick(uint32_t next) {
     LOG("[items] tap: cursor to cell %d\n", cell);
     return (uint32_t)cell;
 }
+extern "C" void load_save_file_select(uint64_t cursor);  // runtime/hle/load_save.c (--load-save)
 // (game thread) the file select, after its list moved the cursor or not: the file a tap asked for instead. Moved: the
 // game's own change of file then runs (the old file at cursor + 1).
 extern "C" int rt_file_nav_pick(uint64_t cursor, int moved) {
+    load_save_file_select(cursor);
     int file = g_file_jump.take();
     if (file < 0) return moved;
     ST8(cursor, (uint8_t)file);
