@@ -440,7 +440,40 @@ static int pad_rank(SDL_JoystickID id) {
     return r;
 }
 #endif
+#ifdef __ANDROID__
+// The Retroid Pocket's built-in controller (USB 2022:3001, "Retroid Pocket Controller") has Nintendo-style face
+// buttons (A on the right, X on top) but its driver reports them by label: A as BTN_A, X as BTN_X. Android and SDL
+// read those as Xbox positions (BTN_A = the bottom button), so every face button came in mirrored: A and B swapped,
+// X and Y swapped (getevent on a Retroid Pocket 5: A, B, X, Y -> BTN_SOUTH, BTN_EAST, BTN_NORTH, BTN_WEST). Its
+// mapping gets a and b, x and y exchanged, and the Switch Pro type, so SDL's positions, its labels, our button
+// layout setting and the button icons all match the buttons as printed. LARECOMP_PAD_NO_RETROID_FIX=1 turns it off.
+static void retroid_fix(SDL_JoystickID id) {
+    if (SDL_GetGamepadVendorForID(id) != 0x2022 || SDL_GetGamepadProductForID(id) != 0x3001) return;
+    if (getenv("LARECOMP_PAD_NO_RETROID_FIX")) return;
+    char *m = SDL_GetGamepadMappingForID(id);
+    if (!m) return;
+    if (strstr(m, "type:switchpro")) { SDL_free(m); return; }  // (done already: the mapping stays across reconnects)
+    char out[1024];
+    size_t n = 0;
+    out[0] = 0;
+    for (char *tok = strtok(m, ","); tok && n < sizeof out - 64; tok = strtok(NULL, ",")) {
+        char k[16] = "";
+        const char *v = strchr(tok, ':');
+        if (v && v - tok < (long)sizeof k) memcpy(k, tok, (size_t)(v - tok)), k[v - tok] = 0;
+        const char *swap = !strcmp(k, "a") ? "b" : !strcmp(k, "b") ? "a" : !strcmp(k, "x") ? "y" : !strcmp(k, "y") ? "x" : NULL;
+        if (!strcmp(k, "type")) continue;
+        n += (size_t)snprintf(out + n, sizeof out - n, "%s%s%s", n ? "," : "", swap ? swap : tok, swap ? v : "");
+    }
+    snprintf(out + n, sizeof out - n, ",type:switchpro");
+    SDL_free(m);
+    if (SDL_SetGamepadMapping(id, out)) LOG("[input] Retroid Pocket controller: face buttons by their labels (A right, X top)\n");
+    else LOG("[input] Retroid Pocket controller mapping: %s\n", SDL_GetError());
+}
+#endif
 static void open_pad(SDL_JoystickID id) {
+#ifdef __ANDROID__
+    retroid_fix(id);
+#endif
     if (!SDL_GetGamepadFromID(id)) SDL_OpenGamepad(id);
 #ifdef __ANDROID__
     int r = pad_rank(id);
