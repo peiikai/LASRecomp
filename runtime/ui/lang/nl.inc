@@ -220,7 +220,7 @@
 {"Switch", "Switch"},
 {"Xbox / PlayStation", "Xbox / PlayStation"},
 {"Button layout", "Knopindeling"},
-{"Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected.", "Switch houdt de knopposities van de Switch, dus de rechterknop bevestigt. Xbox / PlayStation wisselt de onderste en rechterknop om, dus de onderste knop bevestigt, zoals op die controllers. Geldt voor de game en de menu's van LAS Recomp. Nintendo-controllers veranderen niet."},
+{"Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. Applies to the game and LAS Recomp's menus.", "Switch houdt de knopposities van de Switch, dus de rechterknop bevestigt. Xbox / PlayStation wisselt de onderste en rechterknop om, dus de onderste knop bevestigt, zoals op die controllers. Geldt voor de game en de menu's van LAS Recomp."},
 {"Display", "Beeld"},
 {"Appearance", "Uiterlijk"},
 {"Layout", "Indeling"},

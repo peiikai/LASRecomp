@@ -33,7 +33,7 @@ enum { PADB_LTRIGGER = 26 /* SDL_GAMEPAD_BUTTON_COUNT */, PADB_RTRIGGER, PADB_HO
 
 extern int16_t g_bind_pad[BIND_PAD_COUNT];  // PADB value per Switch button, by position (as on a Nintendo pad)
 // The button that drives Switch input `slot` now: g_bind_pad[slot], with the bottom and right buttons swapped (south <->
-// east: A on the bottom) when Button layout is "Xbox / PlayStation" and the game's pad is an Xbox / PlayStation one
+// east: A on the bottom) when Button layout is "Xbox / PlayStation"
 int bind_pad_host(int slot);
 extern int16_t g_bind_key[BIND_KEY_COUNT];  // SDL_Scancode per input (0 = none)
 // The menu's controller shortcuts: one SDL_GamepadButton, or two held together ([1] -1: one; [0] -1: none). Defaults:

@@ -124,8 +124,7 @@ bool bind_is_default_slot(int dev, int slot) {
 // (its own inverse: also turns a pressed button into the positional one stored). Only the bottom and right buttons
 // swap: X / Y stay where the Switch has them (Triangle / Square, Y / X on those pads)
 static int label_swap(int host) {
-    extern int input_pad_family(void);  // runtime/hle/input.c
-    if (!g_settings.face_by_label || !input_pad_family()) return host;
+    if (!g_settings.face_by_label) return host;  // (every pad: the player chose it, a Nintendo-style one too)
     switch (host) {
     case SDL_GAMEPAD_BUTTON_SOUTH: return SDL_GAMEPAD_BUTTON_EAST;
     case SDL_GAMEPAD_BUTTON_EAST: return SDL_GAMEPAD_BUTTON_SOUTH;

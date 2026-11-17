@@ -220,7 +220,7 @@
 {"Switch", "Switch"},
 {"Xbox / PlayStation", "Xbox / PlayStation"},
 {"Button layout", "按鈕配置"},
-{"Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected.", "「Switch」維持Switch的按鈕位置，用右方按鈕確定。「Xbox / PlayStation」交換下方和右方按鈕，像這些控制器一樣用下方按鈕確定。適用於遊戲和LAS Recomp的選單。不影響Nintendo控制器。"},
+{"Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. Applies to the game and LAS Recomp's menus.", "「Switch」維持Switch的按鈕位置，用右方按鈕確定。「Xbox / PlayStation」交換下方和右方按鈕，像這些控制器一樣用下方按鈕確定。適用於遊戲和LAS Recomp的選單。"},
 {"Display", "顯示"},
 {"Appearance", "外觀"},
 {"Layout", "配置"},

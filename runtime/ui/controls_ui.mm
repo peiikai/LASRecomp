@@ -381,7 +381,7 @@ extern "C" void controls_tab_draw(float scale) {
         if (opt_choice("Button layout", &i, names, 2, 0,
                        "Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation "
                        "swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. "
-                       "Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected."))
+                       "Applies to the game and LAS Recomp's menus."))
             g_settings.face_by_label = i != 0;
     }
 

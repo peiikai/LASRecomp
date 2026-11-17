@@ -9,8 +9,9 @@
 static std::atomic<SDL_JoystickID> g_last_pad{0};
 
 // Does the bottom button confirm for a pad of layout family `fam`? Button layout "Switch" (the default): never - the
-// right one confirms, as in the game. "Xbox / PlayStation": Xbox / PlayStation / generic pads (#172), as the game's A then is.
-static bool south_confirms(int fam) { return g_settings.face_by_label && fam != 0; }
+// right one confirms, as in the game. "Xbox / PlayStation": always (#172), as the game's A then is - a Nintendo-style
+// pad too (a Retroid Pocket's built-in one: the player picks the layout they want, not the one printed)
+static bool south_confirms(int fam) { (void)fam; return g_settings.face_by_label; }
 
 ImGuiKey ui_pad_key(SDL_JoystickID which, Uint8 button, bool down) {
     static ImGuiKey held[SDL_GAMEPAD_BUTTON_COUNT];  // (the layout can change while a button is held: its release)
