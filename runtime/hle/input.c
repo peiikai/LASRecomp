@@ -387,11 +387,10 @@ int input_pad_family(void) {
     return env >= 0 ? env : pad_family;
 }
 
-// Our menus' face buttons: the family whose button names they show, and (Button layout = Xbox / PlayStation, #172)
-// whose layout they use - Nintendo (0): the right button confirms, the bottom one goes back; Xbox / PlayStation
-// (1 / 2): the bottom one confirms, the right one goes back (runtime/ui/pad_nav.mm). "Button icons"
-// forced to a style wins (icons and menus agree); Auto: the controller `which` that pressed (0, or not a connected
-// gamepad - a test's pushed press: the game's controller / the first connected one, else Nintendo).
+// Our menus' button names: the family whose words the hints use (which button confirms is the Confirm button
+// setting's alone, runtime/ui/pad_nav.mm). "Button icons" forced to a style wins (hints and the game's icons agree);
+// Auto: the controller `which` that pressed (0, or not a connected gamepad - a test's pushed press: the game's
+// controller / the first connected one, else Nintendo).
 int input_menu_family(SDL_JoystickID which) {
     switch (g_settings.prompts) {
     case PROMPTS_NINTENDO: return 0;

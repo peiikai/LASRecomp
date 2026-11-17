@@ -374,14 +374,13 @@ extern "C" void controls_tab_draw(float scale) {
                    "Which button icons the game shows. Auto matches the controller you have plugged in.");
     }
     {
-        // One choice for the game and our menus: two separate ones let the bottom button confirm in our menus while
-        // it was the Switch's B in the game
-        static const char *const names[] = {LN("Switch"), LN("Xbox / PlayStation")};
+        // One choice for the game and our menus, the same on every pad: two separate ones (or one that also looked at
+        // the pad's type or the icon style) let the bottom button confirm in one and go back in the other
+        static const char *const names[] = {LN("Right (Switch)"), LN("Bottom (Xbox / PlayStation)")};
         int i = g_settings.face_by_label;
-        if (opt_choice("Button layout", &i, names, 2, 0,
-                       "Switch keeps the Switch's button positions, so the right button confirms. Xbox / PlayStation "
-                       "swaps the bottom and right buttons, so the bottom button confirms, as on those controllers. "
-                       "Applies to the game and LAS Recomp's menus. Nintendo controllers aren't affected."))
+        if (opt_choice("Confirm button", &i, names, 2, 0,
+                       "Which button is A in the game. LAS Recomp's menus use the same button to confirm, so Back is "
+                       "the same in both. Right: as on Switch. Bottom: as on Xbox and PlayStation."))
             g_settings.face_by_label = i != 0;
     }
 

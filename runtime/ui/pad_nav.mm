@@ -8,9 +8,10 @@
 
 static std::atomic<SDL_JoystickID> g_last_pad{0};
 
-// Does the bottom button confirm for a pad of layout family `fam`? Button layout "Switch" (the default): never - the
-// right one confirms, as in the game. "Xbox / PlayStation": Xbox / PlayStation / generic pads (#172), as the game's A then is.
-static bool south_confirms(int fam) { return g_settings.face_by_label && fam != 0; }
+// Does the bottom button confirm? Exactly when it is the game's A (Confirm button "Bottom", #172, runtime/hle/bindings.c
+// label_swap), on every pad: never by the pad's type or the Button icons setting, so our menus and the game agree (a
+// DualSense with icons set to Nintendo confirmed with Circle here while Cross was A in the game)
+static bool south_confirms(int fam) { (void)fam; return g_settings.face_by_label; }
 
 ImGuiKey ui_pad_key(SDL_JoystickID which, Uint8 button, bool down) {
     static ImGuiKey held[SDL_GAMEPAD_BUTTON_COUNT];  // (the layout can change while a button is held: its release)
