@@ -169,9 +169,15 @@ PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool 
 #endif
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf
-// dir is synced to a cloud drive: the service's name ("OneDrive" on Windows: under a OneDrive folder, or a cloud
-// file; "iCloud Drive" on iOS), NULL when not (always on macOS / Linux)
+// Recognized sync provider, or NULL when none was identified.
 const char *plat_cloud_synced(const char *dir);
+typedef enum {
+    PLAT_CLOUD_AVAILABLE,
+    PLAT_CLOUD_OFFLOADED,
+    PLAT_CLOUD_INCOMPLETE,
+} PlatCloudState;
+// Metadata-only scan of a recognized cloud folder. Skips links inside the tree.
+PlatCloudState plat_cloud_offloaded(const char *dir);
 #ifdef _WIN32
 #define PLAT_EXE_SUFFIX ".exe"
 #define PLAT_VENV_PYTHON "venv/Scripts/python.exe"  // relative to the venv's parent
@@ -221,7 +227,6 @@ int plat_ios_memory_entitled(void);
 // the picker's own scope until the next pick (the move, the bookmark).
 bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
 int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
-bool plat_ios_cloud_offloaded(const char *dir);  // an iCloud file under dir isn't on the device (read waits for it)
 // Where path is as Files names it: root "" (this device) or a place's name, and the folders under it; false: unknown
 bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, size_t restn);
 #endif

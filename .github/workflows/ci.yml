@@ -341,6 +341,11 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Cloud folder scan (a directory read cut short)
+        run: |
+          clang -O2 tools/test_cloud_scan_darwin.c -framework CoreFoundation -o build/test-cloud-scan
+          mkdir -p build/cloud-scan && touch build/cloud-scan/one
+          build/test-cloud-scan build/cloud-scan
       - name: Dynamic resolution controller (simulated GPU)
         run: python3 tools/test_dynres.py
       - name: Frame pacing (simulated frames, hitches and slow machines)

@@ -966,49 +966,212 @@ bool plat_remove_tree(const char *dir) {
 }
 
 // ---- OneDrive
-// A folder's final path (links and junctions resolved), without the \\?\ prefix, backslashes, no trailing one
-static bool final_path(const wchar_t *p, wchar_t *out, DWORD n) {
-    HANDLE h = CreateFileW(p, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
-                           FILE_FLAG_BACKUP_SEMANTICS, NULL);
-    DWORD k = 0;
-    if (h != INVALID_HANDLE_VALUE) {
-        k = GetFinalPathNameByHandleW(h, out, n, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
-        CloseHandle(h);
+enum { CLOUD_PATH_MAX = 32768 };
+
+static wchar_t *cloud_full_path(const wchar_t *path) {
+    DWORD need = GetFullPathNameW(path, 0, NULL, NULL);
+    if (!need || need > CLOUD_PATH_MAX - 8) return NULL;
+    wchar_t *out = malloc((need + 8) * sizeof *out);
+    if (!out) return NULL;
+    DWORD n = GetFullPathNameW(path, need, out + 8, NULL);
+    if (!n || n >= need) { free(out); return NULL; }
+    wchar_t *p = out + 8;
+    for (wchar_t *c = p; *c; c++) if (*c == L'/') *c = L'\\';
+    if (!wcsncmp(p, L"\\\\?\\", 4)) {
+        memmove(out, p, (n + 1) * sizeof *out);
+    } else if (!wcsncmp(p, L"\\\\.\\", 4)) {
+        free(out);
+        return NULL;
+    } else if (!wcsncmp(p, L"\\\\", 2)) {
+        memmove(out + 8, p + 2, (n - 1) * sizeof *out);
+        memcpy(out, L"\\\\?\\UNC\\", 8 * sizeof *out);
+    } else {
+        memmove(out + 4, p, (n + 1) * sizeof *out);
+        memcpy(out, L"\\\\?\\", 4 * sizeof *out);
     }
-    if (!k || k >= n) k = GetFullPathNameW(p, n, out, NULL);  // (can't be opened: as written)
-    if (!k || k >= n) return false;
-    if (!wcsncmp(out, L"\\\\?\\UNC\\", 8)) memmove(out + 2, out + 8, (wcslen(out + 8) + 1) * sizeof *out);
-    else if (!wcsncmp(out, L"\\\\?\\", 4)) memmove(out, out + 4, (wcslen(out + 4) + 1) * sizeof *out);
-    for (wchar_t *c = out; *c; c++) if (*c == L'/') *c = L'\\';
-    for (size_t l = wcslen(out); l > 3 && out[l - 1] == L'\\';) out[--l] = 0;
-    return true;
+    size_t len = wcslen(out);
+    while (len > 7 && out[len - 1] == L'\\') out[--len] = 0;
+    if (wcspbrk(out + 4, L"*?")) { free(out); return NULL; }
+    return out;
 }
 
-#ifndef FILE_ATTRIBUTE_PINNED
-#define FILE_ATTRIBUTE_PINNED 0x00080000
-#define FILE_ATTRIBUTE_UNPINNED 0x00100000
+static wchar_t *cloud_path_utf8(const char *dir) {
+    if (!dir || !*dir) return NULL;
+    int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, dir, -1, NULL, 0);
+    if (n <= 1 || n > CLOUD_PATH_MAX) return NULL;
+    wchar_t *wide = malloc(n * sizeof *wide);
+    if (!wide) return NULL;
+    wchar_t *path = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, dir, -1, wide, n)
+                    ? cloud_full_path(wide) : NULL;
+    free(wide);
+    return path;
+}
+
+// path (cloud_full_path's, freed here) with links and junctions resolved, in the same form; path itself when it
+// can't be opened.
+static wchar_t *cloud_final_path(wchar_t *path) {
+    if (!path) return NULL;
+    HANDLE h = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) return path;
+    const DWORD form = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;  // (\\?\C:\... and \\?\UNC\..., as cloud_full_path)
+    DWORD need = GetFinalPathNameByHandleW(h, NULL, 0, form);
+    wchar_t *out = need && need <= CLOUD_PATH_MAX ? malloc(need * sizeof *out) : NULL;
+    DWORD n = out ? GetFinalPathNameByHandleW(h, out, need, form) : 0;
+    CloseHandle(h);
+    if (!n || n >= need) { free(out); return path; }
+    while (n > 7 && out[n - 1] == L'\\') out[--n] = 0;
+    free(path);
+    return out;
+}
+
+// Attribute bits and Cloud Files tags are shared by providers. Name OneDrive only under a configured
+// OneDrive root, both with links and junctions resolved: a data folder reached through a junction is in it too.
+const char *plat_cloud_synced(const char *dir) {
+    static const wchar_t *const vars[] = {L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial"};
+    wchar_t *d = NULL;
+    const char *provider = NULL;
+    for (size_t i = 0; i < sizeof vars / sizeof *vars; i++) {
+        DWORD need = GetEnvironmentVariableW(vars[i], NULL, 0);
+        if (!need || need > CLOUD_PATH_MAX) continue;
+        if (!d && !(d = cloud_final_path(cloud_path_utf8(dir)))) break;
+        wchar_t *value = malloc(need * sizeof *value);
+        if (!value) break;
+        DWORD n = GetEnvironmentVariableW(vars[i], value, need);
+        wchar_t *r = n && n < need ? cloud_final_path(cloud_full_path(value)) : NULL;
+        free(value);
+        if (!r) continue;
+        size_t len = wcslen(r);
+        if (r[len - 1] == L'\\') len--;
+        bool inside = !_wcsnicmp(d, r, len) && (!d[len] || d[len] == L'\\');
+        free(r);
+        if (inside) { provider = "OneDrive"; break; }
+    }
+    free(d);
+    return provider;
+}
+
+#ifndef FILE_ATTRIBUTE_RECALL_ON_OPEN
+#define FILE_ATTRIBUTE_RECALL_ON_OPEN 0x00040000
 #endif
 #ifndef FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
 #define FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS 0x00400000
 #endif
+#define CLOUD_RECALL (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_OFFLINE)
 
-// Under one of the OneDrive folders the environment names (personal, work / school), or a cloud file itself
-const char *plat_cloud_synced(const char *dir) {
-    wchar_t w[MAX_PATH], d[1024], r[1024], v[1024];
-    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return NULL;
-    DWORD a = GetFileAttributesW(d);
-    if (a != INVALID_FILE_ATTRIBUTES &&
-        (a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_PINNED | FILE_ATTRIBUTE_UNPINNED)))
-        return "OneDrive";
-    static const wchar_t *const vars[] = {L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial"};
-    for (int i = 0; i < 3; i++) {
-        DWORD k = GetEnvironmentVariableW(vars[i], v, 1024);
-        if (!k || k >= 1024 || !final_path(v, r, 1024)) continue;
-        size_t l = wcslen(r);
-        if (r[l - 1] == L'\\') l--;  // (a drive's root: "D:\")
-        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return "OneDrive";
+static bool cloud_skip_reparse(const WIN32_FIND_DATAW *fd) {
+    return (fd->dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && !cloud_placeholder(fd->dwReserved0);
+}
+
+// The first item found offloaded, by path: a report's log then says which one.
+static void cloud_log_offloaded(const wchar_t *path) {
+    char u[3300];
+    bool unc = !wcsncmp(path, L"\\\\?\\UNC\\", 8);  // (shown as the player knows it: no \\?\ prefix)
+    const wchar_t *p = unc ? path + 6 : !wcsncmp(path, L"\\\\?\\", 4) ? path + 4 : path;
+    if (!WideCharToMultiByte(CP_UTF8, 0, p, -1, u, sizeof u, NULL, NULL)) snprintf(u, sizeof u, "?");
+    if (unc) u[0] = '\\';
+    fprintf(stderr, "[cloud] not on the device: %s\n", u);
+}
+
+// Check ancestors before looking up their children: an exact-name query also enumerates its parent.
+static PlatCloudState cloud_root_state(wchar_t *path) {
+    wchar_t *first;
+    if (!wcsncmp(path, L"\\\\?\\UNC\\", 8)) {
+        wchar_t *server_end = wcschr(path + 8, L'\\');
+        wchar_t *share_end = server_end ? wcschr(server_end + 1, L'\\') : NULL;
+        if (!share_end) return PLAT_CLOUD_INCOMPLETE;  // FindFirstFileExW requires a name below the share.
+        first = share_end + 1;
+    } else {
+        if (wcslen(path) < 7 || path[5] != L':' || path[6] != L'\\') return PLAT_CLOUD_INCOMPLETE;
+        if (!path[7]) {
+            DWORD attr = GetFileAttributesW(path);
+            if (attr == INVALID_FILE_ATTRIBUTES) return PLAT_CLOUD_INCOMPLETE;
+            // RECALL_ON_OPEN is only meaningful in directory enumeration data.
+            if (attr & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_OFFLINE)) return PLAT_CLOUD_OFFLOADED;
+            if (!(attr & FILE_ATTRIBUTE_DIRECTORY) || (attr & FILE_ATTRIBUTE_REPARSE_POINT)) return PLAT_CLOUD_INCOMPLETE;
+            return PLAT_CLOUD_AVAILABLE;
+        }
+        first = path + 7;
     }
-    return NULL;
+    for (wchar_t *part = first; ; ) {
+        wchar_t *end = wcschr(part, L'\\');
+        if (end) *end = 0;
+        bool valid = *part && wcscmp(part, L".") && wcscmp(part, L"..");
+        WIN32_FIND_DATAW fd;
+        HANDLE h = valid ? FindFirstFileExW(path, FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0) : INVALID_HANDLE_VALUE;
+        if (end) *end = L'\\';
+        if (h == INVALID_HANDLE_VALUE) return PLAT_CLOUD_INCOMPLETE;
+        bool closed = FindClose(h);
+        if (fd.dwFileAttributes & CLOUD_RECALL) return PLAT_CLOUD_OFFLOADED;
+        if (!closed || !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || cloud_skip_reparse(&fd))
+            return PLAT_CLOUD_INCOMPLETE;
+        if (!end) return PLAT_CLOUD_AVAILABLE;
+        part = end + 1;
+    }
+}
+
+PlatCloudState plat_cloud_offloaded(const char *dir) {
+    wchar_t *root = cloud_path_utf8(dir);
+    if (!root) return PLAT_CLOUD_INCOMPLETE;
+    PlatCloudState state = cloud_root_state(root);
+    if (state != PLAT_CLOUD_AVAILABLE) {
+        if (state == PLAT_CLOUD_OFFLOADED) cloud_log_offloaded(root);  // (the folder itself, or one above it)
+        free(root);
+        return state;
+    }
+
+    size_t cap = 64, top = 0;
+    wchar_t **stack = malloc(cap * sizeof *stack);
+    if (!stack) { free(root); return PLAT_CLOUD_INCOMPLETE; }
+    stack[top++] = root;
+    wchar_t pattern[CLOUD_PATH_MAX];
+    WIN32_FIND_DATAW fd;
+    while (top && state != PLAT_CLOUD_OFFLOADED) {
+        wchar_t *d = stack[--top];
+        size_t l = wcslen(d);
+        if (l + 3 > CLOUD_PATH_MAX) { free(d); state = PLAT_CLOUD_INCOMPLETE; continue; }
+        wcscpy(pattern, d);
+        if (pattern[l - 1] != L'\\') pattern[l++] = L'\\';
+        free(d);
+        wcscpy(pattern + l, L"*");
+        HANDLE h = FindFirstFileExW(pattern, FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, FIND_FIRST_EX_LARGE_FETCH);
+        if (h == INVALID_HANDLE_VALUE) {
+            if (GetLastError() != ERROR_FILE_NOT_FOUND) state = PLAT_CLOUD_INCOMPLETE;
+            continue;
+        }
+        do {
+            const wchar_t *name = fd.cFileName;
+            if (!wcscmp(name, L".") || !wcscmp(name, L"..")) continue;
+            // An unknown tag can still carry recall attributes. Never descend through it.
+            if (fd.dwFileAttributes & CLOUD_RECALL) {
+                if (l + wcslen(name) < CLOUD_PATH_MAX) wcscpy(pattern + l, name);  // (the scan ends here: over the "*")
+                cloud_log_offloaded(pattern);
+                state = PLAT_CLOUD_OFFLOADED;
+                break;
+            }
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || cloud_skip_reparse(&fd)) continue;
+
+            size_t count = l + wcslen(name) + 1;
+            if (count > CLOUD_PATH_MAX) { state = PLAT_CLOUD_INCOMPLETE; continue; }
+            if (top == cap) {
+                wchar_t **grown = cap <= SIZE_MAX / sizeof *stack / 2
+                    ? realloc(stack, cap * 2 * sizeof *stack) : NULL;
+                if (!grown) { state = PLAT_CLOUD_INCOMPLETE; continue; }
+                stack = grown;
+                cap *= 2;
+            }
+            wchar_t *sub = malloc(count * sizeof *sub);
+            if (!sub) { state = PLAT_CLOUD_INCOMPLETE; continue; }
+            memcpy(sub, pattern, l * sizeof *sub);
+            wcscpy(sub + l, name);
+            stack[top++] = sub;
+        } while (FindNextFileW(h, &fd));
+        if (state != PLAT_CLOUD_OFFLOADED && GetLastError() != ERROR_NO_MORE_FILES) state = PLAT_CLOUD_INCOMPLETE;
+        if (!FindClose(h) && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    }
+    while (top) free(stack[--top]);
+    free(stack);
+    return state;
 }
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.

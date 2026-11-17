@@ -55,23 +55,6 @@ int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n) {
     }
 }
 
-// A folder in iCloud Drive: its files may not be on the device, and a write there is a sync. The start screen
-// warns, as it does for OneDrive on Windows. (Other providers - Google Drive, Dropbox - look just like On My iPhone
-// from here: all of them are folders under some app group's File Provider Storage; no warning for those.)
-const char *plat_cloud_synced(const char *dir) {
-    static char name[128];
-    @autoreleasepool {
-        NSURL *u = [NSURL fileURLWithPath:@(dir) isDirectory:YES];
-        NSNumber *ubi = nil;
-        [u getResourceValue:&ubi forKey:NSURLIsUbiquitousItemKey error:nil];
-        if (!ubi.boolValue) return NULL;
-        NSString *shown = nil;
-        [u getResourceValue:&shown forKey:NSURLUbiquitousItemContainerDisplayNameKey error:nil];
-        snprintf(name, sizeof name, "%s", shown.length ? shown.UTF8String : "iCloud Drive");
-        return name;
-    }
-}
-
 static NSString *shown_name(NSURL *u) {
     NSString *name = nil;
     [u getResourceValue:&name forKey:NSURLLocalizedNameKey error:nil];
@@ -115,23 +98,5 @@ bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, 
         snprintf(root, rn, "%s", top.UTF8String);
         snprintf(rest, restn, "%s", [shown componentsJoinedByString:@" \u203a "].UTF8String);
         return true;
-    }
-}
-
-// A file under dir (iCloud) the system has offloaded: the game would wait for each as it reads it
-bool plat_ios_cloud_offloaded(const char *dir) {
-    @autoreleasepool {
-        NSArray *keys = @[NSURLIsRegularFileKey, NSURLUbiquitousItemDownloadingStatusKey];
-        NSDirectoryEnumerator *e = [NSFileManager.defaultManager enumeratorAtURL:[NSURL fileURLWithPath:@(dir) isDirectory:YES]
-                                                     includingPropertiesForKeys:keys options:0 errorHandler:nil];
-        for (NSURL *f in e) {
-            NSDictionary *v = [f resourceValuesForKeys:keys error:nil];
-            NSString *st = v[NSURLUbiquitousItemDownloadingStatusKey];
-            if ([v[NSURLIsRegularFileKey] boolValue] && st && ![st isEqualToString:NSURLUbiquitousItemDownloadingStatusCurrent]) {
-                fprintf(stderr, "[cloud] not on the device: %s\n", f.path.UTF8String);
-                return true;
-            }
-        }
-        return false;
     }
 }

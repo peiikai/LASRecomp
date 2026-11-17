@@ -1,10 +1,14 @@
-// What the macOS and iOS host layers share (runtime/platform.h): the Mach / POSIX pieces that are the same on both.
+// What the macOS and iOS host layers share (runtime/platform.h): the Mach / POSIX pieces that are the same on both,
+// and iCloud Drive.
 // Included once by each one's host layer (macos.c, ios.c), as posix_log.h is by macos.c and linux.c.
 #pragma once
+#include <CoreFoundation/CoreFoundation.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <execinfo.h>
+#include <fcntl.h>
 #include <ftw.h>
+#include <limits.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
@@ -14,7 +18,10 @@
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/attr.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/ucontext.h>
@@ -175,3 +182,151 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
+
+// TN3150: even a metadata query can materialize a dataless parent. Apply the policy only on this thread
+// and only while probing, so the game's later reads retain their normal behavior.
+static int cloud_no_materialize(void) {
+    int policy = getiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD);
+    if (policy < 0 || setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD,
+                                      IOPOL_MATERIALIZE_DATALESS_FILES_OFF) != 0) {
+        fprintf(stderr, "[cloud] could not set materialization policy: %s\n", strerror(errno));
+        return -1;
+    }
+    return policy;
+}
+
+static bool cloud_restore_policy(int policy) {
+    if (setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD, policy) == 0) return true;
+    fprintf(stderr, "[cloud] could not restore materialization policy: %s\n", strerror(errno));
+    return false;
+}
+
+const char *plat_cloud_synced(const char *dir) {
+    if (!dir || !*dir) return NULL;
+    int policy = cloud_no_materialize();
+    if (policy < 0) return NULL;
+    CFURLRef u = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)dir, (CFIndex)strlen(dir), true);
+    CFBooleanRef ubi = NULL;
+    bool synced = u && CFURLCopyResourcePropertyForKey(u, kCFURLIsUbiquitousItemKey, &ubi, NULL)
+                    && ubi && CFBooleanGetValue(ubi);
+    if (ubi) CFRelease(ubi);
+    if (u) CFRelease(u);
+    return cloud_restore_policy(policy) && synced ? "iCloud Drive" : NULL;
+}
+
+// ATTR_CMN_OBJTYPE uses Darwin's enum vtype. The iOS SDK does not ship sys/vnode.h.
+enum { CLOUD_VREG = 1, CLOUD_VDIR = 2 };
+
+// The returned-attributes bitmap and per-entry error precede the requested attributes.
+typedef struct {
+    uint32_t length;
+    attribute_set_t returned;
+    uint32_t error;
+    attrreference_t name;
+    fsobj_type_t type;
+    uint32_t flags;
+} CloudEntry;
+
+// The entry's name in its record, length with its NUL; NULL when the record doesn't hold one.
+static const char *cloud_entry_name(const char *record, const CloudEntry *entry, size_t *length) {
+    int64_t at = (int64_t)offsetof(CloudEntry, name) + entry->name.attr_dataoffset;
+    size_t n = entry->name.attr_length;
+    if (at < (int64_t)sizeof *entry || at > entry->length || !n || n > entry->length - (size_t)at ||
+        record[at + (int64_t)n - 1] != '\0')
+        return NULL;
+    *length = n;
+    return record + at;
+}
+
+// The first item found offloaded, by path: a report's log then says which one.
+static void cloud_log_offloaded(int dir, const char *name) {
+    char path[PATH_MAX];
+    if (fcntl(dir, F_GETPATH, path) != 0) snprintf(path, sizeof path, "?");
+    fprintf(stderr, "[cloud] not on the device: %s/%s\n", path, name ? name : "?");
+}
+
+// Apple's fts can swallow errors after a partial directory read. Read the same metadata in batches,
+// handle both syscall and entry errors, and open child directories relative to the parent descriptor.
+static PlatCloudState cloud_scan_dir(int parent, const char *name, size_t remaining) {
+    int fd = openat(parent, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return PLAT_CLOUD_INCOMPLETE;
+    enum { BUFFER_SIZE = 4096 };
+    char *buffer = malloc(BUFFER_SIZE);
+    if (!buffer) { close(fd); return PLAT_CLOUD_INCOMPLETE; }
+    const attrgroup_t fields = ATTR_CMN_NAME | ATTR_CMN_OBJTYPE | ATTR_CMN_FLAGS;
+    struct attrlist request = {
+        .bitmapcount = ATTR_BIT_MAP_COUNT,
+        .commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_ERROR | fields,
+    };
+    PlatCloudState state = PLAT_CLOUD_AVAILABLE;
+    while (state != PLAT_CLOUD_OFFLOADED) {
+        int count = getattrlistbulk(fd, &request, buffer, BUFFER_SIZE, FSOPT_PACK_INVAL_ATTRS);
+        if (count <= 0) {
+            if (count < 0) state = PLAT_CLOUD_INCOMPLETE;
+            break;
+        }
+        size_t offset = 0;
+        for (int i = 0; i < count; i++) {
+            CloudEntry entry;
+            if (BUFFER_SIZE - offset < sizeof entry) { state = PLAT_CLOUD_INCOMPLETE; break; }
+            const char *record = buffer + offset;
+            memcpy(&entry, record, sizeof entry);
+            if (entry.length < sizeof entry || entry.length > BUFFER_SIZE - offset) {
+                state = PLAT_CLOUD_INCOMPLETE;
+                break;
+            }
+            offset += entry.length;
+            if (((entry.returned.commonattr & ATTR_CMN_ERROR) && entry.error) ||
+                (entry.returned.commonattr & fields) != fields) {
+                state = PLAT_CLOUD_INCOMPLETE;
+                continue;
+            }
+            size_t length = 0;  // includes NUL, which budgets for the path separator
+            const char *child_name = cloud_entry_name(record, &entry, &length);
+            if ((entry.type == CLOUD_VDIR || entry.type == CLOUD_VREG) && (entry.flags & SF_DATALESS)) {
+                cloud_log_offloaded(fd, child_name);
+                state = PLAT_CLOUD_OFFLOADED;
+                break;
+            }
+            if (entry.type != CLOUD_VDIR) continue;
+
+            if (!child_name || length > remaining) { state = PLAT_CLOUD_INCOMPLETE; continue; }
+            if (!strcmp(child_name, ".") || !strcmp(child_name, "..")) continue;
+            PlatCloudState child = cloud_scan_dir(fd, child_name, remaining - length);
+            if (child != PLAT_CLOUD_AVAILABLE) state = child;
+            if (state == PLAT_CLOUD_OFFLOADED) break;
+        }
+    }
+    free(buffer);
+    if (close(fd) != 0 && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    return state;
+}
+
+// SF_DATALESS reports APFS materialization, not sync status or availability on other file systems. A
+// downloaded directory can still contain dataless files. Inspect each directory before enumerating it.
+PlatCloudState plat_cloud_offloaded(const char *dir) {
+    if (!dir || !*dir) return PLAT_CLOUD_INCOMPLETE;
+    // A trailing slash or "/." would make pathname resolution follow a root symlink.
+    char path[PATH_MAX];
+    size_t len = strlen(dir);
+    if (len >= sizeof path) return PLAT_CLOUD_INCOMPLETE;
+    while (len > 1) {
+        if (dir[len - 1] == '/') len--;
+        else if (dir[len - 1] == '.' && dir[len - 2] == '/') len--;
+        else break;
+    }
+    memcpy(path, dir, len);
+    path[len] = 0;
+    int policy = cloud_no_materialize();
+    if (policy < 0) return PLAT_CLOUD_INCOMPLETE;
+
+    PlatCloudState state = PLAT_CLOUD_INCOMPLETE;
+    struct stat st;
+    if (lstat(path, &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (st.st_flags & SF_DATALESS) fprintf(stderr, "[cloud] not on the device: %s\n", path);
+        state = st.st_flags & SF_DATALESS ? PLAT_CLOUD_OFFLOADED
+                                         : cloud_scan_dir(AT_FDCWD, path, sizeof path - len - 1);
+    }
+    if (!cloud_restore_policy(policy) && state == PLAT_CLOUD_AVAILABLE) state = PLAT_CLOUD_INCOMPLETE;
+    return state;
+}
