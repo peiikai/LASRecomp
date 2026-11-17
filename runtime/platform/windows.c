@@ -1007,8 +1007,26 @@ static wchar_t *cloud_path_utf8(const char *dir) {
     return path;
 }
 
+// path (cloud_full_path's, freed here) with links and junctions resolved, in the same form; path itself when it
+// can't be opened.
+static wchar_t *cloud_final_path(wchar_t *path) {
+    if (!path) return NULL;
+    HANDLE h = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+                           FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) return path;
+    const DWORD form = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;  // (\\?\C:\... and \\?\UNC\..., as cloud_full_path)
+    DWORD need = GetFinalPathNameByHandleW(h, NULL, 0, form);
+    wchar_t *out = need && need <= CLOUD_PATH_MAX ? malloc(need * sizeof *out) : NULL;
+    DWORD n = out ? GetFinalPathNameByHandleW(h, out, need, form) : 0;
+    CloseHandle(h);
+    if (!n || n >= need) { free(out); return path; }
+    while (n > 7 && out[n - 1] == L'\\') out[--n] = 0;
+    free(path);
+    return out;
+}
+
 // Attribute bits and Cloud Files tags are shared by providers. Name OneDrive only under a configured
-// OneDrive root. Compare spelling without opening items, which could recall an online-only directory.
+// OneDrive root, both with links and junctions resolved: a data folder reached through a junction is in it too.
 const char *plat_cloud_synced(const char *dir) {
     static const wchar_t *const vars[] = {L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial"};
     wchar_t *d = NULL;
@@ -1016,11 +1034,11 @@ const char *plat_cloud_synced(const char *dir) {
     for (size_t i = 0; i < sizeof vars / sizeof *vars; i++) {
         DWORD need = GetEnvironmentVariableW(vars[i], NULL, 0);
         if (!need || need > CLOUD_PATH_MAX) continue;
-        if (!d && !(d = cloud_path_utf8(dir))) break;
+        if (!d && !(d = cloud_final_path(cloud_path_utf8(dir)))) break;
         wchar_t *value = malloc(need * sizeof *value);
         if (!value) break;
         DWORD n = GetEnvironmentVariableW(vars[i], value, need);
-        wchar_t *r = n && n < need ? cloud_full_path(value) : NULL;
+        wchar_t *r = n && n < need ? cloud_final_path(cloud_full_path(value)) : NULL;
         free(value);
         if (!r) continue;
         size_t len = wcslen(r);
