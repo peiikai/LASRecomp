@@ -99,6 +99,15 @@
 // resolution stayed at 30 outdoors, backing off: up to 16x the wait). The hold ends and 60 gets a
 // fresh try, with a hitch's grace; frames that don't fit hold again as on a first try. Dynamic's own steps are not
 // a setting change: its scale follows the load, and a reset there would bring back the 60 / 30 flicker on the edge.
+// A GPU time read at 30 can't keep a hold for good either (issue #811: a Radeon 760M at 2560x1440 held entering a
+// dungeon, its frames still heavy past the load's second of grace; held it read 23 ms a frame - an integrated GPU
+// clocks down at half load - and stayed at 30 until a restart, which ran the same dungeon at 60). Without Dynamic
+// resolution nothing else looks for 60 from there. So once the CPU has had clear headroom for PACE_TRY_FRAMES (10 s at
+// 30) times the backoff while only the GPU's time keeps the hold, 60 gets a try (with a hitch's grace), whose frames
+// measure the GPU at 60: frames that don't fit hold again, backing off (the next try in that level waits twice as long,
+// up to 16x; in another level, 10 s again).
+// A try that failed with the GPU over the limit at 60 and not slower at 30 (gpu60: a GPU that keeps its clock) isn't
+// tried again in that scene - its time at 30 is its time at 60.
 // LARECOMP_PACE=0: off (the game's own choice, flips and all).
 #define PACE_SLOW_NS 20000000ull
 #define PACE_GPU_MS 15.0  // (16.7 ms a frame at 60, less some for the window image and jitter)
@@ -112,6 +121,10 @@
 // A hold that busy frames started, after a failed return (backing off): the clear way back wants the GPU this much
 // under its time at that return (see above; the iPad's returns read 11.4-13.0 ms, half a ms apart).
 #define PACE_GPU_BACKOFF_UNDER_MS 2.0
+// A try at 60 while only the GPU's time at 30 holds (see above): after this many held gameplay frames with clear CPU
+// headroom, times the backoff; its GPU time at 30 counts as clocked down when this much over a failed try's at 60
+#define PACE_TRY_FRAMES 300
+#define PACE_GPU_DOWNCLOCK_MS 2.0
 #define PACE_GRACE_NS 1000000000ull
 #define PACE_GRACE_MAX_NS 4000000000ull  // a render scale change's grace at most (see above)
 #define PACE_SETTLE_FRAMES 10            // ... ends once this many frames in a row are on time
@@ -248,15 +261,24 @@ static void spike_test(void) {
 
 // The scene a frame shows, for the way back to 60 (see above): 0 when it isn't gameplay (no save in play, or no world on
 // screen: the pause menu, title, file select), else the level and camera zone, hashed.
+static uint64_t level_hash(void) {
+    extern const char *game_level_name(void);  // hle/widescreen.c
+    uint64_t h = 1469598103934665603ull;  // (FNV-1a)
+    for (const char *c = game_level_name(); *c; c++) h = (h ^ (uint8_t)*c) * 1099511628211ull;
+    return h;
+}
 static uint64_t pace_scene(void) {
     extern int game_in_play(void);              // hle/warp.c
     extern bool world_on_screen(void);          // hle/mirror.c
-    extern const char *game_level_name(void);   // hle/widescreen.c
     extern uint64_t game_camera_zone(void);     // hle/widescreen.c
     if (!game_in_play() || !world_on_screen()) return 0;
-    uint64_t h = 1469598103934665603ull;  // (FNV-1a)
-    for (const char *c = game_level_name(); *c; c++) h = (h ^ (uint8_t)*c) * 1099511628211ull;
-    h = (h ^ game_camera_zone()) * 1099511628211ull;
+    uint64_t h = (level_hash() ^ game_camera_zone()) * 1099511628211ull;
+    return h ? h : 1;
+}
+// The level alone (pace_scene without the camera zone; 0: no gameplay)
+static uint64_t pace_level(void) {
+    if (!pace_scene()) return 0;
+    uint64_t h = level_hash();
     return h ? h : 1;
 }
 
@@ -313,6 +335,10 @@ void pace_frame(void) {
     static uint64_t back_at;  // when frame pacing last went back to 60 (0: not yet)
     static bool try_back;     // (that was Dynamic's look for 60: a hold right after it keeps the backoff)
     static double gpu_back = -1;  // the GPU time per frame (gpu_avg) at that return (-1: not timed)
+    static int try_n;             // held gameplay frames with clear CPU headroom while only the GPU's time holds (see above)
+    static bool trying;           // (the return to 60 was such a try: a hold right after it learns its GPU time at 60)
+    static double try_gpu60 = -1; // the GPU time per frame at 60 when a try failed (-1: none), its scene and level
+    static uint64_t try_scene, try_level, try_from;  // (try_from: the level a try at 60 started in)
     static double avg;  // cost (ms at 60 fps), moving average (~20 frames)
     static uint64_t last_tcpu, last_rcpu;
     extern uint64_t rq_render_cpu_ns(void);  // rqueue.c: the render thread's CPU time so far (0: no render thread)
@@ -344,16 +370,16 @@ void pace_frame(void) {
     const char *reset = __atomic_exchange_n(&reset_what, (const char *)NULL, __ATOMIC_ACQ_REL);
     if (reset && on) {  // a user setting changed the GPU's load: the hold and the backoff start over (see above)
         LOG("[pace] %s setting changed: back-off cleared, trying 60\n", reset);
-        pace_slow = late_hold = false, backoff = 1, back_at = 0;
-        clear = calm = cpu_clear = 0, scene = 0, gpu_said = 0;
+        pace_slow = late_hold = trying = false, backoff = 1, back_at = 0, try_gpu60 = -1;
+        clear = calm = cpu_clear = try_n = 0, scene = 0, gpu_said = 0;
         nover = nbusy = ncpu = 0;
         memset(over, 0, sizeof over);
         memset(recent, 0, sizeof recent);
     }
     if (__atomic_exchange_n(&try_60, 0, __ATOMIC_ACQ_REL) && on && pace_slow) {  // (see above)
         LOG("[pace] dynamic resolution looks for 60: trying 60\n");
-        pace_slow = late_hold = false, back_at = now, try_back = true, gpu_back = gpu_avg;
-        clear = calm = cpu_clear = 0, gpu_said = 0;
+        pace_slow = late_hold = trying = false, back_at = now, try_back = true, gpu_back = gpu_avg;
+        clear = calm = cpu_clear = try_n = 0, gpu_said = 0;
         nover = nbusy = ncpu = 0;
         memset(over, 0, sizeof over);
         memset(recent, 0, sizeof recent);
@@ -489,9 +515,18 @@ void pace_frame(void) {
         pace_slow = true, calm = clear = cpu_clear = 0, gpu_said = 0;
         late_hold = nbusy < 12;
         if (back_at && now - back_at < 20000000000ull && backoff < 16 && !try_back) backoff *= 2;  // (flickering: wait longer)
-        try_back = false;
+        try_back = false, try_n = 0;
+        char g[48] = "";
+        // (a try at 60 from a hold for the GPU's time, failed - within 20 s, as the backoff: what the GPU took at 60. A
+        // hold long after a try that worked can be a level load's tail, which says nothing about the GPU at 60 - as is
+        // one in another level: #811's try in a cave, then held by the field's load)
+        if (trying && gpu_avg >= 0 && now - back_at < 20000000000ull && pace_level() == try_from) {
+            try_gpu60 = gpu_avg, try_scene = pace_scene(), try_level = pace_level();
+            snprintf(g, sizeof g, ", gpu %.1f ms a frame at 60", gpu_avg);
+        }
+        trying = false;
         LOG("[pace] frames don't fit 60 fps (%d of the last 60 over 16.2 ms busy or shown late, %d by busy time, %d by CPU time, "
-            "median %.1f): holding the game's 30 fps mode%s%s\n", nover, nbusy, ncpu, med,
+            "median %.1f%s): holding the game's 30 fps mode%s%s\n", nover, nbusy, ncpu, med, g,
             ncpu >= 12 ? " - the CPU's" : dyn == 1 ? " - dynamic resolution at its floor" : "", backoff > 1 ? " (backing off)" : "");
     } else if (pace_slow) {
         float peak = 0;
@@ -504,7 +539,8 @@ void pace_frame(void) {
         // PACE_GPU_LATE_BACKOFF_MS, or - held for busy frames - PACE_GPU_BACKOFF_UNDER_MS under the GPU time of that
         // return (its time at 30 said nothing about 60; untimed, nothing was learned); the enough way keeps the first
         // try's limit, so the backoff only lengthens the wait.)
-        bool gpu_fits = gpu_avg < (late_hold ? PACE_GPU_LATE_MS : PACE_GPU_MS);
+        double gpu_lim = late_hold ? PACE_GPU_LATE_MS : PACE_GPU_MS;
+        bool gpu_fits = gpu_avg < gpu_lim;
         bool gpu_clear = gpu_fits && (backoff == 1 || (late_hold ? gpu_avg < PACE_GPU_LATE_BACKOFF_MS
                                                                  : gpu_back >= 0 && gpu_avg < gpu_back - PACE_GPU_BACKOFF_UNDER_MS));
         int clear_n = 60 * (backoff < 4 ? backoff : 4);
@@ -518,6 +554,14 @@ void pace_frame(void) {
         }
         clear = gpu_clear && cpu_clear ? clear + 1 : 0;
         calm = sc && gpu_fits && med < 13.5f && nover <= 4 ? calm + 1 : 0;
+        // A try at 60 when only the GPU's time at 30 holds (see "A GPU time read at 30"): not where a failed try showed the
+        // GPU over the limit at 60 and no slower at 30. (Not counted off gameplay: the pause menu neither counts nor resets.)
+        bool gpu_known = try_gpu60 >= gpu_lim && sc == try_scene && gpu_avg <= try_gpu60 + PACE_GPU_DOWNCLOCK_MS;
+        if (sc) try_n = avg < 11.0 && peak < 14.5f && !gpu_fits && !gpu_known && !pace_target_30() ? try_n + 1 : 0;
+        // (the backoff came from tries that failed in one level - #811: a cave at 1440p, 22-25 ms a frame at 60 - and
+        // says nothing about another: there the try waits PACE_TRY_FRAMES alone. The camera zone doesn't count, or a
+        // field that is too heavy everywhere would try again at each zone)
+        int try_wait = try_gpu60 >= 0 && sc && pace_level() != try_level ? 1 : backoff;
         if (clear >= clear_n || calm >= 150 * backoff) {
             char g[32];
             if (gpu_avg >= 0) snprintf(g, sizeof g, ", gpu %.1f ms", gpu_avg);
@@ -525,9 +569,20 @@ void pace_frame(void) {
             LOG("[pace] %d frames with %s headroom on gameplay frames (%.1f ms a frame at 60 on average, median %.1f, at most "
                 "%.1f%s): back to the game's own choice\n", clear >= clear_n ? clear : calm, clear >= clear_n ? "clear" : "enough",
                 avg, med, peak, g);
-            pace_slow = false, nover = nbusy = ncpu = 0, back_at = now, try_back = false, gpu_back = gpu_avg;
+            pace_slow = trying = false, nover = nbusy = ncpu = 0, back_at = now, try_back = false, gpu_back = gpu_avg;
             memset(over, 0, sizeof over);
             memset(recent, 0, sizeof recent);
+        } else if (try_n >= PACE_TRY_FRAMES * try_wait) {
+            LOG("[pace] %d gameplay frames with clear CPU headroom (%.1f ms a frame at 60 on average), the GPU %.1f ms a frame "
+                "at 30 (its clock may be down there): trying 60%s\n", try_n, avg, gpu_avg,
+                try_wait > 1 ? " (backing off)" : backoff > 1 ? " (a level away from the failed try)" : "");
+            pace_slow = late_hold = false, back_at = now, try_back = false, gpu_back = gpu_avg, trying = true;
+            try_from = pace_level();
+            clear = calm = cpu_clear = try_n = 0, gpu_said = 0;
+            nover = nbusy = ncpu = 0;
+            memset(over, 0, sizeof over);
+            memset(recent, 0, sizeof recent);
+            pace_hitch("a try at 60");
         }
     }
     hold_cadence(hold_30(pace_slow));
