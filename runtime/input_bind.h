@@ -1,7 +1,7 @@
 // Control remapping (runtime/hle/bindings.c): which controller button / key drives each Switch input. Edited from
 // the in-game menu's Controls tab and the start screen (runtime/ui/controls_ui.mm), saved in larecomp.ini.
 // Menus (the overlay, the start screen) never use these, so no binding can lock the player out: they follow the
-// game's layout, or the controller's own (Button layout; runtime/ui/pad_nav.h). The controller's shortcuts that open
+// game's layout, or the controller's own (Confirm button; runtime/ui/pad_nav.h). The controller's shortcuts that open
 // the overlay are bindings too (BIND_MENU_*, #591: Home also opens Steam's and other launchers' overlays); F1 and Esc
 // always open it, and the last controller shortcut can't be cleared.
 #pragma once
@@ -33,7 +33,7 @@ enum { PADB_LTRIGGER = 26 /* SDL_GAMEPAD_BUTTON_COUNT */, PADB_RTRIGGER, PADB_HO
 
 extern int16_t g_bind_pad[BIND_PAD_COUNT];  // PADB value per Switch button, by position (as on a Nintendo pad)
 // The button that drives Switch input `slot` now: g_bind_pad[slot], with the bottom and right buttons swapped (south <->
-// east: A on the bottom) when Button layout is "Xbox / PlayStation"
+// east: A on the bottom) when Confirm button is "Bottom", on every pad
 int bind_pad_host(int slot);
 extern int16_t g_bind_key[BIND_KEY_COUNT];  // SDL_Scancode per input (0 = none)
 // The menu's controller shortcuts: one SDL_GamepadButton, or two held together ([1] -1: one; [0] -1: none). Defaults:
@@ -51,7 +51,7 @@ const char *bind_pad_label(int host, int fam); // controller button in the pad f
 const char *bind_key_label(int scancode);
 int bind_label_family(void);                   // the connected controller's family (also on the start screen)
 int input_family_of_type(int sdl_gamepad_type); // runtime/hle/input.c: 0 Nintendo, 1 Xbox (or labelled like one), 2 PS
-int input_menu_family(uint32_t sdl_joystick_id); // runtime/hle/input.c: our menus' layout for that pad (0: any)
+int input_menu_family(uint32_t sdl_joystick_id); // runtime/hle/input.c: our menus' button words for that pad (0: any)
 void bind_reset(int dev);
 bool bind_is_default(int dev);
 bool bind_is_default_slot(int dev, int slot);
