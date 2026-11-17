@@ -339,6 +339,10 @@ int main(int argc, char **argv) {
     bool build_ios = false;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--play")) skip_launcher = true;
+        else if (!strcmp(argv[i], "--load-save") && i + 1 < argc) {  // <file 1-4 | save file> (debug: runtime/hle/load_save.c)
+            extern void load_save_arg(const char *arg);
+            load_save_arg(argv[++i]);
+        }
         else if (!strcmp(argv[i], "--build-ios")) {  // <kit.laskit> [game files]: the iOS app, then exit
             build_ios = true;
             if (i + 1 < argc && !realpath(argv[++i], arg_kit)) snprintf(arg_kit, sizeof arg_kit, "%s", argv[i]);
@@ -347,6 +351,10 @@ int main(int argc, char **argv) {
         else if (argv[i][0] != '-') root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
+    {   // --load-save / LARECOMP_LOAD_SAVE: straight into a save (a bad or missing one: the normal start)
+        extern bool load_save_prepare(void);
+        if (load_save_prepare()) skip_launcher = true;
+    }
     if (getenv("LARECOMP_MENU_SFX_TEST")) {  // (test: the menu sounds loaded now, each logged)
         extern void menu_sfx_set_game_dir(const char *dir);
         extern void menu_sfx_load_now(void);

@@ -898,6 +898,10 @@ static void fill_state(Cpu *c) {
         if (g_inject_plus > 0) { until = renderer_present_count() + 10; g_inject_plus = 0; }
         if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
     }
+    {   // --load-save (runtime/hle/load_save.c): the presses that take the title and the file select into the save
+        extern uint64_t load_save_buttons(void);
+        b |= load_save_buttons();
+    }
     int32_t tlx, tly;
     touch_stick(&tlx, &tly);
     int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + tlx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly + tly) + script_ly);
