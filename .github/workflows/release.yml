@@ -19,8 +19,10 @@
 # Also on a release published on GitHub (its tag = LARECOMP_VERSION at the tagged commit): the files are built and
 # attached to it, with a "being built" line on top of its notes meanwhile and the sha256 table under them after. A
 # release that already has files (a draft this workflow made, then published) is left alone.
-# Linux aarch64 stays on these releases through Beta 6 (so players on older aarch64 builds still get offered an update);
-# from 1.0.0 it is only on the nightly page (nightly.yml).
+# Linux aarch64 lives on the nightly page (nightly.yml). A release's linux-aarch64 file is not built here: it is the
+# newest Linux arm64 nightly, copied under the release's file name, so players on older release builds that still look
+# for it (Beta 5.3 / 5.4) move onto the nightlies (that build only offers newer nightlies). A test build builds it.
+# Until 1.0.0.
 name: Release
 on:
   release:
@@ -53,6 +55,8 @@ jobs:
       skip: ${{ steps.v.outputs.skip }}
       platforms: ${{ steps.v.outputs.platforms }}
       arm64: ${{ steps.v.outputs.arm64 }}
+      linux: ${{ steps.v.outputs.linux }}
+      nightly_arm: ${{ steps.v.outputs.nightly_arm }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -95,6 +99,13 @@ jobs:
           done
           # (Windows on ARM: built only for a test build that names it)
           if [[ " $PLATFORMS " == *" windows-arm64 "* ]]; then echo "arm64=true" >> "$GITHUB_OUTPUT"; fi
+          # (Linux aarch64: a test build builds it; a release, or a ci-test- dry run of one, copies the newest nightly)
+          if [[ $TAG == test-* ]]; then
+            echo 'linux=[{"arch":"x86_64","runner":"ubuntu-24.04"},{"arch":"aarch64","runner":"ubuntu-24.04-arm"}]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'linux=[{"arch":"x86_64","runner":"ubuntu-24.04"}]' >> "$GITHUB_OUTPUT"
+            echo "nightly_arm=true" >> "$GITHUB_OUTPUT"
+          fi
           echo "platforms=$(echo $PLATFORMS)" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -399,9 +410,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { arch: x86_64, runner: ubuntu-24.04 }
-          - { arch: aarch64, runner: ubuntu-24.04-arm }
+        # (aarch64 only for a test build: check's linux output)
+        include: ${{ fromJSON(needs.check.outputs.linux || '[{"arch":"x86_64","runner":"ubuntu-24.04"}]') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -420,14 +430,6 @@ jobs:
         with:
           path: build/linux/${{ matrix.arch }}/wheels
           key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'tools/linux/rando_helper.sh', 'tools/linux/Containerfile') }}
-      # From Beta 6 the release's aarch64 build is the bridge to the experimental release: its update check only offers
-      # newer experimental builds (LARECOMP_EXPERIMENTAL_STAMP, runtime/ui/launcher.mm), so players on it move there.
-      - name: Experimental update check (aarch64)
-        if: matrix.arch == 'aarch64'
-        run: |
-          STAMP=$(date -u +%Y%m%d%H%M)
-          sed -i "s/^#define LARECOMP_EXPERIMENTAL_STAMP .*/#define LARECOMP_EXPERIMENTAL_STAMP ${STAMP}LL/" runtime/ui/launcher.mm
-          grep -q "^#define LARECOMP_EXPERIMENTAL_STAMP ${STAMP}LL" runtime/ui/launcher.mm
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
       # saved once complete (shaderc: build_deps.sh's last part; .ok: the helpers' wheels all installed), even when a
@@ -462,6 +464,53 @@ jobs:
           path: |
             build/dist/*.AppImage
             build/dist/update-*.txt
+          if-no-files-found: error
+          compression-level: 0
+
+  # A release's linux-aarch64 file: the newest Linux arm64 nightly (nightly.yml's rolling "nightly" pre-release) as it
+  # is, under this release's file name. Older release builds (Beta 5.3 / 5.4) find it by that name; being a nightly
+  # build, it then only offers newer nightlies (LARECOMP_NIGHTLY_STAMP, runtime/ui/launcher.mm).
+  linux-aarch64-nightly:
+    needs: check
+    if: needs.check.outputs.skip != 'true' && needs.check.outputs.nightly_arm == 'true'
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      name: ${{ steps.n.outputs.name }}
+    steps:
+      - name: Newest nightly AppImage
+        id: n
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          # (the newest stamp: during a round nightly_publish.sh uploads the new file before it deletes the old one)
+          NAME=$(gh release view nightly --json assets -q '.assets[].name' |
+                 grep -E '^LAS\.Recomp-nightly-[0-9]{12}-[0-9a-f]{7}-linux-aarch64\.AppImage$' | sort | tail -1 || true)
+          [ -n "$NAME" ] || { echo "::error::no linux-aarch64 AppImage on the nightly release"; exit 1; }
+          STAMP=$(cut -d- -f3 <<< "$NAME"); COMMIT=$(cut -d- -f4 <<< "$NAME")
+          mkdir -p dl build/dist
+          gh release download nightly -p "$NAME" -D dl
+          DIGEST=$(gh api "repos/$GH_REPO/releases/tags/nightly" -q ".assets[] | select(.name == \"$NAME\") | .digest // empty")
+          [ -z "$DIGEST" ] || [ "$DIGEST" = "sha256:$(sha256sum "dl/$NAME" | cut -d' ' -f1)" ] || { echo "::error::$NAME: not the sha256 GitHub has"; exit 1; }
+          chmod +x "dl/$NAME" && (cd dl && "./$NAME" --appimage-extract > /dev/null)
+          # it is that nightly build (nightly_version.sh: version nightly-<stamp>-<commit>, LARECOMP_NIGHTLY_STAMP <stamp>)
+          grep -aq "nightly-$STAMP-$COMMIT" dl/squashfs-root/usr/bin/lasrecomp || { echo "::error::$NAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
+          # (as the linux job's check)
+          A=dl/squashfs-root
+          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
+                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
+          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
+          find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
+            if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
+          done
+          cp "dl/$NAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.AppImage"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          ls -la build/dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-aarch64
+          path: build/dist/*.AppImage
           if-no-files-found: error
           compression-level: 0
 
@@ -545,7 +594,7 @@ jobs:
           gh release edit "$TAG" --notes-file new.md
 
   release:
-    needs: [check, macos, windows, windows-arm64, linux, android, ios]
+    needs: [check, macos, windows, windows-arm64, linux, linux-aarch64-nightly, android, ios]
     # (windows-arm64 is skipped unless a test build names it: a skipped job doesn't hold the draft back, a failed one does)
     if: always() && needs.check.result == 'success' && needs.check.outputs.skip != 'true' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-24.04
@@ -563,6 +612,7 @@ jobs:
           SHA: ${{ needs.check.outputs.sha }}
           PLATFORMS: ${{ needs.check.outputs.platforms }}
           ARM64: ${{ needs.check.outputs.arm64 }}
+          NIGHTLY_ARM: ${{ needs.linux-aarch64-nightly.outputs.name }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
@@ -587,7 +637,8 @@ jobs:
           MANIFESTS=(); for m in ../manifests/*; do [ -f "$m" ] && MANIFESTS+=("$m"); done
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)
             gh release view "$TAG" --json body -q .body | grep -v '^> The download files are being built' > ../body.md || true
-            { cat ../body.md; echo; echo "| File | sha256 |"; echo "|---|---|"
+            { cat ../body.md; echo; [ -z "$NIGHTLY_ARM" ] || { echo "The linux-aarch64 file is the nightly build \`$NIGHTLY_ARM\`."; echo; }
+              echo "| File | sha256 |"; echo "|---|---|"
               for f in *; do echo "| \`${f// /.}\` | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"; done; } > ../notes.md
             gh release upload "$TAG" --clobber * "${MANIFESTS[@]}"
             gh release edit "$TAG" --notes-file ../notes.md
@@ -600,6 +651,7 @@ jobs:
             echo
             echo "Built from $SHA."
             echo
+            [ -z "$NIGHTLY_ARM" ] || { echo "The linux-aarch64 file is the nightly build \`$NIGHTLY_ARM\`."; echo; }
             echo "| File | sha256 |"
             echo "|---|---|"
             for f in *; do echo "| \`${f// /.}\` | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"; done
@@ -618,7 +670,7 @@ jobs:
 
   # (a release published on GitHub whose build failed: the "being built" line says so instead)
   failed:
-    needs: [check, macos, windows, windows-arm64, linux, android, ios, release]
+    needs: [check, macos, windows, windows-arm64, linux, linux-aarch64-nightly, android, ios, release]
     if: failure() && github.event_name == 'release'
     runs-on: ubuntu-24.04
     permissions:
