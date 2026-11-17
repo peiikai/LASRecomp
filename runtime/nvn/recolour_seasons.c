@@ -12,10 +12,12 @@
 //   Sand: the beaches, Yarna Desert, the sandy south around the Face Shrine, the shore lines.
 // The leaves flying off cut grass and bushes (effect sheets grass_00 / grass_01 / cut_lawn_00) get the same colour as
 // what was cut. Only greens move (a hue range): flowers, trunks, dirt, rocks keep theirs.
+#include <math.h>
 #include <string.h>
 
 #include "../settings.h"
 #include "recolour.h"
+#include "season.h"
 
 // (S_BEACH: the pale beach sand; S_LIME: the lime / olive foliage maps; S_LAWN: the tall grass - its own window: the
 // graveyard's is drawn dark teal; S_FERN: the Mysterious Woods' ferns, olive fronds beside a brown trunk in one map.
@@ -92,43 +94,79 @@ static const RecolourSource k_sources[] = {
 // (140, 0.8, 0.58: the canopies are mostly in their own shade, so they're lifted more), grass (100, 0.65, 0.8). Only
 // greens move: hues within ~72 degrees of the leaves' 140 (their shaded parts reach ~180) / ~61 of the grass' 100
 // (the dirt paths, ~35, stay out); their own variety is kept at 35%, around that typical hue.
+typedef struct {
+    int row;                 // 0 leaves, 1 grass, 2 sand
+    float h, s, v;           // the typical colour as drawn (degrees, 0..1, 0..1)
+    float dh;                // a hue offset on top of the mapping (degrees)
+    float centre, width, min_sat;  // the hue window (degrees, turns, saturation)
+} Geo;
+
+static bool geo(int cls, Geo *g) {
+    switch (cls) {
+    case S_FACE: case S_ROCK: return false;
+    // (sand reads 30-50 degrees: only that range moves; typical: the desert / south (38, 0.8, 0.8), the pale beach
+    // (45, 0.25, 0.9))
+    case S_SAND: *g = (Geo){2, 38, 0.8f, 0.8f, 0, 38, 0.1f, 0.12f}; return true;
+    case S_BEACH: *g = (Geo){2, 45, 0.25f, 0.9f, 0, 45, 0.1f, 0.05f}; return true;
+    case S_MYST: *g = (Geo){0, 55, 0.8f, 0.45f, 0, 55, 0.5f, 0.08f}; return true;  // (Leaves; typical: 55, 0.8, 0.45)
+    // (the tall grass: hues 30-210, around 120 - its blades have nothing else)
+    case S_GRASS: *g = (Geo){1, 100, 0.65f, 0.8f, 0, 100, 0.17f, 0.12f}; return true;
+    case S_LAWN: *g = (Geo){1, 100, 0.65f, 0.8f, -20, 120, 0.25f, 0.12f}; return true;
+    // (Leaves; drawn in the woods' blue light the fronds read 140-200 degrees, typical (155, 0.5, 0.4); the trunk stays
+    // under 80)
+    case S_FERN: *g = (Geo){0, 155, 0.5f, 0.4f, 0, 155, 0.2f, 0.12f}; return true;
+    // (Leaves; typical: 95, 0.7, 0.6; hues within ~72 degrees of 110 move)
+    case S_LIME: *g = (Geo){0, 95, 0.7f, 0.6f, -15, 110, 0.2f, 0.12f}; return true;
+    default: *g = (Geo){0, 140, 0.8f, 0.58f, 0, 140, 0.2f, 0.12f}; return true;
+    }
+}
+
+static uint32_t hsv_rgb(float h, float s, float v) {  // (h in degrees)
+    float c = v * s, hh = h / 60, x = c * (1 - fabsf(fmodf(hh, 2) - 1)), m = v - c, r = 0, g = 0, b = 0;
+    int i = (int)hh % 6;
+    if (i == 0) r = c, g = x; else if (i == 1) r = x, g = c; else if (i == 2) g = c, b = x;
+    else if (i == 3) g = x, b = c; else if (i == 4) r = x, b = c; else r = c, b = x;
+    return (uint32_t)((r + m) * 255 + 0.5f) << 16 | (uint32_t)((g + m) * 255 + 0.5f) << 8 | (uint32_t)((b + m) * 255 + 0.5f);
+}
+
+// The colour row `c` aims at (Default: the typical colour itself) and how much of the hues' own variety stays (Default:
+// all of it). False: Default.
+static bool target(const Geo *g, const CosColour *c, uint32_t *rgb, float *spread) {
+    static const int slots[3] = {COL_SLOT_LEAVES, COL_SLOT_GRASS, COL_SLOT_SAND};
+    if (col_target(c, slots[g->row], rgb)) { *spread = 0.35f; return true; }
+    *rgb = hsv_rgb(g->h, g->s, g->v), *spread = 1;
+    return false;
+}
+
 static bool tint(int cls, float t[8]) {
+    Geo g;
+    if (!geo(cls, &g)) return false;
     uint32_t rgb;
-    float sh, sf, vf;
-    if (cls == S_FACE || cls == S_ROCK) return false;
-    if (cls == S_SAND || cls == S_BEACH) {  // (sand reads 30-50 degrees: only that range moves)
-        if (!col_target(&g_settings.sand, COL_SLOT_SAND, &rgb)) return false;
-        bool beach = cls == S_BEACH;  // typical: the desert / south (38, 0.8, 0.8), the pale beach (45, 0.25, 0.9)
-        float h = beach ? 45 : 38;
-        col_mapping(h / 360.0f, beach ? 0.25f : 0.8f, beach ? 0.9f : 0.8f, rgb, &sh, &sf, &vf);
-        recolour_pack(t, sh, sf, vf, recolour_deg(h), 0.1f, beach ? 0.05f : 0.12f, 0.35f);
-        return true;
-    }
-    if (cls == S_MYST) {  // (Leaves; typical: 55, 0.8, 0.45)
-        if (!col_target(&g_settings.leaves, COL_SLOT_LEAVES, &rgb)) return false;
-        col_mapping(55 / 360.0f, 0.8f, 0.45f, rgb, &sh, &sf, &vf);
-        recolour_pack(t, sh, sf, vf, recolour_deg(55), 0.5f, 0.08f, 0.35f);
-        return true;
-    }
-    if (cls == S_GRASS || cls == S_LAWN) {  // (the tall grass: hues 30-210, around 120 - its blades have nothing else)
-        if (!col_target(&g_settings.grass, COL_SLOT_GRASS, &rgb)) return false;
-        col_mapping(100 / 360.0f, 0.65f, 0.8f, rgb, &sh, &sf, &vf);
-        if (cls == S_LAWN) recolour_pack(t, sh - 20 / 360.0f, sf, vf, recolour_deg(120), 0.25f, 0.12f, 0.35f);
-        else recolour_pack(t, sh, sf, vf, recolour_deg(100), 0.17f, 0.12f, 0.35f);
-    } else if (cls == S_FERN) {  // (Leaves; drawn in the woods' blue light the fronds read 140-200 degrees, typical
-                                 // (155, 0.5, 0.4); the trunk stays under 80)
-        if (!col_target(&g_settings.leaves, COL_SLOT_LEAVES, &rgb)) return false;
-        col_mapping(155 / 360.0f, 0.5f, 0.4f, rgb, &sh, &sf, &vf);
-        recolour_pack(t, sh, sf, vf, recolour_deg(155), 0.2f, 0.12f, 0.35f);
-    } else if (cls == S_LIME) {  // (Leaves; typical: 95, 0.7, 0.6; hues within ~72 degrees of 110 move)
-        if (!col_target(&g_settings.leaves, COL_SLOT_LEAVES, &rgb)) return false;
-        col_mapping(95 / 360.0f, 0.7f, 0.6f, rgb, &sh, &sf, &vf);
-        recolour_pack(t, sh - 15 / 360.0f, sf, vf, recolour_deg(110), 0.2f, 0.12f, 0.35f);
+    float spread, on, sh, sf, vf;
+    int from, to;
+    float k;
+    if (season_blend(&from, &to, &k)) {
+        // Season: Random - one season fading into the next: the two targets mixed (in RGB: autumn's orange pales on
+        // its way to winter's white, spring's pink greys a little on its way to the game's green - mixing the hues
+        // instead swung through other colours)
+        CosColour ca = {g_season_preset[from][g.row], 0}, cb = {g_season_preset[to][g.row], 0};
+        uint32_t a, b;
+        float pa, pb;
+        bool oa = target(&g, &ca, &a, &pa), ob = target(&g, &cb, &b, &pb);
+        if (!oa && !ob) return false;
+        rgb = 0;
+        for (int i = 0; i < 24; i += 8) {
+            float x = (a >> i & 255) + ((float)(b >> i & 255) - (a >> i & 255)) * k;
+            rgb |= (uint32_t)(x + 0.5f) << i;
+        }
+        spread = pa + (pb - pa) * k, on = (oa ? 1 - k : 0) + (ob ? k : 0);
     } else {
-        if (!col_target(&g_settings.leaves, COL_SLOT_LEAVES, &rgb)) return false;
-        col_mapping(140 / 360.0f, 0.8f, 0.58f, rgb, &sh, &sf, &vf);
-        recolour_pack(t, sh, sf, vf, recolour_deg(140), 0.2f, 0.12f, 0.35f);
+        const CosColour *rows[3] = {&g_settings.leaves, &g_settings.grass, &g_settings.sand};
+        if (!target(&g, rows[g.row], &rgb, &spread)) return false;
+        on = 1;
     }
+    col_mapping(g.h / 360.0f, g.s, g.v, rgb, &sh, &sf, &vf);
+    recolour_pack(t, sh + on * g.dh / 360.0f, sf, vf, recolour_deg(g.centre), g.width, g.min_sat, spread);
     return true;
 }
 

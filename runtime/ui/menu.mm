@@ -41,6 +41,10 @@ extern "C" {
 #include "../settings.h"
 #include "../nvn/output_scale.h"
 #include "../nvn/hud_stats.h"
+extern "C" {
+#include "../nvn/season.h"
+#include "../nvn/weather.h"
+}
 #include "../menu_sfx.h"
 #include "menu.h"
 void input_reset(void);
@@ -898,17 +902,20 @@ static void tab_cosmetics(void) {
     CosColour *rows[] = {&g_settings.tunic, &g_settings.hearts, &g_settings.hair, &g_settings.skin, &g_settings.shield,
                          &g_settings.leaves, &g_settings.grass, &g_settings.sand, &g_settings.water,
                          &g_settings.fences, &g_settings.walls, &g_settings.houses};
-    if (opt_button("Randomize all", "Picks a random color for everything below."))
+    if (opt_button("Randomize all", "Picks a random color for everything below.")) {
         for (int i = 0; i < COL_SLOTS; i++)  // (a named colour the row offers: shown as what it is)
             rows[i]->pick = col_random_pick(i, (unsigned)rand());
+        g_settings.season_random = false;  // (else Season: Random would hide the new leaves / grass / sand)
+    }
     if (opt_button("Default all", "Puts everything on this page back to the game's normal look.")) {
         for (CosColour *c : rows) c->pick = COL_DEFAULT;
         g_settings.enemy_colours = 0;
         g_settings.screen_filter = 0;
         g_settings.weather = 0;
+        g_settings.season_random = false;
     }
     if (cosmetics_seed_on() && opt_button("Seed's look", "Puts everything on this page back to this seed's look."))
-        cosmetics_seed_apply();
+        cosmetics_seed_apply(), g_settings.season_random = false;
     opt_section("Colors");
     opt_colour("Tunic color", &g_settings.tunic, COL_SLOT_TUNIC, "Link's tunic color.");
     opt_colour("Heart color", &g_settings.hearts, COL_SLOT_HEARTS, "The color of the hearts on the HUD.");
@@ -916,28 +923,55 @@ static void tab_cosmetics(void) {
     opt_colour("Body color", &g_settings.skin, COL_SLOT_SKIN, "Link's body color.");  // (larecomp.ini: skin)
     opt_colour("Shield color", &g_settings.shield, COL_SLOT_SHIELD, "The color of Link's shield.");
     opt_section("Overworld");
-    {   // Season: fills Leaves, Grass and Sand at once (palette: Orange 2, Gold 3, Pink 9, White 10; Water stays out: it
-        // has no season, and white water would read as ice; nor fences, walls or houses: wood and stone have none);
-        // "Mixed" when they match none
-        static const char *const names[] = {LN("Spring"), LN("Autumn"), LN("Winter"),
-                                             LN("Cherry blossom"), LN("Mixed")};
-        static const int preset[4][3] = {{COL_DEFAULT, COL_DEFAULT, COL_DEFAULT}, {2, 3, 3}, {10, 10, 10},
-                                         {9, COL_DEFAULT, COL_DEFAULT}};
-        int cur = 4;
-        for (int i = 0; i < 4; i++)
-            if (g_settings.leaves.pick == preset[i][0] && g_settings.grass.pick == preset[i][1] &&
-                g_settings.sand.pick == preset[i][2])
-                cur = i;
+    {   // Season: fills Leaves, Grass and Sand at once (g_season_preset, runtime/nvn/season.h; Water stays out: it has
+        // no season, and white water would read as ice; nor fences, walls or houses: wood and stone have none);
+        // Random goes round the seasons as you play (season_cycle.c, issue #831), over the three rows' own colours,
+        // which wait for it to be turned off; "Mixed" when they match no season
+        static const char *const names[] = {LN("Spring"), LN("Summer"), LN("Autumn"), LN("Winter"), LN("Random"),
+                                             LN("Mixed")};
+        int cur = 5;
+        if (g_settings.season_random) cur = 4;
+        else
+            for (int i = 0; i < N_SEASONS; i++)
+                if (g_settings.leaves.pick == g_season_preset[i][0] && g_settings.grass.pick == g_season_preset[i][1] &&
+                    g_settings.sand.pick == g_season_preset[i][2])
+                    cur = i;
         int v = cur;
-        // (Mixed is never chosen: it's there only while the colours match no season; Right stops at Cherry blossom)
-        if (opt_choice("Season", &v, names, cur == 4 ? 5 : 4, 0, "Sets the leaves, grass and sand colors below.") && v != cur) {
-            g_settings.leaves.pick = preset[v][0];
-            g_settings.grass.pick = preset[v][1];
-            g_settings.sand.pick = preset[v][2];
+        // (Mixed is never chosen: it's there only while the colours match no season; Right stops at Random)
+        if (opt_choice("Season", &v, names, cur == 5 ? 6 : 5, 1,
+                       "Sets the leaves, grass and sand colors below. Random goes through the seasons as you play.") &&
+            v != cur) {
+            g_settings.season_random = v == 4;
+            if (v < N_SEASONS) {
+                g_settings.leaves.pick = g_season_preset[v][0];
+                g_settings.grass.pick = g_season_preset[v][1];
+                g_settings.sand.pick = g_season_preset[v][2];
+            }
         }
     }
+    {   // Weather, under Season (user 2026-11-16): Off, On (the season's: weather.c), Random, then the fixed ones; the
+        // seed's weather cycle: "Seed", the seed's weather - locked. Metal and Vulkan both draw it: weather_vk.c
+        static const int order[N_WEATHERS] = {WEATHER_OFF, WEATHER_ON, WEATHER_RANDOM, WEATHER_RAIN, WEATHER_STORM,
+                                              WEATHER_SNOW, WEATHER_BLIZZARD};
+        const char *names[N_WEATHERS];
+        int v = 0;
+        for (int i = 0; i < N_WEATHERS; i++) {
+            names[i] = g_weathers[order[i]];
+            if (order[i] == g_settings.weather) v = i;
+        }
+        bool cycle = weather_cycle_on();
+        if (cycle) names[0] = LN("Seed"), v = 0, opt_disable_next();
+        if (opt_choice("Weather", &v, names, N_WEATHERS, 0,
+                       cycle ? "This seed picked the weather. Commit to it!"
+                             : "Rain, snow, a storm or a blizzard on the overworld. On follows the season.") &&
+            !cycle)
+            g_settings.weather = order[v];
+    }
+    if (g_settings.season_random) opt_disable_next();
     opt_colour("Leaves color", &g_settings.leaves, COL_SLOT_LEAVES, "The overworld's tree leaves and bushes.");
+    if (g_settings.season_random) opt_disable_next();
     opt_colour("Grass color", &g_settings.grass, COL_SLOT_GRASS, "The overworld's grass.");
+    if (g_settings.season_random) opt_disable_next();
     opt_colour("Sand color", &g_settings.sand, COL_SLOT_SAND, "The beaches, the desert and other sandy ground.");
     opt_colour("Water color", &g_settings.water, COL_SLOT_WATER, "The sea, rivers, ponds, waterfalls and dungeon water.");
     opt_colour("Fence color", &g_settings.fences, COL_SLOT_FENCES, "The wooden fences.");
@@ -949,15 +983,6 @@ static void tab_cosmetics(void) {
     opt_section("Screen");
     opt_preview("Screen filter", &g_settings.screen_filter, g_screen_filters, N_SCREEN_FILTERS, 0,
                "Puts a filter over the whole screen, HUD included.");
-    {   // (the seed's weather cycle: "Seed", the seed's weather - locked; Metal and Vulkan both draw it: weather_vk.c)
-        const char *names[N_WEATHERS];
-        for (int i = 0; i < N_WEATHERS; i++) names[i] = g_weathers[i];
-        bool cycle = weather_cycle_on();
-        int shown = 0;
-        if (cycle) names[0] = LN("Seed"), opt_disable_next();
-        opt_choice("Weather", cycle ? &shown : &g_settings.weather, names, N_WEATHERS, 0,
-                   cycle ? "This seed picked the weather. Commit to it!" : "Rain, snow, a storm or a blizzard on the overworld.");
-    }
     if (head) opt_list_end();
     opt_end();
 }

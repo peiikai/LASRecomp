@@ -166,10 +166,13 @@ Use it with `LARECOMP_INPUT` (to get into a save) and `LARECOMP_SAVE_DIR` (so th
 | `LARECOMP_HINT_SHEET` | 0 / 1 | Force the Hint Sheet on or off. |
 | `LARECOMP_ENEMY_RANDOM` | 0 | Turn a seed's enemy randomizer off. |
 | `LARECOMP_NICE_BOMBS` | 0 | Keep the game's one bomb at a time in a randomizer seed. |
-| `LARECOMP_WEATHER` | `off`, `rain`, `snow`, `storm`, `blizzard`, `random` | Override the weather setting. |
+| `LARECOMP_WEATHER` | `off`, `rain`, `snow`, `storm`, `blizzard`, `random`, `on` | Override the weather setting (`on`: the season's weather). |
 | `LARECOMP_WEATHER_CYCLE` | 0 / 1 | Turn the weather cycle on. |
 | `LARECOMP_WEATHER_CYCLE_START` | `rain`, `snow`, `storm`, `blizzard` | A new weather cycle starts with this weather, 20 seconds before the next change. |
 | `LARECOMP_WEATHER_CYCLE_SPEED` | multiplier | Run the weather cycle's clock this many times faster. |
+| `LARECOMP_SEASON` | `random` | Turn Season: Random on (the seasons go round as you play). |
+| `LARECOMP_SEASON_START` | `spring`, `summer`, `autumn`, `winter` | A save without a season file starts in this season, 20 seconds before the next change. |
+| `LARECOMP_SEASON_SPEED` | multiplier | Run the season clock this many times faster. |
 | `LARECOMP_WEATHER_HARM` | 1 | Lightning shocks Link outside a Weather Cycle seed too. |
 | `LARECOMP_WEATHER_PUSH` | 1 | Blizzard wind pushes Link outside a Weather Cycle seed too. |
 | `LARECOMP_MENU_AT` | frame | Open the overlay menu at that frame. |

@@ -18,7 +18,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum { WEATHER_OFF, WEATHER_RAIN, WEATHER_SNOW, WEATHER_STORM, WEATHER_BLIZZARD, WEATHER_RANDOM };
+// (On: rolled from the season each time the overworld is entered, weather.c; ini keys by name, so new ones go last)
+enum { WEATHER_OFF, WEATHER_RAIN, WEATHER_SNOW, WEATHER_STORM, WEATHER_BLIZZARD, WEATHER_RANDOM, WEATHER_ON };
 
 typedef struct {
     float vp[16];      // the scene camera's view-projection (rows, the game's GL clip space)

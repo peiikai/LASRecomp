@@ -864,6 +864,8 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             dpad_items_save_read(f->path, b->addr, off, n);  // (runtime/hle/dpad_items.c)
             extern void weather_cycle_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
             weather_cycle_save_read(f->path, b->addr, off, n);  // (runtime/nvn/weather_cycle.c)
+            extern void season_save_read(const char *path, uint64_t addr, int64_t off, int64_t size);
+            season_save_read(f->path, b->addr, off, n);  // (runtime/nvn/season_cycle.c)
         }
         OUT(int64_t, 0) = n < 0 ? 0 : n;
         resp_size(resp, 8);
@@ -888,6 +890,8 @@ static void file(Service *s, IpcReq *req, IpcResp *resp) {
             if (!flags_ext_save_written(f->path, a->addr, off, size)) error = errno ? errno : EIO;
             extern void weather_cycle_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
             if (!error) weather_cycle_save_written(f->path, a->addr, off, size);  // (runtime/nvn/weather_cycle.c)
+            extern void season_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
+            if (!error) season_save_written(f->path, a->addr, off, size);  // (runtime/nvn/season_cycle.c)
             extern void dpad_items_save_written(const char *path, uint64_t addr, int64_t off, int64_t size);
             if (!error) dpad_items_save_written(f->path, a->addr, off, size);  // (runtime/hle/dpad_items.c)
         }

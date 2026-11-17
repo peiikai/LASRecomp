@@ -34,8 +34,8 @@ const char *const g_screen_filters[N_SCREEN_FILTERS] = {LN("Off"), LN("Game Boy"
 static const char *const k_screen_filter_keys[N_SCREEN_FILTERS] = {"off", "gameboy", "gameboy_color", "grayscale"};  // (else: off)
 const char *const g_audio_outs[N_AUDIO_OUTS] = {LN("Stereo"), LN("5.1")};
 static const char *const k_audio_out_keys[N_AUDIO_OUTS] = {"stereo", "5.1"};  // (else: stereo)
-const char *const g_weathers[N_WEATHERS] = {LN("Off"), LN("Rain"), LN("Snow"), LN("Storm"), LN("Blizzard"), LN("Random")};
-static const char *const k_weather_keys[N_WEATHERS] = {"off", "rain", "snow", "storm", "blizzard", "random"};  // (else: off)
+const char *const g_weathers[N_WEATHERS] = {LN("Off"), LN("Rain"), LN("Snow"), LN("Storm"), LN("Blizzard"), LN("Random"), LN("On")};
+static const char *const k_weather_keys[N_WEATHERS] = {"off", "rain", "snow", "storm", "blizzard", "random", "on"};  // (else: off)
 const char *const g_text_speeds[N_TEXT_SPEEDS] = {LN("Normal"), LN("Fast"), LN("Instant")};
 static const char *const k_text_speed_keys[N_TEXT_SPEEDS] = {"normal", "fast", "instant"};  // (else: normal)
 
@@ -365,6 +365,7 @@ void settings_load(void) {
         else if (!strcmp(key, "leaves")) col_parse(&g_settings.leaves, val);
         else if (!strcmp(key, "grass")) col_parse(&g_settings.grass, val), col_fix(&g_settings.grass, COL_SLOT_GRASS);
         else if (!strcmp(key, "sand")) col_parse(&g_settings.sand, val);
+        else if (!strcmp(key, "season")) g_settings.season_random = !strcmp(val, "random");
         else if (!strcmp(key, "water")) col_parse(&g_settings.water, val);
         else if (!strcmp(key, "fences")) col_parse(&g_settings.fences, val);
         else if (!strcmp(key, "walls")) col_parse(&g_settings.walls, val), col_fix(&g_settings.walls, COL_SLOT_WALLS);
@@ -503,6 +504,7 @@ void settings_save(void) {
         col_format(cols[i].c, v, sizeof v);
         fprintf(f, "%s = %s\n", cols[i].key, v);
     }
+    fprintf(f, "season = %s\n", g_settings.season_random ? "random" : "colors");
     fprintf(f, "enemy_colours = %s\n", k_enemy_colour_keys[g_settings.enemy_colours]);
     fprintf(f, "screen_filter = %s\n", k_screen_filter_keys[g_settings.screen_filter]);
     fprintf(f, "weather = %s\n", k_weather_keys[g_settings.weather]);

@@ -30,6 +30,7 @@
 #include "../hle.h"
 #include "../rando.h"
 #include "../settings.h"
+#include "season.h"
 
 extern int game_in_play(void);  // runtime/hle/warp.c
 
@@ -136,7 +137,7 @@ RT_ON_RESET(weather_cycle_reset) {
 }
 
 // The renderer: a scene composite was drawn (the clock runs only while the game draws its scene)
-void weather_cycle_scene(void) { g_scene_at = host_now(); }
+void weather_cycle_scene(void) { g_scene_at = host_now(); season_scene(); }  // (and the season's: season_cycle.c)
 
 static uint32_t live_crc(void) { return *(const uint32_t *)(uintptr_t)(GA(LIVE_SAVE) + BODY_CRC); }
 

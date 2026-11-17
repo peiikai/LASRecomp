@@ -13,6 +13,7 @@
 #include "../menu_sfx.h"
 #include "../cosmetic_colour.h"
 #include "../settings.h"
+#include "season.h"
 
 extern int game_in_play(void);                 // runtime/hle/warp.c
 extern bool widescreen_frame_boxed(uint64_t frame);  // runtime/hle/widescreen.c (indoors: the interior backdrop)
@@ -35,14 +36,14 @@ void weather_scene_vp(const float *vp, uint64_t frame) {
     g_cam_frame = frame, g_cam_view = false;
 }
 
-// LARECOMP_WEATHER=off|rain|snow|storm|blizzard|random (test): instead of the setting, and of a seed's own (-1: none)
+// LARECOMP_WEATHER=off|rain|snow|storm|blizzard|random|on (test): instead of the setting, and of a seed's own (-1: none)
 static int env_weather(void) {
     static int env = -2;
     if (env == -2) {
         const char *e = getenv("LARECOMP_WEATHER");
-        static const char *const k[] = {"off", "rain", "snow", "storm", "blizzard", "random"};
+        static const char *const k[] = {"off", "rain", "snow", "storm", "blizzard", "random", "on"};
         env = -1;
-        for (int i = 0; e && i < 6; i++) if (!strcmp(e, k[i])) env = i;
+        for (int i = 0; e && i < 7; i++) if (!strcmp(e, k[i])) env = i;
     }
     return env;
 }
@@ -54,13 +55,31 @@ static uint32_t mix32(uint32_t h) {
 }
 
 static int g_random = WEATHER_OFF;  // Random: rolled each time the overworld is entered
+static int g_seasonal = WEATHER_OFF, g_seasonal_of = -2;  // On: rolled from the season (of), the same way
 static bool snowy(int kind) { return kind == WEATHER_SNOW || kind == WEATHER_BLIZZARD; }
 static bool g_outdoors;
 
 int weather_current(void) {
     if (weather_cycle_on()) return weather_cycle_kind(NULL);
     int s = setting();
-    return s == WEATHER_RANDOM ? g_random : s;
+    return s == WEATHER_RANDOM ? g_random : s == WEATHER_ON ? g_seasonal : s;
+}
+
+// On (issue #831, user 2026-11-16): Winter snows, sometimes a blizzard; Spring and Autumn can rain; Summer is mostly
+// clear, but when it rains it storms. A season the rows match none of: Summer's.
+static float frand(void);
+static void seasonal_roll(void) {
+    int season = season_current();
+    float r = frand();
+    int k = WEATHER_OFF;
+    switch (season) {
+    case SEASON_WINTER: k = r < 0.2f ? WEATHER_BLIZZARD : r < 0.75f ? WEATHER_SNOW : WEATHER_OFF; break;
+    case SEASON_SPRING: k = r < 0.05f ? WEATHER_STORM : r < 0.4f ? WEATHER_RAIN : WEATHER_OFF; break;
+    case SEASON_AUTUMN: k = r < 0.1f ? WEATHER_STORM : r < 0.45f ? WEATHER_RAIN : WEATHER_OFF; break;
+    default: k = r < 0.2f ? WEATHER_STORM : WEATHER_OFF; break;
+    }
+    g_seasonal = k, g_seasonal_of = season;
+    if (setting() == WEATHER_ON) LOG("[weather] on: season %d -> %d\n", season, k);
 }
 
 static bool level_is_field(void) {
@@ -223,6 +242,7 @@ void weather_player_tick(Cpu *c, uint64_t frame) {
 static void strike_tick(Cpu *c);
 void weather_player_tick_(Cpu *c, uint64_t frame) {
     weather_cycle_tick();
+    season_tick();  // (runtime/nvn/season_cycle.c: Season Random's clock)
     int kind = weather_current();
     if (!g_outdoors || !(snowy(kind) || kind == WEATHER_STORM) || !level_is_field()) return;
     if (kind == WEATHER_STORM) strike_tick(c);
@@ -717,6 +737,7 @@ bool weather_frame(WeatherFrame *f, uint64_t frame, const float probe[WEATHER_PR
         g_random = (int)(frand() * 5) % 5;
         if (setting() == WEATHER_RANDOM) LOG("[weather] random: %d\n", g_random);
     }
+    if (field && (!g_outdoors || season_current() != g_seasonal_of)) seasonal_roll();  // (and as the season turns)
     g_outdoors = field;
     float level = 1;  // (the weather cycle: a change fading the old weather out and the new one in)
     int kind = weather_cycle_on() ? weather_cycle_kind(&level) : weather_current();
@@ -818,7 +839,9 @@ bool weather_frame(WeatherFrame *f, uint64_t frame, const float probe[WEATHER_PR
         f->fill[3] = storm ? 0.74f : 0.93f;  // (overcast: a storm's heavier clouds)
         if (storm) {  // (a few leaves blowing about: the Leaves colour if one is set, else the texture's own)
             uint32_t rgb;
-            if (col_target(&g_settings.leaves, COL_SLOT_LEAVES, &rgb))  // (sRGB to the scene's linear)
+            int season = season_random_on() ? season_current() : -1;  // (Season: Random - the season's leaves)
+            CosColour lc = season >= 0 ? (CosColour){g_season_preset[season][0], 0} : g_settings.leaves;
+            if (col_target(&lc, COL_SLOT_LEAVES, &rgb))  // (sRGB to the scene's linear)
                 for (int i = 0; i < 3; i++) f->leaf[i] = powf((float)((rgb >> (16 - 8 * i)) & 0xFF) / 255.0f, 2.2f);
             else f->leaf[0] = -1, f->leaf[1] = f->leaf[2] = 1;  // (-1: the game's own green / the texture's colour)
             f->leaf[3] = 40;  // (in the volume, 34 x 34: ~15 on screen)
