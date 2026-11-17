@@ -127,6 +127,12 @@ if (argc == 3 && !strcmp(argv[1], "label")) {  // label <exefs folder>
     puts(l ? l : "none");
     return 0;
 }
+if (argc == 3 && !strcmp(argv[1], "main")) {  // main <exefs/main>: what it is, and its build ID
+    char hex[41] = "x";
+    GameMainKind k = game_main_build_id(argv[2], hex);
+    printf("%s %s\n", k == GAME_MAIN_NSO ? "nso" : k == GAME_MAIN_MISSING ? "missing" : "not-nso", hex[0] ? hex : "-");
+    return 0;
+}
 if (argc == 3 && !strcmp(argv[1], "select")) {  // select <game folder>
     char why[256] = "";
     int ok = game_version_select(argv[2], why, sizeof why);
@@ -192,6 +198,18 @@ assert native('select', g1)[:2] == ['1', 'v1_0_1']
 out = native('select', gx)
 assert out[0] == '0' and 'unsupported version' in ' '.join(out), out
 assert native('select', tmp/'missing')[0] == '0'
+# what the launcher logs when it refuses game files (#696: the log had no build ID, a player had to hexdump exefs/main)
+assert native('main', gx/'exefs/main') == ['nso', '11' * 20]
+assert native('main', g1/'exefs/main') == ['nso', VERSIONS['v1_0_1'][1].upper()]
+assert native('main', tmp/'missing/exefs/main') == ['missing', '-']
+gn = tmp/'gn/exefs'
+gn.mkdir(parents=True)
+(gn/'main').write_bytes(b'NCA3' + bytes(0x5c))  # (another container, header long enough)
+assert native('main', gn/'main') == ['not-nso', '-']
+out = native('select', gn.parent)
+assert out[0] == '0' and 'NSO0' in ' '.join(out), out
+(gn/'main').write_bytes(b'NSO0' + bytes(0x10))  # (cut short before the build ID)
+assert native('main', gn/'main') == ['not-nso', '-']
 
 # ---- the RomFS file check (runtime/game_addresses/romfs_files.h, from tools/romfs_files.py): hashes only
 import romfs_files  # noqa: E402

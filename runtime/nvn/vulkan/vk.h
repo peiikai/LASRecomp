@@ -46,6 +46,8 @@ typedef struct {
     uint32_t ts_bits;          // the queue's timestampValidBits (0: no timestamps)
     VmaAllocator vma;
     VkPhysicalDeviceProperties props;
+    VkDriverId driver_id;  // (device.c; 0 when the driver doesn't say)
+    bool cpu_astc;  // ASTC decoded on the CPU although the driver lists it (device.c)
     VkPipelineCache pcache;
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
@@ -60,6 +62,7 @@ typedef struct {
     bool heap_dmabuf_default;  // the heap as driver memory by default: RADV and Mesa's PanVK (device.c; LARECOMP_VK_HEAP_DMABUF overrides)
     bool compact_varyings;  // each vertex + fragment pair's varyings renumbered from 0: Mesa drivers, for PanVK before 26.1 (device.c; LARECOMP_VK_COMPACT_VARYINGS)
     bool cb_release;  // command buffers reset with RELEASE_RESOURCES before each begin: Arm's driver (device.c; LARECOMP_VK_CB_RELEASE)
+    bool cb_early_reset;  // a slot's command buffers reset once its submission completes: PanVK (device.c; LARECOMP_VK_CB_EARLY_RESET)
     bool ssbo_chunks;  // stores and atomics from fragment and vertex shaders (exec.c: the heap in chunks counts misses)
     bool lazy_heap, bda;  // the heap imported chunk by chunk (device.c lazy_heap_predicted), buffer device addresses enabled for it
     bool heap_probe;      // one import tried at the start, lazy chunks if it runs out of memory (exec.c whole_import_probe_oom)
@@ -72,11 +75,16 @@ typedef struct {
     VkSurfaceKHR surface;
     VkSwapchainKHR swapchain;
     VkFormat sc_format;
-    VkExtent2D sc_extent;
+    VkExtent2D sc_extent;  // the window's size: what everything drawn into the window image is laid out in
+    VkExtent2D sc_phys;    // the swapchain images' own size (the panel's orientation when pre-rotated: sc_quarter)
+    int sc_quarter;        // Android pre-rotation: 0, or quarter turns (1: 90 degrees, 3: 270) applied when drawing into them
     uint32_t sc_count;
     VkImage sc_images[VK_SC_MAX];
     VkImageView sc_views[VK_SC_MAX];
 } VkG;
+// (device.c) a rect / viewport of the window (sc_extent) in the swapchain image (sc_phys): turned with sc_quarter
+VkRect2D vk_sc_rect(int32_t x, int32_t y, uint32_t w, uint32_t h);
+VkViewport vk_sc_viewport(float x, float y, float w, float h);
 void vk_log_memory(const char *why);  // (device.c: per-heap budget and use, at start and on allocation failures)
 extern VkG g_vk;
 
@@ -118,6 +126,7 @@ typedef struct TexBackend {
     uint32_t wgen;  // page write tracking generation at the last upload check (textures.c)
     bool scalable, presented;
     bool ao;             // (scalable) the game's ambient occlusion: at its own scale (textures.c tex_ao)
+    bool shadow;         // (scalable) the game's shadow map: at its own scale (textures.c tex_shadow)
     uint64_t touched_frame, frame_cleared;
     uint32_t level_gen;
     float sx, sy;        // the scale the contents were drawn at (scalable textures)
@@ -128,6 +137,7 @@ typedef struct TexBackend {
     uint32_t pending_uv_off;
     uint8_t astc_bw, astc_bh;  // ASTC without GPU support: decoded to RGBA8 on upload (runtime/nvn/astc.c)
     bool astc_srgb;
+    uint8_t cpu_bc;      // a BC format the driver doesn't list: decoded on upload (runtime/nvn/bc.h kind)
     int tp;              // runtime/nvn/texpatch.c: 0 not checked yet, -1 none, else known UI texture + 1
     uint32_t tp_gen;     // texpatch_generation() it was last uploaded with
     int reg;  // slot in textures.c's live list + 1 (a reboot destroys them all)

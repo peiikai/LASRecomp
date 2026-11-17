@@ -11,7 +11,8 @@
 #include <string>
 #include <vector>
 
-void opt_begin(const char *id, float scale);
+// split: the page ends with opt_split (a right pane of its own): phones then keep the two panes instead of cards
+void opt_begin(const char *id, float scale, bool split = false);
 void opt_section(const char *title);
 bool opt_toggle(const char *label, bool *v, bool def, const char *desc);
 // left / right stop at the ends; A / a click on the row steps on, past the last value back to the first (wrap: false,
@@ -30,8 +31,7 @@ bool opt_int(const char *label, int *v, int lo, int hi, int step, int def, const
 // a Cosmetics colour row (the shared palette, runtime/cosmetic_colour.h): Default, the named colours, Random, Custom;
 // with Custom, a row under it shows the colour and opens a colour picker. True when the colour changed.
 struct CosColour;
-// slot: the row (COL_SLOT_*): when the randomizer seed has its own colour, the row shows it as "Seed: <colour>",
-// greyed out.
+// slot: the row (COL_SLOT_*): which palette entries it offers (col_offered: grass and walls have no Black).
 bool opt_colour(const char *label, CosColour *c, int slot, const char *desc);
 // an action: true when activated
 bool opt_button(const char *label, const char *desc);
@@ -51,6 +51,15 @@ bool opt_text(const char *label, char *buf, size_t cap, const char *hint, const 
 bool opt_text_editing(const char *label);
 // the next row is shown greyed out and can't be changed (e.g. forced by the seed)
 void opt_disable_next(void);
+// Rows that only matter while the row above them is on (its options): opt_child_begin after the parent row, the
+// children, opt_child_end. They sit at the same left edge as their parent, with a line down the pane's margin beside
+// them (bright while the parent is on, faint while it's off); the caller greys them out (opt_disable_next) while the
+// parent is off. Runs nest: a child's own children stay on the one line.
+void opt_child_begin(bool parent_on);
+void opt_child_end(void);
+// the next row is greyed out because of a row above it: its description starts with "Needs <parent>." (value: "Needs
+// <parent> set to <value>.") - English names, shown in the menus' language
+void opt_needs_next(const char *parent, const char *value = NULL);
 // the next row is drawn as chosen (pale orange without the cursor: the list shown beside it)
 void opt_mark_next(void);
 // the next row's value in red (a problem: e.g. the same button bound twice)
@@ -60,6 +69,8 @@ void opt_own_next(void);  // the next row is the player's own setting, not part 
 // the next row's label and value are already in the menus' language (i18n.h: put together with L_line, or the
 // player's own text): shown as they are
 void opt_shown_next(void);
+// the last row's value: its left edge and the middle of its line (screen coordinates; x 0: it had none)
+void opt_last_value_pos(float *x, float *cy);
 // rows after this sit one step in (+1) or back out (-1): options that belong to the row above
 void opt_indent(int step);
 void opt_end(void);

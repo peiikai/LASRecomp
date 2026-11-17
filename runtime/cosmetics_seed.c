@@ -1,10 +1,10 @@
 // The randomizer seed's own cosmetics (Randomizer tab "Random cosmetics", seed option "random-cosmetics"): a seed
 // made with it has its own set, picked from its seed (the same every time it's played): a fully random colour (any
 // hue, saturation and brightness) for each of the tunic, hearts, hair, skin, shield, leaves, grass, sand, water,
-// fences, walls and houses, enemy colours "per seed" and a weather (clear, rain, snow or storm: runtime/nvn/weather.c;
-// the screen filter off: it isn't a colour). The first time such a seed is played its set is copied into the Cosmetics
-// tab's rows (g_settings.cosmetics_seed remembers which seed did it), and from then on they are the player's own to
-// change; the tab's "Seed's look" copies them in again.
+// fences, walls and houses (grass and walls never near black), enemy colours "per seed" and a weather (clear, rain,
+// snow or storm: runtime/nvn/weather.c; the screen filter off: it isn't a colour). The first time such a seed is
+// played its set is copied into the Cosmetics tab's rows (g_settings.cosmetics_seed remembers which seed did it), and
+// from then on they are the player's own to change; the tab's "Seed's look" copies them in again.
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -54,8 +54,21 @@ static void refresh_locked(void) {
     if (k && strchr(k + 9, '"')) name = k + 9, end = strchr(name, '"');
     uint32_t h = 2166136261u;
     for (const char *s = name; s < end; s++) h = (h ^ (uint8_t)*s) * 16777619u;
-    for (int slot = 0; slot < COL_SLOTS; slot++)
-        g_rgb[slot] = mix32(h ^ (uint32_t)slot * 0x9E3779B1u) & 0xFFFFFF;
+    for (int slot = 0; slot < COL_SLOTS; slot++) {
+        uint32_t c = mix32(h ^ (uint32_t)slot * 0x9E3779B1u) & 0xFFFFFF;
+        // (grass and walls never black or close to it: they read as holes - user 2026-11-11. A darker pick keeps its
+        // hue and saturation, brightened to the floor; brighter ones are as before)
+        if (slot == COL_SLOT_GRASS || slot == COL_SLOT_WALLS) {
+            unsigned r = c >> 16 & 255, g = c >> 8 & 255, b = c & 255, mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
+            const unsigned floor = 0x5A;  // (brightness 35%: between Black, 18%, and Gray, 46%)
+            if (mx < floor) {
+                if (!mx) r = g = b = mx = 1;
+                r = r * floor / mx, g = g * floor / mx, b = b * floor / mx;
+                c = r << 16 | g << 8 | b;
+            }
+        }
+        g_rgb[slot] = c;
+    }
     g_weather = (int)(mix32(h ^ 0x57EA7E12u) % 4);
     LOG("[cosmetics] seed's own cosmetics (%s)\n", dir);
 }

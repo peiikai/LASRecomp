@@ -17,10 +17,29 @@ android {
         applicationId = "com.lasrecomp.android"
         minSdk = 30
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1-dev"
+        // (release.yml and nightly.yml set the build's version and a code that grows)
+        versionCode = System.getenv("LARECOMP_VERSION_CODE")?.toInt() ?: 1
+        versionName = System.getenv("LARECOMP_VERSION_NAME") ?: "0.1-dev"
         ndk {
             abiFilters += "arm64-v8a"
+        }
+    }
+
+    // The published APKs' key (.github/workflows/release.yml and nightly.yml, from the repository's secrets): Android installs an
+    // update only over an app signed with the same key. Without it, the release build is unsigned.
+    signingConfigs {
+        System.getenv("LARECOMP_KEYSTORE")?.let { ks ->
+            create("release") {
+                storeFile = file(ks)
+                storePassword = System.getenv("LARECOMP_KEYSTORE_PASSWORD")
+                keyAlias = "lasrecomp"
+                keyPassword = System.getenv("LARECOMP_KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -86,12 +105,12 @@ val prepareLasRecomp by tasks.registering {
         val out = gen.get().asFile
         for (lib in libs) lib.copyTo(out.resolve("jniLibs/arm64-v8a/${lib.name}"), overwrite = true)
         for ((name, f) in res) f.copyTo(out.resolve("assets/res/$name"), overwrite = true)
-        res.getValue("icon.png").copyTo(out.resolve("res/mipmap-xxxhdpi/ic_launcher.png"), overwrite = true)
     }
 }
 // The game code builder's files, unpacked by the activity into <internal files>/gen (runtime/gamebuild.c): Python's
 // standard library, the generator's bindings, zig's lib/, the generator and the tables it reads, and the headers and
-// entry file the generated code is compiled with. Nothing of the game: the player's own files are the input.
+// entry file the generated code is compiled with; and the seed generator with its modules. Nothing of the game: the
+// player's own files are the input.
 val genZip by tasks.registering(Zip::class) {
     val g = deps.resolve("gen")
     archiveFileName.set("gen.zip")
@@ -102,14 +121,27 @@ val genZip by tasks.registering(Zip::class) {
     from(g.resolve("zig/lib")) { into("zig/lib") }
     from(g.resolve("zig/LICENSE-zig.txt")) { into("zig") }
     from(repo.resolve("tools")) {
-        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "simd_c.py", "game_addresses.py",
-                "rando/patch_variants.json")
+        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "chunk_bounds.py", "simd_c.py", "game_addresses.py",
+                "win_longjmp.py")  // (gen.py imports it everywhere; it only acts on Windows, #779)
         into("tools")
+    }
+    // the seed generator (runtime/ui/rando_tab.mm; gen.py reads tools/rando/patch_variants.json too): tools/rando and
+    // LAS-Randomizer in their source layout (las_headless.py finds it at ../../third_party), as the desktop's rando-gen
+    // bundles them (tools/rando/rando_gen.spec)
+    from(repo.resolve("tools/rando")) {
+        include("*.py", "*.json", "*.yml", "*.txt")
+        into("tools/rando")
+    }
+    from(repo.resolve("third_party/LAS-Randomizer")) {
+        include("RandomizerCore/**", "Resources/**", "LICENSE.txt")
+        exclude("**/__pycache__/**", "**/._*", "**/.DS_Store")
+        into("third_party/LAS-Randomizer")
     }
     from(repo.resolve("runtime/game_addresses")) { include("*.h"); into("runtime/game_addresses") }
     from(repo.resolve("runtime")) { include("cpu.h", "simd.h", "simd_fp.h", "gamelib.h", "hle/hle_symbols.txt"); into("gamelib-src")
         eachFile { if (name == "hle_symbols.txt") path = "gamelib-src/hle_symbols.txt" } }
     from(repo.resolve("tools/gamelib_entry.c")) { into("gamelib-src") }
+    from(repo.resolve("tools")) { include("hot_functions*.txt"); into("gamelib-src") }
     includeEmptyDirs = false
 }
 tasks.named("preBuild") { dependsOn(prepareLasRecomp, genZip) }

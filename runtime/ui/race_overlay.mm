@@ -1,5 +1,5 @@
 // Speedrun overlays, drawn by menu.mm under the menu:
-//   the run timer (Gameplay tab "Timer"; runtime/hle/run_timer.c) in the bottom-left corner while Link is in play - the
+//   the run timer (General tab "Timer"; runtime/hle/run_timer.c) in the bottom-left corner while Link is in play - the
 //   game's HUD keeps the top (hearts, item buttons) and the bottom right (rupees) - on a small see-through parchment
 //   panel like the tracker's, gold once the run is finished
 //   the seed hash of a race seed (Randomizer tab "Race mode"; seed_hash.h) on the title / file select screen: five of

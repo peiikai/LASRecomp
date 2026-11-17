@@ -1,13 +1,19 @@
 # Sourced by the test scripts before they start ./build/lasrecomp: a new test copy of the game starts only while the
-# Mac has at least 10 GB free (each copy takes ~2 GB; too many at once ran it out of memory). Launches are taken one
+# machine has at least 10 GB free (each copy takes ~2 GB; too many at once ran it out of memory). Launches are taken one
 # at a time and the next waits ~20 s, so the copy just started has grown before memory is measured again.
 # LARECOMP_MIN_FREE_GB (default 10), LARECOMP_SLOT_DIR.
 GAME_MIN_FREE_GB=${LARECOMP_MIN_FREE_GB:-10}
 GAME_SLOT_DIR=${LARECOMP_SLOT_DIR:-$HOME/.cache/larecomp_test_slots}
 mkdir -p "$GAME_SLOT_DIR"
-game_free_gb() {  # free + inactive + speculative + purgeable pages (what macOS can hand out without swapping)
-    vm_stat | awk '/page size of/ {ps = $8} /Pages (free|inactive|speculative|purgeable):/ {gsub("\\.", "", $NF); n += $NF}
-                   END {printf "%d", n * ps / 1073741824}'
+game_free_gb() {
+    if command -v vm_stat >/dev/null; then  # macOS: free + inactive + speculative + purgeable pages (handed out without swapping)
+        vm_stat | awk '/page size of/ {ps = $8} /Pages (free|inactive|speculative|purgeable):/ {gsub("\\.", "", $NF); n += $NF}
+                       END {printf "%d", n * ps / 1073741824}'
+    elif [ -r /proc/meminfo ]; then  # Linux, and MSYS2 / Git Bash on Windows: MemAvailable (older kernels: MemFree)
+        awk '/^MemAvailable:/ {a = $2} /^MemFree:/ {f = $2} END {printf "%d", (a ? a : f) / 1048576}' /proc/meminfo
+    else
+        echo "$GAME_MIN_FREE_GB"  # (no way to measure: don't wait)
+    fi
 }
 L="$GAME_SLOT_DIR/launch"
 until mkdir "$L" 2>/dev/null; do

@@ -311,7 +311,9 @@ def _place_en(h, via):
     if a in hs.DUNGEON:
         text = hs.DUNGEON[a]
         key = next((k for k, v in hs.DUNGEON_KEY.items() if v == a), None)
-        if via.get(key) and via[key] != key:
+        if isinstance(via.get(key), dict):  # (mix-dungeon-entrances: a house or cave door, hs.via_doors)
+            text += f' (through {hs.via_phrase(via[key])})'
+        elif via.get(key) and via[key] != key:
             text += f" (through {hs.DUNGEON[hs.DUNGEON_KEY[via[key]]].removeprefix('the ')}'s entrance)"
         return text
     return hs.AREA.get(a) or hs.AREA.get(a + '-east') or a.replace('-', ' ').title()
@@ -381,7 +383,9 @@ def _localized(h, via, names, lang):
             dn = hs.dungeon_name(a, lang, names)
             seg = [(dn if isinstance(dn, bytes) else dn.encode(), False)]
             key = next((k for k, v in hs.DUNGEON_KEY.items() if v == a), None)
-            if via.get(key) and via[key] != key:
+            if isinstance(via.get(key), dict):  # (mix-dungeon-entrances: a house or cave door, by its area)
+                way[:] = hs.via_segments(via[key], names, lang)
+            elif via.get(key) and via[key] != key:
                 vn = hs.dungeon_name(hs.DUNGEON_KEY[via[key]], lang, names)
                 way[:] = [(('（' if cjk else ' (') + lt.tr(lt.DETAIL['entrance'], lang) + lt.T['colon'].get(lang, ': '), False),
                         (vn if isinstance(vn, bytes) else vn.encode(), False), ('）' if cjk else ')', False)]
@@ -567,7 +571,7 @@ def apply(out_dir, romfs, settings):
         return 'no hints'
     with open(p) as f:
         data = json.load(f)
-    hints, via = data['hints'], data.get('entered-via') or {}
+    hints, via = data['hints'], hs.via_doors(data.get('entered-via') or {}, romfs)
     import entrance_logic as el
     ed = el.load()
     doors = {d['id']: d for d in ed['doors']}

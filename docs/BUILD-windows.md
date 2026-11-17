@@ -62,7 +62,8 @@ above, except that the helpers need that Python passed in (there is no `py` laun
 
 Everything in the zip is ARM64 except the two helpers (`lasgen`, `rando-gen`), which are x64. AArch64 FP/SIMD
 instructions stay inline assembly (`--simd asm`), as on the Mac. The ARM64 zip is not part of the normal releases.
-It is built by `.github/workflows/experimental.yml` for the Experimental builds page.
+It is built by `.github/workflows/nightly.yml` for the nightly page, and by `release.yml` test builds that name
+`windows-arm64`.
 
 Running it needs a Vulkan 1.3 driver (on Snapdragon X, Qualcomm's). To test without one, Mesa's lavapipe (a CPU
 Vulkan driver) for ARM64 works: set `VK_DRIVER_FILES=<its folder>\lvp_icd.aarch64.json`. The Vulkan loader ignores

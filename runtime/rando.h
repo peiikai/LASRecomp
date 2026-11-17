@@ -9,3 +9,4 @@ uint32_t rando_word(uint64_t addr);  // patched instruction at addr for the acti
 bool rando_romfs_override(const char *path, char *out, size_t cap);
 void rando_boot(void);               // each boot after the modules load: (re)read the chosen seed, apply its data patches
 void rando_select(const char *seed); // seed for the next boot ("" = vanilla), saved; then rt_request_reboot
+bool rando_seed_there(const char *seed);  // rando/<seed> holds a finished seed (settings.json and romfs/)

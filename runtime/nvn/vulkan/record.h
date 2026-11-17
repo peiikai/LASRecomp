@@ -23,6 +23,7 @@ bool rec_on(void);  // commands go through the recorder thread
 // ---- command buffers, submissions, presents (the translating thread only)
 void rec_BeginCommandBuffer(VkCommandBuffer cb);  // ONE_TIME_SUBMIT
 void rec_EndCommandBuffer(VkCommandBuffer cb);
+void rec_ResetCommandBuffer(VkCommandBuffer cb);  // (flags 0; its submission must be complete)
 // Submits si (up to 2 command buffers, 1 wait, 2 signals; nothing chained). seq: the timeline value it signals, which
 // rec_submitted() reaches once the driver has it. dl_trace: LARECOMP_VK_DEVLOST_TRACE's dump runs on a device loss.
 void rec_QueueSubmit2(const VkSubmitInfo2 *si, uint64_t seq);

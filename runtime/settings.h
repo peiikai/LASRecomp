@@ -4,7 +4,7 @@
 #include <stdbool.h>
 
 enum { ASPECT_UNLOCKED = 0, ASPECT_ORIGINAL = 1 };
-enum { RES_MATCH = 0, /* 1..8 = 1x..8x */ RES_DYNAMIC = 9, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12 };
+enum { RES_MATCH = 0, /* 1..8 = 1x..8x */ RES_DYNAMIC = 9 /* output_scale.c's mode while dyn_res is on */, RES_Q75 = 10, RES_Q25 = 11, RES_Q50 = 12 };
 // (11 was 67% of the display: larecomp.ini "67%" now loads as RES_Q75)
 enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /* Windows: AMD FSR 1 */ };
 #ifdef __APPLE__
@@ -13,10 +13,11 @@ enum { UPSCALE_BILINEAR = 0, UPSCALE_METALFX = 1 /* macOS */, UPSCALE_FSR1 = 2 /
 #define UPSCALE_SHARP UPSCALE_FSR1
 #endif
 enum { AA_OFF = 0, AA_SMAA = 1 };
+// the game's shadow map: none, half the Switch's size, or 1 to 4 times it (output_scale_shadow). In menu order.
+enum { SHADOW_OFF = 0, SHADOW_HALF, SHADOW_DEFAULT, SHADOW_2X, SHADOW_3X, SHADOW_4X };
+enum { FPS_TARGET_60 = 0, FPS_TARGET_30 = 1, FPS_TARGET_MIXED = 2 };  // Internal FPS target (pace.c pace_target_30)
 enum { AO_SWITCH = 0, AO_HIGH = 1, AO_OFF = 2 };  // the game's ambient occlusion: the Switch's size, up to twice it (output_scale_ao), or none
 enum { PROMPTS_AUTO = 0, PROMPTS_NINTENDO = 1, PROMPTS_XBOX = 2, PROMPTS_PLAYSTATION = 3 };
-// Which face button confirms in our own menus (runtime/ui/pad_nav.mm); the game's input is never affected
-enum { MENU_CONFIRM_GAME = 0, MENU_CONFIRM_CONTROLLER = 1 };
 enum { DPAD_NOTHING = 0, DPAD_ITEMS = 1, DPAD_MOVE = 2 };
 enum { TIMER_POS_LEFT = 0, TIMER_POS_RIGHT = 1 };  // the run timer's corner (bottom left / right)
 enum { CHAOS_LETTERS_OFF = 0, CHAOS_LETTERS_EXPLORED = 1, CHAOS_LETTERS_MAP = 2 /* explored, all with the Map */ };
@@ -40,24 +41,33 @@ typedef struct {
     bool fullscreen;
     int res_mode;        // RES_MATCH, 1..4 (N x the Switch's 1080p), RES_DYNAMIC, RES_Q75/50/25 (share of the display)
     bool res_auto;       // never chosen: the default for this GPU (settings_resolve_defaults); saved as "auto"
+    bool dyn_res;        // Dynamic resolution (its own toggle since 2026-11-12, was res_mode RES_DYNAMIC): up to the
+                         // display's resolution, res_mode set aside while it's on (output_scale.c)
     int upscaler;        // UPSCALE_*: how a lower internal resolution reaches the window (MetalFX: macOS, FSR 1: Windows)
     bool upscaler_auto;  // never chosen: the default for this GPU (settings_resolve_defaults); saved as "auto"
     int antialias;       // AA_*: anti-aliasing of the game image before it is scaled to the window
     int ao_quality;      // AO_*: the resolution of the game's ambient occlusion
+    int shadow_quality;  // SHADOW_*: the resolution of the game's shadow map
+    int fps_target;      // FPS_TARGET_*: the game's 30 or 60 fps mode, or 30 outdoors (the Field) and 60 indoors
+    int dyn_min;         // Dynamic resolution's lowest render height in lines: 360, 540 or 720
     float volume;        // master volume, 1 = 100%
     int audio_out;       // AUDIO_OUT_*: speaker layout of the game's sound (runtime/services/audio.c)
     bool reverb;         // room reverb effect
     bool movie_audio;
+    bool powerup_music;  // Guardian Acorn / Piece of Power music (hle/powerup_music.c)
     bool menu_sounds;    // LAS Recomp's own menu sounds (runtime/menu_sfx.c)
     bool frame_interp;   // Frame Generation: extra images between the game's frames (runtime/nvn/interp.c)
     bool metal_hud;      // macOS: Apple's Metal Performance HUD over the game (runtime/nvn/metal.m metal_hud_apply)
     int show_fps;        // FPS_*: the frame rate counter's corner (FPS_OFF: none)
+    int fps_corner;      // FPS_* (not off): the corner Show FPS goes back to when turned on (the menu's Position row)
+    bool fps_advanced;   // Show advanced information: the frame rate counter as a developer overlay (menu.mm perf_overlay)
     int dpad_mode;       // DPAD_*: what the d-pad (and arrow keys) do in play: nothing, items (runtime/hle/dpad_items.c), move Link
     bool rumble;         // controller vibration from the game (runtime/hle/input.c)
     int rumble_strength; // its intensity, percent (25 / 50 / 75 / 100)
     bool controller_light; // the controller's light bar shows Link's health (runtime/led.h, hle/input.c)
     bool bg_input;       // controllers keep working while the window isn't in front (SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS)
     bool move_360;       // analog movement in any direction (the game snaps the stick to 8): runtime/hle/qol.c
+    bool hookshot_8way;  // the hookshot fires along the nearest of 8 directions (for 360-degree movement): runtime/hle/hookshot.c
     bool blur_removal;   // no tilt-shift blur at the top / bottom of the screen
     bool hide_hero_icon; // no Hero Mode icon on the HUD
     bool pause_unfocused; // the game stops while its window isn't in front (runtime/hle/vi.c)
@@ -66,9 +76,10 @@ typedef struct {
     bool mirror_mode;    // the world mirrored left to right (Gameplay tab): renderers + runtime/hle/input.c
     int language;        // LANG_AUTO or an index into g_language_codes: the game's text language
     int prompts;         // PROMPTS_*: button glyphs (auto = follow the controller SDL reports): runtime/nvn/texpatch.c
-    int menu_confirm;    // MENU_CONFIRM_*: game layout (right confirms, bottom goes back) or the controller's convention
-    bool face_by_label;  // Xbox / PlayStation pads: the game's A/B/X/Y follow the buttons' labels, not the Switch's
-                         // positions (bottom = A, right = B, left = X, top = Y): runtime/hle/bindings.c bind_pad_host
+    // Confirm button "Bottom": on every pad the game's A and B swap (A on the bottom button, B on the right; X / Y keep
+    // the Switch's positions), and our menus confirm with the bottom button too (runtime/hle/bindings.c bind_pad_host,
+    // runtime/ui/pad_nav.mm). Never depends on the pad's type or the Button icons setting. (ini: face_buttons_by_label)
+    bool face_by_label;
     bool inv_keys;       // randomizer: show every dungeon's keys on the pause menu's Items page
     bool tracker;        // randomizer: check tracker on the pause menu's Map page
     int tracker_filters; // its filter bar (runtime/ui/tracker_overlay.mm bits), -1 = the defaults; no menu row
@@ -86,6 +97,7 @@ typedef struct {
     float diff_damage;   // damage taken multiplier (1 = normal)
     float walk_speed;    // Link's walking speed multiplier (1 = normal; Gameplay tab, runtime/hle/qol.c)
     bool walk_speed_dungeons;  // walk speed also indoors: houses, caves, dungeons (Gameplay tab, under Walk speed)
+    int text_speed;      // TEXT_SPEED_*: how fast message text appears (General tab; runtime/hle/text_speed.c)
     bool diff_ohko;      // any hit kills
     bool diff_hero;      // Hero Mode flag forced on in the loaded save (2x damage, no recovery hearts)
     // cosmetics (Cosmetics tab, runtime/ui/menu.mm), live, never part of a seed: colour rows of the shared palette
@@ -101,12 +113,28 @@ typedef struct {
     int screen_filter;        // 0 Off, 1 Game Boy, 2 Game Boy Color, 3 Grayscale (runtime/nvn/screen_filter.h)
     int weather;              // WEATHER_* (runtime/nvn/weather.h): rain / snow / storm / blizzard on the overworld, looks only
     char cosmetics_seed[300];  // the seed folder whose own cosmetics were last copied into the rows (cosmetics_seed.c)
-    // speedrun (Gameplay tab; runtime/hle/run_timer.c, runtime/livesplit.c)
+    // speedrun (General tab; runtime/hle/run_timer.c, runtime/livesplit.c)
     bool timer;            // the in-game run timer in the corner (game time: level loads don't count)
     int timer_pos;         // TIMER_POS_*: which bottom corner it sits in
     bool livesplit;        // drive LiveSplit (its Server component) over TCP: start, splits, game time
     char livesplit_host[64];  // host:port of the LiveSplit Server ("localhost:16834")
+    // touch screens (runtime/ui/mobile/touch_controls.mm)
+    int touch_mode;      // 0 Auto (while no controller is connected), 1 Always, 2 Off
+    bool touch_stick_fixed;  // the touch stick stays in its place (else its base comes to the thumb)
+    bool touch_dpad;  // the on-screen stick drawn and read as an 8-way D-pad (mobile/touch_controls.mm)
+    bool touch_edit_button;  // the on-screen button (top, beside the menu's) that opens the layout editor
+    bool touch_hide_xy_hud;  // the game's own X / Y item HUD hidden while the on-screen controls are shown
+    float touch_opacity; // 0.15 .. 1
+    float touch_size;    // 0.6 .. 1.6 (1 = the default layout)
+    // the layout editor (touch_controls.mm): per control, moved (its place: share of the screen), size (x), hidden;
+    // saved as touch_ctl_<name> = x, y, size, hidden
+#define TOUCH_NCTL 14
+    bool touch_moved[TOUCH_NCTL];
+    float touch_pos[TOUCH_NCTL][2];
+    float touch_scale[TOUCH_NCTL];
+    bool touch_hidden[TOUCH_NCTL];
     char rando_seed[128];  // active randomizer seed (rando/<name>/), empty = vanilla
+    char rando_last[128];  // the last seed played: where the start screen's Randomizer row starts (empty = New Seed)
     char rando_options[48];  // the Randomizer tab's New seed options: a seed ID without its random part (empty = defaults)
     // the player's own randomizer presets (rando_preset lines): "<name>|<options key>|<tracker><map letters>", "" = free
     char rando_presets[RANDO_PRESETS_MAX][100];
@@ -114,12 +142,19 @@ typedef struct {
 
 
 enum { N_ENEMY_COLOUR_MODES = 3, N_SCREEN_FILTERS = 4, N_WEATHERS = 6 };
+enum { TEXT_SPEED_NORMAL, TEXT_SPEED_FAST, TEXT_SPEED_INSTANT, N_TEXT_SPEEDS };
+extern const char *const g_text_speeds[N_TEXT_SPEEDS];  // (the menu's names: Normal, Fast, Instant)
 extern const char *const g_screen_filters[N_SCREEN_FILTERS];  // (the menu's names)
 extern const char *const g_audio_outs[N_AUDIO_OUTS];  // (the menu's names: Stereo, 5.1)
 extern const char *const g_weathers[N_WEATHERS];  // (the menu's names: Off, Rain, Snow, Storm, Blizzard, Random)
 extern const char *const g_enemy_colour_modes[N_ENEMY_COLOUR_MODES];  // (the menu's names)
 
 extern Settings g_settings;
+// The FPS target in effect: Dynamic resolution's own (user 2026-11-12) - with a resolution of the player's choosing
+// the frame pacer decides (pace.c), as at 60
+static inline int settings_fps_target(void) { return g_settings.dyn_res ? g_settings.fps_target : FPS_TARGET_60; }
+
+const char *touch_control_name(int i);  // the on-screen controls' ini names (touch_ctl_<name>), "" past TOUCH_NCTL
 
 void settings_load(void);
 void settings_save(void);

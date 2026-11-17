@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <shellapi.h>
+#include <psapi.h>  // (K32GetProcessMemoryInfo: in kernel32, no psapi.lib)
 #include <timeapi.h>
 #include <io.h>
 #include <wchar.h>
@@ -154,6 +155,11 @@ static BOOL CALLBACK tsc_calibrate(PINIT_ONCE o, PVOID p, PVOID *c) {
     return TRUE;
 }
 #endif
+uint64_t plat_mem_used_bytes(void) {  // (private bytes: Task Manager's Memory column)
+    PROCESS_MEMORY_COUNTERS_EX pm = {.cb = sizeof pm};
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pm, sizeof pm) ? pm.PrivateUsage : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
 #if defined(__x86_64__) || defined(_M_X64)
     InitOnceExecuteOnce(&tsc_once, tsc_calibrate, NULL, NULL);
@@ -409,13 +415,47 @@ static void publish_log(void) {
     ReleaseMutex(g_log_mutex);
 }
 
+// Command-line runs (plat_cli_begin, runtime/platform.h). The release exe is a GUI-subsystem program: started from a
+// console it gets no standard handles, so it attaches to the parent's console and writes there; an inherited pipe or
+// file (a script capturing it) is kept as it is. Either way the session log below takes stderr, as for the GUI launch.
+static HANDLE g_cli_out = INVALID_HANDLE_VALUE;
+static bool g_cli, g_cli_console, g_cli_attached;  // (attached: stderr never reaches that console)
+
+void plat_cli_begin(void) {
+    g_cli = true;
+    HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
+    if (err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) {
+        if (!DuplicateHandle(GetCurrentProcess(), err, GetCurrentProcess(), &g_cli_out, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            g_cli_out = INVALID_HANDLE_VALUE;
+    } else if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+        g_cli_attached = true;
+        g_cli_out = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                OPEN_EXISTING, 0, NULL);
+    }
+    DWORD mode;
+    g_cli_console = g_cli_out != INVALID_HANDLE_VALUE && GetConsoleMode(g_cli_out, &mode);
+}
+
+bool plat_cli_write(const char *s, size_t n) {
+    if (g_cli_out == INVALID_HANDLE_VALUE || (!g_log_path[0] && !g_cli_attached)) return false;
+    while (n) {
+        DWORD w = 0;
+        if (!WriteFile(g_cli_out, s, (DWORD)n, &w, NULL) || !w) break;
+        s += w;
+        n -= w;
+    }
+    return true;
+}
+
+bool plat_cli_tty(void) { return g_cli_console && (g_log_path[0] || g_cli_attached); }
+
 static void log_to_file_without_console(void) {
     // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting.
     // A relaunched game must still join its GUI session and publish its fallback copy on exit.
     const char *inherited = getenv("LASRECOMP_LOG_FILE");
     bool fresh = !inherited || !*inherited;
     HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
-    if (fresh && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
+    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
     char dir[MAX_PATH];
     DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
     if (!n || n >= sizeof dir) return;
@@ -508,19 +548,6 @@ void plat_fatal_notice(void) {
     if (!g_log_path[0]) return;
     fflush(stderr);
     MessageBoxA(NULL, text, "LAS Recomp", MB_ICONERROR | MB_OK);
-}
-
-static DWORD WINAPI notice_thread(LPVOID text) {
-    MessageBoxA(NULL, text, "LAS Recomp", MB_ICONWARNING | MB_OK);
-    free(text);
-    return 0;
-}
-void plat_notice(const char *text) {
-    if (!g_log_path[0]) return;
-    char *copy = _strdup(text);
-    HANDLE t = copy ? CreateThread(NULL, 0, notice_thread, copy, 0, NULL) : NULL;
-    if (t) CloseHandle(t);
-    else free(copy);
 }
 
 bool plat_module_name(uint64_t pc, char *out, size_t n) {
@@ -740,18 +767,28 @@ ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) { return prw(fd, (v
 // ---- child processes
 typedef struct { HANDLE process, job; } WinProcess;
 
-// Control Flow Guard off for one child (plat_spawn_no_cfg), as a process mitigation policy: it wins over the
-// system-wide Exploit protection setting, which the exe's header (tools/pe_no_cfg.py) does not (#337)
+// Control Flow Guard and user-mode shadow stacks off for one child (plat_spawn_no_cfg), as process mitigation
+// policies: they win over the system-wide Exploit protection settings, which the exe's header (tools/pe_no_cfg.py)
+// does not. unicorn (the generator's jump tables) leaves the code it generated with longjmp from a setjmp that saved
+// no frame, and VCRUNTIME140's longjmp stops the process (0xC0000409) for that when CFG is on (#337); with a shadow
+// stack it would unwind instead (RtlUnwindEx), through generated code that has no unwind data. Under x64 emulation
+// on ARM (Windows 11 26H1) the generator still ended there with both off, so it now replaces unicorn's setjmp and
+// longjmp with its own (tools/win_longjmp.py, #779).
 #ifndef PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY
 #define PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY 0x00020007
 #endif
 #ifndef PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF
 #define PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF (0x00000002ull << 40)
 #endif
+#ifndef PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF
+#define PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF (0x00000002ull << 28)
+#endif
 
 // no_cfg: NULL = a plain start; else *no_cfg = 0 when the child runs with CFG off, or the error that prevented it
-// (then it is started without the policy)
-static PlatProc spawn_child(const char *const argv[], const char *log_path, bool append_log, unsigned long *no_cfg) {
+// (then it is started without the policy). *no_ss likewise for shadow stacks: a Windows that doesn't take that
+// policy gets CFG off alone.
+static PlatProc spawn_child(const char *const argv[], const char *log_path, bool append_log, unsigned long *no_cfg,
+                            unsigned long *no_ss) {
     static __thread char cmd[32768];
     cmd[0] = 0;
     for (int i = 0; argv[i]; i++) append_arg(cmd, sizeof cmd, argv[i]);
@@ -773,29 +810,36 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
     const wchar_t *app = GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
     BOOL ok = FALSE;
     if (no_cfg) {
-        *no_cfg = ERROR_NOT_SUPPORTED;
-        STARTUPINFOEXW six = {.StartupInfo = si};
-        six.StartupInfo.cb = sizeof six;
-        DWORD64 policy[2] = {PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF, 0};
-        SIZE_T size = 0;
-        InitializeProcThreadAttributeList(NULL, 1, 0, &size);
-        six.lpAttributeList = size ? (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size) : NULL;
-        if (!six.lpAttributeList || !InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &size)) {
-            *no_cfg = six.lpAttributeList ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
-            free(six.lpAttributeList);
-            six.lpAttributeList = NULL;
-        } else if (!UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, policy,
-                                              sizeof policy, NULL, NULL)) {
-            *no_cfg = GetLastError();
-        } else {
-            ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE,
-                                CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
-                                &six.StartupInfo, &pi);
-            *no_cfg = ok ? 0 : GetLastError();  // (older Windows: ERROR_INVALID_PARAMETER; or a policy refuses it)
-        }
-        if (six.lpAttributeList) {
-            DeleteProcThreadAttributeList(six.lpAttributeList);
-            free(six.lpAttributeList);
+        *no_cfg = *no_ss = ERROR_NOT_SUPPORTED;
+        // first both policies, then CFG alone (a Windows without shadow stack support may refuse the second word)
+        for (int both = 1; both >= 0 && !ok; both--) {
+            STARTUPINFOEXW six = {.StartupInfo = si};
+            six.StartupInfo.cb = sizeof six;
+            DWORD64 policy[2] = {PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF,
+                                 both ? PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF : 0};
+            unsigned long e;
+            SIZE_T size = 0;
+            InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+            six.lpAttributeList = size ? (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size) : NULL;
+            if (!six.lpAttributeList || !InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &size)) {
+                e = six.lpAttributeList ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
+                free(six.lpAttributeList);
+                six.lpAttributeList = NULL;
+            } else if (!UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
+                                                  policy, sizeof policy, NULL, NULL)) {
+                e = GetLastError();
+            } else {
+                ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE,
+                                    CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+                                    &six.StartupInfo, &pi);
+                e = ok ? 0 : GetLastError();  // (older Windows: ERROR_INVALID_PARAMETER; or a policy refuses it)
+            }
+            if (six.lpAttributeList) {
+                DeleteProcThreadAttributeList(six.lpAttributeList);
+                free(six.lpAttributeList);
+            }
+            if (both) *no_ss = e;
+            if (ok || !both) *no_cfg = e;
         }
     }
     if (!ok) ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
@@ -828,13 +872,15 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
 }
 
 PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
-    return spawn_child(argv, log_path, append_log, NULL);
+    return spawn_child(argv, log_path, append_log, NULL, NULL);
 }
 
-PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error) {
-    unsigned long e = 0;
-    PlatProc p = spawn_child(argv, log_path, append_log, &e);
+PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,
+                           unsigned long *shadow_stack_error) {
+    unsigned long e = 0, ss = 0;
+    PlatProc p = spawn_child(argv, log_path, append_log, &e, &ss);
     if (error) *error = e;
+    if (shadow_stack_error) *shadow_stack_error = ss;
     return p;
 }
 
@@ -947,22 +993,22 @@ static bool final_path(const wchar_t *p, wchar_t *out, DWORD n) {
 #endif
 
 // Under one of the OneDrive folders the environment names (personal, work / school), or a cloud file itself
-bool plat_onedrive_synced(const char *dir) {
+const char *plat_cloud_synced(const char *dir) {
     wchar_t w[MAX_PATH], d[1024], r[1024], v[1024];
-    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return false;
+    if (MultiByteToWideChar(CP_UTF8, 0, dir, -1, w, MAX_PATH) <= 1 || !final_path(w, d, 1024)) return NULL;
     DWORD a = GetFileAttributesW(d);
     if (a != INVALID_FILE_ATTRIBUTES &&
         (a & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_PINNED | FILE_ATTRIBUTE_UNPINNED)))
-        return true;
+        return "OneDrive";
     static const wchar_t *const vars[] = {L"OneDrive", L"OneDriveConsumer", L"OneDriveCommercial"};
     for (int i = 0; i < 3; i++) {
         DWORD k = GetEnvironmentVariableW(vars[i], v, 1024);
         if (!k || k >= 1024 || !final_path(v, r, 1024)) continue;
         size_t l = wcslen(r);
         if (r[l - 1] == L'\\') l--;  // (a drive's root: "D:\")
-        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return true;
+        if (!_wcsnicmp(d, r, l) && (!d[l] || d[l] == L'\\')) return "OneDrive";
     }
-    return false;
+    return NULL;
 }
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.

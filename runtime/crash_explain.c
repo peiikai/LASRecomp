@@ -48,16 +48,21 @@ static bool contains_nocase(const char *hay, const char *needle) {  // (no strca
 }
 
 // The graphics driver's own code (the crash was inside it, not in LAS Recomp): Vulkan drivers on Windows / Linux,
-// Apple's Metal driver
+// Apple's Metal driver, ARM Linux and Android drivers. Only the file name counts (#648: "igd" matched a folder called
+// Rigdon, so a crash in the game code read as a driver crash).
 static bool in_gpu_driver(uint64_t pc) {
     char m[512];
     if (!pc || !plat_module_name(pc, m, sizeof m)) return false;
+    const char *file = m;
+    for (const char *p = m; *p; p++)
+        if (*p == '/' || *p == '\\') file = p + 1;
+    // (Android's vendor drivers are vulkan.<soc>.so; only as a prefix, or libvulkan.so, the loader, would match too)
+    if (!strncmp(file, "vulkan.", 7)) return true;
     static const char *const drivers[] = {"nvoglv", "nvgpucomp", "nvwgf", "libnvidia", "amdvlk", "amdxc", "atiumd",
-                                          "atig6", "igvk", "igc64", "igd", "libvulkan_radeon", "libvulkan_intel",
-                                          "libvulkan_nouveau", "libvulkan_lvp", "libvulkan_virtio", "AGXMetal",
-                                          "MTLCompiler", "libLLVM", "radeonsi"};
+                                          "atig6", "igvk", "igc64", "igd", "libvulkan_", "libmali", "libGLES_mali",
+                                          "AGXMetal", "MTLCompiler", "libLLVM", "radeonsi"};
     for (size_t i = 0; i < sizeof drivers / sizeof *drivers; i++)
-        if (contains_nocase(m, drivers[i])) return true;
+        if (contains_nocase(file, drivers[i])) return true;
     return false;
 }
 
@@ -72,12 +77,12 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
         snprintf(head, sizeof head, "Your game files are incomplete");
         snprintf(what, sizeof what, "LAS Recomp found %d of the game's %d files, and the game stopped when it needed "
                  "one that's missing. Copy your game files again so none are missing, then set them up again on the "
-                 "start screen (Game Files).", rt_romfs_files, (int)ROMFS_FILES);
+                 "start screen (System).", rt_romfs_files, (int)ROMFS_FILES);
     } else if (has("doesn't fit its language")) {
         snprintf(head, sizeof head, "Your game files' text has been changed");
         snprintf(what, sizeof what, "The game's text for this language comes from another language (a translation "
                  "patch), and the game stopped at a question it can't show that way. Set up unmodified game files on "
-                 "the start screen (Game Files). To play in another language, pick it in Settings (Language).");
+                 "the start screen (System). To play in another language, pick it in Settings (Language).");
     } else if (has("built for another version")) {
         snprintf(head, sizeof head, "The game code was built for other game files or another version of LAS Recomp");
         snprintf(what, sizeof what, "Start LAS Recomp again: the start screen rebuilds the game code for these game "
@@ -85,7 +90,7 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
     } else if (has("unsupported version of the game")) {
         snprintf(head, sizeof head, "Wrong version of the game");
         snprintf(what, sizeof what, "LAS Recomp needs version 1.0.0, 1.0.1 or 1.1.0 of the game. Set up those game "
-                 "files on the start screen (Game Files).");
+                 "files on the start screen (System).");
     } else if (has("no font for the game's text")) {
         snprintf(head, sizeof head, "No font for the game's text");
         snprintf(what, sizeof what, "Import the Switch fonts in Settings (Game font), or reinstall LAS Recomp - it "
@@ -96,7 +101,7 @@ void rt_crash_explain(char *out, size_t n, const char *log_path) {
         snprintf(head, sizeof head, "Your game files are damaged or changed");
         snprintf(what, sizeof what, "All of the game's files are there, but some don't match the game, and the game "
                  "stopped when it needed one of them. Copy your game files again, then set them up again on the start "
-                 "screen (Game Files).");
+                 "screen (System).");
     } else if (has("get_terminate") || has("uncaught C++ exception")) {  // (the game threw: recompiled code can't
                                                                          // unwind; runtime/hle/warp.c rt_cxa_throw)
         snprintf(head, sizeof head, "The game ran into an error it couldn't recover from");

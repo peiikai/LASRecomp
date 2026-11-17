@@ -9,6 +9,35 @@
 #include "platform/win_compat.h"
 #elif defined(__linux__) && !defined(__ANDROID__)  // (Bionic has strlcpy and arc4random)
 #include "platform/linux_compat.h"
+#elif defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+// PLAT_IOS: the iOS app (runtime/platform/ios.c): no child processes, no re-exec, no AppKit; data in Documents.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+#define PLAT_IOS 1
+#else
+#define PLAT_IOS 0
+#endif
+#if PLAT_IOS
+#define PLAT_TOUCH 1
+#endif
+// PLAT_TOUCH: a phone or tablet - a touch screen and no desktop around the window (runtime/ui/mobile/, the
+// on-screen controls, the menus as cards in the safe area, no Quit / Fullscreen). A phone port sets it to 1 and
+// implements the plat_touch_* functions below.
+#ifdef __ANDROID__
+#define PLAT_TOUCH 1
+#endif
+#ifndef PLAT_TOUCH
+#define PLAT_TOUCH 0
+#endif
+// LARECOMP_IOSEXPORT: the iOS export is in this app (runtime/iosexport.c, the Makefile's IOSEXPORT: the desktops
+// unless told otherwise; never the iOS app).
+#ifndef LARECOMP_IOSEXPORT
+#ifdef __ANDROID__
+#define LARECOMP_IOSEXPORT 0
+#else
+#define LARECOMP_IOSEXPORT (!PLAT_IOS)
+#endif
 #endif
 
 #ifdef __cplusplus
@@ -18,6 +47,10 @@ extern "C" {
 // ---- guest address space
 // Claim [lo, hi) for the guest at exactly that address, readable/writable (pages may be backed lazily).
 bool plat_reserve_guest(uint64_t lo, uint64_t hi);
+// iOS (LARECOMP_DYN_BASE): claim `size` bytes for the guest wherever the process has room below 2^39 (guest
+// addresses are 39 bits), 1 GB aligned, and return the start; 0 when nowhere fits (after saying where the process's
+// room is: the log). Where an iOS process has room differs by device and version, so the map is read.
+uint64_t plat_place_guest(uint64_t size);
 // Make sure [addr, addr+size) inside the guest window is backed (before the OS itself writes there, e.g.
 // file reads); a no-op where the whole window is backed from the start.
 void plat_commit(uint64_t addr, uint64_t size);
@@ -76,6 +109,7 @@ int plat_thread_realtime_check(uint64_t period_ns);  // (the calling thread, aft
 int plat_cpu_count(void);  // logical cores this process may run on (its affinity mask); 0 if unknown
 void plat_thread_guest(int prio);  // a guest thread's host scheduling class from its Switch priority (lower = more urgent)
 uint64_t plat_thread_cpu_ns(void);  // the calling thread's CPU time so far (user + system; diagnostics)
+uint64_t plat_mem_used_bytes(void);  // this process's memory in use (0: unknown; Show advanced information)
 // The calling thread is one of the frame's critical threads: on Windows, no power throttling (EcoQoS) for it and, on a
 // hybrid CPU, a preference for the performance cores (selected CPU sets); on Linux with big and little cores (arm64
 // big.LITTLE, Intel hybrid), its affinity limited to the big ones. LARECOMP_PCORE=0: off. Elsewhere a no-op.
@@ -95,6 +129,13 @@ static inline void plat_thread_default_core(void) {}
 
 // ---- process
 void plat_init(void);                                // first thing in main()
+// Command-line runs (`--build-ios`, runtime/main.c), before plat_init: the terminal or pipe the command was started
+// from is kept for plat_cli_write (Windows: the parent's console, attached), and the session log opens even from a
+// terminal, so the command's lines can go to both.
+void plat_cli_begin(void);
+// Text for that terminal or pipe. false: there is none apart from stderr (stderr is it, or there's nowhere).
+bool plat_cli_write(const char *s, size_t n);
+bool plat_cli_tty(void);  // plat_cli_write reaches a terminal (one progress line can be rewritten in place)
 // The machine, for the log's first "[info]" line (runtime/main.c): nothing that identifies the player (no user name,
 // no paths). Fields left empty / 0 when unknown.
 typedef struct {
@@ -119,14 +160,18 @@ int plat_proc_wait(PlatProc p, bool block);  // exit code, or -1 while still run
 #define PLAT_PROC_SIGNALED 256               // + N: ended by signal N instead of exiting (not on Windows)
 #define PLAT_PROC_FAST_FAIL 512              // Windows: ended by a security check (0xC0000409, e.g. Control Flow Guard)
 #ifdef _WIN32
-// plat_spawn with Control Flow Guard off for the child (the generator: unicorn's longjmp fails CFG's check, #337).
-// *error: 0 = started that way; else why not (then it was started normally, or not at all if that failed too)
-PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error);
+// plat_spawn with Control Flow Guard and shadow stacks off for the child (the generator: unicorn's longjmp fails
+// CFG's check, #337, and can't unwind with a shadow stack; tools/win_longjmp.py, #779).
+// *error: 0 = started with CFG off; else why not (then it was started normally, or not at all if that failed too).
+// *shadow_stack_error: the same for shadow stacks (when only that is refused, it was started with CFG off alone).
+PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,
+                           unsigned long *shadow_stack_error);
 #endif
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf
-// dir is synced by OneDrive (Windows: under a OneDrive folder, or a cloud file); false on other systems
-bool plat_onedrive_synced(const char *dir);
+// dir is synced to a cloud drive: the service's name ("OneDrive" on Windows: under a OneDrive folder, or a cloud
+// file; "iCloud Drive" on iOS), NULL when not (always on macOS / Linux)
+const char *plat_cloud_synced(const char *dir);
 #ifdef _WIN32
 #define PLAT_EXE_SUFFIX ".exe"
 #define PLAT_VENV_PYTHON "venv/Scripts/python.exe"  // relative to the venv's parent
@@ -141,14 +186,45 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset);
 bool plat_module_name(uint64_t pc, char *out, size_t n);  // the file of the module (exe / library / driver) holding pc
 void plat_print_backtrace(void);
 void plat_fatal_notice(void);  // a fatal error is about to end the process: tell the user (Windows release: message box)
-// Something the player should know that doesn't stop the game (a save that failed): the same dialog as
-// plat_fatal_notice, as a warning, from its own thread so the game keeps running. Like it, only shown when started as
-// the app (a terminal / test run has the log).
-void plat_notice(const char *text);
 void plat_crash_handler_install(void);  // per thread where the OS needs it (alternate signal stack)
 // Called by the crash handler (runtime/dispatch.c): true = fault handled (watchpoint), resume.
 bool rt_fault_watch(uint64_t fault_addr, uint64_t host_pc);
 void rt_fault_report(const char *what, uint64_t fault_addr, uint64_t host_pc, uint64_t host_lr) __attribute__((noreturn));
+
+// ---- phones and tablets (PLAT_TOUCH): what the touch layer asks of the port's platform code
+#if PLAT_TOUCH
+// A tablet: a monitor-sized screen at arm's length - the phone's enlargement of the menus isn't wanted
+bool plat_touch_tablet(void);
+// The launcher icon's shortcuts (iOS: Home Screen quick actions): a pending "Play Vanilla" / play-seed request (seed:
+// "" vanilla), taken once; the items rebuilt from the seeds in rando/ (any thread: applied on the main one)
+bool plat_touch_play_request(char *seed, size_t n);
+void plat_touch_shortcuts_sync(void);
+// A system text prompt (an alert with a text field) over the window, from any thread; its answer polled: 1 OK (out =
+// the text), -1 cancelled, 0 still up. cancel: taken down from our side (the menu closed).
+void plat_touch_prompt(const char *title, const char *hint, const char *initial, int max_len, const char *ok, const char *cancel);
+int plat_touch_prompt_poll(char *out, size_t n);
+void plat_touch_prompt_cancel(void);
+#else
+static inline bool plat_touch_tablet(void) { return false; }
+#endif
+
+// ---- iOS only (runtime/platform/ios.c, ios_bookmark.m; SDL's dialogs: platform/ios_sdl.h; within the iOS layer:
+// platform/ios_internal.h)
+#if PLAT_IOS
+const char *plat_ios_documents(void);     // the app's Documents folder (Files > On My iPhone > LAS Recomp): the default data root
+// The signature has / lacks (1 / 0) com.apple.developer.kernel.increased-memory-limit; -1 unreadable. Without it iOS
+// ends the app at a much lower footprint. LARECOMP_TEST_NO_MEMORY_ENTITLEMENT=1 (test): 0.
+int plat_ios_memory_entitled(void);
+// The data folder's security-scoped bookmark (runtime/paths.c's pointer file holds it, base64): made under the
+// picker's scope and checked to resolve back; resolve opens the folder's scope for the process's life - 1 resolved,
+// 0 not a bookmark / gone / in the trash, -1 resolved but stale (rewrite it). A picked folder stays readable through
+// the picker's own scope until the next pick (the move, the bookmark).
+bool plat_ios_bookmark_make(const char *path, char *out, size_t n);
+int plat_ios_bookmark_resolve(const char *b64, char *path, size_t n);
+bool plat_ios_cloud_offloaded(const char *dir);  // an iCloud file under dir isn't on the device (read waits for it)
+// Where path is as Files names it: root "" (this device) or a place's name, and the folders under it; false: unknown
+bool plat_ios_folder_place(const char *path, char *root, size_t rn, char *rest, size_t restn);
+#endif
 
 #ifdef __cplusplus
 }

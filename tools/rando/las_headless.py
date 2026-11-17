@@ -14,10 +14,31 @@ import re
 import sys
 import types
 
+# Game files copied from a Mac to a drive that isn't its own (an SD card, exFAT) carry a hidden ._<name> beside each
+# file. They aren't the game's, but every folder listing here took them for its files: the room shuffle read
+# ._Lv07EagleTower.bntx as a dungeon's textures and failed. One filter for every listing (tools/rando and LAS-Randomizer).
+_listdir = os.listdir
+
+
+def _listdir_game(path='.'):
+    names = _listdir(path)
+    if names and isinstance(names[0], bytes):
+        return [f for f in names if not (f.startswith(b'._') or f == b'.DS_Store')]
+    return [f for f in names if not (f.startswith('._') or f == '.DS_Store')]
+
+
+os.listdir = _listdir_game
+
+if os.environ.get('LARECOMP_RANDO_SCRATCH'):  # (Android: the app's internal storage - see shuffle_dungeon_rooms)
+    import tempfile
+    tempfile.tempdir = os.environ['LARECOMP_RANDO_SCRATCH']
+
 LAS = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'third_party', 'LAS-Randomizer')
 LAS = os.path.normpath(LAS)
 if getattr(sys, 'frozen', False):  # standalone helper (tools/rando/rando_gen.spec): LAS + tools/rando data in the bundle
     LAS = sys._MEIPASS
+elif os.path.isdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'RandomizerCore')):
+    LAS = os.path.dirname(os.path.abspath(__file__))  # the same flat layout, run from source (iOS: rando-gen/ in the app)
 
 
 # ---- minimal PySide6.QtCore stand-in: the core only uses QThread.run() and Signal.emit/connect
@@ -151,7 +172,8 @@ def shuffle_dungeon_rooms(romfs, out_dir, mode, layouts, jumps):
                 except OSError:
                     shutil.copyfile(src, dst)
     out_romfs = os.path.join(out_dir, 'romfs')
-    overlay = os.path.join(out_dir, '.room_overlay')
+    # (LARECOMP_RANDO_SCRATCH: somewhere symlinks work - Android's shared storage, where seeds are written, has none)
+    overlay = os.path.join(os.environ.get('LARECOMP_RANDO_SCRATCH') or out_dir, '.room_overlay')
     shutil.rmtree(overlay, ignore_errors=True)
     rc = os.path.join(overlay, 'region_common')
     os.makedirs(os.path.join(rc, 'level'))
@@ -327,6 +349,13 @@ def main():
     ent = None
     if tier == 1:
         settings['shuffle-dungeons'] = True
+    # mix-dungeon-entrances (with both levers on): the dungeons' front doors join the houses' pool instead of LAS's
+    # own dungeon swap (entrance_logic.dungeon_pool)
+    mix = tier >= 2 and bool(settings.get('shuffle-dungeons')) and bool(settings.get('mix-dungeon-entrances'))
+    if mix:
+        settings['shuffle-dungeons'] = False
+    else:
+        settings.pop('mix-dungeon-entrances', None)
     if tier >= 2:
         import random as _random
         import entrance_logic as el
@@ -334,9 +363,11 @@ def main():
         decoupled = bool(settings.get('entrance-decoupled', False))
         # (decoupled with the desert shut by the sleeping Walrus: its door, the Lanmola cave, stays vanilla - entrance_logic.pool)
         ent_doors = el.pool(ed, ('desert',) if decoupled and not settings.get('open-desert', True) else ())
-        ent_entry, ent_exit = el.shuffle(ent_doors, decoupled, _random.Random(f"{settings['seed']}-entrances"))
+        house_doors = ent_doors
+        if mix:
+            ent_doors = ent_doors + el.dungeon_pool(ed)
         extra = {k: list(v) for k, v in sanity_inside.items()}
-        lv_door = {d['dest_level']: d['id'] for d in ent_doors}
+        lv_door = {d['dest_level']: d['id'] for d in house_doors}
         for name, p in pot_locs.items():  # pots inside shuffled interiors follow their interior
             if p['level'] in lv_door:
                 extra.setdefault(lv_door[p['level']], []).append((name, 'break-pot'))
@@ -349,7 +380,7 @@ def main():
                 cextra.setdefault(lv_node[p['level']], []).append((name, 'break-pot'))
         pocket_at = el.pocket_of(cdoors)
 
-        def with_caves(cv):
+        def with_caves(cv, houses):
             lg = copy.deepcopy(logic_defs)
             n = el.apply_connector_logic(lg, ed, *cv, cextra) if cv[0] else 0
             # a bush / dig / apple tree / rock tile in a pocket (its door's screen, or its tiles on the screens beside it) needs it
@@ -358,26 +389,46 @@ def main():
                 pk = cv[0] and name in lg and pocket_at(b['room'], b.get('tile'))
                 if pk:
                     lg[name]['condition-basic'] = el._and(lg[name].get('condition-basic'), pk)
-            n += el.apply_logic(lg, ent_doors, ent_entry, ent_exit, extra)
+            n += el.apply_logic(lg, ent_doors, *houses, extra)
             if settings.get('hookshot-anything'):  # (its routes, on conditions the caves' logic replaced)
                 import hookshot_logic
                 hookshot_logic.apply(lg)
             return lg, n
 
         items = lambda lg: {k for k in el.reach_all(lg, item_defs, settings) if lg[k].get('type') == 'item'}
-        want = items(with_caves(([], {}, {}))[0])  # (no caves shuffled)
-        for attempt in range(100):  # re-roll a cave layout that loses a location even with every item
-            rng = _random.Random(f"{settings['seed']}-connectors" + (f'-{attempt}' if attempt else ''))
-            cave = (cdoors,) + el.shuffle(cdoors, decoupled, rng)
-            lg, moved = with_caves(cave)
-            if not want - items(lg):
-                break
-            print(f'caves: layout {attempt} loses', ', '.join(sorted(want - items(lg))[:6]), flush=True)
+        if mix:  # (every location the unshuffled doors reach: a door layout that loses one is re-rolled)
+            same = {d['id']: d['id'] for d in ent_doors}
+            whole = items(with_caves(([], {}, {}), (same, same))[0])
+        for house_try in range(40 if mix else 1):
+            ent_entry, ent_exit = el.shuffle(ent_doors, decoupled, _random.Random(
+                f"{settings['seed']}-entrances" + (f'-{house_try}' if house_try else '')), el.DUNGEON_DOORS if mix else ())
+            houses = (ent_entry, ent_exit)
+            want = items(with_caves(([], {}, {}), houses)[0])  # (no caves shuffled)
+            if mix and whole - want:
+                print(f'entrances: door layout {house_try} loses', ', '.join(sorted(whole - want)[:6]), flush=True)
+                continue
+            for attempt in range(100):  # re-roll a cave layout that loses a location even with every item
+                rng = _random.Random(f"{settings['seed']}-connectors" + (f'-{attempt}' if attempt else ''))
+                cave = (cdoors,) + el.shuffle(cdoors, decoupled, rng)
+                lg, moved = with_caves(cave, houses)
+                if not want - items(lg):
+                    break
+                print(f'caves: layout {attempt} loses', ', '.join(sorted(want - items(lg))[:6]), flush=True)
+            else:
+                if mix:
+                    continue
+                raise RuntimeError('no connector cave layout keeps every location reachable')
+            break
         else:
-            raise RuntimeError('no connector cave layout keeps every location reachable')
+            raise RuntimeError('no door layout keeps every location reachable')
         logic_defs.clear()
         logic_defs.update(lg)
         ent = (ent_doors + cave[0], {**ent_entry, **cave[1]}, {**ent_exit, **cave[2]})
+        if mix:  # (LAS's dungeon-entrances: door -> dungeon; the instrument / Fairy Queen warps: outside the exit door)
+            settings['mixed-dungeon-ways'], settings['dungeon-exits'] = el.dungeon_ways(ent_doors, ent_entry, ent_exit)
+            print('dungeon doors mixed in:', ', '.join(f'{d} -> {t}' for d, t in settings['mixed-dungeon-ways'].items()
+                                                         if d not in el.DUNGEON_DOORS.values()) or 'none behind house doors',
+                  flush=True)
         print('entrances:', len(ent_entry), 'doors +', len(cave[1]), 'cave doors shuffled,', moved, 'locations moved', flush=True)
 
     # ---- Dungeon room shuffle (Coupled / Decoupled): the layouts are planned first, the item logic follows them
@@ -555,6 +606,12 @@ def main():
     import hint_sheet  # the Hint Sheet's steps: progression items in playthrough order
     print('hint sheet steps:', hint_sheet.steps(sh.logic_defs, pl, settings, lambda k, acc: sh.checkAccess(k, acc, settings['logic']),
                                                 sph, out_dir), flush=True)
+    try:  # the spoiler's Route (presentation only: tools/rando/route.py)
+        import route
+        print('route:', route.build(sh.logic_defs, pl, settings, lambda k, acc: sh.checkAccess(k, acc, settings['logic']),
+                                    sph, out_dir), 'stops', flush=True)
+    except Exception as e:
+        print('route: skipped:', e, flush=True)
     if settings.get('hints'):  # owl statues and phone booths (tools/rando/seed_hints.py)
         import seed_hints
         print('hints:', seed_hints.pick(sh.logic_defs, pl, settings, lambda k, acc: sh.checkAccess(k, acc, settings['logic']),
@@ -794,6 +851,8 @@ def main():
         s['escape-bottle'] = True  # (runtime/hle/escape.c: older seeds keep three plain bottles)
         # the overworld door -> the dungeon it leads into (shuffle-dungeons; the tracker puts each dungeon's icon there)
         s['dungeon-entrances'] = dict(result['placements'].get('dungeon-entrances') or {})
+        s.pop('mixed-dungeon-ways', None)  # (mix-dungeon-entrances: in dungeon-entrances, door ids for house doors)
+        s.pop('dungeon-exits', None)
         s['hint-sheet'] = True  # (runtime/hle/hint_sheet.c: older seeds have no Hint Sheet)
         s['ghost-item'] = 'ghost' in pets  # (runtime/hle/pets.c: older seeds' Ghost follows Link)
         s['marin-stays'] = 'marin-companion' in pets  # (pets.py; runtime/hle/pets.c: older seeds' Marin leaves)

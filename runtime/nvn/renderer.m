@@ -14,12 +14,14 @@
 #include "maxwell/shader.h"
 #include "nvn.h"
 #include "renderer.h"
+#include "hud_stats.h"
 #include "pace.h"
 #include "interp.h"
 #include "shader_prep.h"
 #include "recolour.h"
 #include "slowframe.h"
 #include "weather.h"
+#include "output_scale.h"
 #include "../settings.h"
 
 static id<MTLDevice> dev;
@@ -283,6 +285,20 @@ static inline double now_ms(void) { return (double)clock_gettime_nsec_np(CLOCK_U
                                slow_note_build("pipeline", (uint64_t)((now_ms() - t0_) * 1e6)); r_; })
 
 static uint64_t stat_counters_gpu;  // timing counters given the GPU's time (the game's 30 / 60 fps choice)
+// Show advanced information (hud_stats.h): the counters above add up here each time renderer_stats empties them
+static uint64_t hud_draws, hud_passes, hud_dispatches, hud_compiles;
+static double hud_compile_ms;
+void renderer_hud(RendererHud *r) {
+    extern int g_tex_live;
+    extern uint64_t g_tex_live_bytes;
+    r->draws = hud_draws + stat_draws, r->passes = hud_passes + stat_passes, r->dispatches = hud_dispatches + stat_dispatches;
+    r->compiles = hud_compiles + (uint64_t)stat_compiles, r->compile_ms = hud_compile_ms + stat_compile_ms;
+    r->textures = g_tex_live, r->texture_bytes = g_tex_live_bytes;
+    r->gpu_bytes = dev ? (uint64_t)dev.currentAllocatedSize : 0;
+    static char name[128];
+    if (!name[0] && dev) snprintf(name, sizeof name, "%s", dev.name.UTF8String);
+    r->gpu_name = name, r->backend = "Metal";
+}
 const char *renderer_stats(void) {
     static int dumps;
     if (dumps++ < 3) {
@@ -300,6 +316,8 @@ const char *renderer_stats(void) {
              g_tex_live, g_tex_live_bytes / 1048576.0, g_views_live, (unsigned long)(g_snap_copies ? g_snap_copies.count : 0), (unsigned long long)stat_vcopy, stat_vcopy_bytes / 1024.0, foot / 1048576.0, stat_wait_by[0] / 24e3, (unsigned long long)stat_wait_n[0], stat_wait_by[1] / 24e3, (unsigned long long)stat_wait_n[1], stat_wait_by[2] / 24e3, (unsigned long long)stat_wait_n[2], (unsigned long long)stat_clears_as_load, (unsigned long long)stat_clear_passes,
              (unsigned long long)stat_counters_gpu, pace_is_slow() ? "30" : "60", (unsigned long long)pace_frames_over());
     stat_counters_gpu = 0;
+    hud_draws += stat_draws, hud_passes += stat_passes, hud_dispatches += stat_dispatches;  // (renderer_hud's totals)
+    hud_compiles += stat_compiles, hud_compile_ms += stat_compile_ms;
     stat_compiles = 0;
     stat_feedback_copies = 0;
     stat_compile_ms = 0;
@@ -658,7 +676,7 @@ void renderer_submit(void) {
             // (frame interpolation's replays count as the game's work: Dynamic budgets the frame and its in-betweens)
             uint64_t ns = renderer_gpu_busy(done, false);
             stat_gpu_s += ns / 1e9;
-            if (replay) { interp_replay_gpu((done.GPUEndTime - done.GPUStartTime) * 1e3); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
+            if (replay) { interp_replay_gpu(ns / 1e6); __atomic_add_fetch(&g_gpu_interp_ns, ns, __ATOMIC_RELAXED); }
             if (done.error) LOG("[metal] command buffer error: %s\n", done.error.localizedDescription.UTF8String);
         }];
         [c commit];
@@ -2297,6 +2315,8 @@ static void bind_textures(int stage, ShaderInfo *si) {
                 extern int texpatch_heart_kind(int id);
                 extern bool texpatch_is_item_cursor(int id);
                 int id = renderer_texpatch_of(e->tex);
+                extern void texpatch_note_draw(int id);
+                texpatch_note_draw(id);
                 if (!draw_bottle) draw_bottle = texpatch_bottle_kind(id);
                 if (texpatch_bottle_kind(id) == 1) {  // the Hint Sheet: the dungeon map's icon in place (hint_sheet.c)
                     extern bool hint_sheet_icon_draw(const float *ui, uint32_t ui_size);
@@ -3388,6 +3408,7 @@ static id prep_find_pipe(NSString *body) {
 }
 
 static bool wx_composite, wx_mirror;  // (draw_one: this draw is the scene composite - the weather goes on right after it)
+static bool pause_backdrop;  // (draw_one: the pause screen's blurred scene, runtime/hle/pause_fill.c)
 static NvnTexture *wx_depth;  // the frame's scene depth (the latest scene-camera draw's depth attachment)
 static uint64_t wx_depth_frame = ~0ull;
 static float wx_zn, wx_zf = 1;  // (its depth range: the viewport's)
@@ -3409,7 +3430,7 @@ static bool wx_dm1;  // (its depth mode: -1..1)
 static const char *sc_src =
     "#include <metal_stdlib>\n"
     "using namespace metal;\n"
-    "struct SF { float4 vp[4]; float4 ivp[4]; float4 screen, flags, zr, trail, tone; float shake[8]; };\n"
+    "struct SF { float4 vp[4]; float4 ivp[4]; float4 screen, flags, zr, trail, tone; float shake[8]; float4 lvp[4]; float4 shd, shz, shade; };\n"
     "struct SP { float4 a; float4 b; };\n"  // (SnowPrint: x y z t, ang side len wid)
     "static float3 world_at(constant SF &w, float2 uv, float d) {\n"  // the world point of the scene depth d at uv
     "  float2 m = float2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);\n"
@@ -3629,17 +3650,39 @@ static const char *sc_src =
     "  if (k <= 0.0) return none;\n"
     "  return float4(k, n.y, rough, sc_eye(w, (float2(q) + 0.5) * e, d));\n"
     "}\n"
+    // the game's cast shadow at world point p (1 lit .. 0 in shadow): its shadow map, read with the light's matrix
+    // from its shadow pass, as its lit shaders do (four compare taps one texel apart, each bilinear - soft edges)
+    "static float sc_shadow(constant SF &w, depth2d<float> sm, float3 p) {\n"
+    "  if (w.shd.x < 0.5) return 1.0;\n"
+    "  float4 q = float4(p, 1.0);\n"
+    "  float4 l = float4(dot(w.lvp[0], q), dot(w.lvp[1], q), dot(w.lvp[2], q), dot(w.lvp[3], q));\n"
+    "  l.xyz /= l.w;\n"
+    "  float2 uv = float2(l.x * 0.5 + 0.5, 0.5 - l.y * 0.5);\n"  // (the map's rows: the scene's convention, sc_fs' world_at)
+    "  if (w.flags.x > 0.5) uv.y = 1.0 - uv.y;\n"
+    "  float z = w.shd.y > 0.5 ? l.z * 0.5 + 0.5 : l.z;\n"
+    "  z = w.shz.x + w.shz.y * z - w.shz.z;\n"
+    "  if (any(uv <= 0.0) || any(uv >= 1.0) || z >= 1.0) return 1.0;\n"
+    "  float2 a = uv * w.shd.zw - 1.0, f = a - floor(a);\n"  // (the four taps' 2x2 texels overlap: 3x3 of them, weighed)
+    "  int2 i0 = int2(floor(a)), mx = int2(w.shd.zw) - 1;\n"
+    "  float3 wx = float3(1.0 - f.x, 1.0, f.x) * 0.5, wy = float3(1.0 - f.y, 1.0, f.y) * 0.5;\n"
+    "  float s = 0.0;\n"
+    "  for (int j = 0; j < 3; j++)\n"
+    "    for (int i = 0; i < 3; i++)\n"
+    "      s += (z <= sm.read(uint2(clamp(i0 + int2(i, j), int2(0), mx))) ? wx[i] * wy[j] : 0.0);\n"
+    "  return s;\n"
+    "}\n"
     // the cover at full resolution: the half-resolution pass' amount from its texels at this pixel's depth (bilinear,
     // weighed by how alike their depths are: no blur across an edge), then the exact per-pixel parts - characters
     // left alone, near-black pixels left alone, the footprints, the snow's light
     "fragment half4 sc_fs(VO in [[stage_in]], constant SF &w [[buffer(0)]], depth2d<float> dt [[texture(0)]],\n"
     "                     texture2d<float> tr [[texture(1)]], texture2d<uint> sv [[texture(2)]],\n"
-    "                     texture2d<float> hf [[texture(4)]], half4 dst [[color(0)]]) {\n"
+    "                     texture2d<float> hf [[texture(4)]], depth2d<float> smap [[texture(6)]], half4 dst [[color(0)]]) {\n"
     "  float2 uv = in.pos.xy / w.screen.xy;\n"
     "  int2 mx = int2(w.screen.zw) - 1;\n"
     "  int2 q = clamp(int2(uv * w.screen.zw), int2(0), mx);\n"
     "  uint4 sm = sv.read(uint2(q));\n"
     "  if (abs(w.trail.y - 2.0) < 0.5) return half4((sm.r & 0x80u) ? 1.0h : 0.0h, (sm.r & 1u) ? 1.0h : 0.0h, (sm.r & 0x40u) ? 1.0h : 0.0h, 1.0h);\n"  // (test)
+    "  if (abs(w.trail.y - 3.0) < 0.5 && dt.read(uint2(q)) < 0.99999) return half4(half3(sc_shadow(w, smap, world_at(w, (float2(q) + 0.5) / w.screen.zw, dt.read(uint2(q))))), 1.0h);\n"  // (test: the shadow term)
     "  if ((sm.r & 0xC0u) == 0x80u) return dst;\n"  // (the water, or anything else that isn't the level's: no snow on it)
     "  float d = dt.read(uint2(q));\n"
     "  if (d >= 0.99999) return dst;\n"
@@ -3731,6 +3774,14 @@ static const char *sc_src =
     // between leaf and gap), the slope, a soft unevenness
     "  float lit = mix(saturate(mc / w.tone.w), 0.8, rough * 0.7);\n"
     "  float3 col = w.tone.rgb * (0.45 + 0.55 * lit) * (0.85 + 0.15 * hv.y) * (0.96 + 0.06 * vnoise(pr * 3.0));\n"
+    // and the game's cast shadows on it (they all but vanished under the snow: the trees north of Mabe Village).
+    // The picture's brightness above can't carry them: it is the ground's colour times its light, and a lit dark
+    // grass reads as dim as a shadow on sand - so with the shadow map there it only adds a little shading, and the
+    // shadow itself is the map's, darker and cooler (the sky's light, never black)
+    "  if (w.shd.x > 0.5) {\n"
+    "    float sh = sc_shadow(w, smap, p);\n"
+    "    col = w.tone.rgb * (0.8 + 0.2 * lit) * (0.85 + 0.15 * hv.y) * (0.96 + 0.06 * vnoise(pr * 3.0)) * mix(w.shade.rgb, float3(1.0), sh);\n"
+    "  }\n"
     // near black: as drawn, or on open ground (a cast shadow, the shade under trees) snow as dark as the shadow - its
     // shape kept, the dark stones' colours under it gone. Never the lit snow's colour there: where the half pass' open
     // ground estimate is partial (the edge of a tree's shade) that left single grey pixels
@@ -3742,6 +3793,10 @@ static const char *sc_src =
 static NvnTexture *sc_color, *sc_depth;  // the scene pass's targets this frame (while its opaque things are drawn)
 static float sc_vp[16], sc_zn, sc_zf;
 static bool sc_dm1;
+static NvnTexture *sc_shmap;  // the game's shadow map this frame and the light's view-projection it was drawn with
+static float sc_lvp[16], sc_lzn, sc_lzf;  // (its shadow pass: vertex constant slot 1, 1024 bytes, as the scene's camera)
+static bool sc_ldm1;
+static uint64_t sc_lframe = ~0ull;
 static int sc_tree;  // this draw: a tree shaken bare, its slot 1..6 (stencil bits 1-3), 7 a face tree (Crazy
                      // Tracy's, the Tabahl Wasteland: no wall for the alcoves' test), 0: none
 static int sc_mark;  // this draw: 0 as the game has it, 1 the level's model (stencil bit 7 clear), 2 anything else (set),
@@ -3778,6 +3833,20 @@ static void snow_cover_encode(void) {
     sf.screen[3] = fminf((float)lroundf(sc_depth->height * dsy), (float)dt.height);
     sf.flags[0] = nvn_window_origin() == 0, sf.flags[1] = sc_dm1;
     sf.zr[0] = sc_zn, sf.zr[1] = sc_zf - sc_zn;
+    // the game's shadow map, drawn earlier this frame (none with Shadows Off: the cover keeps the picture's light).
+    // LARECOMP_SNOW_SHADOWS=0 (A/B tests): not read, the cover as before
+    static int shadows = -1;
+    if (shadows < 0) shadows = !getenv("LARECOMP_SNOW_SHADOWS") || atoi(getenv("LARECOMP_SNOW_SHADOWS"));
+    id<MTLTexture> smt = shadows && sc_lframe == renderer_exec_frame() && sc_shmap ? renderer_texture(sc_shmap, nil, true) : nil;
+    if (smt && (smt.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || smt.pixelFormat == MTLPixelFormatDepth32Float)) {
+        float lsx, lsy;
+        renderer_texture_scale(sc_shmap, &lsx, &lsy);
+        memcpy(sf.lvp, sc_lvp, sizeof sf.lvp);
+        sf.shd[0] = 1, sf.shd[1] = sc_ldm1;
+        sf.shd[2] = fminf((float)lroundf(sc_shmap->width * lsx), (float)smt.width);
+        sf.shd[3] = fminf((float)lroundf(sc_shmap->height * lsy), (float)smt.height);
+        sf.shz[0] = sc_lzn, sf.shz[1] = sc_lzf - sc_lzn;
+    } else smt = nil;
 
     static id<MTLLibrary> lib;
     static id<MTLRenderPipelineState> cover, stamp;
@@ -3960,6 +4029,7 @@ static void snow_cover_encode(void) {
     [e setFragmentTexture:trail atIndex:1];
     [e setFragmentTexture:sv atIndex:2];
     [e setFragmentTexture:half atIndex:4];
+    [e setFragmentTexture:smt ? smt : dt atIndex:6];  // (none: the scene depth stands in, unread)
     [e drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [e endEncoding];
     stat_passes++;
@@ -3994,6 +4064,13 @@ static void snow_cover_check(CmdRec *r, bool indexed, Prog *pr) {
     sc_mark = sc_tree = 0;
     uint64_t frame = renderer_exec_frame();
     if (sc_done == frame || !st.rt.depth) return;
+    NvnTexture *sd = st.rt.depth;  // (the shadow pass: its light, for the cover's shadows - first draw of the frame)
+    if (sc_lframe != frame && st.ubuf[0][1].addr && st.ubuf[0][1].size == 1024 &&
+        output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0)) {
+        memcpy(sc_lvp, (const float *)(uintptr_t)st.ubuf[0][1].addr, sizeof sc_lvp);
+        sc_lzn = st.depth_range[0][0], sc_lzf = st.depth_range[0][1], sc_ldm1 = nvn_depth_mode() == 0;
+        sc_shmap = sd, sc_lframe = frame;
+    }
     bool scene = st.rt.ncolor && st.rt.color[0] && st.rt.color[0]->width == wx_scene_w &&
                  st.rt.color[0]->height == wx_scene_h && st.rt.depth->format == 0x35;
     bool blended = st.rt.ncolor && (st.color_state[0] & 1);
@@ -4168,6 +4245,24 @@ static void draw_one(CmdRec *r, bool indexed) {
             if (composite) wx_scene_w = t0->width, wx_scene_h = t0->height;  // (the snow cover: the scene pass's size)
             extern void scene_size_log(bool composite, uint32_t sw, uint32_t sh, uint32_t w, uint32_t h);
             if (t0) scene_size_log(composite, t0->width, t0->height, st.rt.color[0]->width, st.rt.color[0]->height);
+        }
+        // the pause screen's backdrop (its blurred 192x108 copy of the scene, over the whole window): a composite drawn
+        // before it this frame is under it - the save screen draws the world behind it (runtime/hle/mirror.c)
+        if (!composite && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) && r->x[2] <= 6 &&
+            pr->fi->ntex == 1 && st.viewport[0][0] == 0 && st.viewport[0][1] == 0 &&
+            st.viewport[0][2] >= st.rt.color[0]->width && st.viewport[0][3] >= st.rt.color[0]->height) {
+            extern void mirror_scene_covered(void);
+            NvnTexture *t0 = shader_texture_object(1, &pr->fi->tex[0]);
+            if (t0 && t0->width == 192 && t0->height == 108) mirror_scene_covered();
+        }
+        // a fill over the whole screen (blended, untextured or a copy of the screen - a 16:9 render target): how much of
+        // the world and HUD it hides (runtime/hle/mirror.c)
+        if (!composite && (st.color_state[0] & 1) && st.rt.ncolor && st.rt.color[0] && renderer_texture_presented(st.rt.color[0]) &&
+            r->x[2] <= 6) {
+            extern void mirror_layout_fill(const float *u, uint64_t size);
+            NvnTexture *t0 = pr->fi->ntex ? shader_texture_object(1, &pr->fi->tex[0]) : NULL;
+            if (!pr->fi->ntex || (t0 && (t0->flags & 8) && t0->width * 9 == t0->height * 16))
+                mirror_layout_fill((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
         }
         wx_composite = composite;
         if (mirror_draw(composite)) {  // (the vertex flip mirrors a composite drawn with uvs, the fragment one a
@@ -4415,6 +4510,9 @@ static void draw_one(CmdRec *r, bool indexed) {
         static float last[3] = {0, 0, 0};
         float f[3] = {0, 0, 0};
         if ((st.poly[3] & 4) && !nobias) memcpy(f, st.poly_offset, sizeof f);
+        NvnTexture *sd = st.rt.depth;  // (the shadow map at another size than the game's: output_scale_shadow_slope)
+        if (f[0] && sd && output_scale_is_shadow_map(sd->target, sd->samples, sd->width, sd->height, sd->format, (sd->flags & 8) != 0))
+            f[0] *= output_scale_shadow_slope();
         if (decal_le) {  // (EPS in float units, 2^-24 at depth 0.5..1; a D16 buffer's unit is 2^-16)
             f[0] *= hw_scale;
             f[1] = f[1] * hw_scale - (st.rt.depth && st.rt.depth->format == 0x32 ? hw_eps / 256 : hw_eps);
@@ -4516,6 +4614,8 @@ static void draw_one(CmdRec *r, bool indexed) {
     extern bool pets_hide_item_cursor(void);  // (the cursor is on the companion card: runtime/hle/pets.c)
     if (draw_item_cursor && pets_hide_item_cursor()) { stat_skipped++; return; }
     vp_sx = pass_sx; vp_sy = pass_sy; vp_ox = 0; vp_oy = 0;
+    const void *hud_u = NULL;  // (runtime/hle/hud_corners.c: the window-wide uniforms of a UI draw)
+    float hud_k = 1, hud_ky = 1;
     if (fabsf(pass_sx - pass_sy) > 0.01f * pass_sy && st.rt.ncolor && renderer_texture_presented(st.rt.color[0])) {
         // Draws into the swapchain image: draws that sample the full-size reshaped scene (the final
         // composite, blurred menu backgrounds) and untextured full-screen fades fill the window; everything
@@ -4536,6 +4636,9 @@ static void draw_one(CmdRec *r, bool indexed) {
         // (single-texture draws only: the menu's frosted panels sample the same blurred copy but are UI pieces)
         if (fullscreen_quad && !reads_scene && pr->fi->ntex == 1 && (tex_sc[1][0][0] != 1 || tex_sc[1][0][1] != 1))
             reads_scene = true;
+        extern bool pause_fill_backdrop(int w, int h);
+        if (reads_scene && fullscreen_quad && pr->fi->ntex == 1 && pause_fill_backdrop(tex_wh[1][0][0], tex_wh[1][0][1]))
+            pause_backdrop = true;
         extern uint64_t renderer_present_count(void);
         static uint64_t wide_frame = ~0ull;  // the latest draw this frame filled the window (nothing boxed since)
         extern uint64_t renderer_exec_frame(void);  // (the frame being translated)
@@ -4549,6 +4652,12 @@ static void draw_one(CmdRec *r, bool indexed) {
             fade_fill = black || white;
         }
         bool composite = reads_scene || fade_fill || (fullscreen_fill && wide_frame == renderer_exec_frame());
+        if (!composite && fullscreen_quad) {  // (the pause screen's frosted layers over its blurred scene: the window too)
+            bool reshaped = false;
+            for (int i = 0; i < pr->fi->ntex && i < 64; i++) reshaped |= tex_sc[1][i][0] != 1 || tex_sc[1][i][1] != 1;
+            extern bool pause_fill_scene_pane(bool reshaped, const float *u, uint64_t size);
+            composite = pause_fill_scene_pane(reshaped, (const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size);
+        }
         if (!composite) wide_frame = ~0ull;
         static int log_fills = -1;  // LARECOMP_LOG_FILLS: every full-screen untextured fill (fs hash, colour cbuf, decision)
         if (log_fills < 0) log_fills = getenv("LARECOMP_LOG_FILLS") != NULL;
@@ -4579,15 +4688,43 @@ static void draw_one(CmdRec *r, bool indexed) {
             vp_ox = (pw - st.rt.color[0]->width * u) * 0.5f;
             vp_oy = (ph - st.rt.color[0]->height * u) * 0.5f;
         }
+
+        // (phones: the HUD at the screen corners, runtime/hle/hud_corners.c) UI in the box gets the window-wide viewport
+        // and rescaled uniforms; a scissor covering the target stays open for the bars
+        if (!composite && st.ubuf[0][0].addr) {
+            int pw_, ph_;
+            pass_size(&pw_, &ph_);
+            hud_k = (float)pw_ / (st.rt.color[0]->width * vp_sx), hud_ky = (float)ph_ / (st.rt.color[0]->height * vp_sy);
+            // (the pause screen's backdrop first: the HUD's stretch stays on for the pause screen's first frames, while
+            // the world still counts as on screen, and would keep the backdrop boxed until it went off)
+            extern const void *pause_fill_ubo(const float *u, uint64_t size, float k, float ky);
+            hud_u = pause_fill_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
+            extern const void *hud_corners_ubo(const float *u, uint64_t size, float k, float ky);
+            if (!hud_u) hud_u = hud_corners_ubo((const float *)(uintptr_t)st.ubuf[0][0].addr, st.ubuf[0][0].size, hud_k, hud_ky);
+        }
     }
     {   // camera-attached effects sized for 16:9 are widened with the view (runtime/hle/widescreen.c)
         extern float widescreen_effect_stretch(uint64_t fs_hash);
-        float k = widescreen_effect_stretch(g_cur_fs_hash);
+        float k = hud_u ? hud_k : widescreen_effect_stretch(g_cur_fs_hash);
         double vx = vp[0] * vp_sx + vp_ox, vw = vp[2] * vp_sx;
         if (k > 1.0f) { vx -= vw * (k - 1) / 2; vw *= k; }
-        E_viewport((MTLViewport){vx, vp[1] * vp_sy + vp_oy, vw, vp[3] * vp_sy, zn, zf});
+        double vy = vp[1] * vp_sy + vp_oy, vh = vp[3] * vp_sy;
+        if (hud_u && hud_ky > 1) { vy -= vh * (hud_ky - 1) / 2; vh *= hud_ky; }
+        E_viewport((MTLViewport){vx, vy, vw, vh, zn, zf});
+    }
+    int32_t hud_sc[4];
+    bool hud_open = hud_u && st.scissor[0][0] <= 0 && st.scissor[0][0] + st.scissor[0][2] >= (int32_t)st.rt.color[0]->width &&
+                    st.scissor[0][1] <= 0 && st.scissor[0][1] + st.scissor[0][3] >= (int32_t)st.rt.color[0]->height;
+    if (hud_open) {
+        memcpy(hud_sc, st.scissor[0], sizeof hud_sc);
+        st.scissor[0][0] = st.scissor[0][1] = -16384, st.scissor[0][2] = st.scissor[0][3] = 65536;
     }
     apply_scissor();
+    if (hud_open) memcpy(st.scissor[0], hud_sc, sizeof hud_sc);
+    if (hud_u) {  // (the uniforms were bound before the decision: slot 0 again, from the copy)
+        uint64_t hud_size = pr->vi->cbuf_size[cbuf_base] && pr->vi->cbuf_size[cbuf_base] < st.ubuf[0][0].size ? pr->vi->cbuf_size[cbuf_base] : st.ubuf[0][0].size;
+        E_cbuf(0, ring, ring_alloc(hud_u, hud_size), cbuf_base, -1, hud_size);
+    }
     if (pr->fi->uses_rscale) {  // [0] = render target scale, [1 + i] = scale of texture i
         float rs[66][4] = {{vp_sx, vp_sy, vp_ox, vp_oy}};  // [1 + i] = scale x, y, content part x, y of texture i
         for (int i = 0; i < pr->fi->ntex && i < 64; i++) {
@@ -5376,9 +5513,48 @@ static void weather_encode(void) {
     }
 }
 
+// (phones: the HUD at the screen corners, runtime/hle/hud_corners.c) a boxed room's bars, black after the scene composite
+static bool hud_bars_clear(void) {  // (false: not at the window's image yet, e.g. the dungeon title's offscreen text)
+    extern bool hud_corners_bars(uint64_t frame, int w, int h, int bar[4]);
+    extern uint64_t renderer_exec_frame(void);
+    if (!st.rt.ncolor || !st.rt.color[0] || !renderer_texture_presented(st.rt.color[0])) return false;
+    int w = (int)st.rt.color[0]->width, h = (int)st.rt.color[0]->height, bar[4];
+    if (!hud_corners_bars(renderer_exec_frame(), w, h, bar)) return true;
+    int32_t sc[4];
+    memcpy(sc, st.scissor[0], sizeof sc);
+    static const float black[4] = {0, 0, 0, 1};
+    if (bar[0] > 0) {
+        st.scissor[0][0] = 0, st.scissor[0][1] = 0, st.scissor[0][2] = bar[0], st.scissor[0][3] = h;
+        clear(0, 0, black, 0xF, false, 0, false, 0, 0);
+    }
+    if (bar[1] < w) {
+        st.scissor[0][0] = bar[1], st.scissor[0][1] = 0, st.scissor[0][2] = w - bar[1], st.scissor[0][3] = h;
+        clear(0, 0, black, 0xF, false, 0, false, 0, 0);
+    }
+    if (bar[2] > 0) {
+        st.scissor[0][0] = 0, st.scissor[0][1] = 0, st.scissor[0][2] = w, st.scissor[0][3] = bar[2];
+        clear(0, 0, black, 0xF, false, 0, false, 0, 0);
+    }
+    if (bar[3] < h) {
+        st.scissor[0][0] = 0, st.scissor[0][1] = bar[3], st.scissor[0][2] = w, st.scissor[0][3] = h - bar[3];
+        clear(0, 0, black, 0xF, false, 0, false, 0, 0);
+    }
+    memcpy(st.scissor[0], sc, sizeof sc);
+    return true;
+}
+
 static void draw(CmdRec *r, bool indexed) {
-    wx_composite = wx_mirror = false;
+    {   // Shadows Off (output_scale_shadow_off): nothing is drawn into the game's shadow map
+        NvnTexture *d = st.rt.depth;
+        if (d && output_scale_shadow_off() &&
+            output_scale_is_shadow_map(d->target, d->samples, d->width, d->height, d->format, (d->flags & 8) != 0)) return;
+    }
+    static bool hud_bars;  // (the scene composite was drawn, its bars not cleared yet)
+    extern bool hud_corners_active(void);
+    if (hud_bars && hud_bars_clear()) hud_bars = false;
+    wx_composite = wx_mirror = pause_backdrop = false;
     draw_one(r, indexed);
+    hud_bars = (hud_bars || wx_composite || pause_backdrop) && hud_corners_active();
     if (wx_composite) weather_encode();
 }
 
@@ -5472,7 +5648,7 @@ static id<MTLTexture> copy_raw_view(id<MTLTexture> t) {
 }
 
 static void draw_copy(id<MTLTexture> s, int sx0, int sy0, int sw, int sh, id<MTLTexture> d, int dx0, int dy0, int dw, int dh,
-                      bool linear) {
+                      bool linear, bool mirror_y) {
     static int raw = -1;  // LARECOMP_COPY_RAW_SRGB: copies move values unchanged (no sRGB decode/encode on either side)
     if (raw < 0) raw = getenv("LARECOMP_COPY_RAW_SRGB") != NULL;
     if (raw) { s = copy_raw_view(s); d = copy_raw_view(d); }
@@ -5501,7 +5677,7 @@ static void draw_copy(id<MTLTexture> s, int sx0, int sy0, int sw, int sh, id<MTL
     }
     id<MTLSamplerState> smp = linear ? lin : near;
     void (^copy)(void) = ^{
-        float r[4] = {(float)sx0 / s.width, (float)sy0 / s.height, (float)sw / s.width, (float)sh / s.height};
+        float r[4] = {(float)sx0 / s.width, (float)(mirror_y ? sy0 + sh : sy0) / s.height, (float)sw / s.width, (float)(mirror_y ? -sh : sh) / s.height};
         id<MTLRenderCommandEncoder> e = [cb() renderCommandEncoderWithDescriptor:rp];
         [e setRenderPipelineState:pipe];
         [e setViewport:(MTLViewport){dx0, dy0, dw, dh, 0, 1}];
@@ -5544,7 +5720,7 @@ static void copy_texture_to_buffer(const TexRefRec *src, uint64_t dst) {
         td.storageMode = MTLStorageModePrivate;
         id<MTLTexture> small = [dev newTextureWithDescriptor:td];
         tape_mute++;  // (replays make no readbacks)
-        draw_copy(tex, 0, 0, (int)lroundf(t->width * tsx), (int)lroundf(t->height * tsy), small, 0, 0, t->width, t->height, true);
+        draw_copy(tex, 0, 0, (int)lroundf(t->width * tsx), (int)lroundf(t->height * tsy), small, 0, 0, t->width, t->height, true, false);
         tape_mute--;
         tex = small;
     }
@@ -5646,8 +5822,11 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         }
         bool up = !up_nearest && (dw > sw || dh > sh);
         id<MTLTexture> sdepth = s;
-        if (s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8 || s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8)
-            sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
+        bool packed_ds = s.pixelFormat == MTLPixelFormatDepth32Float_Stencil8;
+#if !TARGET_OS_IPHONE
+        packed_ds |= s.pixelFormat == MTLPixelFormatDepth24Unorm_Stencil8;  // (macOS only; iOS never makes one)
+#endif
+        if (packed_ds) sdepth = [s newTextureViewWithPixelFormat:s.pixelFormat];
         id<MTLSamplerState> smp = up ? dlin : dnear;
         id<MTLDepthStencilState> dss = always;
         void (^copy)(void) = ^{
@@ -5687,7 +5866,10 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         }
         return;
     }
-    if (renderer_format_is_depth(dt->format) || (s.pixelFormat == d.pixelFormat && sw == dw && sh == dh && s.sampleCount == d.sampleCount)) {
+    // NVN's copy flag 8 mirrors the copy vertically. The game sets it when it grabs the world for a blurred background
+    // (Items screen, Game Over) and its shaders then read the grab upside down.
+    bool mirror_y = (flags & 8) && !renderer_format_is_depth(dt->format);
+    if (renderer_format_is_depth(dt->format) || (!mirror_y && s.pixelFormat == d.pixelFormat && sw == dw && sh == dh && s.sampleCount == d.sampleCount)) {
         void (^copy)(void) = ^{
             id<MTLBlitCommandEncoder> b = [cb() blitCommandEncoder];
             [b copyFromTexture:s sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(sx0, sy0, 0)
@@ -5699,7 +5881,7 @@ static void copy_texture(const TexRefRec *src, const TexRefRec *dst, uint64_t fl
         tape_block(copy);
         return;
     }
-    draw_copy(s, sx0, sy0, sw, sh, d, dx0, dy0, dw, dh, flags & 1);
+    draw_copy(s, sx0, sy0, sw, sh, d, dx0, dy0, dw, dh, flags & 1, mirror_y);
 }
 
 // ------------------------------------------------------------------ executor

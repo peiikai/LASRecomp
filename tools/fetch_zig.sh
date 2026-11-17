@@ -27,7 +27,10 @@ esac
 
 DL=build/zig-dl
 mkdir -p "$DL"
-[ -f "$DL/$NAME.$EXT" ] || curl -fL --proto '=https' -o "$DL/$NAME.$EXT" "https://ziglang.org/download/$VER/$NAME.$EXT"
+if [ ! -f "$DL/$NAME.$EXT" ]; then  # (a .part file until it's whole: a download cut off partway is fetched again)
+    curl -fL --proto '=https' -o "$DL/$NAME.$EXT.part" "https://ziglang.org/download/$VER/$NAME.$EXT"
+    mv "$DL/$NAME.$EXT.part" "$DL/$NAME.$EXT"
+fi
 GOT=$( (shasum -a 256 2>/dev/null || sha256sum) < "$DL/$NAME.$EXT" | cut -d' ' -f1)
 [ "$GOT" = "$SHA" ] || { echo "$NAME.$EXT: sha256 $GOT, expected $SHA"; exit 1; }
 rm -rf "$DL/$NAME" build/zig
@@ -35,7 +38,8 @@ if [ "$EXT" = zip ]; then unzip -q "$DL/$NAME.$EXT" -d "$DL"; else tar -xJf "$DL
 mv "$DL/$NAME" build/zig
 
 # size: only what compiling C for this same OS needs (the game code is built for the machine it runs on): its libc
-# headers and libc sources; no C++ runtimes (libcxx, libcxxabi) or sanitizers
+# headers and libc sources; no C++ runtimes (libcxx, libcxxabi) or sanitizers. (The iOS game code's Darwin headers
+# come with the iOS kit, tools/ios_kit.sh.)
 L=build/zig/lib
 case "${TARGET#*-}" in
     macos)   inc='darwin'; src='darwin' ;;

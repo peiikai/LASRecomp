@@ -293,6 +293,57 @@ def _items_page(gen, a):
 PATCHES[ITEMS_PAGE_SITE] = _items_page
 
 
+# Touch controls (runtime/ui/mobile/touch_controls.mm): main+0xee6f80 is the pause menu's update, once per frame on
+# every page and between them (the Items / Map / System pages' own updates are called from it; found by profiling
+# the System and Map pages against play). Its prologue reports that the pause menu is up.
+PAUSE_MENU_SITE = A.PAUSE_MENU_SITE
+
+
+def _pause_menu(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xd10383ff, hex(w)  # sub sp, sp, #0xe0
+    return ('{ extern void rt_pause_menu_tick(void); rt_pause_menu_tick(); c->sp -= 0xe0; }'
+            f'  /* {a:#x}: sub sp, sp, #0xe0 (pause menu shown) */')
+
+
+PATCHES[PAUSE_MENU_SITE] = _pause_menu
+
+
+# The Items page's cursor move: main+0xeb7fdc loads the cell the pressed direction leads to (the page's neighbour
+# table; 0x27 none). A tap on a cell (touch screens) asks for that cell there, so one press moves the cursor straight to
+# it through the game's own move (the old cell let go, the new one picked, its sound): rt_items_nav_pick.
+ITEMS_NAV_SITE = A.ITEMS_NAV_SITE
+
+
+def _items_nav(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0xb9400116, hex(w)  # ldr w22, [x8]
+    return ('{ extern uint32_t rt_items_nav_pick(uint32_t); c->x[22] = rt_items_nav_pick(LD32(c->x[8])); }'
+            f'  /* {a:#x}: ldr w22, [x8] (items page: the next cell) */')
+
+
+PATCHES[ITEMS_NAV_SITE] = _items_nav
+
+
+# The file select's cursor (main+0xe61040, each frame while it is shown): a list helper (main+0xe6b160) moves the cursor
+# byte (+0x159b0, the one before it at +0x159b1) up or down among the four files and says whether it moved; on a move
+# the game lets the old file go, picks the new one and plays its sound. A tap on a file (touch screens) puts the cursor
+# there right after the helper, so one press goes straight to it: rt_file_nav_pick.
+FILE_SELECT_NAV_SITE = A.FILE_SELECT_NAV_SITE
+
+
+def _file_select_nav(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x370003c0, hex(w)  # tbnz w0, #0, <moved>
+    t = a + ((w >> 5) & 0x3FFF) * 4
+    return (f'{{ extern int rt_file_nav_pick(uint64_t cursor, int moved); '
+            f'if (rt_file_nav_pick(c->x[19], (int)(c->x[0] & 1))) goto L_{t:x}; }}'
+            f'  /* {a:#x}: tbnz w0, #0 (file select: the cursor moved) */')
+
+
+PATCHES[FILE_SELECT_NAV_SITE] = _file_select_nav
+
+
 # Check tracker (runtime/ui/tracker_overlay.mm): main+0xe93800 runs once per frame only while the pause menu's
 # Map page is shown (fnprof diff of Map vs Items/System/closed). Its prologue reports that.
 MAP_PAGE_SITE = A.MAP_PAGE_SITE
@@ -576,6 +627,22 @@ def _hookshot_attr(gen, a):
 
 
 PATCHES[HOOKSHOT_ATTR_SITE] = _hookshot_attr
+
+
+# Hookshot 8-way aim (runtime/hle/hookshot.c, setting hookshot_8way): Link's hookshot action, on entering its Start state
+# (main+0xdbb760), computes his flat forward vector and stores it here (q0) as the direction it gives the hook
+# (main+0xd82a80, its only caller). The runtime can round q0 to the nearest of 8 directions first.
+HOOKSHOT_DIR_SITE = A.HOOKSHOT_DIR_SITE
+
+
+def _hookshot_dir(gen, a):
+    w = struct.unpack_from('<I', gen.nso.image, a - gen.base)[0]
+    assert w == 0x3d80be60, hex(w)  # str q0, [x19, #0x2f0]
+    return ('{ extern void rt_hookshot_dir(Cpu *); rt_hookshot_dir(c); memcpy((void *)(uintptr_t)(c->x[19] + 0x2f0), &c->v[0], 16); }'
+            f'  /* {a:#x}: str q0, [x19, #0x2f0] (hookshot firing direction) */')
+
+
+PATCHES[HOOKSHOT_DIR_SITE] = _hookshot_dir
 
 
 # 360-degree movement (runtime/hle/qol.c, setting move_360): main+0xded9f0 snaps Link's stick vector (s1 = x, s2 = y)
@@ -987,12 +1054,33 @@ SHAPE_SIM_SITES = [A.SHAPE_SIM_SITES_0, A.SHAPE_SIM_SITES_1]
 # so the effect plays where the item is.
 EFFECT_BONE_SITE = A.EFFECT_BONE_SITE
 
+# Text speed (issue #681, runtime/hle/text_speed.c). A message pane's text shows by playing a layout animation: its
+# frame is how much of the text is drawn. Each window opening (main+0xf53c80) sets the pane's step to 2 (pane+0x284;
+# times pane+0x280, frames per character unit). The pane's update (main+0xf534e0, every message layout's) plays the
+# animation at that step while its frame is short of the page's end and sets the frame to the end once it is there.
+# B mid-page sets the frame to the end too (main+0xf53b60). Fast scales the step; Instant takes the "at the end"
+# branch at once. The window's states (Reading, KeyWaiting, Selecting, TimerWaiting) still wait for the button or
+# timer as before.
+TEXT_RATE_SITE = A.TEXT_RATE_SITE  # str w8, [x0, #0x284]
+TEXT_SNAP_SITE = A.TEXT_SNAP_SITE  # b.lt: the frame is short of the page's end
+
 # ---- hook sites: the instruction stays as it is; just before it the runtime's rt_hook (runtime/hle/hooks.c) is asked
 # what to do - 0 run it, 1 the hook did it all, 2.. jump to the site's first.. target (each a label in its function).
 # The game code they generate never changes when a hook's behaviour does: only a new site needs the game code
 # rebuilt. New game-code changes go here, as a hook, unless they can't.
 # site -> (the instruction word, (jump targets...), what it's for)
+# Power-up music (powerup_music.c): the pickup starts BGM_NUTS directly. Four music paths independently check
+# Link's sound-disable bit at +0x1b8c; set it only in their local copies so normal music isn't muted or replaced.
+BUFF_MUSIC_PICKUP_SITE = A.BUFF_MUSIC_PICKUP_SITE
+BUFF_MUSIC_FLAGS_SITES = [A.BUFF_MUSIC_FLAGS_SITES_0, A.BUFF_MUSIC_FLAGS_SITES_1,
+                        A.BUFF_MUSIC_FLAGS_SITES_2, A.BUFF_MUSIC_FLAGS_SITES_3]
+
 HOOKS = {
+    BUFF_MUSIC_PICKUP_SITE: (0x97ccd77b, (), 'bl main+0xaf560: Guardian Acorn / Piece of Power music'),
+    BUFF_MUSIC_FLAGS_SITES[0]: (0xb95b8d15, (), 'ldr w21, [x8, #0x1b8c]: music update, power-up sound flag'),
+    BUFF_MUSIC_FLAGS_SITES[1]: (0xb95b8d14, (), 'ldr w20, [x8, #0x1b8c]: zone music, power-up sound flag'),
+    BUFF_MUSIC_FLAGS_SITES[2]: (0xb95b8d15, (), 'ldr w21, [x8, #0x1b8c]: event music, power-up sound flag'),
+    BUFF_MUSIC_FLAGS_SITES[3]: (0xb95b8d15, (), 'ldr w21, [x8, #0x1b8c]: power-up presentation, sound flag'),
     MB_SEEN_SITE: (0xf94002a8, (), 'ldr x8, [x21]: an actor seen - field mini-bosses (miniboss.c)'),
     CRASHOUT_SITE: (0xb900b81f, (A.CRASHOUT_SKIP,), 'str wzr, [x0, #0xb8]: Blaino knock-out, no crash-out on the Field'),
     GOHMA_HEADING_SITES[0]: (0xb915ee68, (), 'str w8, [x19, #0x15ec]: Gohma heading at Link on the Field'),
@@ -1018,4 +1106,6 @@ HOOKS = {
     SHAPE_SIM_SITES[0]: (0xaa0003f4, (A.SHAPE_SIM_SKIP_0,), 'mov x20, x0: a PhysX shape change, no update without its simulation object (#314)'),
     SHAPE_SIM_SITES[1]: (0xaa0003e1, (A.SHAPE_SIM_SKIP_1,), 'mov x1, x0: a PhysX shape change, no update without its simulation object (#314)'),
     EFFECT_BONE_SITE: (0xf9402ac0, (A.EFFECT_BONE_SKIP,), 'ldr x0, [x22, #0x50]: a bone-following effect without its bone, at the actor instead (#349)'),
+    TEXT_RATE_SITE: (0xb9028408, (), 'str w8, [x0, #0x284]: a message pane\'s text step, set as a window opens (#681)'),
+    TEXT_SNAP_SITE: (0x540002cb, (), 'b.lt: message text short of the page\'s end, Instant shows it all (#681)'),
 }

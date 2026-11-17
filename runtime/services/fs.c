@@ -21,6 +21,7 @@
 #include "../platform.h"
 #include "../game_addresses.h"
 #include "../romfs_build.h"
+#include "../ui/menu.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
 #define FS_PATH_EXISTS MAKE_RESULT(2, 2)
@@ -618,10 +619,7 @@ static void save_failed(HostFs *fs, const char *what, const char *path, int erro
     static bool told;
     if (told) return;
     told = true;
-    char text[1400];
-    snprintf(text, sizeof text, "Your game could not be saved (the game may still say it was). Your previous save "
-             "is unchanged.\n\nMake sure this folder can be written to and the disk has free space:\n%s", fs->root);
-    plat_notice(text);
+    menu_save_failed(fs->root);  // (the menu's notice, in its look)
 }
 
 static void sync_dir_of(const char *path) {

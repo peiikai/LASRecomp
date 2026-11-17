@@ -14,6 +14,7 @@ import android.content.res.AssetManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
 import android.provider.DocumentsContract;
 import android.system.ErrnoException;
 import android.system.Os;
@@ -45,8 +46,17 @@ public class LASRecompActivity extends SDLActivity {
             copyAssets("res", new File(getFilesDir(), "res"));
             Os.setenv("LARECOMP_NATIVE_LIB_DIR", getApplicationInfo().nativeLibraryDir, true);
             Os.setenv("LARECOMP_GEN_DIR", new File(getFilesDir(), "gen").getAbsolutePath(), true);
+            // the app's folder on a removable SD card, if one is in (runtime/ui/launcher.mm storage_rows: the data
+            // folder there or in internal storage, both usable by path without any permission)
+            String sd = "";
+            for (File f : getExternalFilesDirs(null))
+                if (f != null && Environment.isExternalStorageRemovable(f) &&
+                    Environment.MEDIA_MOUNTED.equals(Environment.getExternalStorageState(f))) { sd = f.getAbsolutePath(); break; }
+            Os.setenv("LARECOMP_ANDROID_SD_DIR", sd, true);
             File driver = customDriver();  // (runtime/nvn/vulkan/android_driver.c: none = the system's)
             Os.setenv("LARECOMP_VK_DRIVER", driver != null ? driver.getAbsolutePath() : "", true);
+            // (a screen of 600 dp or more: runtime/platform/android_storage.c, read while libmain loads)
+            Os.setenv("LARECOMP_ANDROID_TABLET", getResources().getConfiguration().smallestScreenWidthDp >= 600 ? "1" : "0", true);
             // the desktop's debug and test switches (docs/debug-hooks.md) from the launch, in debuggable builds only (the
             // activity is exported: in a release build any app could start it with switches set):
             //   adb shell am start -n com.lasrecomp.android/com.lasrecomp.LASRecompActivity --es LARECOMP_LOG_SKIPS 1
@@ -175,11 +185,49 @@ public class LASRecompActivity extends SDLActivity {
         return true;
     }
 
+    // ---- the start screen's update check (runtime/ui/launcher.mm update_thread; desktops run curl): GitHub's releases
+    // list into a file. Called on the check's own thread. False: offline, an error status, or anything unexpected.
+    public static boolean fetchUrl(String url, String path, String userAgent) {
+        java.net.HttpURLConnection c = null;
+        try {
+            c = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+            c.setConnectTimeout(15000);
+            c.setReadTimeout(15000);
+            c.setRequestProperty("Accept", "application/vnd.github+json");
+            c.setRequestProperty("User-Agent", userAgent);
+            if (c.getResponseCode() != 200) return false;
+            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(path)) {
+                byte[] buf = new byte[65536];
+                long total = 0;
+                for (int n; (n = in.read(buf)) > 0 && total < (8L << 20); total += n) out.write(buf, 0, n);
+            }
+            return true;
+        } catch (Exception e) {
+            Log.w("LASRecomp", "update check: " + e);
+            new File(path).delete();
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
+    // A Snapdragon (Adreno) phone: driver packages (Turnip) exist only for those (runtime/ui/launcher.mm driver_rows).
+    // Read from the system, as the dialog below comes up before any GPU works: SOC_MANUFACTURER "QTI" (Android 12+),
+    // else the qcom hardware name (Retroid Pocket 5: QTI, SM8250, qcom).
+    private static boolean snapdragon() {
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            String m = android.os.Build.SOC_MANUFACTURER;
+            if (m != null && (m.equalsIgnoreCase("QTI") || m.toLowerCase().contains("qualcomm"))) return true;
+        }
+        return "qcom".equalsIgnoreCase(android.os.Build.HARDWARE);
+    }
+
     private void showDriverError(String extra) {
         String msg = dlgText + (extra != null ? "\n\n" + extra : "");
         android.app.AlertDialog.Builder b = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
-            .setTitle("LAS Recomp").setMessage(msg).setCancelable(false)
-            .setPositiveButton("Choose a driver package", (d, w) -> {
+            .setTitle("LAS Recomp").setMessage(msg).setCancelable(false);
+        if (snapdragon())  // (elsewhere no package can help: Close, or back to the phone's own driver)
+            b.setPositiveButton("Choose a driver package", (d, w) -> {
                 Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 i.addCategory(Intent.CATEGORY_OPENABLE);
                 i.setType("*/*");
@@ -189,10 +237,10 @@ public class LASRecompActivity extends SDLActivity {
                     Log.e(TAG, "file picker: " + e);
                     showDriverError("The file picker couldn't open.");
                 }
-            })
-            .setNegativeButton("Close", (d, w) -> {
-                synchronized (dlgLock) { dlgDone = true; dlgLock.notifyAll(); }
             });
+        b.setNegativeButton("Close", (d, w) -> {
+            synchronized (dlgLock) { dlgDone = true; dlgLock.notifyAll(); }
+        });
         File[] custom = new File(getExternalFilesDir(null), "drivers").listFiles((dir, n) -> n.endsWith(".so") || n.endsWith(".zip"));
         if (custom != null && custom.length > 0)
             b.setNeutralButton("Use the phone's own driver", (d, w) -> {
@@ -201,6 +249,51 @@ public class LASRecompActivity extends SDLActivity {
                 restartApp();
             });
         b.show();
+    }
+
+    // The touch layer's text prompt (plat_touch_prompt): a dialog with a text field over the game, from any thread.
+    private android.app.AlertDialog prompt;
+
+    public void showPrompt(int serial, String title, String hint, byte[] initial, int maxLen, String ok, String cancel) {
+        runOnUiThread(() -> {
+            closePromptNow();
+            android.app.AlertDialog.Builder db = new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
+            android.widget.EditText f = new android.widget.EditText(db.getContext());  // (the dialog's dark look)
+            f.setSingleLine(true);
+            f.setTextColor(0xFFFFFFFF);
+            f.setHintTextColor(0x99FFFFFF);
+            f.setHint(hint);
+            f.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+            f.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);  // (landscape: the keyboard's own full-screen field, no room for the dialog's)
+            if (maxLen > 0) f.setFilters(new android.text.InputFilter[] {new android.text.InputFilter.LengthFilter(maxLen)});
+            f.setText(new String(initial, java.nio.charset.StandardCharsets.UTF_8));
+            f.selectAll();
+            int pad = (int)(20 * getResources().getDisplayMetrics().density);
+            android.widget.FrameLayout box = new android.widget.FrameLayout(db.getContext());
+            box.setPadding(pad, pad / 2, pad, 0);
+            box.addView(f);
+            android.app.AlertDialog d = db
+                .setTitle(title).setView(box)
+                .setPositiveButton(ok, (x, w) -> { prompt = null; nativePromptDone(serial, f.getText().toString().getBytes(java.nio.charset.StandardCharsets.UTF_8)); })
+                .setNegativeButton(cancel, (x, w) -> { prompt = null; nativePromptDone(serial, null); })
+                .setOnCancelListener(x -> { prompt = null; nativePromptDone(serial, null); })
+                .create();
+            f.setOnEditorActionListener((v, action, e) -> {
+                if (action != android.view.inputmethod.EditorInfo.IME_ACTION_DONE) return false;
+                d.getButton(android.app.AlertDialog.BUTTON_POSITIVE).performClick();
+                return true;
+            });
+            d.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE);
+            prompt = d;
+            d.show();
+        });
+    }
+
+    public void closePrompt() { runOnUiThread(this::closePromptNow); }
+
+    private void closePromptNow() {
+        if (prompt != null) prompt.dismiss();
+        prompt = null;
     }
 
     // Starts the app again (a new process: the driver is chosen at start). Started while the app is in front (an alarm
@@ -308,6 +401,7 @@ public class LASRecompActivity extends SDLActivity {
 
     static native void nativeFolderPicked(String uri);  // null: cancelled
     static native void nativeFilesPicked(String[] paths);  // empty: cancelled, null: no file picker
+    static native void nativePromptDone(int serial, byte[] text);  // null: cancelled
     static native void nativeImportProgress(long done, long total);
     static native boolean nativeImportCancelled();
 
@@ -444,6 +538,10 @@ public class LASRecompActivity extends SDLActivity {
         return out;
     }
 
+    // A Mac's hidden files beside the game's: ._<name> (a file's metadata on a drive that isn't the Mac's own, such as an
+    // SD card) and .DS_Store. Not the game's, so not copied: the seed generator read ._Lv07EagleTower.bntx as a dungeon.
+    private static boolean macJunk(String name) { return name.startsWith("._") || name.equals(".DS_Store"); }
+
     private static Doc child(List<Doc> kids, String name) {
         for (Doc d : kids) if (d.name.equals(name)) return d;
         return null;
@@ -460,6 +558,7 @@ public class LASRecompActivity extends SDLActivity {
         if (found[1] == null && rc != null && rc.isDir()) found[1] = dir;
         for (Doc k : kids) {
             String n = k.name.toLowerCase();
+            if (macJunk(k.name)) continue;
             if (n.endsWith(".xci") || n.endsWith(".nsp") || n.endsWith(".nca") || n.endsWith(".nsz") || n.endsWith(".xcz"))
                 unusable = true;
         }
@@ -469,7 +568,7 @@ public class LASRecompActivity extends SDLActivity {
 
     private long treeBytes(Uri tree, Doc dir) {
         long n = 0;
-        for (Doc k : children(tree, dir.id)) n += k.isDir() ? treeBytes(tree, k) : k.size;
+        for (Doc k : children(tree, dir.id)) n += macJunk(k.name) ? 0 : k.isDir() ? treeBytes(tree, k) : k.size;
         return n;
     }
 
@@ -480,6 +579,7 @@ public class LASRecompActivity extends SDLActivity {
         byte[] buf = new byte[1 << 20];
         for (Doc k : children(tree, dir.id)) {
             if (nativeImportCancelled()) return false;
+            if (macJunk(k.name)) continue;
             File dst = new File(to, k.name);
             if (k.isDir()) {
                 if (!copyTree(tree, k, dst)) return false;

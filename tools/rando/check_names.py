@@ -116,8 +116,11 @@ def display_name(name, kind=None, area=None, where=None):
     m = re.match(r'trendy-prize-(\d+)$', name)
     if m:
         return f'Trendy Game: prize {m.group(1)}'
+    m = re.match(r'shop-slot(\d)-(2nd|3rd)$', name)  # (a shelf's next item once the first is bought)
+    if m:
+        return f"Town Tool Shop: shelf {m.group(1)}, {'second' if m.group(2) == '2nd' else 'third'} item"
     m = re.match(r'(D\d)-(.*)$', name)
-    if m and not m.group(2).startswith('pot-'):
+    if m and not re.match(r'pot-\d\d[A-P]-', m.group(2)):  # (potsanity's numbered pots: their own wording)
         return spelled(m.group(2))
     if kind in KIND_WORD:
         parts = [KIND_WORD[kind]]

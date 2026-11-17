@@ -387,11 +387,10 @@ int input_pad_family(void) {
     return env >= 0 ? env : pad_family;
 }
 
-// Our menus' face buttons: the family whose button names they show, and (Confirm button = Controller convention, #172)
-// whose layout they use - Nintendo (0): the right button confirms, the bottom one goes back; Xbox / PlayStation
-// (1 / 2): the bottom one confirms, the right one goes back (runtime/ui/pad_nav.mm). "Button icons"
-// forced to a style wins (icons and menus agree); Auto: the controller `which` that pressed (0, or not a connected
-// gamepad - a test's pushed press: the game's controller / the first connected one, else Nintendo).
+// Our menus' button names: the family whose words the hints use (which button confirms is the Confirm button
+// setting's alone, runtime/ui/pad_nav.mm). "Button icons" forced to a style wins (hints and the game's icons agree);
+// Auto: the controller `which` that pressed (0, or not a connected gamepad - a test's pushed press: the game's
+// controller / the first connected one, else Nintendo).
 int input_menu_family(SDL_JoystickID which) {
     switch (g_settings.prompts) {
     case PROMPTS_NINTENDO: return 0;
@@ -451,6 +450,21 @@ static void open_pad(SDL_JoystickID id) {
 #endif
 }
 
+bool input_gamepad_connected(void) { return pad != NULL; }
+
+// touch screens: the on-screen controls (runtime/ui/mobile/touch_controls.mm)
+#if PLAT_TOUCH
+bool touch_handle_event(const SDL_Event *e);
+uint64_t touch_buttons(void);
+void touch_stick(int32_t *lx, int32_t *ly);
+void touch_pad_used(void);
+#else
+static bool touch_handle_event(const SDL_Event *e) { (void)e; return false; }
+static uint64_t touch_buttons(void) { return 0; }
+static void touch_stick(int32_t *lx, int32_t *ly) { *lx = *ly = 0; }
+static void touch_pad_used(void) {}
+#endif
+
 void input_handle_event(const SDL_Event *e) {
     static bool scanned;  // pads present at startup: their ADDED event may have gone to the start screen's loop
     if (!scanned) {
@@ -460,6 +474,7 @@ void input_handle_event(const SDL_Event *e) {
         for (int i = 0; ids && i < n; i++) open_pad(ids[i]);
         SDL_free(ids);
     }
+    if (touch_handle_event(e)) return;
     switch (e->type) {
     case SDL_EVENT_KEY_DOWN: case SDL_EVENT_KEY_UP: {
         if (e->type == SDL_EVENT_KEY_DOWN && e->key.scancode == SDL_SCANCODE_F9 && !e->key.repeat) g_debug_frame_request = 1;
@@ -473,6 +488,7 @@ void input_handle_event(const SDL_Event *e) {
     }
     case SDL_EVENT_GAMEPAD_ADDED:
         open_pad(e->gdevice.which);
+        if (pad && SDL_GetGamepadID(pad) == e->gdevice.which) touch_pad_used();  // (the touch controls hide)
         break;
     case SDL_EVENT_GAMEPAD_REMOVED: {
         SDL_Gamepad *g = SDL_GetGamepadFromID(e->gdevice.which);
@@ -501,6 +517,7 @@ void input_handle_event(const SDL_Event *e) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN: case SDL_EVENT_GAMEPAD_BUTTON_UP:
         if (e->gbutton.down && e->gbutton.which != TEST_DEVICE && !host_test) use_pad(e->gbutton.which, " (switched)");
         if (pad && e->gbutton.which != TEST_DEVICE && e->gbutton.which != SDL_GetGamepadID(pad)) break;  // (another pad)
+        if (e->gbutton.down && !host_test) touch_pad_used();  // (the touch controls hide)
         if (!host_test || e->gbutton.which == TEST_DEVICE) {  // (the press as the event has it, before reading the pad)
             uint64_t b = pad_bits(e->gbutton.button);
             note_press(e->gbutton.down ? b : 0, e->gbutton.down ? 0 : b);
@@ -527,6 +544,8 @@ void input_handle_event(const SDL_Event *e) {
             }
         }
         recompute_pad();
+        // the controller in use (a stick or trigger well off centre - not drift; a press: above): the touch controls hide
+        if (abs(e->gaxis.value) > 12000) touch_pad_used();
         break;
     }
 }
@@ -564,6 +583,7 @@ static void push_key(SDL_Scancode sc, SDL_Keymod mod, bool down) {
     SDL_PushEvent(&e);
 }
 uint32_t g_window_resize_request;  // (W << 16 | H: menu_apply_window_requests applies it)
+uint64_t g_window_move_request;    // ((x + 32768) << 16 | (y + 32768), bit 63 set: a move to x,y - another display in tests)
 static void test_push(uint64_t frame, unsigned long start, unsigned long len, const char *dev, const char *arg) {
     SDL_Event e;
     memset(&e, 0, sizeof e);
@@ -572,6 +592,14 @@ static void test_push(uint64_t frame, unsigned long start, unsigned long len, co
         if (frame == start && sscanf(arg, "%ux%u", &w, &h) == 2 && w && h && w < 65536 && h < 65536) {
             LOG("[input] test: window to %ux%u\n", w, h);
             __atomic_store_n(&g_window_resize_request, w << 16 | h, __ATOMIC_RELAXED);
+        }
+        return;
+    }
+    if (!strcmp(dev, "move")) {
+        int x = 0, y = 0;
+        if (frame == start && sscanf(arg, "%d/%d", &x, &y) == 2 && abs(x) < 32768 && abs(y) < 32768) {
+            LOG("[input] test: window moved to %d,%d\n", x, y);
+            __atomic_store_n(&g_window_move_request, 1ull << 63 | (uint64_t)(unsigned)(x + 32768) << 16 | (unsigned)(y + 32768), __ATOMIC_RELAXED);
         }
         return;
     }
@@ -675,7 +703,7 @@ static void host_test_frame(uint64_t frame) {
             char dev[8] = "", name[400] = "";
             if (sscanf(tok, "%lu:%7[a-z]:%399[^:]:%lu", &start, dev, name, &len) < 3) continue;
             if (!strcmp(dev, "type") || !strcmp(dev, "sdlpad") || !strcmp(dev, "sdlaxis") || !strcmp(dev, "sdlkey") || !strcmp(dev, "shot") ||
-                !strcmp(dev, "resize") || !strcmp(dev, "mouse")) {
+                !strcmp(dev, "resize") || !strcmp(dev, "move") || !strcmp(dev, "mouse")) {
                 test_push(frame, start, len, dev, name);
                 continue;
             }
@@ -801,11 +829,13 @@ void input_frame(uint64_t frame) {
     script_rx = rx;
     script_ry = ry;
 }
+// (touch_controls.mm, LARECOMP_TOUCH_SHOW_INPUT: the scripted presses drawn on the on-screen controls)
+void input_script_state(uint64_t *buttons, int32_t *lx, int32_t *ly) { *buttons = script_buttons, *lx = script_lx, *ly = script_ly; }
 
 extern bool menu_input_captured(void);  // runtime/ui/menu.mm: overlay menu or name entry up (it has the keys / pad)
 
 // Buttons held right now (keyboard, gamepad, test script), independent of whether the game polls (movies).
-uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons) | script_buttons; }
+uint64_t input_buttons_now(void) { return (menu_input_captured() ? 0 : key_buttons | pad_buttons | touch_buttons()) | script_buttons; }
 
 static int32_t clamp_axis(int32_t v) { return v > 32767 ? 32767 : v < -32767 ? -32767 : v; }
 
@@ -849,7 +879,7 @@ static void fill_state(Cpu *c) {
         LOG("[input] watching controller object %llx\n", c->x[1] - 8);
     }
     bool menu = menu_input_captured();  // the overlay menu / name entry has the controls (typing there isn't for the game)
-    uint64_t held = key_buttons | pad_buttons;
+    uint64_t held = key_buttons | pad_buttons | touch_buttons();
     atomic_fetch_and(&press_unseen, ~held);  // (the game sees these now)
     static uint64_t tap, tap_frame;  // (pressed and released since the last poll: held for the rest of this frame)
     {
@@ -867,7 +897,9 @@ static void fill_state(Cpu *c) {
         if (g_inject_plus > 0) { until = renderer_present_count() + 10; g_inject_plus = 0; }
         if (renderer_present_count() < until) b |= 1ull << BTN_PLUS;
     }
-    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly) + script_ly);
+    int32_t tlx, tly;
+    touch_stick(&tlx, &tly);
+    int32_t lx = clamp_axis((menu ? 0 : key_lx + pad_lx + tlx) + script_lx), ly = clamp_axis((menu ? 0 : key_ly + pad_ly + tly) + script_ly);
     int32_t rx = clamp_axis((menu ? 0 : key_rx + pad_rx) + script_rx), ry = clamp_axis((menu ? 0 : key_ry + pad_ry) + script_ry);
     if (!menu) {  // d-pad items (setting): the Items page assigns, play uses (runtime/hle/dpad_items.c; before mirroring:
         extern uint64_t dpad_items_input(uint64_t b);  // the d-pad as held)

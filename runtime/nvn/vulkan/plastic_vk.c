@@ -154,11 +154,15 @@ void vk_plastic_draw(VkCommandBuffer cb, const void *push, uint32_t size, int x,
     }
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, piece_pipe);
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, piece_layout, 0, 1, &piece_set, 0, NULL);
-    VkViewport vp = {0, 0, vw, vh, 0, 1};
-    VkRect2D sc = {{x, y}, {w, h}};
+    VkViewport vp = vk_sc_viewport(0, 0, vw, vh);  // (the swapchain's pre-rotation: device.c; the turn itself is f1.w below)
+    VkRect2D sc = vk_sc_rect(x, y, w, h);
     vkCmdSetViewport(cb, 0, 1, &vp);
     vkCmdSetScissor(cb, 0, 1, &sc);
-    vkCmdPushConstants(cb, piece_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size, push);
+    float pc[28];  // (runtime/ui/plastic.mm: 7 vec4; f1.w, its last float, unused there, carries the quarter turns)
+    if (size > sizeof pc) size = sizeof pc;
+    memcpy(pc, push, size);
+    if (size == sizeof pc) pc[27] = (float)g_vk.sc_quarter;
+    vkCmdPushConstants(cb, piece_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, size, pc);
     if (g_vk.vids && g_vk.set_vertex_input) g_vk.set_vertex_input(cb, 0, NULL, 0, NULL);
     for (int i = 0; i < (repeat < 1 ? 1 : repeat); i++) vkCmdDraw(cb, 4, 1, 0, 0);
 }

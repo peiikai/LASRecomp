@@ -57,20 +57,50 @@ with tempfile.TemporaryDirectory() as directory:
     # likewise the resolution: Match display until the player picks one (also on integrated GPUs); a saved one is kept
     for lines, mode, saved in [(['resolution = auto'], 'res-auto', 'auto'), (['volume = 1'], 'res-auto', 'auto'),
                                (['resolution = match'], 'res-chosen', 'match'), (['resolution = 1x'], 'res-chosen', '1x'),
-                               (['resolution = 75%'], 'res-chosen', '75%'), (['resolution = dynamic'], 'res-chosen', 'dynamic')]:
+                               (['resolution = 75%'], 'res-chosen', '75%'), (['resolution = dynamic'], 'res-chosen', 'match')]:
         ini = directory / 'test.ini'
         ini.write_text('\n'.join(lines) + '\n')
         env = dict(os.environ, LARECOMP_SETTINGS=str(ini))
         env.pop('LARECOMP_INTEGRATED', None)
         subprocess.run([str(exe), mode], env=env, check=True, capture_output=True)
         assert f'resolution = {saved}\n' in ini.read_text(), (lines, ini.read_text())
+        # (Dynamic was a resolution in older files: it's its own toggle now, over Match display)
+        assert f'dynamic_resolution = {int(lines == ["resolution = dynamic"])}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
+    # Shadows (issue #602): Default unless the file says 0.5x, 2x, 3x, 4x or off ("high" from earlier test builds is 2x)
+    for lines, saved in [([], 'default'), (['shadows = default'], 'default'), (['shadows = 2x'], '2x'), (['shadows = 3x'], '3x'),
+                         (['shadows = 4x'], '4x'), (['shadows = off'], 'off'), (['shadows = 0.5x'], '0.5x'), (['shadows = high'], '2x'), (['shadows = ultra'], 'default')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(['resolution = 1x'] + lines) + '\n')
+        subprocess.run([str(exe), 'res-chosen'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
+        assert f'shadows = {saved}\n' in ini.read_text(), (lines, ini.read_text())
+        count += 1
+    # Power-up music stays vanilla in old files; either explicit choice survives a roundtrip.
+    for lines, value in [([], 1), (['powerup_music = 0'], 0), (['powerup_music = 1'], 1)]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'powerup_music = {value}\n' in ini.read_text()
+        count += 1
+    # Text speed (#681): Normal in old files and for an unknown value; Fast and Instant survive a roundtrip.
+    for lines, value in [([], 'normal'), (['text_speed = fast'], 'fast'), (['text_speed = instant'], 'instant'),
+                         (['text_speed = normal'], 'normal'), (['text_speed = turbo'], 'normal')]:
+        ini = directory / 'test.ini'
+        ini.write_text('\n'.join(lines) + '\n')
+        subprocess.run([str(exe), 'res-auto'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)),
+                       check=True, capture_output=True)
+        assert f'text_speed = {value}\n' in ini.read_text(), (lines, ini.read_text())
         count += 1
     # Cosmetics colour rows (shared palette): older names map onto it, Custom is a hex value, unknown -> Default
     ini = directory / 'test.ini'
-    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\n')
+    # (grass and walls have no Black: an older Black there loads as Gray; other rows keep it)
+    ini.write_text('tunic = Yellow\nhearts = Pink\nhair = #12ab34\nshield = Sparkly\nskin = Random\ngrass = Black\n'
+                   'walls = Black\nsand = Black\n')
     subprocess.run([str(exe), 'colours'], env=dict(os.environ, LARECOMP_SETTINGS=str(ini)), check=True, capture_output=True)
     saved = ini.read_text()
-    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random']:
+    for line in ['tunic = Gold', 'hearts = Pink', 'hair = #12AB34', 'shield = Default', 'skin = Random', 'grass = Gray',
+                 'walls = Gray', 'sand = Black']:
         assert line + '\n' in saved, (line, saved)
     count += 1
     # the Randomizer tab's New seed options: an older file without the key stays without it (the defaults)

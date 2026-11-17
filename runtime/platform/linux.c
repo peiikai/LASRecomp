@@ -301,6 +301,14 @@ uint64_t plat_now_ns(void) {
     return (uint64_t)ts.tv_sec * 1000000000u + (uint64_t)ts.tv_nsec;
 }
 
+uint64_t plat_mem_used_bytes(void) {  // (resident pages: /proc/self/statm's second field)
+    FILE *f = fopen("/proc/self/statm", "r");
+    unsigned long long size = 0, res = 0;
+    bool ok = f && fscanf(f, "%llu %llu", &size, &res) == 2;
+    if (f) fclose(f);
+    return ok ? res * (uint64_t)sysconf(_SC_PAGESIZE) : 0;
+}
+
 uint64_t plat_thread_cpu_ns(void) {
     struct timespec ts;
     return clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0 ? (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec : 0;
@@ -535,7 +543,7 @@ static void log_to_file_without_terminal(void) {
     pthread_t t;
     if (pthread_create(&t, NULL, log_pump, (void *)(intptr_t)p[0]) == 0) pthread_detach(t);
 #else
-    if (isatty(STDERR_FILENO)) return;
+    if (isatty(STDERR_FILENO) && !g_cli) return;  // (a command-line run logs from a terminal too: plat_cli_begin)
     char dir[900];
     if (!rt_data_root_early(dir, sizeof dir)) return;  // dev mode: wherever stderr goes already
     for (char *c = dir + 1; *c; c++)
@@ -544,6 +552,10 @@ static void log_to_file_without_terminal(void) {
     session_log_open(dir, g_log_path, sizeof g_log_path);
 #endif
 }
+
+void plat_cli_begin(void) { cli_keep_stderr(); }
+bool plat_cli_write(const char *s, size_t n) { return cli_write(s, n, g_log_path[0] != 0); }
+bool plat_cli_tty(void) { return g_cli_isatty && g_log_path[0]; }
 
 #if defined(__x86_64__)
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
@@ -675,8 +687,12 @@ static char **self_argv(void) {
 
 void plat_exec(char *const argv[]) {
 #ifdef __ANDROID__
+    // (an app process can't replace itself: the activity starts the app again and ends this process - argv isn't
+    // used, a new process starts as the launcher icon would. Still here after a while: the caller reports the failure)
     (void)argv;
-    return;  // (an app process can't replace itself: the caller reports the failure)
+    extern bool android_call(const char *method);
+    if (android_call("restartApp")) sleep(10);
+    return;
 #endif
     if (argv) { execv(argv[0], argv); return; }
     char path[4096];
@@ -713,19 +729,6 @@ void plat_fatal_notice(void) {
     }
 #endif
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "LAS Recomp", text, NULL);
-}
-
-static void *notice_thread(void *text) {
-    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, "LAS Recomp", text, NULL);
-    free(text);
-    return NULL;
-}
-void plat_notice(const char *text) {
-    if (!g_log_path[0]) return;
-    pthread_t t;
-    char *copy = strdup(text);
-    if (copy && !pthread_create(&t, NULL, notice_thread, copy)) pthread_detach(t);
-    else free(copy);
 }
 
 bool plat_module_name(uint64_t pc, char *out, size_t n) {
@@ -846,7 +849,7 @@ static int rm_entry(const char *path, const struct stat *sb, int flag, struct FT
     return remove(path) == 0 || errno == ENOENT ? 0 : -1;  // (gone already: e.g. a ._ file macOS removed with its folder on exFAT)
 }
 bool plat_remove_tree(const char *dir) { return nftw(dir, rm_entry, 16, FTW_DEPTH | FTW_PHYS) == 0; }
-bool plat_onedrive_synced(const char *dir) { (void)dir; return false; }
+const char *plat_cloud_synced(const char *dir) { (void)dir; return NULL; }
 
 // End the process at once, skipping the library teardown: as on Windows, the GPU driver's threads crashed in exit()
 // while the game's threads still submitted work.

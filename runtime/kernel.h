@@ -4,8 +4,11 @@
 
 #include "rt.h"
 
-#define STACK_BASE (GUEST_LO + 0x0200000000ull)
+#define STACK_BASE GUEST_STACK_BASE  // (runtime/rt.h, with the rest of the layout)
 #define STACK_SIZE 0x0040000000ull
+_Static_assert(ALIAS_OFF >= GUEST_STACK_OFF + STACK_SIZE || ALIAS_OFF + ALIAS_SIZE <= GUEST_STACK_OFF,
+               "the stacks run into the alias region");
+_Static_assert(GUEST_STACK_OFF + STACK_SIZE <= GUEST_SIZE, "the stacks run past the window's end");
 
 typedef enum { KOBJ_THREAD = 1, KOBJ_EVENT, KOBJ_SESSION, KOBJ_SHMEM, KOBJ_TMEM } KType;
 typedef enum { WAIT_NONE = 0, WAIT_MUTEX, WAIT_CONDVAR, WAIT_ARBITER } WaitKind;
@@ -75,4 +78,6 @@ void kernel_dump_threads(const char *prefix);
 // The renderer's part of the hang dump (runtime/nvn/rqueue.c), called from the hang watch thread every second:
 // check fills why and returns true when it sees a hang (limit_ns: LARECOMP_HANG_DUMP); state logs its side.
 void kernel_hang_hooks(bool (*check)(uint64_t limit_ns, char *why, size_t n), void (*state)(const char *prefix));
+// The game is deliberately paused (iOS: the app in the background): the watchdog skips its check while this says so.
+void kernel_hang_paused_hook(bool (*paused)(void));
 uint64_t kernel_heap_size(void);  // bytes from HEAP_BASE set by SetHeapSize

@@ -187,12 +187,13 @@ def py_strings(path, want):
             yield a.left.value + '%s'  # ('Settings: ' + ', '.join(...))
 
 
-MARKUP = re.compile(r'^(# |## |- |  )')
+MARKUP = re.compile(r'^(# |## |### |- |  )')
 
 
 def spoiler_keys():
     sys.path.insert(0, os.path.join(ROOT, 'tools', 'rando'))
     import spoiler_view as sv
+    import check_names as cn
     path = os.path.join(ROOT, 'tools', 'rando', 'spoiler_view.py')
     for s in py_strings(path, {'append'}):
         s = MARKUP.sub('', s)
@@ -202,6 +203,17 @@ def spoiler_keys():
     yield "%s's Soul", 'spoiler_view.py', False
     yield "%s' Soul", 'spoiler_view.py', False
     yield '%s:', 'spoiler_view.py', False  # ("- Mabe Village:")
+    yield 'room %s', 'spoiler_view.py', False  # ("Double stalfos (room A3)", "Catfish's Maw, room D7": room shuffle)
+    yield 'The last of the %s Triforce pieces you need ends the game.', 'spoiler_view.py', False
+    yield '2nd', 'spoiler_view.py', True  # ("Shield (2nd)": the second copy of a progressive item)
+    for k in ('shop-slot3-2nd', 'shop-slot5-2nd', 'shop-slot5-3rd'):  # (the Town Tool Shop's next items: check_names.py)
+        yield cn.display_name(k), 'spoiler_view.py', True
+    import entrance_names
+    for v in entrance_names.NAMES.values():
+        yield v, 'spoiler_view.py', True
+    for v in sv.PLACE:
+        if v:
+            yield v, 'spoiler_view.py', True
     for d in (sv.AREAS, sv.DUNGEONS, sv.DPREFIX):
         for v in d.values():
             yield v, 'spoiler_view.py', True
@@ -215,6 +227,12 @@ def spoiler_keys():
     if os.path.exists(yml):
         for m in re.finditer(r'^\s+-\s+([a-z0-9-]+)\s*$', open(yml).read(), re.M):
             yield sv.pretty_loc(m.group(1)), 'spoiler_view.py', True
+            yield cn.display_name(m.group(1)), 'spoiler_view.py', True  # (the tracker's wording, used since 2026-11)
+    # dungeon checks in the tracker's wording ("Beetles"): every item location of LAS's logic
+    lg = os.path.join(ROOT, 'third_party', 'LAS-Randomizer', 'RandomizerCore', 'Data', 'logic.yml')
+    if os.path.exists(lg):
+        for m in re.finditer(r'^(D\d-[a-z0-9-]+):\s*\n\s+type:\s*(item|follower)\b', open(lg).read(), re.M):
+            yield cn.display_name(m.group(1)), 'spoiler_view.py', True
     # settings ("Settings: " + the options that are on, dashes as spaces)
     for f in glob.glob(os.path.join(ROOT, 'runtime', 'ui', 'rando_tab.mm')) + glob.glob(os.path.join(ROOT, 'runtime', 'rando.c')):
         for m in re.finditer(r'"([a-z0-9]+(?:-[a-z0-9]+)+)"', open(f).read()):
@@ -323,7 +341,7 @@ def split_all(entries):
 # matches them, so they're texts of their own
 PATTERNS = ['leaving %s', 'outside %s', 'Outside %s', 'Room %s', 'Warp hole: %s', 'Level %s', '%s #%s',
             'Bush %s', 'Dig %s', 'Pot %s', 'pot %s', 'pot %s in room %s', '%s: pot %s', '%s: pot %s in room %s',
-            'rupee %s', 'Apple tree (%s), %s of 3', 'Trendy prize %s', 'Trendy figure %s', 'fairy %s', 'Step %s',
+            'rupee %s', 'Apple tree (%s), %s of 3', 'Trendy prize %s', 'Trendy figure %s', 'fairy %s', 'Step %s', 'Sphere %s',
             'Seed %s']
 # the separators L_line joins parts with: a language may have its own ("、" for ", ", " : " in French)
 SEPARATORS = [', ', ': ']

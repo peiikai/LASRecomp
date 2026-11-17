@@ -10,11 +10,28 @@
 
 #include "i18n_mark.h"
 
+#define GRAY_RGB 0x6E7276  // (between Silver and Black: grass and walls' darkest)
+
 const char *const g_col_names[N_COL] = {LN("Default"), LN("Red"),   LN("Orange"), LN("Gold"),   LN("Brown"),
                                         LN("Green"),   LN("Teal"),  LN("Blue"),   LN("Purple"), LN("Pink"),
-                                        LN("White"),   LN("Black"), LN("Silver"), LN("Random"), LN("Custom")};
+                                        LN("White"),   LN("Black"), LN("Gray"),   LN("Silver"), LN("Random"),
+                                        LN("Custom")};
 const uint32_t g_col_rgb[N_COL] = {0,        0xD63A3A, 0xF08A24, 0xE8B830, 0x7A4A28, 0x3FA34D, 0x22A7A0, 0x2F6FD6,
-                                   0x8A4FD8, 0xE86AA8, 0xF2F0EA, 0x2A2A2E, 0xA9B0B8, 0,        0};
+                                   0x8A4FD8, 0xE86AA8, 0xF2F0EA, 0x2A2A2E, GRAY_RGB, 0xA9B0B8, 0,        0};
+
+bool col_offered(int pick, int slot) {
+    return pick != COL_BLACK || (slot != COL_SLOT_GRASS && slot != COL_SLOT_WALLS);
+}
+
+void col_fix(CosColour *c, int slot) {
+    if (!col_offered(c->pick, slot)) c->pick = COL_GRAY;
+}
+
+int col_random_pick(int slot, unsigned r) {
+    if (col_offered(COL_BLACK, slot)) return 1 + (int)(r % (COL_RANDOM - 1));  // (any named colour)
+    int p = 1 + (int)(r % (COL_RANDOM - 2));  // (one fewer: Black's draw goes to the last, Silver)
+    return p == COL_BLACK ? COL_RANDOM - 1 : p;
+}
 
 void col_parse(CosColour *c, const char *val) {
     c->pick = COL_DEFAULT;
@@ -55,7 +72,7 @@ bool col_target(const CosColour *c, int slot, uint32_t *rgb) {
         if (!picks[slot]) {
             if (!seed) seed = (unsigned)time(NULL) ^ (unsigned)(uintptr_t)&seed;
             seed = seed * 1103515245u + 12345u;
-            picks[slot] = 1 + (int)((seed >> 16) % (COL_RANDOM - 1));
+            picks[slot] = col_random_pick(slot, seed >> 16);
         }
         *rgb = g_col_rgb[picks[slot]];
         return true;

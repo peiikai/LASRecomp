@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdatomic.h>
 #include <time.h>
 
 #include <SDL3/SDL.h>
@@ -95,6 +96,10 @@ typedef struct {
     pthread_t thread;
     volatile bool quit;  // reboot (audio_reset)
 } Renderer;
+
+static atomic_bool g_paused;  // the app in the background (audio_set_background)
+static bool audio_paused(void) { return atomic_load(&g_paused); }
+static void audio_track_lock(bool on);
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -656,8 +661,10 @@ static void *renderer_tick(void *arg) {
     while (!r->quit) {
         // Audio > Output changed: reopen the stream with the new channel count (what is queued is dropped)
         if (r->out_ch != (g_settings.audio_out == AUDIO_OUT_51 ? 6 : 2)) {
+            audio_track_lock(true);  // (audio_set_background walks the streams)
             if (r->stream) SDL_DestroyAudioStream(r->stream), r->stream = NULL;
             renderer_open_stream(r);
+            audio_track_lock(false);
             target = queue_target(r, N);
         }
         int frame_bytes = (int)(N * r->out_ch * sizeof(float));
@@ -959,7 +966,7 @@ static void renderer_open_stream(Renderer *r) {
     r->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
     if (!r->stream) { LOG("[audren] SDL audio open failed: %s\n", SDL_GetError()); return; }
     if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(r->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
-    SDL_ResumeAudioStreamDevice(r->stream);
+    if (!audio_paused()) SDL_ResumeAudioStreamDevice(r->stream);  // (opened paused: in the background it stays so)
 }
 
 static void renderer_open_output(Renderer *r) {
@@ -1085,6 +1092,24 @@ static void audio_track(Renderer *r, AudioOut *a) {
         if (a && !g_outs[i]) { g_outs[i] = a; a = NULL; }
     }
     pthread_mutex_unlock(&g_track_lock);
+}
+static void audio_track_lock(bool on) { on ? pthread_mutex_lock(&g_track_lock) : pthread_mutex_unlock(&g_track_lock); }
+
+// The app in the background (iOS: runtime/nvn/metal.m background_watch). An app allowed background audio - a
+// UIBackgroundModes audio entry, as LiveContainer's own Info.plist has - kept playing the game's sound from the home
+// screen: every output is paused then and resumed in front. Their threads stop with them (they wait while the
+// stream's queue is full), as the game does in its present; outputs opened meanwhile start paused.
+void audio_set_background(bool bg) {
+    pthread_mutex_lock(&g_track_lock);
+    atomic_store(&g_paused, bg);
+    int n = 0;
+    for (int i = 0; i < 8; i++) {
+        SDL_AudioStream *st[2] = {g_rens[i] ? g_rens[i]->stream : NULL, g_outs[i] ? g_outs[i]->stream : NULL};
+        for (int k = 0; k < 2; k++)
+            if (st[k]) bg ? SDL_PauseAudioStreamDevice(st[k]) : SDL_ResumeAudioStreamDevice(st[k]), n++;
+    }
+    pthread_mutex_unlock(&g_track_lock);
+    LOG("[audio] %s: %d outputs\n", bg ? "in the background, paused" : "in front, resumed", n);
 }
 
 static void audout_free(AudioOut *a) {
@@ -1267,7 +1292,7 @@ SERVICE("audout:u", audout_u) {
             a->stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, NULL, NULL);
             if (a->stream) {
                 if (getenv("LARECOMP_AUDIO_GAIN")) SDL_SetAudioStreamGain(a->stream, (float)atof(getenv("LARECOMP_AUDIO_GAIN")));
-                SDL_ResumeAudioStreamDevice(a->stream);
+                if (!audio_paused()) SDL_ResumeAudioStreamDevice(a->stream);
             }
         }
         pthread_create(&a->thread, NULL, audout_thread, a);

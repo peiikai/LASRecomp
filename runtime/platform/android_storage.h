@@ -29,6 +29,10 @@ void android_on_driver(void (*done)(const char *result));
 // restart). Blocks until it closes; false when it couldn't be shown.
 bool android_driver_error_dialog(const char *text);
 
+// The start screen's update check: GET url (GitHub's JSON API, with that User-Agent) into the file out. Blocks; false
+// on any failure (the file is then gone).
+bool android_fetch(const char *url, const char *out, const char *user_agent);
+
 #ifdef __cplusplus
 }
 #endif

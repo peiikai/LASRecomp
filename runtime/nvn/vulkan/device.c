@@ -14,6 +14,7 @@
 #include "../../ui/menu.h"
 #include "../rqueue.h"
 #include "vk.h"
+#include "../../platform.h"
 #include "record.h"
 #include "../output_scale.h"
 #include "../renderer.h"
@@ -22,6 +23,9 @@
 #include "../interp.h"
 #include <pthread.h>
 #include <dirent.h>
+#ifdef __ANDROID__
+#include <sys/sysinfo.h>  // (android_import_ram_ok)
+#endif
 
 VkG g_vk;
 static SDL_Window *window;
@@ -48,6 +52,14 @@ static int import_heap_room(const ImportHeap *h, uint32_t n, uint64_t *room) {
 // tried once at the start (exec.c whole_import_probe_oom), with buffer device addresses enabled so lazy chunks can take
 // over. Machines with more (an RTX with 16 GB or more of RAM) skip the probe and keep the device as before.
 #define IMPORT_PROBE_BELOW (2 * HEAP_MAX)
+// Android: whether the phone has the RAM to import the whole heap. The import pins every page of the heap (HEAP_MAX,
+// committed at once) for as long as the game runs, and the low-memory killer counts them against the app; the Vulkan
+// heap budget doesn't know that. Issue #693 (Galaxy S25 FE, 7 GB, Xclipse 940): heap 5316 MB, budget 5050, the probe
+// (whole_import_probe_oom) passed and the real import was the log's last line - the process was killed with no
+// signal. Below this the heap isn't imported and shader global memory goes through copies (exec.c gmir_), as an
+// Android fork did on that phone, which played. 8 GB phones report about 7-7.5 GB; 12 GB ones about 11.
+#define ANDROID_IMPORT_RAM_MIN (10ull << 30)
+static bool android_import_ram_ok(uint64_t ram) { return !ram || ram >= ANDROID_IMPORT_RAM_MIN; }  // (0: unknown)
 
 // Whether one import of the whole heap fits its system memory heap (import_heap_room), from the physical device;
 // *probe: it fits, but not by much (IMPORT_PROBE_BELOW), or LARECOMP_VK_SIM_HEAP_OOM=1 (the probe then fails).
@@ -271,6 +283,10 @@ static void pick_device(void) {
     LOG("[vk] lean usage %s, SMAA stencil %s, per-frame target clears %s (%s GPU)\n", g_vk.lean_usage ? "on" : "off",
         g_vk.smaa_stencil ? "on" : "off", g_vk.no_frame_clear ? "off" : "on", igpu ? "integrated" : "not an integrated");
 }
+
+// The GPU's PCI-style vendor ID (0x5143 Qualcomm, 0x13B5 Arm, ...); 0 before a device is picked. Android's start
+// screen offers driver packages only on Adreno (runtime/ui/launcher.mm driver_rows).
+uint32_t vk_gpu_vendor(void) { return g_vk.phys ? g_vk.props.vendorID : 0; }
 
 static bool g_fault_ext;
 // After VK_ERROR_DEVICE_LOST: what the driver says faulted (VK_EXT_device_fault), into the log.
@@ -629,6 +645,19 @@ static void create_device(void) {
     if (g_vk.divisor) ext[n_ext++] = VK_EXT_VERTEX_ATTRIBUTE_DIVISOR_EXTENSION_NAME;
     g_vk.host_import = has_ext(ep, ne, VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);  // guest heap as a GPU buffer (exec.c)
     if (getenv("LARECOMP_VK_NO_HOST_IMPORT")) g_vk.host_import = false;  // (tests the copies, exec.c gmir_, on any GPU)
+#ifdef __ANDROID__
+    {   // (android_import_ram_ok; LARECOMP_VK_HOST_IMPORT=1: import anyway)
+        struct sysinfo si;
+        uint64_t ram = sysinfo(&si) == 0 ? (uint64_t)si.totalram * si.mem_unit : 0;
+        const char *e = getenv("LARECOMP_VK_HOST_IMPORT");
+        if (g_vk.host_import && !(e && atoi(e)) && !android_import_ram_ok(ram)) {
+            g_vk.host_import = false;
+            LOG("[vk] guest heap: %llu MB of RAM, under %llu MB: no heap import (it would pin %llu MB), shader global "
+                "memory through copies\n", (unsigned long long)(ram >> 20), (unsigned long long)(ANDROID_IMPORT_RAM_MIN >> 20),
+                (unsigned long long)(HEAP_MAX >> 20));
+        }
+    }
+#endif
     if (g_vk.host_import) ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME;
     bool fault = has_ext(ep, ne, VK_EXT_DEVICE_FAULT_EXTENSION_NAME);  // device-lost diagnostics (vk_device_fault_report)
     if (fault) ext[n_ext++] = VK_EXT_DEVICE_FAULT_EXTENSION_NAME;
@@ -711,6 +740,7 @@ static void create_device(void) {
         if (pbin_ext) pbp.pNext = pr.pNext, pr.pNext = &pbp;
 #endif
         vkGetPhysicalDeviceProperties2(g_vk.phys, &pr);
+        g_vk.driver_id = drv.driverID;
         // the heap as driver memory (exec.c guest_heap_dmabuf) by default: RADV, and PanVK (Mali-G610, Mesa 27.0-devel,
         // issue #483: an 81-minute run without faults, the Field 15 -> 21 fps, ~85% fewer uploads). PanVK's device name
         // is the GPU's ("Mali-G610 MC4"), hence the driver ID.
@@ -740,6 +770,25 @@ static void create_device(void) {
         const char *cbr = getenv("LARECOMP_VK_CB_RELEASE");
         g_vk.cb_release = cbr ? atoi(cbr) != 0 : drv.driverID == VK_DRIVER_ID_ARM_PROPRIETARY;
         if (g_vk.cb_release) LOG("[vk] command buffers release their memory at each begin%s\n", cbr ? " (LARECOMP_VK_CB_RELEASE)" : ": Arm's driver");
+        // command buffers reset as soon as their submission completes (exec.c cb_early_reset) by default on PanVK. PanVK
+        // gives a command buffer one shader scratch (TLS) allocation at vkEndCommandBuffer: the largest per-thread stack
+        // of the shaders it used, rounded up to a power of two, x 2048 threads x the core ID range (19 on RK3588: 1 KB a
+        // thread is 38 MB, 8 KB is 304 MB). From Mesa 25.3 (0e88dd575fc0) a reset hands it back to the command pool's
+        // free list for the next command buffer to reuse; it is freed only by vkResetCommandPool(RELEASE_RESOURCES) or
+        // the pool's destruction. Before 25.3 a reset freed it. Either way, every command buffer between its
+        // vkEndCommandBuffer and its reset holds its own: kept until the slot's next use, 24 submissions later, there are
+        // as many of them as slots whose last submission used a stack-heavy shader. Reset early, only the submissions
+        // still in flight hold one.
+        {
+            const char *cer = getenv("LARECOMP_VK_CB_EARLY_RESET");
+            g_vk.cb_early_reset = cer && *cer ? atoi(cer) != 0 : drv.driverID == VK_DRIVER_ID_MESA_PANVK;
+            if (cer && *cer)
+                LOG("[vk] command buffers reset once their submission completes: %s (LARECOMP_VK_CB_EARLY_RESET)\n",
+                    g_vk.cb_early_reset ? "on" : "off");
+            else if (g_vk.cb_early_reset)
+                LOG("[vk] command buffers reset once their submission completes: PanVK keeps a command buffer's shader "
+                    "scratch memory until its reset\n");
+        }
 #ifdef VK_EXT_graphics_pipeline_library
         if (gpl_ext)
             snprintf(gpl, sizeof gpl, "%s (fast linking %s, independent interpolation decoration %s)",
@@ -757,6 +806,11 @@ static void create_device(void) {
         LOG("[vk] driver %s %s; graphics pipeline library: %s; vertex input dynamic state: %s; extended dynamic state 3: %s\n",
             drv.driverName, drv.driverInfo, gpl, vids_ext ? (have_vids.vertexInputDynamicState ? "yes" : "no") : "no extension",
             eds3);
+        // The Android emulator (gfxstream to MoltenVK) lists ASTC but textures sampled that way come out empty: the HUD's
+        // hearts and the file select's icons were missing (API 35 image on an M3 Max). LARECOMP_VK_CPU_ASTC=1 / =0 overrides.
+        const char *ca = getenv("LARECOMP_VK_CPU_ASTC");
+        g_vk.cpu_astc = ca ? atoi(ca) != 0 : strstr(drv.driverName, "MoltenVK") != NULL;
+        LOG("[vk] ASTC %s (%s)\n", g_vk.cpu_astc ? "decoded on the CPU" : "as the driver lists it", ca ? "LARECOMP_VK_CPU_ASTC" : "default for this GPU");
 #ifdef VK_KHR_pipeline_binary
         // our own pipeline binaries (pb_make, #509): by default on AMD's drivers only, whose own cache kept nothing
         // between launches; LARECOMP_VK_PIPELINE_BINARY=0 / =1 turns them off / on
@@ -873,6 +927,9 @@ static void create_device(void) {
     b->fillModeNonSolid = h->fillModeNonSolid;
     b->samplerAnisotropy = h->samplerAnisotropy;
     b->textureCompressionBC = h->textureCompressionBC;
+#if PLAT_TOUCH
+    b->textureCompressionASTC_LDR = h->textureCompressionASTC_LDR;  // (phones: the game's UI icons are ASTC, sampled natively)
+#endif
     b->shaderInt64 = h->shaderInt64;
     b->depthBiasClamp = h->depthBiasClamp;
     b->depthClamp = h->depthClamp;
@@ -990,7 +1047,8 @@ void vk_pipeline_cache_save(void) {
 }
 
 // ================================================================== swapchain
-static bool sc_interp;  // (the swapchain was made for Frame Generation: FIFO; the menu's toggle makes a new one)
+static bool sc_interp;  // (the swapchain was made for Frame Generation: FIFO; the menu's toggle makes a new one if the mode differs)
+static VkPresentModeKHR sc_mode;  // (the swapchain's present mode)
 static VkPresentModeKHR present_mode(void) {
     // MAILBOX by default: the game paces itself (vi.c's emulated 60 Hz vsync), and with FIFO every submission
     // queued behind the one waiting for a window image, so the game's fence waits followed the presentation engine:
@@ -1010,6 +1068,13 @@ static VkPresentModeKHR present_mode(void) {
     vkGetPhysicalDeviceSurfacePresentModesKHR(g_vk.phys, g_vk.surface, &n, m);
     for (uint32_t i = 0; i < n; i++) if (m[i] == want) return want;
     return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+// Frame Generation's toggle needs a new swapchain only when the mode really changes. Where the driver offers no mailbox
+// (AMD on Windows) both settings are FIFO, and remaking the same swapchain left 60 fps stuttering on a 144 Hz display
+// until a restart (#602; 60 Hz was fine). present_mode updates sc_interp: asked once per toggle.
+static bool sc_mode_changed(void) {
+    return sc_interp != (interp_wanted() == INTERP_ON) && present_mode() != sc_mode;
 }
 
 #ifdef __ANDROID__
@@ -1035,18 +1100,32 @@ static void create_swapchain(void) {
     int w, h;
     SDL_GetWindowSizeInPixels(window, &w, &h);
 #ifdef __ANDROID__
-    // The surface reports the panel's own (portrait) orientation; the activity is landscape: images of the window's
-    // size, turned by the compositor (rotating in the app instead, pre-rotation, would spare it that). From
-    // LASRecompAndroid by mamcjr (MIT).
+    // The surface reports the panel's own (portrait) orientation; the activity is landscape. Pre-rotation: the images
+    // in the panel's orientation with its transform, everything drawn into them turned (sc_quarter: vk_sc_rect /
+    // vk_sc_viewport, and the present, ImGui and menu piece vertex shaders). Otherwise the images are the window's
+    // size and SurfaceFlinger turns them with the GPU at every present: on the Retroid Pocket 5 (Adreno 650) the
+    // game's layer was CLIENT composited, ROT_90, while the system bars went to the display hardware. Ported from
+    // Nycolazs's LASRecomp-Android-Plus (MIT), which measured ~13% of an S20 FE's GPU time for that composition.
+    // LARECOMP_VK_PRETRANSFORM=0: the system turns them (the earlier way, from mamcjr's LASRecompAndroid, MIT).
     VkExtent2D ext = {(uint32_t)w, (uint32_t)h};
     VkSurfaceTransformFlagBitsKHR transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-    LOG("[vk] swapchain: surface %ux%u transform %#x, window %dx%d\n", caps.currentExtent.width, caps.currentExtent.height,
-        caps.currentTransform, w, h);
+    static int pre = -1;
+    if (pre < 0) { const char *e = getenv("LARECOMP_VK_PRETRANSFORM"); pre = !e || atoi(e) != 0; }
+    g_vk.sc_quarter = 0;
+    if (pre && (caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ||
+                caps.currentTransform == VK_SURFACE_TRANSFORM_ROTATE_270_BIT_KHR) &&
+        (caps.supportedTransforms & caps.currentTransform)) {
+        transform = caps.currentTransform;
+        g_vk.sc_quarter = transform == VK_SURFACE_TRANSFORM_ROTATE_90_BIT_KHR ? 1 : 3;
+    }
+    LOG("[vk] swapchain: surface %ux%u transform %#x, window %dx%d%s\n", caps.currentExtent.width, caps.currentExtent.height,
+        caps.currentTransform, w, h, g_vk.sc_quarter ? ", pre-rotated" : pre ? "" : " (LARECOMP_VK_PRETRANSFORM=0)");
 #else
     VkExtent2D ext = caps.currentExtent.width != UINT32_MAX ? caps.currentExtent : (VkExtent2D){(uint32_t)w, (uint32_t)h};
     VkSurfaceTransformFlagBitsKHR transform = caps.currentTransform;
 #endif
     if (!ext.width || !ext.height) return;  // minimised
+    VkExtent2D phys = g_vk.sc_quarter ? (VkExtent2D){ext.height, ext.width} : ext;
     uint32_t nf = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(g_vk.phys, g_vk.surface, &nf, NULL);
     VkSurfaceFormatKHR fmts[64];
@@ -1066,11 +1145,12 @@ static void create_swapchain(void) {
     VkSwapchainKHR old = g_vk.swapchain;
     VkSwapchainCreateInfoKHR ci = {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR, .surface = g_vk.surface, .minImageCount = count,
-        .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = ext, .imageArrayLayers = 1,
+        .imageFormat = sf.format, .imageColorSpace = sf.colorSpace, .imageExtent = phys, .imageArrayLayers = 1,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE, .preTransform = transform,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR, .presentMode = present_mode(), .clipped = VK_TRUE,
         .oldSwapchain = old};
+    sc_mode = ci.presentMode;
 #ifdef __ANDROID__
     {   // (the window went away after its surface was made - sent to the background right then: no swapchain now, the
         // next frame makes the surface and swapchain again instead of stopping. From mamcjr's LASRecompAndroid, MIT,
@@ -1090,12 +1170,13 @@ static void create_swapchain(void) {
     VK_CHECK(vkCreateSwapchainKHR(g_vk.dev, &ci, NULL, &g_vk.swapchain));
 #endif
     static const char *const modes[] = {"immediate", "mailbox", "fifo", "fifo-relaxed"};
-    LOG("[vk] swapchain %ux%u, %u images, %s\n", ext.width, ext.height, count,
+    LOG("[vk] swapchain %ux%u, %u images, %s\n", phys.width, phys.height, count,
         ci.presentMode < 4 ? modes[ci.presentMode] : "other present mode");
     for (uint32_t i = 0; i < g_vk.sc_count; i++) vkDestroyImageView(g_vk.dev, g_vk.sc_views[i], NULL);
     if (old) vkDestroySwapchainKHR(g_vk.dev, old, NULL);
     g_vk.sc_format = sf.format;
     g_vk.sc_extent = ext;
+    g_vk.sc_phys = phys;
 #ifdef __ANDROID__
     VK_CHECK(vkGetSwapchainImagesKHR(g_vk.dev, g_vk.swapchain, &g_vk.sc_count, NULL));
     if (g_vk.sc_count > VK_SC_MAX)
@@ -1117,8 +1198,10 @@ static void create_swapchain(void) {
 // Android destroys the window's surface whenever another activity covers the app (the folder picker, the home screen)
 // and SDL makes a new one on return: the old VkSurfaceKHR is lost for good (VK_ERROR_SURFACE_LOST_KHR on every acquire,
 // a black screen). So each swapchain rebuild there makes the surface again from SDL's current window first; the old
-// swapchain belongs to the old window and can't be passed on. False: no window right now (in the background).
+// swapchain belongs to the old window and can't be passed on. False: no window right now (in the background). That
+// is tried again every frame while the app is away, so it is logged once: the first try, and the count on return.
 static bool recreate_surface(void) {
+    static unsigned misses;
     for (uint32_t i = 0; i < g_vk.sc_count; i++) vkDestroyImageView(g_vk.dev, g_vk.sc_views[i], NULL);
     g_vk.sc_count = 0;
     if (g_vk.swapchain) vkDestroySwapchainKHR(g_vk.dev, g_vk.swapchain, NULL);
@@ -1126,11 +1209,13 @@ static bool recreate_surface(void) {
     if (g_vk.surface) vkDestroySurfaceKHR(g_vk.inst, g_vk.surface, NULL);
     g_vk.surface = VK_NULL_HANDLE;
     if (!SDL_Vulkan_CreateSurface(window, g_vk.inst, NULL, &g_vk.surface)) {
-        LOG("[vk] no window surface yet: %s\n", SDL_GetError());
+        if (!misses++) LOG("[vk] no window surface yet: %s (tried again each frame, not logged)\n", SDL_GetError());
         g_vk.surface = VK_NULL_HANDLE;
         return false;
     }
-    LOG("[vk] window surface made again (the app was in the background)\n");
+    if (misses) LOG("[vk] window surface made again (the app was in the background; %u tries without a window)\n", misses);
+    else LOG("[vk] window surface made again (the app was in the background)\n");
+    misses = 0;
     return true;
 }
 #endif
@@ -1202,7 +1287,7 @@ bool vk_frame_begin(const float clear[4]) {
     WAITING(rec_wait_presents(rec_presents_queued()));
     if (rec_present_recreate()) recreate_swapchain();
     if (!g_vk.swapchain || (uint32_t)w != g_vk.sc_extent.width || (uint32_t)h != g_vk.sc_extent.height ||
-        sc_interp != (interp_wanted() == INTERP_ON)) recreate_swapchain();
+        sc_mode_changed()) recreate_swapchain();
     if (!g_vk.swapchain) return false;
     static int trace = -1;
     if (trace < 0) trace = getenv("LARECOMP_VK_TRACE") != NULL;
@@ -1238,13 +1323,15 @@ bool vk_frame_begin(const float clear[4]) {
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
                                     .clearValue.color.float32 = {clear[0], clear[1], clear[2], clear[3]}};
-    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_extent}, .layerCount = 1,
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_phys}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
     rec_CmdBeginRendering(cb, &ri);
-    VkViewport vp = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
-    VkRect2D sc = {{0, 0}, g_vk.sc_extent};
+    VkViewport vp = {0, 0, (float)g_vk.sc_phys.width, (float)g_vk.sc_phys.height, 0, 1};
+    VkRect2D sc = {{0, 0}, g_vk.sc_phys};
     rec_CmdSetViewport(cb, 0, 1, &vp);
     rec_CmdSetScissor(cb, 0, 1, &sc);
+    extern void vk_imgui_prerotation(int quarter);  // (imgui_glue.cpp: the UI drawn into this image turned like it)
+    vk_imgui_prerotation(g_vk.sc_quarter);
     cur_frame.ok = true;
     return true;
 }
@@ -1261,16 +1348,30 @@ void vk_frame_resume(void) {
     VkRenderingAttachmentInfo ca = {.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO, .imageView = g_vk.sc_views[cur_frame.image],
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
-    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_extent}, .layerCount = 1,
+    VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .renderArea = {{0, 0}, g_vk.sc_phys}, .layerCount = 1,
                           .colorAttachmentCount = 1, .pColorAttachments = &ca};
     rec_CmdBeginRendering(cb, &ri);
-    VkViewport vp = {0, 0, (float)g_vk.sc_extent.width, (float)g_vk.sc_extent.height, 0, 1};
-    VkRect2D sc = {{0, 0}, g_vk.sc_extent};
+    VkViewport vp = {0, 0, (float)g_vk.sc_phys.width, (float)g_vk.sc_phys.height, 0, 1};
+    VkRect2D sc = {{0, 0}, g_vk.sc_phys};
     rec_CmdSetViewport(cb, 0, 1, &vp);
     rec_CmdSetScissor(cb, 0, 1, &sc);
 }
 
 VkExtent2D vk_frame_extent(void) { return g_vk.sc_extent; }
+// Pre-rotation (sc_quarter): window coordinates (sc_extent, y down) to the swapchain image's. A quarter turn of 1 is
+// clip space (x, y) -> (-y, x), 3 is (y, -x) (the vertex shaders); these turn the rects to match.
+VkRect2D vk_sc_rect(int32_t x, int32_t y, uint32_t w, uint32_t h) {
+    int32_t W = (int32_t)g_vk.sc_extent.width, H = (int32_t)g_vk.sc_extent.height;
+    if (g_vk.sc_quarter == 1) return (VkRect2D){{H - y - (int32_t)h, x}, {h, w}};
+    if (g_vk.sc_quarter == 3) return (VkRect2D){{y, W - x - (int32_t)w}, {h, w}};
+    return (VkRect2D){{x, y}, {w, h}};
+}
+VkViewport vk_sc_viewport(float x, float y, float w, float h) {
+    float W = (float)g_vk.sc_extent.width, H = (float)g_vk.sc_extent.height;
+    if (g_vk.sc_quarter == 1) return (VkViewport){H - y - h, x, h, w, 0, 1};
+    if (g_vk.sc_quarter == 3) return (VkViewport){y, W - x - w, h, w, 0, 1};
+    return (VkViewport){x, y, w, h, 0, 1};
+}
 // The window image's command buffer for direct recording (the start screen's ImGui): the recorder has recorded
 // everything queued before it, and records what is queued after it.
 void *vk_frame_cmd(void) {
@@ -1359,7 +1460,7 @@ void vk_overlay_end(void *window_cmd, void *cmd) {
                                     .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                                     .loadOp = VK_ATTACHMENT_LOAD_OP_LOAD, .storeOp = VK_ATTACHMENT_STORE_OP_STORE};
     VkRenderingInfo ri = {.sType = VK_STRUCTURE_TYPE_RENDERING_INFO, .flags = VK_RENDERING_CONTENTS_SECONDARY_COMMAND_BUFFERS_BIT,
-                          .renderArea = {{0, 0}, g_vk.sc_extent}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
+                          .renderArea = {{0, 0}, g_vk.sc_phys}, .layerCount = 1, .colorAttachmentCount = 1, .pColorAttachments = &ca};
     rec_CmdBeginRendering(cb, &ri);
     rec_CmdExecuteCommands(cb, 1, &sec);
     cur_frame.secondary = true;
@@ -1367,7 +1468,7 @@ void vk_overlay_end(void *window_cmd, void *cmd) {
 }
 
 static void save_window_image(VkCommandBuffer cb, VkSpan *out) {
-    uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
+    uint32_t w = g_vk.sc_phys.width, h = g_vk.sc_phys.height;
     *out = vk_readback((uint64_t)w * h * 4);
     image_barrier(cb, g_vk.sc_images[cur_frame.image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
     VkBufferImageCopy rg = {.bufferOffset = out->off, .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
@@ -1395,11 +1496,21 @@ void vk_frame_end(const char *shot_path) {
     if (shot_path) {
         vk_wait_seq(seq);
         uint32_t w = g_vk.sc_extent.width, h = g_vk.sc_extent.height;
-        uint8_t *px = shot.ptr;
+        uint8_t *px = shot.ptr, *turned = NULL;
+        if (g_vk.sc_quarter) {  // (the pre-rotated image turned back into the window's shape: W x H from H x W)
+            turned = malloc((uint64_t)w * h * 4);
+            for (uint32_t y = 0; y < h && turned; y++)
+                for (uint32_t x = 0; x < w; x++) {
+                    uint32_t qx = g_vk.sc_quarter == 1 ? h - 1 - y : y, qy = g_vk.sc_quarter == 1 ? x : w - 1 - x;
+                    memcpy(turned + ((uint64_t)y * w + x) * 4, px + ((uint64_t)qy * h + qx) * 4, 4);
+                }
+            if (turned) px = turned;
+        }
         bool bgr = g_vk.sc_format == VK_FORMAT_B8G8R8A8_UNORM || g_vk.sc_format == VK_FORMAT_B8G8R8A8_SRGB;
         for (uint64_t i = 0; bgr && i < (uint64_t)w * h; i++) { uint8_t t = px[i * 4]; px[i * 4] = px[i * 4 + 2]; px[i * 4 + 2] = t; }
         for (uint64_t i = 0; i < (uint64_t)w * h; i++) px[i * 4 + 3] = 255;
         vk_save_png(shot_path, px, w, h);
+        free(turned);
     }
 }
 
@@ -1639,23 +1750,10 @@ static int ip_mids(TexBackend *b, uint64_t frame) {  // (the in-betweens shown)
     if (mids < 1) { ip_not_made[IP_CAPPED] += hz_cap > 0; mids_last = 0; ip_hz = 0; return 0; }
     if (mids != mids_last) settle = slow_checks = 0;
     mids_last = mids;
-    // The GPU's time goes to the game's frames first (as on Metal, metal.m): in-betweens only in what a game frame
-    // leaves of its interval - the game's own GPU time (pace.c; the in-betweens' submissions aren't counted there,
-    // exec.c) against an in-between's, replay and window image. Fewer than the refresh rate wants: evenly spaced, each
-    // shown longer. LARECOMP_INTERP_GPU_BUDGET=0: all made (research).
-    int allowed = mids;
-    {
-        static int budget_on = -1;
-        if (budget_on < 0) { const char *e = getenv("LARECOMP_INTERP_GPU_BUDGET"); budget_on = !e || atoi(e); }
-        extern double pace_gpu_frame_ms(void);
-        double game = pace_gpu_frame_ms(), img = interp_image_gpu_ms();
-        double D = fmin(fmax(interval_ns / 1e6, 16.667), 50);
-        if (budget_on && game >= 0 && img > 0) {
-            double left = 0.9 * D - game;
-            allowed = left > 0 ? (int)(left / img) : 0;
-            if (allowed > mids) allowed = mids;
-        }
-    }
+    // The GPU's time goes to the game's frames first (as on Metal): in-betweens only in what a game frame leaves of its
+    // interval (interp.c interp_gpu_allowed; the in-betweens' submissions aren't counted in the game's time, exec.c).
+    // Fewer than the refresh rate wants: evenly spaced, each shown longer.
+    int allowed = interp_gpu_allowed(mids, interval_ns / 1e6);
     for (int m = allowed; m < mids; m++) interp_note_no_gpu();
     if (allowed < 1) { ip_not_made[IP_NO_GPU]++; ip_hz = 0; return 0; }
     ip_hz = hz * (allowed + 1) / (mids + 1);  // (presents spaced for the images made)
@@ -1726,7 +1824,7 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         widescreen_frame_end(frame);
         extern void widescreen_set_factor(float f);
         extern bool widescreen_allowed(void);
-        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Internal resolution");
+        // render scale + placement in the window: runtime/nvn/output_scale.c (Video tab "Resolution");
         // GPU time since the last frame (exec.c's GPU timer; -1 without one: dynamic resolution goes by frame times):
         // the game's submissions and the window image's (LARECOMP_DYNRES_COUNT_PRESENT=0: the game's only, as before)
         static int count_present = -1;
@@ -1781,8 +1879,17 @@ void backend_present_now(NvnTexture *t, uint64_t frame) {
         static long win_shot = -1;
         if (win_shot < 0) win_shot = getenv("LARECOMP_WINDOW_SHOT") ? atol(getenv("LARECOMP_WINDOW_SHOT")) : 0;
         bool shot = win_shot && (long)frame + 1 == win_shot;
+        // test hooks (runtime/hle/hookshot.c: LARECOMP_SHOTS, tours, ...): the window image with the overlay, as metal.m
+        extern char g_window_shot_request[256];
+        char req[256] = "";
+        if (!shot && g_window_shot_request[0]) {
+            snprintf(req, sizeof req, "%s", g_window_shot_request);
+            g_window_shot_request[0] = 0;
+        }
         ip_space();
-        vk_frame_end(shot ? "build/window.png" : NULL);
+        // LARECOMP_SHOT_PATH: where (tools/shot.sh: each SHOT_ID run its own, as metal.m; default build/window.png)
+        const char *win_path = getenv("LARECOMP_SHOT_PATH") ? getenv("LARECOMP_SHOT_PATH") : "build/window.png";
+        vk_frame_end(shot ? win_path : req[0] ? req : NULL);
         if (shot && getenv("LARECOMP_EXIT_AFTER_SHOT")) exit_after_shot();
     } else {
         renderer_submit();
@@ -1982,6 +2089,25 @@ static void quick_exit_handler(void) {
 #endif
 }
 
+// the app in the background with the game paused (phones; runtime/kernel.c's hang watchdog asks): never here
+bool ui_in_background(void) { return false; }
+
+#ifdef __ANDROID__
+// the app may not come back from the background (the system ends it there): keep the pipeline cache and the settings
+// (options changed with the menu still open were lost). From LASRecomp-Android-Plus (MIT).
+// SDL 3 never queues the lifecycle events: they reach an event watcher only, here on the thread that pumps events
+// (ui_run's SDL_WaitEventTimeout). Issue #767.
+static bool SDLCALL background_watch(void *ud, SDL_Event *e) {
+    (void)ud;
+    if (e->type == SDL_EVENT_WILL_ENTER_BACKGROUND && g_vk.dev) {
+        vk_pipeline_cache_save();
+        settings_save();
+        LOG("[app] background: saved pipeline cache and settings\n");
+    }
+    return true;
+}
+#endif
+
 void ui_window_init(void) {
     if (window) return;
     atexit(quick_exit_handler);
@@ -2017,6 +2143,9 @@ void ui_window_init(void) {
     }
 #endif
     if (!window) FATAL("SDL_CreateWindow: %s\n", SDL_GetError());
+#ifdef __ANDROID__
+    SDL_AddEventWatch(background_watch, NULL);
+#endif
     rt_window_icon(window);
     rt_window_remember(window);
     // the Fullscreen setting applies from the start screen on (not only once the game runs); test windows stay windows
@@ -2070,14 +2199,6 @@ int ui_run(void) {
         SDL_Event e;
         while (SDL_WaitEventTimeout(&e, 16)) {
             input_rumble_poll();
-#ifdef __ANDROID__
-            // the app may not come back from the background (the system ends it there): keep the pipeline cache and
-            // the settings (options changed with the menu still open were lost). From LASRecomp-Android-Plus (MIT).
-            if (e.type == SDL_EVENT_WILL_ENTER_BACKGROUND && g_vk.dev) {
-                vk_pipeline_cache_save();
-                settings_save();
-            }
-#endif
             if (e.type == SDL_EVENT_QUIT) {
                 input_rumble_stop();
                 input_led_stop();

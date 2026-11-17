@@ -16,6 +16,13 @@ extern "C" {
 #include "live_preview.h"
 #include "option_rows.h"
 #include "plastic.h"
+extern "C" {
+#include "../platform.h"  // (PLAT_TOUCH)
+}
+static float g_sl, g_st, g_sr, g_sb;
+void preview_safe_area(float l, float t, float r, float b) { g_sl = l, g_st = t, g_sr = r, g_sb = b; }
+static bool g_top;
+void preview_place_top(bool top) { g_top = top; }
 
 static struct {
     bool active, scanning, found;
@@ -31,6 +38,7 @@ static struct {
 } P;
 
 bool preview_active(void) { return P.active; }
+const char *preview_label(void) { return P.active ? P.label.c_str() : ""; }
 bool preview_scanning(void) { return P.scanning; }
 
 void preview_open(const char *label, int focus_row) {
@@ -126,8 +134,8 @@ bool preview_draw(float scale, ImFont *font, ImFont *font_big, void (*page)(void
         if (clicked == 1) right = true;
         if (!P.off && (left || right)) {
             P.step = left ? -1 : 1;
-            menu_sfx_play(MENU_SFX_CURSOR);
-        } else if ((left || right) && P.off) menu_sfx_play(MENU_SFX_BEEP);
+            menu_sfx_play(MENU_SFX_TAB);  // (as a ◀ value ▶ row's step: option_rows.mm step_sfx)
+        }
         if (clicked == 3 && !P.off && P.cur != P.def) P.set = P.def, menu_sfx_play(MENU_SFX_DECIDE);
         if (a || clicked == 6) close = true, menu_sfx_play(MENU_SFX_DECIDE);  // (A / Apply keeps it)
         else if (b || clicked == 2) {
@@ -180,16 +188,22 @@ bool preview_draw(float scale, ImFont *font, ImFont *font_big, void (*page)(void
     float fs = ImGui::GetFontSize();
     ImGui::PopFont();
     ImFont *bf = font_big ? font_big : font;
-    float big = fs * 1.2f, small = fs * 0.9f, btn = fs * 0.95f, bh = btn * 1.75f;
+    // (phones: the description at the rows' size, the buttons taller - a finger's; the panel in the safe area)
+    float big = fs * 1.2f, small = fs * (PLAT_TOUCH ? 1.0f : 0.9f), btn = fs * 0.95f, bh = btn * (PLAT_TOUCH ? 2.1f : 1.75f);
     float edge = 18 * scale;  // (the panel's margin to the window, as the menu window's)
     float pad = fmaxf(48 * scale, 20.0f);  // (inside the frame)
-    float px0 = fmaxf(ds.x * 0.05f, edge), px1 = ds.x - px0;
+    float sl = g_sl, sr = g_sr, sb = g_sb;
+    float px0 = fmaxf(ds.x * 0.05f, edge + fmaxf(sl, sr)), px1 = ds.x - px0;
     float mx = px0 + pad, w = px1 - pad - mx;
     float desc_h = P.desc.empty() ? 0 : font->CalcTextSizeA(small, FLT_MAX, w, P.desc.c_str()).y;
-    float bottom = ds.y - edge;
+    float bottom = ds.y - edge - sb;
     float y_btn = bottom - pad * 0.7f - bh, y_rule = y_btn - fs * 0.6f, y_desc = y_rule - fs * 0.6f - desc_h;
     float y_line = y_desc - fs * 0.3f - big;
     float top = y_line - pad * 0.6f;
+    if (g_top) {
+        float d = edge - top;
+        top += d, y_line += d, y_desc += d, y_rule += d, y_btn += d, bottom += d;
+    }
     {   // (the paper at the menu's colours, lighter so the game shows through; its frame solid)
         ImVec4 p1 = pt.panel, p2 = pt.panel2;
         p1.w = p2.w = 0.62f;
@@ -209,7 +223,7 @@ bool preview_draw(float scale, ImFont *font, ImFont *font_big, void (*page)(void
         float ah = big * 0.22f, aw = ah * 0.5f, gap = big * 0.55f, cy = y_line + big * 0.55f;
         float rx = mx + w - aw, vx = rx - gap - vw, lx = vx - gap - aw;
         bool can_l = !P.off && (P.wrap || P.cur > 0), can_r = !P.off && (P.wrap || P.cur < P.n - 1);
-        float hb = big * 0.5f;  // (the arrows' hit boxes: bigger than they look)
+        float hb = big * (PLAT_TOUCH ? 0.9f : 0.5f);  // (the arrows' hit boxes: bigger than they look; a finger's on phones)
         hit[0][0] = ImVec2(lx - hb, cy - hb), hit[0][1] = ImVec2(lx + aw + hb * 0.6f, cy + hb);
         hit[1][0] = ImVec2(rx - hb * 0.6f, cy - hb), hit[1][1] = ImVec2(rx + aw + hb, cy + hb);
         bool hl = !P.confirm && in_rect(m, hit[0][0], hit[0][1]), hr = !P.confirm && in_rect(m, hit[1][0], hit[1][1]);

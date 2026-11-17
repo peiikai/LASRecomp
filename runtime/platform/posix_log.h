@@ -120,3 +120,29 @@ static void raise_open_file_limit(void) {
     fprintf(stderr, "[fd] open-file limit %llu (was %llu, hard limit %s)\n", (unsigned long long)rl.rlim_cur,
             (unsigned long long)before, hard);
 }
+
+// Command-line runs (plat_cli_begin, runtime/platform.h): stderr as the command found it (a terminal, a pipe), kept
+// before session_log_open takes stderr, so the command's lines reach it as well as the log.
+#include <signal.h>
+static int g_cli_fd = -1;
+static bool g_cli, g_cli_isatty;
+
+static void cli_keep_stderr(void) {
+    g_cli = true;
+    g_cli_fd = dup(STDERR_FILENO);
+    g_cli_isatty = g_cli_fd >= 0 && isatty(g_cli_fd);
+    signal(SIGPIPE, SIG_IGN);  // (a closed pipe: the writes fail instead of ending the run)
+}
+
+// logging: the session log has stderr (else stderr is still the terminal itself: nothing apart from it)
+static bool cli_write(const char *s, size_t n, bool logging) {
+    if (g_cli_fd < 0 || !logging) return false;
+    while (n) {
+        ssize_t w = write(g_cli_fd, s, n);
+        if (w < 0 && errno == EINTR) continue;
+        if (w <= 0) break;
+        s += w;
+        n -= (size_t)w;
+    }
+    return true;
+}

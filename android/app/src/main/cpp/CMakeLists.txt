@@ -37,7 +37,7 @@ endfunction()
 file(GLOB PATCH_TABLES RELATIVE ${R} ${R}/runtime/game_addresses/patches_v*.h)
 list(SORT PATCH_TABLES)
 las_id(GAMELIB_ID 16 tools/game_addresses.py runtime/game_addresses/versions.h ${PATCH_TABLES} tools/gen.py tools/lifter.py
-       tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/simd_c.py tools/rando/patch_variants.json
+       tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/chunk_bounds.py tools/simd_c.py tools/rando/patch_variants.json
        tools/gamelib_entry.c runtime/hle/hle_symbols.txt runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
        "${GAMELIB_CFLAGS}\n")
 las_id(GAMELIB_BASE_ID 16 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/fetch_zig.sh
@@ -75,7 +75,10 @@ file(GLOB VK_SRC ${R}/runtime/nvn/vulkan/*.c ${R}/runtime/nvn/vulkan/*.cpp)
 # libadrenotools (BSD-2; android/deps/build_deps.sh unpacks it): a custom Vulkan driver (Turnip) in a linker namespace of
 # its own. Its hook libraries (hook_impl, main_hook, ...) are shared libraries of this build: they ship in the APK.
 add_subdirectory(${DEPS}/adrenotools ${CMAKE_BINARY_DIR}/adrenotools)
-file(GLOB UI_SRC ${R}/runtime/ui/*.mm)
+file(GLOB UI_SRC ${R}/runtime/ui/*.mm ${R}/runtime/ui/mobile/*.mm)
+# the iOS export is a desktop feature (the Makefile's IOSEXPORT)
+list(REMOVE_ITEM RT_SRC ${R}/runtime/zipfile.c ${R}/runtime/iosexport.c)
+list(REMOVE_ITEM UI_SRC ${R}/runtime/ui/ios_export_ui.mm)
 set(IMGUI ${R}/third_party/imgui)
 set(IMGUI_SRC ${IMGUI}/imgui.cpp ${IMGUI}/imgui_draw.cpp ${IMGUI}/imgui_tables.cpp ${IMGUI}/imgui_widgets.cpp
     ${IMGUI}/backends/imgui_impl_sdl3.cpp ${IMGUI}/backends/imgui_impl_vulkan.cpp)
@@ -94,7 +97,9 @@ target_include_directories(main PRIVATE ${R}/runtime ${R}/runtime/nvn ${IMGUI} $
 # every Vulkan function through volk (runtime/nvn/vulkan/vk.h), ImGui's and VMA's too
 target_compile_definitions(main PRIVATE LARECOMP_DYN_BASE VK_USE_PLATFORM_ANDROID_KHR VK_NO_PROTOTYPES
     IMGUI_IMPL_VULKAN_USE_VOLK VMA_STATIC_VULKAN_FUNCTIONS=0 VMA_DYNAMIC_VULKAN_FUNCTIONS=1)
-target_compile_options(main PRIVATE -fno-strict-aliasing -Wall -Wno-unused-function -Wno-format  # (as on Linux)
+# -O2 -g with assert() on in every build type, as the desktop Makefile builds it (Gradle's debug type is -O0, its
+# release type -O3 -DNDEBUG)
+target_compile_options(main PRIVATE -O2 -g -UNDEBUG -fno-strict-aliasing -Wall -Wno-unused-function -Wno-format  # (as on Linux)
     $<$<COMPILE_LANGUAGE:CXX>:-std=c++17>)
 # -z nostart-stop-gc: tables in named sections found through
 # __start_ / __stop_ symbols (runtime/hle.h, ipc.h, main.c); 16 KB pages (Android 15+)

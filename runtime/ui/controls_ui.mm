@@ -4,8 +4,11 @@
 // bindings; A on a binding waits for the new button / key (Esc or 5 s without a press cancels; a button already in
 // use swaps over); B goes back a step (bindings -> categories -> the tab). Open menu holds the controller's shortcuts for
 // this menu (one button or two together; X / Delete clears one, never the last) and the keyboard's F1 / Esc, which
-// can't be changed. Drawn in whichever ImGui context is current.
+// can't be changed. LAS Menu holds the buttons our menus use (pad_nav.h): the controller conventions until one is changed,
+// every action always on a button of its own (a button in use swaps over); the keyboard's are shown, fixed. Drawn in
+// whichever ImGui context is current.
 #include <SDL3/SDL.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,17 +19,25 @@
 #include "option_rows.h"
 
 extern "C" {
+#include "../platform.h"
 #include "../input_bind.h"
 #include "../settings.h"
 int input_pad_family(void);              // runtime/hle/input.c
 SDL_JoystickID input_active_pad(void);   // runtime/hle/input.c: the controller the game reads (0: none yet)
-void input_apply_background(void);
+#if PLAT_TOUCH
+bool touch_edit_available(void);  // mobile/touch_controls.mm (the on-screen controls)
+void touch_edit_begin(void);
+void touch_layout_reset(void);
+int game_in_play(void);  // hle/warp.c
+void menu_toggle(void);  // menu.mm
+#endif
 }
 
 // ------------------------------------------------------------------ Configure inputs: what's on it
-enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, CAT_MENU, N_CAT };
-static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad"), LN("Open menu")};
-static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad", "menu"};  // (LARECOMP_CONTROLS_SUB)
+enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, CAT_MENU, CAT_LAS, N_CAT };
+static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad"), LN("Open menu"),
+                                              LN("LAS Menu")};
+static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad", "menu", "lasmenu"};  // (LARECOMP_CONTROLS_SUB)
 
 // section: a header before this row; fixed: a key that can't be changed (slot -1)
 struct Bind { int slot; const char *label; const char *section; const char *fixed; };
@@ -56,10 +67,19 @@ static int cat_rows(int cat, bool pad, Bind *out) {
         if (pad) add(BIND_MENU_1, LN("Shortcut 1")), add(BIND_MENU_2, LN("Shortcut 2"));
         else out[n++] = {-1, LN("Shortcut 1"), NULL, "F1"}, out[n++] = {-1, LN("Shortcut 2"), NULL, "Esc"};
         break;
+    case CAT_LAS:  // (the keyboard's are fixed: Enter, Esc)
+        if (pad)
+            for (int a = BIND_UI_CONFIRM; a < BIND_UI_END; a++) add(a, bind_input_name(a));
+        else {
+            static const char *const fixed[][2] = {{LN("Confirm"), "Enter"}, {LN("Back"), "Esc"}};
+            for (auto &f : fixed) out[n++] = {-1, f[0], NULL, f[1]};
+        }
+        break;
     }
     return n;
 }
 static int slot_cat(int slot) {
+    if (slot >= BIND_UI_CONFIRM) return CAT_LAS;
     if (slot >= BIND_MENU_1) return CAT_MENU;
     Bind b[16];
     for (int c = 0; c < N_CAT; c++)
@@ -146,7 +166,10 @@ static void watch_results(int fam, char *msg, size_t cap) {
     seen = serial;
     msg[0] = 0;
     char lab[64];
-    if (kind == 2 && rother >= BIND_MENU_1)
+    if (kind == 2 && rother >= BIND_UI_CONFIRM)
+        snprintf(msg, cap, L("Swapped. %s is on %s now."), L(bind_input_name(rother)),
+                 L(bind_pad_label(g_bind_ui[rother - BIND_UI_CONFIRM], fam)));
+    else if (kind == 2 && rother >= BIND_MENU_1)
         snprintf(msg, cap, L("Swapped. Shortcut %d is %s now."), rother - BIND_MENU_1 + 1,
                  menu_label(rother - BIND_MENU_1, fam, lab, sizeof lab));
     else if (kind == 2)
@@ -154,6 +177,8 @@ static void watch_results(int fam, char *msg, size_t cap) {
                  L(rdev == BIND_DEV_PAD ? bind_pad_label(bind_pad_host(rother), fam) : bind_key_label(g_bind_key[rother])));
     if (kind == 6) snprintf(msg, cap, "%s", L("The game uses that button. Hold it with a second button."));
     if (kind == 7) snprintf(msg, cap, "%s", L("Keep at least one shortcut, so a controller can open this menu."));
+    if (kind == 9) snprintf(msg, cap, "%s", L("LAS Menu uses that button. Hold it with a second button."));
+    if (kind == 10) snprintf(msg, cap, "%s", L("That button opens this menu."));
     if (kind == 1 || kind == 2 || kind == 5 || kind == 8) settings_save();
 }
 
@@ -185,7 +210,7 @@ static void configure_inputs(float scale) {
                                  ImGui::IsKeyPressed(ImGuiKey_GamepadLStickLeft)))
         g_focus = FOCUS_CAT;
 
-    opt_begin("##configure", scale);
+    opt_begin("##configure", scale, true);
     opt_section("Configure inputs");
     const char *names[9];
     for (int i = 0; i < nd; i++) names[i] = devs[i].name;
@@ -200,7 +225,12 @@ static void configure_inputs(float scale) {
         bool open = opt_link(k_cat_name[c], NULL);
         if (c == g_cat) take_focus(FOCUS_CAT);
         if (nav_on_item() && g_cat != c) g_cat = c, msg[0] = 0;  // (moving down the list shows each)
-        if (open) { if (g_cat != c) msg[0] = 0; g_cat = c, g_focus = FOCUS_RIGHT; bind_capture_cancel(); }
+        if (open) {
+            if (g_cat != c) msg[0] = 0;
+            g_cat = c;
+            if (!(ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left))) g_focus = FOCUS_RIGHT;  // (a tap / click on it: no cursor)
+            bind_capture_cancel();
+        }
     }
     if (bind_is_default(dev)) opt_disable_next();
     if (opt_action("Restore default controls", "", g_dev_pad ? "Puts every controller button back to its default."
@@ -209,13 +239,15 @@ static void configure_inputs(float scale) {
         bind_reset(dev);
     }
     // (the cursor or the mouse on a row with a description: it shows on the right instead of the bindings)
-    bool desc_right = (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;
+    bool desc_right = !PLAT_TOUCH && (ImGui::IsItemHovered() || nav_on_item()) && g_focus != FOCUS_RIGHT;  // (phones: in its card)
+    // B / Esc go back too, but a mouse has neither: without this row it could only leave by another tab
+    bool back = opt_action("Back", "", NULL);
     opt_split();
     if (desc_right) {
         opt_desc_text();
         g_in_right = false;
     } else {
-        Bind rows[16];
+        Bind rows[16];  // (the most: the keyboard's Sticks, 10)
         int n = cat_rows(g_cat, g_dev_pad, rows);
         opt_section(k_cat_name[g_cat]);
         bool in_right = false;
@@ -229,17 +261,19 @@ static void configure_inputs(float scale) {
                 ImGui::PopID();
                 continue;
             }
-            bool waiting = cd == dev && cs == b.slot, menu = b.slot >= BIND_MENU_1;
+            bool waiting = cd == dev && cs == b.slot, las = b.slot >= BIND_UI_CONFIRM, menu = b.slot >= BIND_MENU_1 && !las;
             char val[64];
             if (waiting) snprintf(val, sizeof val, g_dev_pad ? L("Press a button...  %d") : L("Press a key...  %d"), (ms + 999) / 1000);
             else if (menu) menu_label(b.slot - BIND_MENU_1, fam, val, sizeof val);
+            else if (las) snprintf(val, sizeof val, "%s", bind_pad_label(bind_ui_host(b.slot), fam));
             else snprintf(val, sizeof val, "%s", g_dev_pad ? bind_pad_label(bind_pad_host(b.slot), fam) : bind_key_label(g_bind_key[b.slot]));
             // the same button / key on two inputs (a hand-edited larecomp.ini), or a game button that opens the menu: red
+            // (LAS Menu: never - every action has a button of its own)
             bool dup = false;
             if (menu) {
                 int a = g_bind_menu[b.slot - BIND_MENU_1][0];
                 for (int j = 0; j < BIND_PAD_COUNT; j++) dup |= g_bind_menu[b.slot - BIND_MENU_1][1] < 0 && bind_pad_host(j) == a && a >= 0;
-            } else {
+            } else if (!las) {
                 const int16_t *t = g_dev_pad ? g_bind_pad : g_bind_key;
                 for (int j = 0, m = g_dev_pad ? BIND_PAD_COUNT : BIND_KEY_COUNT; j < m; j++)
                     dup |= j != b.slot && t[j] == t[b.slot] && t[b.slot] > (g_dev_pad ? -1 : 0);
@@ -251,7 +285,10 @@ static void configure_inputs(float scale) {
             if (menu) {  // (its value is put together here, so already in the menus' language)
                 opt_shown_next();
                 hit = opt_action(L(b.label), val, NULL, true, waiting || !bind_is_default_slot(dev, b.slot));
-            } else hit = opt_action(b.label, val, NULL, true, waiting || !bind_is_default_slot(dev, b.slot));
+            } else if (las)
+                hit = opt_action(b.label, val, NULL, true,
+                                 waiting || bind_ui_host(b.slot) != bind_ui_convention(b.slot));
+            else hit = opt_action(b.label, val, NULL, true, waiting || !bind_is_default_slot(dev, b.slot));
             ImGui::PopID();
             if (i == 0) take_focus(FOCUS_RIGHT);
             if (ImGui::IsItemFocused()) in_right = true;
@@ -268,18 +305,28 @@ static void configure_inputs(float scale) {
             if (hit && menu && ImGui::IsKeyDown(ImGuiKey_GamepadFaceUp)) hit = false;  // (ImGui activates on it too)
             if (hit) {
                 if (waiting) bind_capture_cancel();
+                else if (las) msg[0] = 0, bind_ui_capture_begin(b.slot);
                 else { msg[0] = 0; bind_capture_begin(dev, b.slot); }
             }
         }
+        if (g_cat == CAT_LAS && g_dev_pad) {  // (at the bottom of the list: back to the controller's own conventions)
+            if (!g_bind_ui_custom) opt_disable_next();
+            if (opt_action("Reset to controller conventions", "", NULL)) {
+                bind_capture_cancel();
+                bind_ui_reset();
+            }
+            if (ImGui::IsItemFocused()) in_right = true;
+        }
         g_in_right = in_right;
-        if (cd == dev && cs >= BIND_MENU_1) ImGui::TextDisabled("%s", L("Press one button, or two together. Esc cancels."));
+        if (cd == dev && cs >= BIND_MENU_1 && cs < BIND_UI_CONFIRM) ImGui::TextDisabled("%s", L("Press one button, or two together. Esc cancels."));
         else if (cd == dev) ImGui::TextDisabled("%s", L("Esc cancels."));
         else if (msg[0]) ImGui::TextDisabled("%s", msg);
         else if (g_cat == CAT_MENU && g_dev_pad)
-            ImGui::TextDisabled(L("%s or Delete clears a shortcut."), L(bind_pad_label(SDL_GAMEPAD_BUTTON_NORTH, fam)));
+            ImGui::TextDisabled(L("%s or Delete clears a shortcut."), L(bind_pad_label(bind_ui_host(BIND_UI_OPTION), fam)));
         else if (g_cat == CAT_MENU) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
     }
     opt_split_end();
+    if (back) bind_capture_cancel(), g_sub = false, g_focus = FOCUS_CONFIGURE, g_in_right = false, msg[0] = 0;
 }
 
 // ------------------------------------------------------------------ the tab
@@ -314,16 +361,14 @@ extern "C" void controls_tab_draw(float scale) {
 
     opt_begin("##controls", scale);
     opt_section("Inputs");
-    if (opt_link("Configure inputs", "Set the buttons and keys for the game, and the buttons that open this menu. "
-                                     "F1 and Esc always open it.")) {
+    if (opt_link("Configure inputs", PLAT_TOUCH ? "Set the buttons for the game, and the buttons that open this menu. The "
+                                                  "on-screen menu button always opens it."
+                                                : "Set the buttons and keys for the game, and the buttons that open this menu. "
+                                                  "F1 and Esc always open it.")) {
         pick_device(keyboard_pressed());
         g_sub = true, g_focus = FOCUS_DEVICE, g_in_right = false;
     }
     take_focus(FOCUS_CONFIGURE);
-    if (opt_toggle("Allow background inputs", &g_settings.bg_input, false,
-                   "Controllers keep working while another window is in front. macOS may ask for Input Monitoring "
-                   "permission."))
-        input_apply_background();
 
     opt_section("Movement");
     {
@@ -332,6 +377,11 @@ extern "C" void controls_tab_draw(float scale) {
     }
     opt_toggle("360-degree movement", &g_settings.move_360, false,
                "Link walks in the exact direction of the stick instead of snapping to 8 directions.");
+    opt_child_begin(g_settings.move_360);
+    if (!g_settings.move_360) opt_disable_next(), opt_needs_next("360-degree movement");
+    opt_toggle("Hookshot aims in 8 directions", &g_settings.hookshot_8way, false,
+               "The hookshot fires straight along the nearest of 8 directions, even with 360-degree movement.");
+    opt_child_end();
 
     opt_section("Controller");
     opt_toggle("Rumble", &g_settings.rumble, true, "Controller vibration.");
@@ -339,9 +389,11 @@ extern "C" void controls_tab_draw(float scale) {
         static const char *const pct[] = {LN("25%"), LN("50%"), LN("75%"), LN("100%")};
         int i = g_settings.rumble_strength / 25 - 1;
         if (i < 0 || i > 3) i = 3;
-        if (!g_settings.rumble) opt_disable_next();
+        opt_child_begin(g_settings.rumble);
+        if (!g_settings.rumble) opt_disable_next(), opt_needs_next("Rumble");
         if (opt_choice("Intensity", &i, pct, 4, 3, "How strong the vibration is.", false))
             g_settings.rumble_strength = (i + 1) * 25;
+        opt_child_end();
     }
     opt_toggle("Controller light", &g_settings.controller_light, true, "The light bar shows Link's health.");
     {
@@ -353,14 +405,74 @@ extern "C" void controls_tab_draw(float scale) {
                    "Which button icons the game shows. Auto matches the controller you have plugged in.");
     }
     {
-        static const char *const names[] = {LN("Nintendo layout"), LN("Bottom button")};
-        opt_choice("Confirm button", &g_settings.menu_confirm, names, 2, MENU_CONFIRM_CONTROLLER,
-                   "Which button confirms in LAS Recomp's menus. Nintendo layout uses the right button like the Switch, "
-                   "Bottom button uses the bottom one like Xbox and PlayStation.");
+        // One choice for the game and our menus, the same on every pad: two separate ones (or one that also looked at
+        // the pad's type or the icon style) let the bottom button confirm in one and go back in the other
+        static const char *const names[] = {LN("Right (Switch)"), LN("Bottom (Xbox / PlayStation)")};
+        int i = g_settings.face_by_label;
+        if (opt_choice("Confirm button", &i, names, 2, 0,
+                       "Which button is A in the game. LAS Recomp's menus use the same button to confirm, so Back is "
+                       "the same in both. Right: as on Switch. Bottom: as on Xbox and PlayStation. To set LAS Recomp's "
+                       "menu buttons yourself, use Configure inputs > LAS Menu."))
+            g_settings.face_by_label = i != 0;
     }
-    opt_toggle("Buttons match labels", &g_settings.face_by_label, false,
-               "On Xbox and PlayStation controllers, A, B, X and Y work as printed on the controller, so the bottom "
-               "button is A. Off keeps the Switch layout. Nintendo controllers aren't affected.");
 
     opt_end();
 }
+
+#if PLAT_TOUCH
+// The Touch tab (phones and tablets): the on-screen controls. In play their looks open the live preview, the controls
+// drawn over the game (menu.mm); before play there is nothing to show them over.
+extern "C" void touch_tab_draw(float scale) {
+    const bool live = game_in_play() != 0;
+    auto row = [live](const char *label, int *v, const char *const *names, int n, int def, const char *desc, bool wrap) {
+        return opt_preview(label, v, names, n, def, desc, wrap, live);
+    };
+    opt_begin("##touch", scale);
+    opt_section("Display");
+    {
+        static const char *const modes[] = {"Auto (no controller)", "Always", "Off"};
+        row("Show", &g_settings.touch_mode, modes, 3, 0,
+            "On-screen buttons for the touch screen. The middle button at the top opens this menu.", true);
+        static const char *const off_on[] = {"Off", "On"};
+        int hide = g_settings.touch_hide_xy_hud ? 1 : 0;
+        if (row("Hide X/Y item HUD", &hide, off_on, 2, 1, "Hides the game's own X / Y items while the on-screen buttons are shown.", true))
+            g_settings.touch_hide_xy_hud = hide != 0;
+    }
+    opt_section("Appearance");
+    {
+        // (steps of 5%: the preview's rows are lists of values)
+        static char text[21][8];
+        static const char *size_names[21], *op_names[18];
+        static bool init;
+        if (!init) {
+            init = true;
+            for (int i = 0; i < 21; i++) snprintf(text[i], 8, "%d%%", 60 + i * 5), size_names[i] = text[i];
+        }
+        static char op_text[18][8];
+        for (int i = 0; i < 18; i++) snprintf(op_text[i], 8, "%d%%", 15 + i * 5), op_names[i] = op_text[i];
+        int sz = (int)lroundf((g_settings.touch_size * 100 - 60) / 5), op = (int)lroundf((g_settings.touch_opacity * 100 - 15) / 5);
+        sz = sz < 0 ? 0 : sz > 20 ? 20 : sz, op = op < 0 ? 0 : op > 17 ? 17 : op;
+        if (row("Size", &sz, size_names, 21, 8, "The on-screen buttons' size.", false)) g_settings.touch_size = (60 + sz * 5) / 100.0f;
+        if (row("Opacity", &op, op_names, 18, 9, "How see-through the on-screen buttons are.", false))
+            g_settings.touch_opacity = (15 + op * 5) / 100.0f;
+    }
+    opt_section("Layout");
+    {
+        static const char *const move[] = {"Stick", "D-pad"};
+        int v = g_settings.touch_dpad ? 1 : 0;
+        if (row("Movement", &v, move, 2, 0, "Stick: any direction. D-pad: eight directions.", true)) g_settings.touch_dpad = v != 0;
+        bool f = !g_settings.touch_stick_fixed;
+        if (opt_toggle("Follow thumb", &f, true,
+                       "On: it comes to where your thumb lands, anywhere on the lower left. Off: it stays where it is "
+                       "(move it with the Layout button)."))
+            g_settings.touch_stick_fixed = !f;
+        // the layout editor's own button on the screen (mobile/touch_controls.mm), beside the menu's: off once the
+        // layout is set
+        opt_toggle("Layout button", &g_settings.touch_edit_button, true,
+                   "A button at the top, next to the menu button, that lets you move and resize the on-screen buttons.");
+        if (opt_action("Reset touch layout", "", "Puts every on-screen button back in its place, at its size, shown."))
+            touch_layout_reset();
+    }
+    opt_end();
+}
+#endif

@@ -9,8 +9,8 @@ extern "C" {
 #endif
 
 // (in rising importance: a sound drops a less important one started just before it, and is dropped after a more
-// important one - one press, one sound)
-enum { MENU_SFX_CURSOR, MENU_SFX_TAB, MENU_SFX_DECIDE, MENU_SFX_BEEP, MENU_SFX_CANCEL, MENU_SFX_OPEN, MENU_SFX_CLOSE,
+// important one - one press, one sound). No "can't do that" beep (SE_SY_BEEP): a press that does nothing is silent.
+enum { MENU_SFX_CURSOR, MENU_SFX_TAB, MENU_SFX_DECIDE, MENU_SFX_CANCEL, MENU_SFX_OPEN, MENU_SFX_CLOSE,
        // (not menu sounds - the Storm weather's, runtime/nvn/weather.c; they never drop or are dropped): the thunder's
        // roll, a near strike's crack, the crackle on the ground before a strike
        MENU_SFX_THUNDER, MENU_SFX_THUNDER_CRACK, MENU_SFX_SPARK,
@@ -24,10 +24,13 @@ void menu_sfx_play_ex(int id, float gain, float rate, float lowpass, float from,
 // The start screen's game folder (its romfs/ holds the sounds) until the game's own is set (g_romfs_dir).
 void menu_sfx_set_game_dir(const char *dir);
 // After an ImGui frame of the menu (its thread, before ImGui::Render): the controller's cursor moving plays the cursor
-// sound, A / Enter / a click on something the decide sound, B / Esc (back_ok) the cancel sound.
+// sound, A / Enter / a click on something that opens or does something the decide sound (a value row's step plays the
+// tab sound instead: option_rows.mm), B / Esc (back_ok) the cancel sound.
 void menu_sfx_frame(bool back_ok);
 // The item just drawn is a menu tab: a click or A on it plays the tab sound (as L / R), not decide. Each frame.
 void menu_sfx_tab_item(void);
+// This frame's press plays no decide sound: it steps a value, which plays its own (the tab sound)
+void menu_sfx_click_silent(void);
 // Nothing played for a while: the stream pauses (menu_sfx_frame calls it).
 void menu_sfx_idle_check(void);
 // The test hook (LARECOMP_MENU_SFX_TEST=1, main.c): load the sounds now (LARECOMP_NO_AUDIO too) and log each one.

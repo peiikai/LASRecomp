@@ -19,8 +19,10 @@
 #include <string>
 #include <vector>
 
+#include "../platform.h"  // (PLAT_TOUCH)
 #include "i18n.h"
 #include "imgui.h"
+#include "plastic.h"
 #include "option_rows.h"
 #include "osk.h"
 #include "warp_data.h"
@@ -471,6 +473,9 @@ static void draw_map(void) {
     warp_draw_island(dl, a0, a1, g_island, cr, cc, a->sec == SEC_OW && cr < 0 ? a->region : -1);
 }
 
+static bool g_close_pressed;
+extern "C" bool warp_tab_close_pressed(void) { bool r = g_close_pressed; g_close_pressed = false; return r; }
+
 extern "C" bool warp_tab_draw(float scale) {
     if (g_areas.empty()) build_places();
     const char *cur = current_level();
@@ -530,9 +535,20 @@ extern "C" bool warp_tab_draw(float scale) {
         ImGui::TextDisabled("%s", L("Load a save to warp."));
         ImGui::Spacing();
     }
-    opt_begin("##warp", scale);
+    opt_begin("##warp", scale, true);
     opt_compact();
+#if PLAT_TOUCH
+    {   // the left column's heading, level with the map box's X - as the Randomizer's (rando_tab.mm pane_heading)
+        float top = 10 * scale, bx = 44 * 1.35f * scale;  // (plastic_close_pane's place and size)
+        ImGui::SetCursorPosY(top + (bx - ImGui::GetTextLineHeight()) / 2);
+        ImGui::TextColored(plastic_col(plastic_theme().section), "%s", i18n_upper(L("Places")).c_str());
+        ImGui::SetCursorPosY(top + bx + 4 * scale);
+    }
+    ImGui::BeginChild("##left_list", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);  // (the heading pinned: the list scrolls)
+#endif
+    ui_text_inline(true);  // (filters as typed: typed into directly, not through a prompt)
     opt_text("Search", g_filter, sizeof g_filter, "Search places...", NULL);
+    ui_text_inline(false);
     bool searching = g_filter[0] != 0;
     for (int s = SEC_OW; s <= SEC_DG; s++) {
         std::string sk = "S" + std::to_string(s);
@@ -580,7 +596,13 @@ extern "C" bool warp_tab_draw(float scale) {
         }
         opt_indent(-1);
     }
+#if PLAT_TOUCH
+    ImGui::EndChild();  // (##left_list)
+#endif
     opt_split();
+#if PLAT_TOUCH
+    g_close_pressed = plastic_close_pane(44 * scale, scale);  // (the page has no row of its own for it: the map's box)
+#endif
     draw_map();
     opt_split_end();
     g_focus_prev = g_focus_now;

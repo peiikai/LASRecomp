@@ -28,6 +28,8 @@ bool build_cache_save_object(BuildCache *cache, const char *stem, const char *so
 // Publishes <name>.tmp with its .id, preserving the old pair on failure. Success keeps only objects and receipts.
 bool build_cache_publish(BuildCache *cache, const char *name, const char *runtime_id, char *why,
                          size_t cap);
+// SHA-256 of the file as lower-case hex (cache_sha256.h, for C callers); false when it can't be read
+bool build_cache_file_sha256(const char *path, char out[65]);
 #ifdef __cplusplus
 }
 #endif

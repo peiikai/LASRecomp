@@ -1,4 +1,4 @@
-// LiveSplit Server client (Gameplay tab "LiveSplit"): the run timer (runtime/hle/run_timer.c) drives LiveSplit through
+// LiveSplit Server client (General tab "LiveSplit"): the run timer (runtime/hle/run_timer.c) drives LiveSplit through
 // its Server component's text protocol - one command per line, "\r\n" ended: starttimer, initgametime, setgametime
 // <h:mm:ss.fff>, pausegametime / unpausegametime, split. Nothing is read back.
 //

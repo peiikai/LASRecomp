@@ -30,8 +30,9 @@
 #define GAMELIB_ABI 1
 #define GAMELIB_FULL_ID_SIZE 96
 
-// The id a library for the game files in game_dir has (GAMELIB_ID-<build ID>); false when exefs/main is unreadable.
-static inline bool gamelib_full_id(const char *game_dir, char *out, size_t size) {
+// The id a library for the game files in game_dir has (<id>-<build ID>, id = GAMELIB_ID, or the iOS build's for an
+// export from the desktop: runtime/gamebuild.c); false when exefs/main is unreadable.
+static inline bool gamelib_full_id_for(const char *id, const char *game_dir, char *out, size_t size) {
     char path[1100];
     unsigned char hdr[0x60];
     snprintf(path, sizeof path, "%s/exefs/main", game_dir);
@@ -40,9 +41,12 @@ static inline bool gamelib_full_id(const char *game_dir, char *out, size_t size)
     bool ok = fread(hdr, 1, sizeof hdr, f) == sizeof hdr && !memcmp(hdr, "NSO0", 4);
     fclose(f);
     if (!ok) return false;
-    int n = snprintf(out, size, "%s-", GAMELIB_ID);
+    int n = snprintf(out, size, "%s-", id);
     for (int i = 0; i < 8 && n + 2 < (int)size; i++) n += snprintf(out + n, size - n, "%02X", hdr[0x40 + i]);
     return true;
+}
+static inline bool gamelib_full_id(const char *game_dir, char *out, size_t size) {
+    return gamelib_full_id_for(GAMELIB_ID, game_dir, out, size);
 }
 
 typedef struct {
@@ -68,6 +72,9 @@ bool gamelib_load(const char *game_dir, char *why, size_t why_size);
 const GameLibTables *gamelib_tables(void);
 // True when a library usable with this build is in one of those places (without loading it).
 bool gamelib_present(const char *game_dir);
+// iOS only: the app's own library (its id's GAMELIB_ID matches) - the game's build ID it was made for (16 hex digits,
+// the id's last part), whatever game files are there. false: none.
+bool gamelib_built_for(char *out, size_t size);
 
 #ifdef __cplusplus
 }
