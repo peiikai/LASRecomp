@@ -121,11 +121,12 @@ bool bind_is_default_slot(int dev, int slot) {
     return dev == BIND_DEV_PAD ? g_bind_pad[slot] == k_def_pad[slot] : g_bind_key[slot] == k_def_key[slot];
 }
 
-// (its own inverse: also turns a pressed button into the positional one stored). Only the bottom and right buttons
-// swap: X / Y stay where the Switch has them (Triangle / Square, Y / X on those pads)
+// (its own inverse: also turns a pressed button into the positional one stored). Confirm button "Bottom": the bottom
+// and right buttons swap on every pad, whatever its type or the Button icons setting (the player chose it, on a
+// Nintendo-style pad too; LAS Recomp's menus use the same rule, runtime/ui/pad_nav.mm). X / Y stay where the Switch
+// has them.
 static int label_swap(int host) {
-    extern int input_pad_family(void);  // runtime/hle/input.c
-    if (!g_settings.face_by_label || !input_pad_family()) return host;
+    if (!g_settings.face_by_label) return host;
     switch (host) {
     case SDL_GAMEPAD_BUTTON_SOUTH: return SDL_GAMEPAD_BUTTON_EAST;
     case SDL_GAMEPAD_BUTTON_EAST: return SDL_GAMEPAD_BUTTON_SOUTH;
