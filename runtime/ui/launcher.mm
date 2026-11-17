@@ -770,10 +770,14 @@ static void show_folder_dialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *
 // ------------------------------------------------------------------ a cloud drive (OneDrive on Windows, iCloud Drive on macOS / iOS)
 // A data root inside a synced folder uploads every game file to the player's cloud drive: a warning on the start
 // screen with roughly how much, and Choose another folder (the Data folder's Change...: move the data there) or Keep
-// here (settings.cloud_kept). LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
+// here (settings.cloud_kept). The size is measured in the background when the launch scan found every file on the
+// device - the data root's own once set up, before that the picked game files (or a typical copy) plus what the setup
+// adds; otherwise a typical setup's, since measuring lists every folder and listing an offloaded one downloads it.
+// LARECOMP_TEST_ONEDRIVE=1 (test): shown on any system, as OneDrive.
 #define GAME_FILES_GB 6.3   // exefs + romfs, as players bring them
 #define SETUP_ADDS_GB 0.4   // the built game code and its kept pieces (0.23, a beta_5 setup), shader caches
 static const char *g_cloud_name;           // the service's name (the English text names it); NULL: not synced
+static PlatCloudState g_cloud_state = PLAT_CLOUD_INCOMPLETE;  // the data root's scan at launch
 // (the drive offloads a synced folder's files it thinks unused; the game then waits for each one it reads)
 #if PLAT_IOS
 static const char *const KEEP_DOWNLOADED = LN("In the Files app, touch and hold the data folder and choose Keep "
@@ -794,9 +798,44 @@ static const char *const NOT_HERE = LN("Some of LAS Recomp's files are only in %
                                        "download as the game reads them, so it may be very slow or close.");
 static const char *const CLOUD_OWN = "OneDrive";
 #endif
+static std::atomic<double> g_cloud_gb{-1}; // the estimate (-1: not known yet)
+static std::atomic<int> g_cloud_job;
+static std::string g_cloud_for = "\x02";   // what the estimate is for: "" set up, "\x01" nothing picked, else the folder
+
+static void *cloud_size_thread(void *arg) {
+    std::string *src = (std::string *)arg;
+    int job = g_cloud_job;
+    double gb;
+    if (src->empty()) gb = rt_tree_size(rt_data_root()) / 1e9;
+    else {
+        std::string exefs, romfs;
+        bool unusable = false;
+        if (*src != "\x01") find_game(*src, exefs, romfs, unusable);
+        gb = (exefs.empty() || romfs.empty() ? GAME_FILES_GB : (rt_tree_size(exefs.c_str()) + rt_tree_size(romfs.c_str())) / 1e9)
+             + SETUP_ADDS_GB;
+    }
+    if (job == g_cloud_job) g_cloud_gb = gb;
+    delete src;
+    return NULL;
+}
+
 // The warning, w wide at the cursor (the start screen's upper right; before the setup, under the System rows).
 // 1: Keep here pressed, 2: Choose another folder (offered when the data folder can be changed and nothing is running)
-static int cloud_notice(float s, float w) {
+static int cloud_notice(float s, float w, bool ready) {
+    double gb = GAME_FILES_GB + SETUP_ADDS_GB;
+    if (g_cloud_state == PLAT_CLOUD_AVAILABLE) {
+        std::string src;
+        pthread_mutex_lock(&g_lock);
+        src = ready ? "" : g_src.empty() ? "\x01" : g_src;
+        pthread_mutex_unlock(&g_lock);
+        if (src != g_cloud_for) {  // (set up, or another folder picked: estimate again)
+            g_cloud_for = src, g_cloud_job++;
+            pthread_t th;
+            if (pthread_create(&th, NULL, cloud_size_thread, new std::string(src)) == 0) pthread_detach(th);
+        }
+        gb = g_cloud_gb;
+        if (gb < 0) return 0;
+    }
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.03f, 0.04f, 0.05f, 0.86f));
     ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 14 * s);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24 * s, 18 * s));
@@ -807,8 +846,7 @@ static int cloud_notice(float s, float w) {
     ImGui::PushTextWrapPos(0);
     ImGui::TextColored(ImVec4(1, 0.72f, 0.4f, 1), L("!  This folder is synced by %s"), g_cloud_name);
     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), L("About %.0f GB of game files will upload to your %s."),
-                       // A typical setup avoids another enumeration of potentially offloaded folders.
-                       GAME_FILES_GB + SETUP_ADDS_GB, g_cloud_name);
+                       fmax(1.0, gb), g_cloud_name);
 #ifdef __APPLE__
     ImGui::TextColored(ImVec4(0.86f, 0.85f, 0.80f, 1), "%s", L(KEEP_DOWNLOADED));
 #endif
@@ -2478,7 +2516,7 @@ extern "C" void launcher_run(const char *root) {
                              g_settings.cloud_kept ? " (kept there)" : "", rt_data_root());
         if (g_cloud_name) {
             uint64_t t0 = plat_now_ns();
-            PlatCloudState cloud = plat_cloud_offloaded(rt_data_root());
+            PlatCloudState cloud = g_cloud_state = plat_cloud_offloaded(rt_data_root());
             fprintf(stderr, "[cloud] %s (%.0f ms)\n", cloud == PLAT_CLOUD_OFFLOADED ? "some files are not on the device"
                     : cloud == PLAT_CLOUD_INCOMPLETE ? "could not verify local availability" : "every file is on the device",
                     (plat_now_ns() - t0) / 1e6);
@@ -3156,7 +3194,7 @@ extern "C" void launcher_run(const char *root) {
                 }
                 if (!ready && g_cloud_name && !g_settings.cloud_kept) {  // (before the copy is the time to move)
                     ImGui::Dummy(ImVec2(0, 14 * sc));
-                    int r = cloud_notice(1.5f * sc, ImGui::GetContentRegionAvail().x);
+                    int r = cloud_notice(1.5f * sc, ImGui::GetContentRegionAvail().x, false);
                     if (r == 1) cloud_keep();
                     else if (r == 2) choose_data_folder();
                 }
@@ -3242,7 +3280,7 @@ extern "C" void launcher_run(const char *root) {
             if (g_cloud_name && !g_settings.cloud_kept) {
                 float w = fminf(ds.x * 0.42f, 560 * s);
                 ImGui::SetCursorPos(ImVec2(ds.x - w - fmaxf(60 * s, safe_r + 30 * s), 60 * s + safe_t));
-                int r = cloud_notice(s, w);
+                int r = cloud_notice(s, w, status.empty());
                 if (r == 1) cloud_keep();
                 else if (r == 2) choose_data_folder();
             }
