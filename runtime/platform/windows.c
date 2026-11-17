@@ -1066,7 +1066,10 @@ static bool cloud_skip_reparse(const WIN32_FIND_DATAW *fd) {
 // The first item found offloaded, by path: a report's log then says which one.
 static void cloud_log_offloaded(const wchar_t *path) {
     char u[3300];
-    if (!WideCharToMultiByte(CP_UTF8, 0, path, -1, u, sizeof u, NULL, NULL)) snprintf(u, sizeof u, "?");
+    bool unc = !wcsncmp(path, L"\\\\?\\UNC\\", 8);  // (shown as the player knows it: no \\?\ prefix)
+    const wchar_t *p = unc ? path + 6 : !wcsncmp(path, L"\\\\?\\", 4) ? path + 4 : path;
+    if (!WideCharToMultiByte(CP_UTF8, 0, p, -1, u, sizeof u, NULL, NULL)) snprintf(u, sizeof u, "?");
+    if (unc) u[0] = '\\';
     fprintf(stderr, "[cloud] not on the device: %s\n", u);
 }
 
