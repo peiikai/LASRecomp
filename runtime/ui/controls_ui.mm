@@ -220,6 +220,9 @@ static void configure_inputs(float scale) {
         g_dev_pad = devs[ndi].pad, g_dev_id = devs[ndi].id, msg[0] = 0;
     }
     take_focus(FOCUS_DEVICE);
+    // On Device (where the cursor starts) the right column stays empty: showing the Buttons category's bindings there
+    // looked as if Buttons was picked, and A on Device switched devices instead of going into them (user 2026-11-18)
+    bool on_device = nav_on_item() || (ImGui::IsItemHovered() && !ImGui::GetCurrentContext()->NavCursorVisible);
     for (int c = 0; c < N_CAT; c++) {
         if (g_in_right && c == g_cat) opt_mark_next();
         bool open = opt_link(k_cat_name[c], NULL);
@@ -245,6 +248,8 @@ static void configure_inputs(float scale) {
     opt_split();
     if (desc_right) {
         opt_desc_text();
+        g_in_right = false;
+    } else if (on_device) {
         g_in_right = false;
     } else {
         Bind rows[16];  // (the most: the keyboard's Sticks, 10)
@@ -334,15 +339,17 @@ extern "C" void controls_tab_draw(float scale) {
     int frame = ImGui::GetFrameCount();
     if (frame - g_last_frame > 1) g_sub = false, g_focus = FOCUS_NONE, g_in_right = false;  // (back on the tab)
     g_last_frame = frame;
-    // (test) LARECOMP_CONTROLS_SUB=<buttons|triggers|sticks|dpad>[:right][:key]: on that page, the cursor on the category
-    // (right: on its first binding; key: the keyboard's) - for a few frames, past the menu putting it on the tab bar
+    // (test) LARECOMP_CONTROLS_SUB=<buttons|triggers|sticks|dpad|device>[:right][:key]: on that page, the cursor on the
+    // category or Device (right: on its first binding; key: the keyboard's) - for a few frames, past the menu putting it
+    // on the tab bar
     static bool hook_done;
     static int hook_frames, hook_focus;
     if (!hook_done) {
         hook_done = true;
         if (const char *h = getenv("LARECOMP_CONTROLS_SUB")) {
             pick_device(strstr(h, ":key") != NULL);
-            g_sub = true, hook_focus = strstr(h, "right") ? FOCUS_RIGHT : FOCUS_CAT, hook_frames = 10;
+            g_sub = true, hook_frames = 10;
+            hook_focus = strstr(h, "right") ? FOCUS_RIGHT : !strncmp(h, "device", 6) ? FOCUS_DEVICE : FOCUS_CAT;
             for (int c = 0; c < N_CAT; c++) if (!strncmp(h, k_cat_hook[c], strlen(k_cat_hook[c]))) g_cat = c;
         }
     }
