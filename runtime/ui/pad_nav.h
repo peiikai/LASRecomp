@@ -26,3 +26,11 @@ const char *ui_pad_action_label(int act);  // any menu action's button (act: BIN
 // Every key and controller input let go, in ImGui's eyes: its releases can go missing (the menu closed, a rebind took
 // them) and a key it still thinks is held repeats - the cursor keeps scrolling until that button is pressed again
 void ui_pad_release_all(ImGuiIO &io);
+// The left stick as one direction for the menus: an SDL_GAMEPAD_AXIS_LEFTX / LEFTY motion (v: -1..1) in, the direction
+// now held out (0 left, 1 right, 2 up, 3 down, -1 none). Only the direction pushed furthest counts, past half way, and it
+// stays held until under 0.3: a tilt near the edge no longer flickers into many presses, and a push down that leans to
+// one side doesn't step the row's value (user 2026-11-18).
+int ui_stick_dir(int axis, float v);
+// Before each ImGui frame of a menu: a held direction waits 0.4 s, then steps 8 times a second (ImGui's own 0.275 s and
+// 20 a second ran past the row wanted - user 2026-11-18). Typing keeps ImGui's (a held Backspace).
+void ui_nav_repeat(ImGuiIO &io, bool typing);
