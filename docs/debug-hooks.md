@@ -23,6 +23,33 @@ Put a copy of a save in `build/testsave/save_0/` first (`savedata0.bin`), so the
 `tools/shot.sh <frame> [max seconds]` runs `./build/lasrecomp extracted` with your `LARECOMP_*` variables, saves the
 window at that frame to `build/window.png` and exits.
 
+## Command line
+
+For launchers and scripts. Every option except the one-shot ones (`--prepare`, `--list-settings`, `--help`,
+`--version`) also works as an environment variable, which restarts keep (an update, a data folder move).
+
+| Option | Variable | What it does |
+|---|---|---|
+| `--play` | `LARECOMP_PLAY=1` | Skip the start screen and start the game. Shaders are still prepared first; if that takes more than a moment (the first start), the start screen shows its progress bar and then plays. |
+| `--data-dir <folder>` | `LARECOMP_DATA_ROOT` | Use this folder for game files, saves, seeds, settings and caches this run. It comes before every other rule (`runtime/paths.h`), writes no `data_root.txt`, and Settings > System > Data folder can't move it. |
+| `--game-files <folder>` | `LARECOMP_GAME_FILES` | Use the extracted game files in that folder. If the data folder already has that version set up, the game starts. If not, the start screen sets them up (copy, game code build, shaders) and then plays. |
+| `--prepare` | | The setup without a window, then exit: the game files from `--game-files` if needed, the game code, the shaders. Prints `progress <0-1> <step>` lines on stdout and exits 0 when the game is ready to play. On a failure it prints `error <why>` and exits 1 (details in the log). |
+| `--fullscreen` / `--windowed` | | Start fullscreen or in a window this run. Short for `--set fullscreen=1` / `--set fullscreen=0`. |
+| `--set <key>=<value>` | `LARECOMP_SET="key=value;key=value"` | Any `larecomp.ini` setting for this run only. Repeatable; the last one for a key wins. It isn't saved: the file keeps its own value, unless you change that setting in the menu during the run. Unknown keys are ignored with a line in the log. |
+| `--list-settings` | | Print the settings as `larecomp.ini` lines (the data folder's file plus this run's `--set`) and exit. |
+| `--no-update-check` | `LARECOMP_NO_UPDATE_CHECK=1` | No update check and no update this run. |
+| `--version`, `--help` | | Print and exit. On Windows they go to the console or pipe the exe was started from, else to a message box. |
+
+Started by RecompLauncher (`RECOMPLAUNCHER=1` is set), there is no update check (the launcher installs updates), and
+`RECOMPLAUNCHER_MODE=bigpicture` starts fullscreen unless the command line says `--windowed`.
+
+Example: a launcher that keeps everything in its own folder.
+
+```sh
+lasrecomp --prepare --data-dir ~/Games/LAS --game-files ~/Games/LAS-files   # once: set up, exit 0
+lasrecomp --play --data-dir ~/Games/LAS --no-update-check --set resolution=2
+```
+
 ## Running and test runs
 
 | Variable | Values | What it does |
@@ -32,7 +59,7 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_LAUNCHER_AUTOPLAY` | 1, `once` | Press PLAY on the start screen at once. `once`: only the first time, so a "Title screen" reboot stays on the start screen. |
 | `LARECOMP_LAUNCHER_PLAY_AT` | seconds | Press PLAY on the start screen that many seconds in. |
 | `LARECOMP_LAUNCHER_KEYS` | `frame:key,...` | Press keys on the start screen at those frames (`left right up down enter esc`, controller `pl pr pu pd pa pb`, or `b.<button>` with a larecomp.ini button name such as `b.north` or `b.rtrigger`: a real controller event that goes through LAS Menu). The log names the RANDOMIZER row's choice when it changes. |
-| `LARECOMP_NO_UPDATE_CHECK` | 1 | Skip the update check on the start screen. |
+| `LARECOMP_NO_UPDATE_CHECK` | 1 | No update check (start screen, Sparkle) and no update. Same as `--no-update-check`. |
 | `LARECOMP_INPUT` | script (see below) | Scripted controller input for player 1. Also skips the start screen and blocks your own input. |
 | `LARECOMP_NO_USER_INPUT` | 0 / 1 | Ignore keyboard, mouse and controllers. On by default when a scripted input hook is set; `0` lets your input through during a scripted run. |
 | `LARECOMP_HOST_INPUT` | script (see below) | Scripted host input that goes through the bindings and menus like a player's: keys, controller buttons, typing, mouse, window resize, screenshots. |
@@ -41,7 +68,7 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_PAD_TYPE` | `xbox`, `playstation` (or `ps`), other = Nintendo | Pretend the controller is of this family (button labels and confirm/back layout). |
 | `LARECOMP_SAVE_DIR` | folder | Use this folder for save slots (`save_0/savedata0.bin` ...) instead of the normal save folder. Test runs should always set it to a scratch copy. |
 | `LARECOMP_SETTINGS` | file path | Use this settings file instead of `larecomp.ini`, so test runs never change the player's settings. |
-| `LARECOMP_DATA_ROOT` | folder | Use this folder as the data folder (game files copy, settings, saves, caches). |
+| `LARECOMP_DATA_ROOT` | folder | Use this folder as the data folder (game files copy, settings, saves, caches). Same as `--data-dir`. |
 | `LARECOMP_NO_AUDIO` | 1 / 0 | No audio output at all (game and menu sounds). `0` keeps sound. |
 | `LARECOMP_NO_MOVIE_AUDIO` | 1 | Play movies without their audio track. |
 | `LARECOMP_WINDOW` | `WxH` | Window size in points (default: the remembered size, else 1280x720). Also stops fullscreen. |

@@ -15,7 +15,7 @@ native Windows, macOS, Linux, Android and iOS application.
 > Currently supported platforms:
 > - macOS - Apple Silicon only, Metal graphics backend + MetalFX
 > - Windows - x86-64 only, Vulkan graphics backend
-> - Linux - x86-64, Vulkan graphics backend (AppImage)
+> - Linux - x86-64, Vulkan graphics backend (AppImage, or a .tar.gz for Flatpak sandboxes and launchers)
 > - Android - arm64, Vulkan graphics backend
 > - iPhone and iPad - arm64, Metal graphics backend (sideloaded: see [iPhone and iPad](#iphone-and-ipad))
 > - Linux aarch64 (ARM) - **experimental**: on the [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) page; reports welcome
@@ -94,6 +94,12 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 - Add the AppImage to Steam as a non-Steam game and play it from there. In Desktop Mode, games Steam didn't launch
   get Steam's desktop controller layout, which sends extra keyboard presses.
 - If it won't start, add this to the game's launch options in Steam: `APPIMAGE_EXTRACT_AND_RUN=1 %command%`
+
+## Launchers
+
+LAS Recomp can be started from game launchers. `lasrecomp --help` lists the options: start the game directly, choose
+the data folder, set up the game files without a window, change settings for one run. Details are in
+[docs/debug-hooks.md](docs/debug-hooks.md#command-line).
 
 ## iPhone and iPad
 
@@ -210,11 +216,11 @@ Vulkan Memory Allocator from your distribution, Python 3.12. Packages, cross bui
 Where files live (game files, saves, seeds, settings and logs):
 - macOS: `~/Library/Application Support/com.peiikai.lasrecomp/`
 - Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
-- Linux: `~/.local/share/lasrecomp/`
+- Linux: `~/.local/share/lasrecomp/` (the tarball: its own folder; see [docs/linux.md](docs/linux.md))
 - Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
 - iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
 - You can move it to another folder or drive in Settings > System > Data folder.
-- `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
+- `--data-dir <dir>` (or `LARECOMP_DATA_ROOT=<dir>`) overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
 
 ### Android

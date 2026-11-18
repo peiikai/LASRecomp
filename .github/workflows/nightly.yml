@@ -82,7 +82,7 @@ jobs:
               echo "Built from [\`${SHA::7}\`]($URL/commit/$SHA) on $(date -u -d "${STAMP::8} ${STAMP:8:2}:${STAMP:10:2}" '+%Y-%m-%d %H:%M UTC'). Each platform's file appears as soon as it is built, and the game tells you on its start screen when a newer nightly is here. A nightly only offers newer nightlies, never a release."
               echo
               echo "- macOS: \`macOS.dmg\`  - Windows: \`windows.zip\`  - Windows on ARM: \`windows-arm64.zip\`"
-              echo "- Linux: \`linux-x86_64.AppImage\`, \`linux-aarch64.AppImage\`"
+              echo "- Linux: \`linux-x86_64.AppImage\`, \`linux-aarch64.AppImage\`; the same as a folder (no FUSE needed, e.g. in a Flatpak): \`linux-x86_64.tar.gz\`, \`linux-aarch64.tar.gz\`"
               echo "- Android: \`android.apk\`, installed as its own app, LAS Recomp Nightly, beside the release one"
               echo "- iPhone and iPad: \`iOS.laskit\`, made into the app with a nightly desktop build of the same date"
               # Changes: the pull requests merged since the previous round, newest round first, with the earlier
@@ -124,8 +124,8 @@ jobs:
           ASSETS=$(gh release view nightly --json assets -q '.assets[].name' 2>/dev/null || true)
           missing() { grep -qx "LAS.Recomp-$VERSION-$1" <<< "$ASSETS" && echo false || echo true; }
           LINUX=()
-          [ "$(missing linux-x86_64.AppImage)" = true ] && LINUX+=('{"arch":"x86_64","runner":"ubuntu-24.04"}')
-          [ "$(missing linux-aarch64.AppImage)" = true ] && LINUX+=('{"arch":"aarch64","runner":"ubuntu-24.04-arm"}')
+          [ "$(missing linux-x86_64.AppImage)" = true ] || [ "$(missing linux-x86_64.tar.gz)" = true ] && LINUX+=('{"arch":"x86_64","runner":"ubuntu-24.04"}')
+          [ "$(missing linux-aarch64.AppImage)" = true ] || [ "$(missing linux-aarch64.tar.gz)" = true ] && LINUX+=('{"arch":"aarch64","runner":"ubuntu-24.04-arm"}')
           LJSON="[$(IFS=,; echo "${LINUX[*]}")]"
           {
             echo "sha=$SHA"; echo "stamp=$STAMP"; echo "version=$VERSION"
@@ -442,21 +442,22 @@ jobs:
         with:
           path: build/linux/${{ matrix.arch }}/wheels
           key: ${{ steps.wheels.outputs.cache-primary-key }}
+      # package.sh checked the executable; here the whole AppDir that was packed, then the tarball made from it
       - name: No game code
-        run: |
-          A=build/linux/${{ matrix.arch }}/AppDir
-          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
-                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
-          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
-          find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
-            if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
-          done
+        run: tools/linux/check_no_game_code.sh build/linux/${{ matrix.arch }}/AppDir
+      - name: Tarball
+        run: make tarball ARCH=${{ matrix.arch }}
+      - name: Data folder rules
+        run: tools/linux/check_portable.sh ${{ matrix.arch }}
       - name: Update manifest
         env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.plan.outputs.version }}' }
         run: tools/update_manifest.sh "$VERSION" linux-${{ matrix.arch }} build/dist/*-linux-${{ matrix.arch }}.AppImage
       - name: Publish
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-linux-${{ matrix.arch }}.AppImage linux-${{ matrix.arch }}.AppImage
+      - name: Publish tarball
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: tools/nightly_publish.sh build/dist/*-linux-${{ matrix.arch }}.tar.gz linux-${{ matrix.arch }}.tar.gz
 
   # its own app (com.lasrecomp.android.nightly, "LAS Recomp Nightly"): installs beside the release app, with its own
   # data; signed with the published APKs' key
