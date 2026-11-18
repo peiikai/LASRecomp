@@ -19,7 +19,7 @@ playing exactly as before:
 | stage | what | state |
 |---|---|---|
 | 1 | seed record + one runtime API; Python's `random` in C++ | in progress |
-| 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | in progress: rooms, level configs, data sheets, messages, archives, event flows done; textures next |
+| 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | done: rooms, level configs, data sheets, messages, archives, event flows, texture banks |
 | 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | |
 | 4 | asset builds (dungeon room shuffle, textures) in the runtime | |
 | 5 | native solver | |
@@ -76,12 +76,13 @@ compiler (see `uniform()`).
 
 - `fixed_hash`, `leb` (rooms), `lvb` (level configs): ported from LAS-Randomizer's Python (MIT, credited in each file).
 - `msbt` (messages): ported from our `tools/rando/msbt.py`.
-- `gsheet` (data sheets), `sarc` (archives), `bfevfl` (event flows): written for LAS Recomp from the format; they lay
-  files out exactly as oead 1.3 / evfl 1.2 do (GPL libraries: read for the layout only, no code copied).
+- `gsheet` (data sheets), `sarc` (archives), `bfevfl` (event flows), `bntx` (texture banks, with the merge, subset,
+  rename and pixel-copy operations of `tools/rando/bntx_merge.py`): written for LAS Recomp from the format; they lay
+  files out exactly as oead 1.3 / evfl 1.2 / LAS's bundled BNTX editor do (GPL code: read for the layout only, no code copied).
 
 Each writer produces the same bytes as the Python code seeds are made with today, so the two pipelines can be compared
 file by file. `tools/rando/test_formats.py <romfs> [kind ...]` checks that on every game file of a kind (or on a seed's
-`romfs/`), with the LAS venv's Python and `make lasrando`.
+`romfs/`), with the LAS venv's Python and `make lasrando`; texture banks: `tools/test_bntx_formats.py <romfs> [<seed romfs> ...]`.
 
 ## Tests
 
