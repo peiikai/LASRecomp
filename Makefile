@@ -83,8 +83,8 @@ GENFLAGS := $(GENFLAGS_BASE)
 GEN_SRC  := $(strip $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c))
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
 RT_SRC   := $(wildcard runtime/*.c runtime/*.cpp) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/rando/*.c) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
-RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/rando/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
+            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
+RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/rando/*.h runtime/rando/fmt/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
             $(wildcard runtime/nvn/maxwell/*.h) $(wildcard runtime/nvn/vulkan/*.h) $(wildcard runtime/ui/*.h) $(wildcard runtime/ui/mobile/*.h) \
             $(wildcard runtime/ui/lang/*.inc)
 UI_SRC   := $(wildcard runtime/ui/*.mm) $(wildcard runtime/ui/mobile/*.mm)  # (mobile/: the touch layer, empty off PLAT_TOUCH)
@@ -466,12 +466,15 @@ rando-helper: build/rando-venv/.ok
 
 # The randomizer's command-line tool (tools/lasrando.c): the game's own seed code (runtime/rando/) on the command line,
 # for converting older seed folders to seed.json, checks and tests. Plain C, no game files.
-LASRANDO_SRC := tools/lasrando.c runtime/rando/seed.c runtime/rando/json.c
+LASRANDO_C   := runtime/rando/seed.c runtime/rando/json.c
+LASRANDO_CXX := tools/lasrando.cpp $(wildcard runtime/rando/fmt/*.cpp)
 LASRANDO := build/lasrando$(if $(filter windows,$(PLATFORM)),.exe)
 lasrando: $(LASRANDO)
-$(LASRANDO): $(LASRANDO_SRC) $(wildcard runtime/rando/*.h)
-	@mkdir -p build
-	$(CC) -std=gnu11 -O2 $(LASRANDO_SRC) -o $@
+$(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/rando/fmt/*.h)
+	@mkdir -p build/lasrando.o
+	$(CC) -std=gnu11 -O2 -c runtime/rando/seed.c -o build/lasrando.o/seed.o
+	$(CC) -std=gnu11 -O2 -c runtime/rando/json.c -o build/lasrando.o/json.o
+	$(CXX) -std=c++17 -O2 $(LASRANDO_CXX) build/lasrando.o/seed.o build/lasrando.o/json.o -o $@
 
 # The game code generator, the same way (tools/lasgen.spec): build/helper/lasgen/, shipped as lasgen/ next to the exe or
 # in Contents/Resources. The start screen's setup runs it on the player's own game files (runtime/gamebuild.c).

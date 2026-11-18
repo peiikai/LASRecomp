@@ -19,7 +19,7 @@ playing exactly as before:
 | stage | what | state |
 |---|---|---|
 | 1 | seed record + one runtime API; Python's `random` in C++ | in progress |
-| 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | |
+| 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | in progress: rooms, level configs, data sheets done |
 | 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | |
 | 4 | asset builds (dungeon room shuffle, textures) in the runtime | |
 | 5 | native solver | |
@@ -69,6 +69,17 @@ The rules for every stage:
 native solver must give the same seeds. `tools/test_pyrandom.cpp` checks it against CPython 3.12
 (`tools/rando/pyrandom_golden.txt`). Float sums that Python rounds twice must not be fused into one multiply-add by the
 compiler (see `uniform()`).
+
+## File formats
+
+`runtime/rando/fmt/`: the game's data files, read and written by the same code in the game and in `lasrando`.
+
+- `fixed_hash`, `leb` (rooms), `lvb` (level configs): ported from LAS-Randomizer's Python (MIT, credited in each file).
+- `gsheet` (data sheets): written for LAS Recomp from the format; it lays files out exactly as oead 1.3 does.
+
+Each writer produces the same bytes as the Python code seeds are made with today, so the two pipelines can be compared
+file by file. `tools/rando/test_formats.py <romfs> [kind ...]` checks that on every game file of a kind (or on a seed's
+`romfs/`), with the LAS venv's Python and `make lasrando`.
 
 ## Tests
 
