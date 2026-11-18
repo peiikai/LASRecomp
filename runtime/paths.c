@@ -284,13 +284,25 @@ static bool pointer_root(const char *home, char *out, size_t n) {
     return true;
 }
 
+static bool has_entries(const char *dir);
+
+// --new-data-dir <folder> / LARECOMP_NEW_DATA_DIR (a launcher's own folder for a new install): used when it holds
+// LAS Recomp's data already, or when the usual data folder (the rules below) has none yet. Existing data wins: a player
+// who played before keeps their folder. NULL: not set.
+static const char *new_data_dir(void) {
+    const char *e = getenv("LARECOMP_NEW_DATA_DIR");
+    return e && *e ? e : NULL;
+}
+
 bool rt_data_root_early(char *out, size_t n) {
-    const char *env = getenv("LARECOMP_DATA_ROOT");
+    const char *env = getenv("LARECOMP_DATA_ROOT"), *nd = new_data_dir();
     if (env && *env) return (size_t)snprintf(out, n, "%s", env) < n;
+    if (nd && has_entries(nd)) return (size_t)snprintf(out, n, "%s", nd) < n;
     if (is_dir("extracted")) return false;  // (dev mode)
     char home[1024];
     default_home(home, sizeof home);
     if (!pointer_root(home, out, n) || !is_dir(out)) snprintf(out, n, "%s", home);
+    if (nd && !has_entries(out)) snprintf(out, n, "%s", nd);
     return true;
 }
 
@@ -365,8 +377,10 @@ void rt_paths_init(void) {
     exe_dir(g_exe_dir, sizeof g_exe_dir);
     default_home(g_home, sizeof g_home);
     char root[1024];
-    const char *env = getenv("LARECOMP_DATA_ROOT");
+    const char *env = getenv("LARECOMP_DATA_ROOT"), *nd = new_data_dir();
+    bool use_new = false;
     if (env && *env) snprintf(root, sizeof root, "%s", env);
+    else if (nd && has_entries(nd)) snprintf(root, sizeof root, "%s", nd), use_new = true;  // (set up there before)
 #if !PLAT_IOS
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
 #endif
@@ -393,6 +407,10 @@ void rt_paths_init(void) {
                 remove(p);
             }
         }
+    }
+    if (nd && !(env && *env) && !use_new) {
+        if (has_entries(root)) fprintf(stderr, "[paths] --new-data-dir: LAS Recomp's data is already in %s: kept there\n", root);
+        else snprintf(root, sizeof root, "%s", nd), g_dev = false;
     }
     mkdirs(root);
     char msg[1400];

@@ -34,6 +34,8 @@ with tempfile.TemporaryDirectory() as t:
 
     def data_of(args, env=None, exe=EXE):
         """The data folder a run used: its "[paths] data:" line (stderr, or the data folder's log without one)"""
+        for log in list(t.rglob('lasrecomp*.log')):  # (earlier runs' logs: only this run's line counts)
+            log.unlink()
         r = run(args + ['--list-settings'], env, exe)
         lines = r.stderr.splitlines()
         for log in list(t.rglob('lasrecomp.log')):
@@ -90,6 +92,20 @@ with tempfile.TemporaryDirectory() as t:
     s = settings(run(['--data-dir', str(d), '--list-settings'], dict(rl, RECOMPLAUNCHER_MODE='desktop')).stdout)
     check('RecompLauncher desktop: the file\'s setting', s.get('fullscreen') == '0', s)
 
+    # --new-data-dir (RecompLauncher's profile): a new player's data goes there; a player with data already keeps it
+    normal, new = t / 'platform-home', t / 'new'
+    folder, _ = data_of(['--new-data-dir', str(new)])
+    check('--new-data-dir: nothing anywhere yet -> the new folder', folder == str(new), folder)
+    shutil.rmtree(new)
+    normal.mkdir(exist_ok=True)
+    (normal / 'larecomp.ini').write_text('volume = 0.50\n')
+    folder, _ = data_of(['--new-data-dir', str(new)])
+    check('--new-data-dir: data in the usual folder -> kept there', folder == str(normal) and not (new / 'larecomp.ini').exists(), folder)
+    new.mkdir(exist_ok=True)
+    (new / 'save').mkdir()
+    folder, _ = data_of(['--new-data-dir', str(new)])
+    check('--new-data-dir: set up there before -> the new folder', folder == str(new), folder)
+
     if sys.platform.startswith('linux'):
         # the tarball: <folder>/usr/bin/lasrecomp with <folder>/portable.txt (an unpacked AppImage the same)
         tb = t / 'LAS Recomp'
@@ -97,11 +113,12 @@ with tempfile.TemporaryDirectory() as t:
         exe = tb / 'usr' / 'bin' / 'lasrecomp'
         shutil.copy2(EXE, exe)
         (tb / 'portable.txt').write_text('portable\n')
-        folder, _ = data_of([], exe=exe)
+        nohome = {'LARECOMP_DATA_HOME': ''}  # (the platform's own folder: the rules under test)
+        folder, _ = data_of([], nohome, exe=exe)
         check('tarball: its own folder', folder == str(tb), folder)
-        folder, _ = data_of([], {'APPDIR': str(tb)}, exe=exe)
+        folder, _ = data_of([], dict(nohome, APPDIR=str(tb)), exe=exe)
         check('an AppImage a launcher unpacked (APPDIR, no APPIMAGE): its own folder', folder == str(tb), folder)
-        folder, _ = data_of([], {'APPDIR': str(tb), 'APPIMAGE': str(t / 'x.AppImage')}, exe=exe)
+        folder, _ = data_of([], dict(nohome, APPDIR=str(tb), APPIMAGE=str(t / 'x.AppImage')), exe=exe)
         check('a mounted AppImage never writes into itself', folder != str(tb), folder)
         folder, _ = data_of(['--data-dir', str(d)], exe=exe)
         check('tarball --data-dir', folder == str(d), folder)
@@ -114,7 +131,7 @@ with tempfile.TemporaryDirectory() as t:
         (t / 'game.AppImage.home').mkdir()
         folder, _ = data_of([], {'APPIMAGE': str(ai), 'LARECOMP_DATA_HOME': ''})
         check('AppImage with .home', folder == str(t / 'game.AppImage.home' / '.local' / 'share' / 'lasrecomp'), folder)
-        (t / 'game.AppImage.home').rmdir()
+        shutil.rmtree(t / 'game.AppImage.home')
         folder, _ = data_of([], {'APPIMAGE': str(ai), 'LARECOMP_DATA_HOME': ''})
         check('AppImage without .home: XDG_DATA_HOME', folder == str(xdg / 'lasrecomp'), folder)
 

@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#ifdef _WIN32
+#include <windows.h>  // (rt_cli_print: the inherited stdout handle)
+#endif
 
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -312,6 +315,8 @@ static const char *const HELP =
     "\n"
     "  --play                 skip the start screen (LARECOMP_PLAY=1)\n"
     "  --data-dir <folder>    keep saves, settings and game files there for this run (LARECOMP_DATA_ROOT)\n"
+    "  --new-data-dir <folder>  keep the data there if LAS Recomp has none yet; existing data stays where it is\n"
+    "                         (LARECOMP_NEW_DATA_DIR)\n"
     "  --game-files <folder>  set up the extracted game files from that folder if needed, then play\n"
     "                         (LARECOMP_GAME_FILES)\n"
     "  --fullscreen           start fullscreen for this run (same as --set fullscreen=1)\n"
@@ -326,16 +331,56 @@ static const char *const HELP =
     "  --version              print the version and exit\n"
     "  --help                 print this and exit\n";
 
-// To stdout. Windows: the release exe has no console of its own - the parent's console or pipe (plat_cli_begin),
-// else a message box.
-void rt_cli_print(const char *s) {
+// Printed output (--help, --version, --list-settings, --prepare's progress lines): the stdout the program was started
+// with, kept by rt_cli_init before the session log takes stdout and stderr over (plat_init: a log file when they aren't
+// a terminal). Windows: the release exe is a GUI program - its inherited stdout (a file or pipe), else the parent's
+// console (plat_cli_begin), else a message box.
 #ifdef _WIN32
-    plat_cli_begin();
-    if (!plat_cli_write(s, strlen(s))) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "LAS Recomp", s, NULL);
+static HANDLE g_cli_out;
 #else
-    fputs(s, stdout);
-    fflush(stdout);
+static int g_cli_fd = -1;
 #endif
+static bool g_cli_ready;
+static void rt_cli_init(void) {
+    if (g_cli_ready) return;
+    g_cli_ready = true;
+#ifdef _WIN32
+    HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (h && h != INVALID_HANDLE_VALUE && GetFileType(h) != FILE_TYPE_UNKNOWN &&
+        DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &g_cli_out, 0, FALSE, DUPLICATE_SAME_ACCESS))
+        return;
+    g_cli_out = NULL;
+    plat_cli_begin();  // (no stdout: the console it was started from)
+#else
+    g_cli_fd = dup(STDOUT_FILENO);
+#endif
+}
+void rt_cli_print(const char *s) {
+    rt_cli_init();
+    size_t n = strlen(s);
+#ifdef _WIN32
+    if (g_cli_out) {
+        DWORD w;
+        for (const char *p = s; n && WriteFile(g_cli_out, p, (DWORD)n, &w, NULL) && w; p += w, n -= w) {}
+        return;
+    }
+    if (!plat_cli_write(s, n)) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "LAS Recomp", s, NULL);
+#else
+    for (const char *p = s; n && g_cli_fd >= 0;) {
+        ssize_t w = write(g_cli_fd, p, n);
+        if (w <= 0) break;
+        p += w, n -= (size_t)w;
+    }
+#endif
+}
+// --prepare / --list-settings done: that exit status, at once (the graphics backends end the process with status 0 from
+// their atexit handlers: runtime/nvn/vulkan/device.c)
+static void cli_exit(int code) {
+    fflush(stdout), fflush(stderr);
+#if defined(_WIN32) || defined(__linux__)
+    plat_terminate_code(code);
+#endif
+    _exit(code);
 }
 
 // A folder named on the command line, absolute (relative to where we started; it may not exist yet)
@@ -400,11 +445,12 @@ static int cli_options(int argc, char **argv, bool *list, bool *prepare) {
         else if (!strcmp(a, "--no-update-check")) setenv("LARECOMP_NO_UPDATE_CHECK", "1", 1);
         else if (!strcmp(a, "--fullscreen")) cli_set("fullscreen=1");
         else if (!strcmp(a, "--windowed")) cli_set("fullscreen=0");
-        else if (!strcmp(a, "--data-dir") || !strcmp(a, "--game-files") || !strcmp(a, "--set")) {
+        else if (!strcmp(a, "--data-dir") || !strcmp(a, "--new-data-dir") || !strcmp(a, "--game-files") || !strcmp(a, "--set")) {
             if (!next) { fprintf(stderr, "[main] %s needs a value (--help)\n", a); return 2; }
             i++;
             if (!strcmp(a, "--set")) cli_set(next);
-            else cli_path(a, next, a[2] == 'd' ? "LARECOMP_DATA_ROOT" : "LARECOMP_GAME_FILES");
+            else cli_path(a, next, !strcmp(a, "--data-dir") ? "LARECOMP_DATA_ROOT" :
+                                   !strcmp(a, "--new-data-dir") ? "LARECOMP_NEW_DATA_DIR" : "LARECOMP_GAME_FILES");
         }
         else if (!strcmp(a, "--load-save") || !strcmp(a, "--build-ios")) i++;  // (main(): their argument)
     }
@@ -415,9 +461,7 @@ int main(int argc, char **argv) {
     bool list_settings = false, prepare = false;
     int code = cli_options(argc, argv, &list_settings, &prepare);
     if (code >= 0) return code;
-#ifdef _WIN32
-    if (list_settings || prepare) plat_cli_begin();  // (their output: the console or pipe it was started from)
-#endif
+    if (list_settings || prepare) rt_cli_init();  // (their output: the stdout they were started with, before the log)
 #ifdef __APPLE__
     metal_hud_relaunch();
 #endif
@@ -455,7 +499,8 @@ int main(int argc, char **argv) {
     static char arg_root[4096], arg_kit[4096];  // (>= PATH_MAX: Bionic's fortified realpath checks it)
     bool build_ios = false;
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--data-dir") || !strcmp(argv[i], "--game-files") || !strcmp(argv[i], "--set")) i++;  // (cli_options)
+        if (!strcmp(argv[i], "--data-dir") || !strcmp(argv[i], "--new-data-dir") || !strcmp(argv[i], "--game-files") ||
+            !strcmp(argv[i], "--set")) i++;  // (cli_options)
         else if (!strcmp(argv[i], "--load-save") && i + 1 < argc) {  // <file 1-4 | save file> (debug: runtime/hle/load_save.c)
             extern void load_save_arg(const char *arg);
             load_save_arg(argv[++i]);
@@ -475,17 +520,15 @@ int main(int argc, char **argv) {
     }
     if (list_settings) {  // (--list-settings: the data folder's settings and this run's --set ones)
         char *t = settings_text();
-        if (!t) { fprintf(stderr, "can't read the settings\n"); return 1; }
+        if (!t) { fprintf(stderr, "can't read the settings\n"); cli_exit(1); }
         rt_cli_print(t);
         free(t);
-        return 0;
+        cli_exit(0);
     }
     const char *gf = getenv("LARECOMP_GAME_FILES");
     if (prepare) {  // (--prepare: the setup without a window, then exit. runtime/ui/launcher.mm)
         extern int launcher_prepare_cli(const char *root, const char *src);
-        int r = launcher_prepare_cli(root, gf);
-        fflush(stdout), fflush(stderr);
-        exit(r);
+        cli_exit(launcher_prepare_cli(root, gf));
     }
     if (gf && *gf) {  // (--game-files: played if set up already, else
         extern bool launcher_game_files_ready(const char *root, const char *src);  //  the start screen's setup first)
