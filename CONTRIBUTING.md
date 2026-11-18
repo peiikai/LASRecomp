@@ -130,6 +130,10 @@ untranslated text shows in English.
 `third_party/LAS-Randomizer/venv/bin/python tools/test_keysanity_text.py [<romfs>]` checks that keysanity dungeon
 items picked up anywhere, floor key spots included, get a message naming their dungeon.
 
+The randomizer's native random numbers: `tools/test_pyrandom.cpp` (build line at its top) checks
+`runtime/rando/pyrandom.h` against CPython's `random` with the vectors in `tools/rando/pyrandom_golden.txt`, without
+game data. Seed IDs must keep giving the same seeds, so a mismatch is a bug in the C++ side.
+
 `python tools/test_text_speed.py` checks the Text speed hooks (Normal, Fast, Instant) without game data.
 
 The updater: `tools/test_update.cpp` (manifest, signature, the swap and its rollback; build line at its top) and

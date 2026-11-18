@@ -129,6 +129,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Randomizer RNG matches CPython (golden vectors)
+        run: |
+          clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom
+          build/test-pyrandom
       - name: Self-updater (manifest, signature, swap and rollback)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
@@ -270,6 +274,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Randomizer RNG matches CPython (golden vectors)
+        run: |
+          clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom
+          build/test-pyrandom
       - name: Self-updater (manifest, signature, swap and rollback)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
@@ -361,6 +369,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O1 tools/test_update_tags.cpp -o build/test-update-tags
           build/test-update-tags
+      - name: Randomizer RNG matches CPython (golden vectors)
+        run: |
+          clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom
+          build/test-pyrandom
       - name: Self-updater (manifest, signature, swap and rollback)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
@@ -522,6 +534,10 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Randomizer RNG matches CPython (golden vectors)
+        run: |
+          clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom.exe
+          build/test-pyrandom.exe
       - name: Self-updater (manifest, signature, swap and rollback; Windows file rules)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update.exe
@@ -642,6 +658,10 @@ jobs:
         run: python3 tools/test_delete_guard.py
       - name: Data folder move (cut off at every step)
         run: python3 tools/test_data_move.py
+      - name: Randomizer RNG matches CPython (golden vectors)
+        run: |
+          clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom.exe
+          build/test-pyrandom.exe
       - name: Self-updater (manifest, signature, swap and rollback; Windows file rules)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update.exe
