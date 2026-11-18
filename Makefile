@@ -83,8 +83,8 @@ GENFLAGS := $(GENFLAGS_BASE)
 GEN_SRC  := $(strip $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c))
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
 RT_SRC   := $(wildcard runtime/*.c runtime/*.cpp) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
-RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/rando/*.h runtime/rando/fmt/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
+            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp runtime/rando/apply/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
+RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/rando/*.h runtime/rando/fmt/*.h runtime/rando/apply/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
             $(wildcard runtime/nvn/maxwell/*.h) $(wildcard runtime/nvn/vulkan/*.h) $(wildcard runtime/ui/*.h) $(wildcard runtime/ui/mobile/*.h) \
             $(wildcard runtime/ui/lang/*.inc)
 UI_SRC   := $(wildcard runtime/ui/*.mm) $(wildcard runtime/ui/mobile/*.mm)  # (mobile/: the touch layer, empty off PLAT_TOUCH)
@@ -467,10 +467,10 @@ rando-helper: build/rando-venv/.ok
 # The randomizer's command-line tool (tools/lasrando.c): the game's own seed code (runtime/rando/) on the command line,
 # for converting older seed folders to seed.json, checks and tests. Plain C, no game files.
 LASRANDO_C   := runtime/rando/seed.c runtime/rando/json.c
-LASRANDO_CXX := tools/lasrando.cpp $(wildcard runtime/rando/fmt/*.cpp)
+LASRANDO_CXX := tools/lasrando.cpp $(wildcard runtime/rando/fmt/*.cpp runtime/rando/apply/*.cpp)
 LASRANDO := build/lasrando$(if $(filter windows,$(PLATFORM)),.exe)
 lasrando: $(LASRANDO)
-$(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/rando/fmt/*.h)
+$(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/rando/fmt/*.h runtime/rando/apply/*.h)
 	@mkdir -p build/lasrando.o
 	$(CC) -std=gnu11 -O2 -c runtime/rando/seed.c -o build/lasrando.o/seed.o
 	$(CC) -std=gnu11 -O2 -c runtime/rando/json.c -o build/lasrando.o/json.o

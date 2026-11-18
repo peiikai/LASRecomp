@@ -207,6 +207,8 @@ def shuffle_dungeon_rooms(romfs, out_dir, mode, layouts, jumps):
 
 def main():
     romfs, out_dir, settings_file = ARGS
+    import record  # the seed's decisions; with LARECOMP_RECORD, every file write too (tools/rando/record.py)
+    record.install(out_dir)
     stage('Preparing', 0.01)
     with open(settings_file) as f:
         user = json.load(f)
@@ -665,6 +667,7 @@ def main():
     if settings.get('chest-looks'):  # chest colour shows what's inside (tools/rando/chest_looks.py)
         import chest_looks
         print('chest looks:', chest_looks.install(result['placements'], item_defs, sh.logic_defs, settings), flush=True)
+    record.hook_mods(ModsProcess)
     mods = ModsProcess(result['placements'], romfs, out_dir, item_defs, settings['seed'], result['randstate'])
     last = [0]
 
@@ -843,6 +846,7 @@ def main():
         sys.exit(f'room links broken in {len(problems)} place(s) - the game would crash loading them; first: {problems[0]}')
     import quick_pickups  # (every flow edit done) ground items given without an event: Link doesn't stop for them
     print('quick pickups:', quick_pickups.apply(out_dir, romfs), flush=True)
+    record.decisions(out_dir, mods.placements, mods.settings, mods.item_defs)
     with open(os.path.join(out_dir, 'settings.json'), 'w') as f:
         s = dict(settings)
         s['excluded-locations'] = sorted(s['excluded-locations'])
