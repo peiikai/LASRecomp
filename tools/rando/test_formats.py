@@ -9,7 +9,8 @@ informational). Point it at the game files, or at a seed's romfs/ to check the f
 
 usage: third_party/LAS-Randomizer/venv/bin/python tools/rando/test_formats.py <romfs> [kind ...]
 kinds: leb (room files as LAS repacks them), leb-grid (the same with the tile grid read and rewritten), lvb (level
-configs), gsheet (data sheets, as oead writes them)
+configs), gsheet (data sheets, as oead writes them), msbt
+(messages), bfevfl (event flows, as evfl writes them)
 Exit status 1 if any file differs between the two. Needs `make lasrando` first.
 """
 import os
@@ -23,7 +24,7 @@ LAS = os.path.join(ROOT, 'third_party', 'LAS-Randomizer')
 sys.path.insert(0, LAS)
 TOOL = os.path.join(ROOT, 'build', 'lasrando.exe' if os.name == 'nt' else 'lasrando')
 
-EXT = {'leb': '.leb', 'leb-grid': '.leb', 'lvb': '.lvb', 'gsheet': '.gsheet'}
+EXT = {'leb': '.leb', 'leb-grid': '.leb', 'lvb': '.lvb', 'gsheet': '.gsheet', 'msbt': '.msbt', 'sarc': '.arc', 'bfevfl': '.bfevfl'}
 
 
 def python_repack(kind, data):
@@ -39,6 +40,21 @@ def python_repack(kind, data):
         sheet.alignment, sheet.hash, sheet.name = src.alignment, src.hash, src.name
         sheet.root_fields, sheet.values = src.root_fields, src.values
         return bytes(sheet.to_binary())
+    if kind == 'sarc':  # (as dungeon_gen rewrites DgnTex.arc)
+        import oead
+        return bytes(oead.SarcWriter.from_sarc(oead.Sarc(data)).write()[1])
+    if kind == 'msbt':
+        sys.path.insert(0, HERE)
+        import msbt
+        return msbt.Msbt(data).pack()
+    if kind == 'bfevfl':  # (as event_tools.readFlow / writeFlow)
+        import io
+        import evfl
+        flow = evfl.EventFlow()
+        flow.read(data)
+        out = io.BytesIO()
+        flow.write(out)
+        return out.getvalue()
     raise SystemExit(f'unknown kind {kind}')
 
 

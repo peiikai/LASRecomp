@@ -5,7 +5,7 @@
 //   lasrando get <seed folder> <key>...            settings as the runtime reads them: one line per key,
 //                                                  "<key> bool=<0|1> int=<n|-> str=<s|->"
 //   lasrando repack <kind> <out folder> < paths     each listed game file read and written back by the format code
-//                                                  (kind: leb, leb-grid, lvb, gsheet), to <out folder>/<the path as listed>;
+//                                                  (kind: leb, leb-grid, lvb, gsheet, msbt, sarc, bfevfl), to <out folder>/<the path as listed>;
 //                                                  tools/rando/test_formats.py compares that with the Python's
 //
 // Build: make lasrando (build/lasrando).
@@ -19,15 +19,18 @@
 #include <iterator>
 #include <string>
 
+#include "../runtime/rando/fmt/bfevfl.h"
 #include "../runtime/rando/fmt/gsheet.h"
 #include "../runtime/rando/fmt/leb.h"
+#include "../runtime/rando/fmt/msbt.h"
+#include "../runtime/rando/fmt/sarc.h"
 #include "../runtime/rando/fmt/lvb.h"
 #include "../runtime/rando/seed.h"
 
 static int usage(void) {
     fprintf(stderr, "usage: lasrando convert <seed folder> [<out.json>]\n"
                     "       lasrando get <seed folder> <key>...\n"
-                    "       lasrando repack <leb|leb-grid|lvb|gsheet> <out folder> < paths\n");
+                    "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n");
     return 2;
 }
 
@@ -47,6 +50,9 @@ static int repack(const std::string &kind, const std::string &out) {
             if (kind == "leb" || kind == "leb-grid") res = rando::LebRoom::parse(data, kind == "leb-grid").repack();
             else if (kind == "lvb") res = rando::LvbLevel::parse(data).repack();
             else if (kind == "gsheet") res = rando::GSheet::parse(data).write();
+            else if (kind == "msbt") res = rando::Msbt::parse(data).pack();
+            else if (kind == "sarc") res = rando::Sarc::parse(data).write();
+            else if (kind == "bfevfl") res = rando::EventFlow::parse(data).write();
             else { fprintf(stderr, "unknown kind %s\n", kind.c_str()); return 2; }
         } catch (const std::exception &e) {
             res = std::string("ERROR ") + e.what();
