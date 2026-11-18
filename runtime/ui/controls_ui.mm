@@ -249,7 +249,7 @@ static void configure_inputs(float scale) {
         Bind rows[16];  // (the most: the keyboard's Sticks, 10)
         int n = cat_rows(g_cat, g_dev_pad, rows);
         opt_section(k_cat_name[g_cat]);
-        bool in_right = false;
+        bool in_right = false, on_shortcut = false;  // (the cursor / mouse on Shortcut 1 / 2: their hint)
         // LAS Menu: back to the controller's own conventions, under its buttons (before the shortcuts that open it)
         auto conventions = [&]() {
             if (!g_bind_ui_custom) opt_disable_next();
@@ -301,6 +301,7 @@ static void configure_inputs(float scale) {
             ImGui::PopID();
             if (i == 0) take_focus(FOCUS_RIGHT);
             if (ImGui::IsItemFocused()) in_right = true;
+            if (menu && (ImGui::IsItemFocused() || ImGui::IsItemHovered())) on_shortcut = true;
             if (waiting && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);  // (a capture started by a test hook)
             // X (the top button) / Delete / Backspace / right click: clear a menu shortcut (#591: Home free for overlays)
             if (menu && !waiting && cd < 0 &&
@@ -322,9 +323,9 @@ static void configure_inputs(float scale) {
         if (cd == dev && cs >= BIND_MENU_1 && cs < BIND_UI_CONFIRM) ImGui::TextDisabled("%s", L("Press one button, or two together. Esc cancels."));
         else if (cd == dev) ImGui::TextDisabled("%s", L("Esc cancels."));
         else if (msg[0]) ImGui::TextDisabled("%s", msg);
-        else if (g_cat == CAT_LAS && g_dev_pad)
+        else if (g_cat == CAT_LAS && g_dev_pad && on_shortcut)  // (not on the menu's own buttons: they don't clear)
             ImGui::TextDisabled(L("%s or Delete clears a shortcut."), L(bind_pad_label(bind_ui_host(BIND_UI_OPTION), fam)));
-        else if (g_cat == CAT_LAS) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
+        else if (g_cat == CAT_LAS && !g_dev_pad) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
     }
     opt_split_end();
     if (back) bind_capture_cancel(), g_sub = false, g_focus = FOCUS_CONFIGURE, g_in_right = false, msg[0] = 0;
