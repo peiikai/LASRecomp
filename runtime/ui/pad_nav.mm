@@ -3,6 +3,7 @@
 #include "i18n.h"
 #include "imgui_internal.h"  // (ImGuiKey_Gamepad_BEGIN / END)
 #include <atomic>
+#include <math.h>
 #include "input_bind.h"
 #include "../settings.h"
 
@@ -47,7 +48,33 @@ bool ui_pad_trigger(SDL_JoystickID which, int axis, int value, ImGuiKey *key, bo
     return *key != ImGuiKey_None;
 }
 
+static int g_stick_held = -1;
+static float g_stick_x, g_stick_y;
+int ui_stick_dir(int axis, float v) {
+    if (axis == SDL_GAMEPAD_AXIS_LEFTX) g_stick_x = v;
+    else if (axis == SDL_GAMEPAD_AXIS_LEFTY) g_stick_y = v;
+    else return g_stick_held;
+    float ax = fabsf(g_stick_x), ay = fabsf(g_stick_y);
+    int major = ax > ay ? (g_stick_x < 0 ? 0 : 1) : (g_stick_y < 0 ? 2 : 3);
+    float mag = ax > ay ? ax : ay;
+    int h = g_stick_held;
+    if (h >= 0) {
+        float hm = h == 0 ? -g_stick_x : h == 1 ? g_stick_x : h == 2 ? -g_stick_y : g_stick_y;
+        float other = h < 2 ? ay : ax;
+        if (hm < 0.3f) h = -1;                                // (let go)
+        else if (other > hm && other >= 0.5f) h = major;      // (the other way pushed further: it takes over)
+    }
+    if (h < 0) h = mag >= 0.5f && ax != ay ? major : -1;      // (a new press: clearly one way)
+    return g_stick_held = h;
+}
+
+void ui_nav_repeat(ImGuiIO &io, bool typing) {
+    io.KeyRepeatDelay = typing ? 0.275f : 0.4f;
+    io.KeyRepeatRate = typing ? 0.05f : 0.125f;
+}
+
 void ui_pad_release_all(ImGuiIO &io) {
+    g_stick_held = -1;  // (pressed again by its next motion)
     io.ClearEventsQueue();  // (presses / releases not applied yet: from before)
     io.ClearInputKeys();
     for (int k = ImGuiKey_Gamepad_BEGIN; k < ImGuiKey_Gamepad_END; k++) io.KeysData[k - ImGuiKey_NamedKey_BEGIN].AnalogValue = 0;
