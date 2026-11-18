@@ -27,7 +27,7 @@
   | Game behaviour or a new feature | `runtime/hle/` and the hooks in `tools/patches.py` and `runtime/hle/hooks.c` |
   | Saves | [docs/save-format.md](docs/save-format.md), `runtime/services/fs.c` |
   | Game addresses | CONTRIBUTING "Project layout" (`runtime/game_addresses/`, `GA(NAME)`, `tools/version_map.py`) |
-  | Randomizer logic | `tools/rando/` and `third_party/LAS-Randomizer` (local changes marked "LAS Recomp") |
+  | Randomizer logic | `tools/rando/` and `third_party/LAS-Randomizer` (local changes marked "LAS Recomp"); where it's going: [docs/randomizer.md](docs/randomizer.md) |
   | Menu text | `python3 tools/menu_strings.py check` |
 
 - **No Nintendo files, ever.**

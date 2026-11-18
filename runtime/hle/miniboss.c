@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "../hle.h"
+#include "../rando/seed.h"
 
 void guest_call(Cpu *c, uint64_t addr);
 uint64_t doorjump_player(uint64_t frame);  // PlayerCollision component: position at +0x80
@@ -353,17 +354,7 @@ static void miniboss_marker_set(void) {
     if (g_marker == -2) {
         g_marker = -1;
         extern const char *rando_seed_dir(void);
-        const char *dir = rando_seed_dir();
-        char p[512];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            static char buf[1 << 16];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            const char *k = strstr(buf, "\"miniboss-marker-flag\":");
-            if (k) g_marker = atoi(k + strlen("\"miniboss-marker-flag\":"));
-        }
+        if (rando_seed_dir()) g_marker = (int)rando_setting_int("miniboss-marker-flag", -1);
     }
     if (g_marker < 0) return;
     uint8_t *fl = (uint8_t *)(uintptr_t)LD64(GA(FLAG_PTR));

@@ -53,6 +53,7 @@ extern "C" {
 #endif
 #include "paths.h"
 #include "gamebuild.h"
+#include "rando.h"
 #include "build_cache.h"
 #include "game_addresses.h"
 #include "gamelib.h"
@@ -996,8 +997,7 @@ static std::vector<std::string> list_seeds() {
     if (DIR *d = opendir("rando")) {
         while (struct dirent *e = readdir(d)) {
             if (e->d_name[0] == '.') continue;
-            std::string dir = std::string("rando/") + e->d_name;
-            if (file_exists(dir + "/settings.json") && file_exists(dir + "/romfs")) out.push_back(e->d_name);
+            if (rando_seed_there(e->d_name)) out.push_back(e->d_name);  // (seed.json or an older settings.json, + romfs)
         }
         closedir(d);
     }

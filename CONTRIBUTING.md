@@ -133,6 +133,9 @@ items picked up anywhere, floor key spots included, get a message naming their d
 The randomizer's native random numbers: `tools/test_pyrandom.cpp` (build line at its top) checks
 `runtime/rando/pyrandom.h` against CPython's `random` with the vectors in `tools/rando/pyrandom_golden.txt`, without
 game data. Seed IDs must keep giving the same seeds, so a mismatch is a bug in the C++ side.
+`tools/test_seed_record.c` (build line at its top) checks that seed records (`runtime/rando/seed.h`) answer every
+setting the runtime reads as the older `settings.json` readers did, without game data. How seeds are made and applied,
+and where that is going: [docs/randomizer.md](docs/randomizer.md).
 
 `python tools/test_text_speed.py` checks the Text speed hooks (Normal, Fast, Instant) without game data.
 

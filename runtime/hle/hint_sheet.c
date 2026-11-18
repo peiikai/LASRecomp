@@ -28,6 +28,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 extern uint64_t renderer_present_count(void);
 extern int game_in_play(void);
@@ -49,16 +50,8 @@ bool hint_sheet_on(void) {
     const char *e = getenv("LARECOMP_HINT_SHEET");
     if (e) return on = atoi(e) != 0;
     on = 0;
-    const char *dir = rando_seed_dir();
-    if (!dir) return false;
-    char path[512], buf[16384];
-    snprintf(path, sizeof path, "%s/settings.json", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return false;
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[n] = 0;
-    on = strstr(buf, "\"hint-sheet\": true") != NULL;  // (older seeds: no Hint Sheet)
+    if (!rando_seed_dir() || !rando_seed()) return false;
+    on = rando_setting("hint-sheet");  // (older seeds: no Hint Sheet)
     LOG("[hint] Hint Sheet %s\n", on ? "on" : "off");
     return on;
 }

@@ -14,6 +14,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 
 // item ids as AddItem gets them: Items.gsheet `itemID` (not the row number; rows 41+ differ)
@@ -37,16 +38,9 @@ RT_ON_RESET(shuffle_bags_reset) { g_shuffle_bombs = g_shuffle_powder = -1; }
 static void read_bag_settings(void) {
     if (g_shuffle_powder >= 0) return;
     g_shuffle_bombs = g_shuffle_powder = 0;
-    const char *dir = rando_seed_dir();
-    static char buf[1 << 16];
-    char p[512];
-    FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-    if (f) {
-        size_t n = fread(buf, 1, sizeof buf - 1, f);
-        buf[n] = 0;
-        fclose(f);
-        g_shuffle_bombs = strstr(buf, "\"shuffle-bombs\": true") != NULL;
-        g_shuffle_powder = strstr(buf, "\"shuffle-powder\": true") != NULL;
+    if (rando_seed_dir()) {
+        g_shuffle_bombs = rando_setting("shuffle-bombs");
+        g_shuffle_powder = rando_setting("shuffle-powder");
     }
 }
 

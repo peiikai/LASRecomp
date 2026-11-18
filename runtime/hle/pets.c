@@ -15,6 +15,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 
 #define COMPANION (GA(LIVE_SAVE) + 0x555D)
@@ -72,15 +73,9 @@ int pets_current(void) { return *(volatile uint8_t *)(uintptr_t)COMPANION; }
 static bool ghost_item(void) {
     if (g_ghost_item >= 0) return g_ghost_item;
     g_ghost_item = g_marin_stays = 0;
-    char p[600], buf[16384];
-    snprintf(p, sizeof p, "%s/settings.json", rando_seed_dir() ? rando_seed_dir() : ".");
-    FILE *f = rando_seed_dir() ? fopen(p, "r") : NULL;
-    if (!f) return false;
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[n] = 0;
-    g_marin_stays = strstr(buf, "\"marin-stays\": true") != NULL;
-    return g_ghost_item = strstr(buf, "\"ghost-item\": true") != NULL;
+    if (!rando_seed_dir()) return false;
+    g_marin_stays = rando_setting("marin-stays");
+    return g_ghost_item = rando_setting("ghost-item");
 }
 
 // story flag after which companion c can't be called back (Marin: none in "marin-stays" seeds, pets.py)
@@ -146,13 +141,7 @@ static bool companion_allowed(const char *lv, int c) {
     if ((c == C_BOWWOW && !strcmp(lv, "MadamHouse")) || (c == C_MARIN && !strcmp(lv, "CraneGame"))) return false;
     if (strncmp(lv, "Lv", 2)) return true;
     if (g_bad_pets < 0) {
-        char p[600], buf[16384];
-        snprintf(p, sizeof p, "%s/settings.json", rando_seed_dir() ? rando_seed_dir() : ".");
-        FILE *f = rando_seed_dir() ? fopen(p, "r") : NULL;
-        size_t n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
-        if (f) fclose(f);
-        buf[n] = 0;
-        g_bad_pets = strstr(buf, "\"bad-pets\": true") != NULL;
+        g_bad_pets = rando_seed_dir() && rando_setting("bad-pets");
     }
     return g_bad_pets;
 }

@@ -21,6 +21,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 uint64_t renderer_present_count(void);
 int souls_owned(int dungeon);  // runtime/hle/souls.c: -1 = no boss souls in this seed
@@ -159,38 +160,18 @@ static bool companion_card(void) {
     return pets_menu_options(o) >= 2;
 }
 
-// The seed's settings.json, read once per seed.
-static const char *seed_settings(void) {
-    const char *dir = rando_seed_dir();
-    if (!dir) return NULL;
-    static std::string seed;
-    static char buf[1 << 16];
-    if (seed != dir) {
-        seed = dir;
-        buf[0] = 0;
-        if (FILE *f = fopen((seed + "/settings.json").c_str(), "rb")) {
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-        }
-    }
-    return buf;
-}
-
 // The dungeon keys panel: on with keysanity (the seed's settings.json "keysanity" isn't "off"; keys can be anywhere,
 // so the Items screen shows what each dungeon's are).
 static bool keys_shown(void) {
-    const char *s = seed_settings();
-    const char *k = s ? strstr(s, "\"keysanity\":") : NULL;
-    static const char off[] = "\"keysanity\": \"off\"";
-    return k && strncmp(k, off, sizeof off - 1) != 0;
+    if (!rando_seed_dir()) return false;
+    const char *k = rando_setting_str("keysanity");
+    return rando_seed_has(rando_seed(), "keysanity") && !(k && !strcmp(k, "off"));
 }
 
 // The trade sequence row: with keysanity (under the keys) or with the trade quest gifts shuffled ("include-trade-gifts":
 // the trade items can come from anywhere) - then on its own (user 2026-10-11).
 static bool trade_shown(void) {
-    const char *s = seed_settings();
-    return keys_shown() || (s && strstr(s, "\"include-trade-gifts\": true"));
+    return keys_shown() || (rando_seed_dir() && rando_setting("include-trade-gifts"));
 }
 
 extern "C" int rt_tunic_upgrades(void);  // runtime/hle/qol.c

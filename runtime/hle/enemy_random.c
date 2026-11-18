@@ -24,6 +24,7 @@
 #include "../game_addresses.h"
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 extern uint64_t renderer_present_count(void);
 
@@ -487,16 +488,7 @@ void enemy_stairs_tick(void) {
     extern void flags_put(int idx, bool on);
     if (g_stairs_seed < 0) {
         g_stairs_seed = 0;
-        const char *dir = rando_seed_dir();
-        char p[600];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            static char buf[1 << 16];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            g_stairs_seed = strstr(buf, "\"randomize-enemies\": true") != NULL;
-        }
+        g_stairs_seed = rando_seed_dir() && rando_setting("randomize-enemies");
     }
     if (!g_stairs_seed) return;
     uint32_t crc = LD32(GA(LIVE_SAVE) + 0x5EC4);  // (the save's body CRC: runtime/hle/flags_ext.c)

@@ -75,8 +75,11 @@ static void shortcuts_apply(void) {
     NSMutableArray<NSDictionary *> *seeds = [NSMutableArray array];
     for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil]) {
         if (!rando_seed_there(name.UTF8String)) continue;
-        NSString *p = [[dir stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"settings.json"];
-        NSDate *t = [NSFileManager.defaultManager attributesOfItemAtPath:p error:nil].fileModificationDate;
+        NSString *seed = [dir stringByAppendingPathComponent:name];
+        NSDate *t = [NSFileManager.defaultManager attributesOfItemAtPath:[seed stringByAppendingPathComponent:@"seed.json"]
+                                                                   error:nil].fileModificationDate;  // (its record; older: settings.json)
+        if (!t) t = [NSFileManager.defaultManager attributesOfItemAtPath:[seed stringByAppendingPathComponent:@"settings.json"]
+                                                                   error:nil].fileModificationDate;
         [seeds addObject:@{@"name": name, @"t": t ?: NSDate.distantPast}];
     }
     NSString *cur = @(g_settings.rando_seed);

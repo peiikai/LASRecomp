@@ -133,6 +133,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom
           build/test-pyrandom
+      - name: Randomizer seed record (reads settings as the older readers did)
+        run: |
+          clang -std=gnu11 -O1 tools/test_seed_record.c runtime/rando/seed.c runtime/rando/json.c -o build/test-seed-record
+          build/test-seed-record
       - name: Self-updater (manifest, signature, swap and rollback)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
@@ -278,6 +282,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom
           build/test-pyrandom
+      - name: Randomizer seed record (reads settings as the older readers did)
+        run: |
+          clang -std=gnu11 -O1 tools/test_seed_record.c runtime/rando/seed.c runtime/rando/json.c -o build/test-seed-record
+          build/test-seed-record
       - name: Self-updater (manifest, signature, swap and rollback)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
@@ -373,6 +381,10 @@ jobs:
         run: |
           clang++ -std=c++17 -O2 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom
           build/test-pyrandom
+      - name: Randomizer seed record (reads settings as the older readers did)
+        run: |
+          clang -std=gnu11 -O1 tools/test_seed_record.c runtime/rando/seed.c runtime/rando/json.c -o build/test-seed-record
+          build/test-seed-record
       - name: Self-updater (manifest, signature, swap and rollback)
         run: |
           clang++ -std=c++17 -O1 -Iruntime tools/test_update.cpp -o build/test-update
