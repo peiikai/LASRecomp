@@ -327,14 +327,13 @@ bool menu_handle_event(const SDL_Event *e) {
         QEvent q = {};
         q.kind = QEvent::ANALOG;
         switch (e->gaxis.axis) {
-        case SDL_GAMEPAD_AXIS_LEFTX:
-            q.key = ImGuiKey_GamepadLStickLeft; q.value = v < -0.3f ? -v : 0; push(q);
-            q.key = ImGuiKey_GamepadLStickRight; q.value = v > 0.3f ? v : 0; push(q);
+        case SDL_GAMEPAD_AXIS_LEFTX: case SDL_GAMEPAD_AXIS_LEFTY: {  // (one direction at a time: pad_nav.h)
+            int d = ui_stick_dir(e->gaxis.axis, v);
+            const ImGuiKey keys[4] = {ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight, ImGuiKey_GamepadLStickUp,
+                                      ImGuiKey_GamepadLStickDown};
+            for (int i = 0; i < 4; i++) q.key = keys[i], q.value = d == i ? 1.0f : 0.0f, push(q);
             break;
-        case SDL_GAMEPAD_AXIS_LEFTY:
-            q.key = ImGuiKey_GamepadLStickUp; q.value = v < -0.3f ? -v : 0; push(q);
-            q.key = ImGuiKey_GamepadLStickDown; q.value = v > 0.3f ? v : 0; push(q);
-            break;
+        }
         case SDL_GAMEPAD_AXIS_RIGHTY:  // (scrolls a right column of plain text: option_rows.mm)
             q.key = ImGuiKey_GamepadRStickUp; q.value = v < 0 ? -v : 0; push(q);
             q.key = ImGuiKey_GamepadRStickDown; q.value = v > 0 ? v : 0; push(q);
@@ -2195,6 +2194,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #else
     ImGui_ImplVulkan_NewFrame();
 #endif
+    ui_nav_repeat(ImGui::GetIO(), g_text_busy);
     ImGui::NewFrame();
     g_touch.scroll_apply(touch_px);
 

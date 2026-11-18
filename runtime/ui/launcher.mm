@@ -1499,28 +1499,22 @@ static bool launcher_pad_event(const SDL_Event &e) {
             bool tdown;
             if (ui_pad_trigger(e.gaxis.which, e.gaxis.axis, e.gaxis.value, &tk, &tdown)) io.AddKeyEvent(tk, tdown);
         }
-        // the left stick also works as the d-pad (ImGui moves between items with the d-pad only; the stick scrolls):
-        // pressed past half way, released under 0.3
+        // the left stick also works as the d-pad (ImGui moves between items with the d-pad only; the stick scrolls),
+        // one direction at a time (pad_nav.h ui_stick_dir). Its own keys too, pressed or not, no analog value: ImGui
+        // scrolls the window under the cursor by it - the column moved with the selection, user 2026-11-13; the right
+        // stick scrolls: option_rows.mm stick_scroll
         if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            static bool held[4];  // left, right, up, down
-            bool x = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX;
-            int neg = x ? 0 : 2, pos = neg + 1;
-            const ImGuiKey keys[4] = {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadDpadUp,
+            static int held = -1;
+            int d = ui_stick_dir(e.gaxis.axis, v);
+            const ImGuiKey dpad[4] = {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadDpadUp,
                                       ImGuiKey_GamepadDpadDown};
-            for (int i : {neg, pos}) {
-                float m = i == neg ? -v : v;
-                bool now = held[i] ? m > 0.3f : m > 0.5f;
-                if (now != held[i]) { held[i] = now; io.AddKeyEvent(keys[i], now); }
+            const ImGuiKey stick[4] = {ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight, ImGuiKey_GamepadLStickUp,
+                                       ImGuiKey_GamepadLStickDown};
+            if (d != held) {
+                if (held >= 0) io.AddKeyEvent(dpad[held], false), io.AddKeyAnalogEvent(stick[held], false, 0);
+                if (d >= 0) io.AddKeyEvent(dpad[d], true), io.AddKeyAnalogEvent(stick[d], true, 0);
+                held = d;
             }
-        }
-        // (pressed or not, no analog value: ImGui scrolls the window under the cursor by it - the column moved with the
-        // selection, user 2026-11-13; the right stick scrolls: option_rows.mm stick_scroll)
-        if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, 0);
-        } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, 0);
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTY) {  // (scrolls a right column of plain text: option_rows.mm)
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickUp, v < -0.1f, v < 0 ? -v : 0);
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, v > 0.1f, v > 0 ? v : 0);
@@ -2540,6 +2534,7 @@ extern "C" void launcher_run(const char *root) {
             // a drag / flick (touch_ui.h): this frame's scroll, onto the page under the finger
             float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); },
                                            [&](bool down) { io.AddMouseButtonEvent(0, down); });
+            ui_nav_repeat(io, ui_text_busy());
             ImGui::NewFrame();
             g_touch.scroll_apply(touch_px);
             const Page frame_page = page;  // (menu_sfx_frame: B on the main page does nothing)
