@@ -644,8 +644,11 @@ jobs:
             { cat ../body.md; echo; [ -z "$NIGHTLY_ARM" ] || { echo "The linux-aarch64 file is the nightly build \`$NIGHTLY_ARM\`."; echo; }
               echo "| File | sha256 |"; echo "|---|---|"
               for f in *; do echo "| \`${f// /.}\` | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"; done; } > ../notes.md
-            # (the macOS feed goes up with the notes already in: Sparkle's window shows them)
-            [ ! -f ../manifests/appcast-macOS.xml ] || ../tools/sparkle_notes.sh ../manifests/appcast-macOS.xml release ../body.md
+            # (the macOS feed goes up with the notes already in: Sparkle's window shows them. Never fatal: on a
+            #  failure the feed is left as it was, with the release page link, and the files still go up)
+            if [ -f ../manifests/appcast-macOS.xml ] && ! ../tools/sparkle_notes.sh ../manifests/appcast-macOS.xml release ../body.md; then
+              echo "::warning::release notes not added to appcast-macOS.xml: it keeps the release page link"
+            fi
             gh release upload "$TAG" --clobber * "${MANIFESTS[@]}"
             gh release edit "$TAG" --notes-file ../notes.md
             gh release view "$TAG" --json url,assets -q '.url, (.assets[] | "\(.name) \(.size)")'
