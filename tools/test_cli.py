@@ -55,6 +55,15 @@ with tempfile.TemporaryDirectory() as t:
     r = run(['--help'])
     check('--help lists the options', r.returncode == 0 and all(o in r.stdout for o in
           ['--data-dir', '--game-files', '--prepare', '--set', '--list-settings', '--no-update-check']))
+    # the RecompLauncher profile we ship (tools/recomplauncher.json): JSON, and only options this app knows
+    import json
+    profile = json.loads((ROOT / 'tools' / 'recomplauncher.json').read_text())
+    used = {a for part in ('start', 'prepare') for a in profile[part]['args'] if a.startswith('--')}
+    used |= {a for row in profile.get('settings', []) for c in row.get('choices', []) for a in c.get('args', [])
+             if a.startswith('--')}
+    help_text = run(['--help']).stdout
+    check('the RecompLauncher profile uses known options', all(a in help_text for a in used),
+          sorted(a for a in used if a not in help_text))
     r = run(['--set'])
     check('an option without its value fails', r.returncode == 2)
 

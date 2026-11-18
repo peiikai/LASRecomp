@@ -28,8 +28,8 @@ To keep everything next to the AppImage instead, make the AppImage's portable fo
 
     ./LAS.Recomp-<version>-linux-x86_64.AppImage --appimage-portable-home
 
-That creates `LAS.Recomp-<version>-linux-x86_64.AppImage.home` next to it, and the data goes in its
-`.local/share/lasrecomp`. Updates keep the AppImage's name, so the folder stays in use.
+That creates `LAS.Recomp-<version>-linux-x86_64.AppImage.home` next to it (making that folder by hand works too), and
+the data goes in its `.local/share/lasrecomp`. Updates keep the AppImage's name, so the folder stays in use.
 
 ## The tarball (no FUSE)
 

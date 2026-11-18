@@ -320,7 +320,7 @@ static const char *const HELP =
     "                         (LARECOMP_SET=\"key=value;key=value\")\n"
     "  --prepare              set up without a window, then exit: the game files from --game-files (if\n"
     "                         needed), the game code, the shaders. Prints \"progress <0-1> <step>\" lines;\n"
-    "                         exit code 0 when ready to play, else 1 after an \"error <why>\" line\n"
+    "                         exit code 0 when ready to play, 1 after an \"error <why>\" line, 3 cancelled\n"
     "  --list-settings        print the settings (larecomp.ini keys and values) and exit\n"
     "  --no-update-check      no update check or update this run (LARECOMP_NO_UPDATE_CHECK=1)\n"
     "  --version              print the version and exit\n"

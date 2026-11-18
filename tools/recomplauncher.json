@@ -1,0 +1,87 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "repo": "peiikai/LASRecomp",
+  "game": {
+    "kind": "folder",
+    "label": "Your extracted game files: the folder with exefs and romfs in it.",
+    "check": { "file": "exefs/main" }
+  },
+  "prepare": {
+    "program": ["lasrecomp.exe", "LAS Recomp.AppImage", "AppRun"],
+    "args": ["--prepare", "--data-dir", "{install}", "--game-files", "{game}"],
+    "label": "Game files, game code and shaders",
+    "timeout": 3600,
+    "version": "1"
+  },
+  "start": {
+    "program": ["lasrecomp.exe", "LAS Recomp.AppImage", "AppRun"],
+    "args": ["--data-dir", "{install}"]
+  },
+  "saves": ["{install}/save"],
+  "folders": {
+    "saves": [{ "path": "{install}/save" }],
+    "logs": [{ "path": "{install}" }]
+  },
+  "config": [
+    { "id": "main", "format": "ini", "file": [{ "path": "{install}/larecomp.ini" }] }
+  ],
+  "settings": [
+    {
+      "id": "start", "label": "Start", "in": "args",
+      "help": "The start screen has the randomizer and all settings.",
+      "choices": [
+        { "label": "Start screen", "args": [] },
+        { "label": "Straight into the game", "args": ["--play"] }
+      ]
+    },
+    {
+      "id": "fullscreen", "label": "Window", "group": "Video",
+      "choices": [
+        { "label": "Windowed", "set": { "fullscreen": "0" } },
+        { "label": "Fullscreen", "set": { "fullscreen": "1" } }
+      ],
+      "defaults": { "fullscreen": "0" }
+    },
+    {
+      "id": "resolution", "label": "Resolution", "group": "Video",
+      "help": "Automatic picks one for your graphics card.",
+      "choices": [
+        { "label": "Automatic", "set": { "resolution": "auto" } },
+        { "label": "Match display", "set": { "resolution": "match" } },
+        { "label": "1080p", "set": { "resolution": "1x" } },
+        { "label": "4K", "set": { "resolution": "2x" } },
+        { "label": "75% of display", "set": { "resolution": "75%" } },
+        { "label": "50% of display", "set": { "resolution": "50%" } }
+      ],
+      "defaults": { "resolution": "auto" }
+    },
+    {
+      "id": "fps_target", "label": "Frame rate", "group": "Video",
+      "choices": [
+        { "label": "60", "set": { "fps_target": "60" } },
+        { "label": "30", "set": { "fps_target": "30" } },
+        { "label": "60 indoors, 30 outdoors", "set": { "fps_target": "mixed" } }
+      ],
+      "defaults": { "fps_target": "60" }
+    },
+    {
+      "id": "antialias", "label": "Anti-aliasing", "group": "Video",
+      "choices": [
+        { "label": "Off", "set": { "antialias": "off" } },
+        { "label": "SMAA", "set": { "antialias": "smaa" } }
+      ],
+      "defaults": { "antialias": "off" }
+    },
+    {
+      "id": "shadows", "label": "Shadows", "group": "Video",
+      "choices": [
+        { "label": "Default", "set": { "shadows": "default" } },
+        { "label": "2x", "set": { "shadows": "2x" } },
+        { "label": "4x", "set": { "shadows": "4x" } },
+        { "label": "Off", "set": { "shadows": "off" } }
+      ],
+      "defaults": { "shadows": "default" }
+    }
+  ]
+}

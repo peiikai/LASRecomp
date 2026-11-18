@@ -39,7 +39,10 @@ mkdir "$T/ai"
 cp "$APP" "$T/ai/game.AppImage"
 chmod +x "$T/ai/game.AppImage"
 export APPIMAGE_EXTRACT_AND_RUN=1  # (no FUSE needed)
-"$T/ai/game.AppImage" --appimage-portable-home >/dev/null 2>&1
-[ -d "$T/ai/game.AppImage.home" ] || { echo "::error::--appimage-portable-home made no folder"; exit 1; }
-expect "AppImage with .home" "$(data_of "$T/ai/game.AppImage")" "$T/ai/game.AppImage.home/.local/share/lasrecomp"
+mkdir "$T/ai/game.AppImage.home"  # (what --appimage-portable-home makes; that option needs the runtime to mount)
+got=$(data_of "$T/ai/game.AppImage")
+if [ -z "$got" ]; then  # (the AppImage didn't run: what it said)
+    "$T/ai/game.AppImage" --list-settings 2>&1 | tail -20 || true
+fi
+expect "AppImage with .home" "$got" "$T/ai/game.AppImage.home/.local/share/lasrecomp"
 echo "data folder rules: ok"

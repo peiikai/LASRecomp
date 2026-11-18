@@ -33,7 +33,7 @@ For launchers and scripts. Every option except the one-shot ones (`--prepare`, `
 | `--play` | `LARECOMP_PLAY=1` | Skip the start screen and start the game. Shaders are still prepared first; if that takes more than a moment (the first start), the start screen shows its progress bar and then plays. |
 | `--data-dir <folder>` | `LARECOMP_DATA_ROOT` | Use this folder for game files, saves, seeds, settings and caches this run. It comes before every other rule (`runtime/paths.h`), writes no `data_root.txt`, and Settings > System > Data folder can't move it. |
 | `--game-files <folder>` | `LARECOMP_GAME_FILES` | Use the extracted game files in that folder. If the data folder already has that version set up, the game starts. If not, the start screen sets them up (copy, game code build, shaders) and then plays. |
-| `--prepare` | | The setup without a window, then exit: the game files from `--game-files` if needed, the game code, the shaders. Prints `progress <0-1> <step>` lines on stdout and exits 0 when the game is ready to play. On a failure it prints `error <why>` and exits 1 (details in the log). |
+| `--prepare` | | The setup without a window, then exit: the game files from `--game-files` if needed, the game code, the shaders. Prints `progress <0-1> <step>` lines on stdout and exits 0 when the game is ready to play. On a failure it prints `error <why>` and exits 1 (details in the log). Stopped (SIGINT / SIGTERM): exits 3; the finished game code pieces are kept, so the next run goes on from there. |
 | `--fullscreen` / `--windowed` | | Start fullscreen or in a window this run. Short for `--set fullscreen=1` / `--set fullscreen=0`. |
 | `--set <key>=<value>` | `LARECOMP_SET="key=value;key=value"` | Any `larecomp.ini` setting for this run only. Repeatable; the last one for a key wins. It isn't saved: the file keeps its own value, unless you change that setting in the menu during the run. Unknown keys are ignored with a line in the log. |
 | `--list-settings` | | Print the settings as `larecomp.ini` lines (the data folder's file plus this run's `--set`) and exit. |
@@ -42,6 +42,11 @@ For launchers and scripts. Every option except the one-shot ones (`--prepare`, `
 
 Started by RecompLauncher (`RECOMPLAUNCHER=1` is set), there is no update check (the launcher installs updates), and
 `RECOMPLAUNCHER_MODE=bigpicture` starts fullscreen unless the command line says `--windowed`.
+
+The Windows zip, the AppImage (at its root) and the Linux tarball carry `recomplauncher.json`
+(`tools/recomplauncher.json`), RecompLauncher's profile: it asks for the extracted game files, runs `--prepare` on
+them, starts the game, and shows a few video settings and the choice of start screen or straight into the game. Both
+pass `--data-dir` with the game's install folder, so saves, settings and logs stay there. Not in the macOS .dmg.
 
 Example: a launcher that keeps everything in its own folder.
 

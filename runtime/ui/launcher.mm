@@ -15,6 +15,7 @@
 #include <dirent.h>
 #include <limits.h>
 #include <pthread.h>
+#include <signal.h>
 #include <set>
 #include <string>
 #include <sys/stat.h>
@@ -2339,7 +2340,7 @@ extern "C" void launcher_autoplay(void) { g_autoplay = g_cli_play = true; }
 // --prepare [--game-files <folder>]: the setup without a window, for a launcher's own setup screen. The game files
 // copied from the folder (unless that version is set up already), the game code built if needed, the shaders
 // prepared (a hidden window: the GPU device). Lines "progress <0..1> <step>" on stdout as it goes; the result last.
-// 0: ready to play; 1: it failed (the line before says why, the log has the details).
+// 0: ready to play; 1: it failed (the line before says why, the log has the details); 3: cancelled.
 extern "C" void rt_cli_print(const char *s);  // runtime/main.c (stdout; Windows: the console or pipe)
 static std::atomic<bool> g_prep_cli_done{false};
 static void *prepare_cli_report(void *) {
@@ -2361,8 +2362,14 @@ static void *prepare_cli_report(void *) {
     }
     return NULL;
 }
+// SIGINT / SIGTERM (the launcher's Cancel): the build and the shader step stop at their next check; finished build
+// pieces are kept, so the next --prepare resumes. Exit 3.
+static volatile sig_atomic_t g_prep_cli_stop;
+static void prepare_cli_signal(int) { g_prep_cli_stop = 1, g_cancel_build = true, g_prep_skip = 1; }
 extern "C" int launcher_prepare_cli(const char *root, const char *src) {
     g_root = root;
+    signal(SIGINT, prepare_cli_signal);
+    signal(SIGTERM, prepare_cli_signal);
     setenv("LARECOMP_HIDDEN", "1", 1);  // (the window only holds the GPU device: never shown)
     bool have = src && *src;
     int same = have ? same_game_files(g_root, src) : check_copied_files(g_root).empty();
@@ -2388,6 +2395,11 @@ extern "C" int launcher_prepare_cli(const char *root, const char *src) {
     }
     g_prep_cli_done = true;
     pthread_join(rep, NULL);
+    if (g_prep_cli_stop) {
+        rt_cli_print("error Cancelled.\n");
+        fprintf(stderr, "[launcher] --prepare: cancelled\n");
+        return 3;
+    }
     std::string why = check_game_files(g_root);
     if (!why.empty()) {
         std::string line = "error " + (g_job_failed && !g_job.empty() ? g_job : why);

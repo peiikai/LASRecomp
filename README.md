@@ -98,8 +98,8 @@ Known issues and their status are on the [GitHub issues page](https://github.com
 ## Launchers
 
 LAS Recomp can be started from game launchers. `lasrecomp --help` lists the options: start the game directly, choose
-the data folder, set up the game files without a window, change settings for one run. Details are in
-[docs/debug-hooks.md](docs/debug-hooks.md#command-line).
+the data folder, set up the game files without a window, change settings for one run. The Windows and Linux releases
+include a profile for RecompLauncher. Details are in [docs/debug-hooks.md](docs/debug-hooks.md#command-line).
 
 ## iPhone and iPad
 
