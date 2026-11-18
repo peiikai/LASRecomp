@@ -88,6 +88,56 @@ static void compare(const char *dir, const char *text, const RandoSeed *s, const
     CHECK(!strcmp(a, b), "%s (%s): seed \"%s\" vs \"%s\"", dir, what, a, b);
 }
 
+// every table read through rando_text_gets is what fgets reads from the table's file as a text-mode read gives it
+// (CRLF as LF), at several buffer sizes (a line longer than the buffer comes in pieces)
+static const char *const kTableFiles[][2] = {
+    {"apple_trees", "apple_trees.tsv"}, {"bushes", "bushes.tsv"}, {"digs", "digs.tsv"}, {"door_jumps", "door_jumps.tsv"},
+    {"dungeon_map", "dungeon_map.tsv"}, {"enemies_random", "enemies_random.tsv"}, {"flags", "flags.tsv"},
+    {"flags_ext", "flags_ext"}, {"hints", "hints.tsv"}, {"pots", "pots.tsv"}, {"quick_pickups", "quick_pickups.tsv"},
+    {"roam", "roam.tsv"}, {"rocks", "rocks.tsv"}, {"shell_spots", "shell_spots.tsv"}, {"shopsanity", "shopsanity.tsv"},
+    {"souls", "souls.tsv"}, {"tracker", "tracker.tsv"}, {"triforce", "triforce.tsv"},
+};
+static void compare_tables(const char *dir, const RandoSeed *s, const char *what) {
+    static const int caps[] = {2, 7, 64, 256, 16384};
+    for (size_t i = 0; i < sizeof kTableFiles / sizeof *kTableFiles; i++) {
+        char p[1200];
+        snprintf(p, sizeof p, "%s/%s", dir, kTableFiles[i][1]);
+        FILE *probe = fopen(p, "rb");
+        CHECK((probe != NULL) == rando_seed_has_table(s, kTableFiles[i][0]), "%s (%s): table %s there", dir, what,
+              kTableFiles[i][0]);
+        if (!probe) continue;
+        fclose(probe);
+        // the file as a text-mode read gives it (CRLF -> LF), in memory
+        char *raw = slurp(p);
+        size_t rn = strlen(raw), w = 0;
+        for (size_t k = 0; k < rn; k++)
+            if (!(raw[k] == '\r' && k + 1 < rn && raw[k + 1] == '\n')) raw[w++] = raw[k];
+        if (w && raw[w - 1] != '\n') {  // (a table is lines: a last line without its newline reads with one)
+            raw = realloc(raw, w + 2);
+            raw[w++] = '\n';
+        }
+        raw[w] = 0;
+        for (size_t c = 0; c < sizeof caps / sizeof *caps; c++) {
+            FILE *f = fmemopen(raw, w ? w : 1, "r");
+            if (!w) { fclose(f); f = fopen("/dev/null", "r"); }
+            RandoText t;
+            rando_seed_text(s, &t, kTableFiles[i][0]);
+            char a[16384], b[16384];
+            int lines = 0, bad = 0;
+            for (;;) {
+                char *x = fgets(a, caps[c], f), *y = rando_text_gets(b, caps[c], &t);
+                if (!x || !y) { if (x != NULL || y != NULL) bad++; break; }
+                lines++;
+                if (strcmp(a, b) && !bad++) printf("  %s %s cap %d piece %d: \"%.40s\" vs \"%.40s\"\n", dir, kTableFiles[i][0], caps[c], lines, a, b);
+            }
+            fclose(f);
+            CHECK(!bad, "%s (%s): table %s read with a %d-byte buffer differs (%d pieces)", dir, what, kTableFiles[i][0],
+                  caps[c], lines);
+        }
+        free(raw);
+    }
+}
+
 static void check_folder(const char *dir, const char *tmp) {
     char p[1200];
     snprintf(p, sizeof p, "%s/settings.json", dir);
@@ -97,6 +147,7 @@ static void check_folder(const char *dir, const char *tmp) {
     CHECK(s != NULL, "%s: no record", dir);
     if (!s) { free(text); return; }
     compare(dir, text, s, "folder");
+    compare_tables(dir, s, "folder");
     // the same seed as seed.json alone (lasrando convert): every answer unchanged, and it reads as format 1
     char conv[1200];
     snprintf(conv, sizeof conv, "%s/conv", tmp);
@@ -110,7 +161,7 @@ static void check_folder(const char *dir, const char *tmp) {
     free(j);
     const RandoSeed *c = rando_seed_load(conv);
     CHECK(c && rando_seed_format(c) == 1, "%s: converted record didn't load as seed.json", dir);
-    if (c) compare(dir, text, c, "seed.json");
+    if (c) compare(dir, text, c, "seed.json"), compare_tables(dir, c, "seed.json");
     CHECK(c && !strcmp(rando_seed_id(c), rando_seed_id(s)), "%s: seed ID", dir);
     remove(p);
     rmdir(conv);
@@ -162,7 +213,30 @@ int main(int argc, char **argv) {
             make(tmp, "big", b, NULL);
             free(b);
         }
-        const char *names[] = {"all-on", "all-off", "old-seed", "no-seed-key", "damaged", "big"};
+        // tables: plain rows, a line longer than any reader's buffer, CRLF lines, an empty file, no final newline
+        make(tmp, "tables", "{\"seed\": \"T\"}", "T-ID");
+        {
+            char p[1300];
+            const char *files[][2] = {
+                {"pots.tsv", "ArmosShrine\t5.25\t1.5\t30.75\t1291\nBananaHouse\t10.5\t0.02\t2.25\t1293\n"},
+                {"flags.tsv", "MarthaStatueOpened\t106\r\nPineappleGet\t201\r\n\r\nLetterDrop\t202\r\n"},
+                {"flags_ext", ""},
+                {"door_jumps.tsv", "# level\tcell\nLv10ClothesDungeon\t08A\tE\t8\t8\t07E\tW\t2.25\t0.0"},
+            };
+            for (size_t i = 0; i < sizeof files / sizeof *files; i++) {
+                snprintf(p, sizeof p, "%s/tables/%s", tmp, files[i][0]);
+                FILE *f = fopen(p, "wb");
+                fputs(files[i][1], f);
+                fclose(f);
+            }
+            snprintf(p, sizeof p, "%s/tables/tracker.tsv", tmp);
+            FILE *f = fopen(p, "wb");
+            fputs("V\t2\nN\t", f);
+            for (int i = 0; i < 20000; i++) fputc('a' + i % 26, f);
+            fputs("\nC\tx\t1\t2\tg\t300\n", f);
+            fclose(f);
+        }
+        const char *names[] = {"all-on", "all-off", "old-seed", "no-seed-key", "damaged", "big", "tables"};
         for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
             char d[1200];
             snprintf(d, sizeof d, "%s/%s", tmp, names[i]);

@@ -38,10 +38,10 @@ static int flag_index(const char *name) {
     static int idx[64];
     if (g_nflags < 0) {
         g_nflags = 0;
-        char p[600], line[128];
-        snprintf(p, sizeof p, "%s/flags.tsv", rando_seed_dir() ? rando_seed_dir() : ".");
-        FILE *f = rando_seed_dir() ? fopen(p, "r") : NULL;
-        while (f && g_nflags < 64 && fgets(line, sizeof line, f)) {
+        char line[128];
+        RandoText f;
+        bool have = rando_seed_dir() && rando_text_open(&f, "flags");
+        while (have && g_nflags < 64 && rando_text_gets(line, sizeof line, &f)) {
             char nm[64];
             int i;
             if (sscanf(line, "%63s %d", nm, &i) == 2) {
@@ -49,7 +49,6 @@ static int flag_index(const char *name) {
                 idx[g_nflags++] = i;
             }
         }
-        if (f) fclose(f);
     }
     for (int i = 0; name && i < g_nflags; i++)
         if (!strcmp(names[i], name)) return idx[i];

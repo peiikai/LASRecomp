@@ -76,11 +76,11 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char path[512], line[1024];
-    snprintf(path, sizeof path, "%s/hints.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
+    snprintf(path, sizeof path, "%s: hints", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "hints")) return;
     int cap = 0;
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;
         char *c[6] = {0};
         int k = 0;
@@ -97,11 +97,9 @@ static void load(void) {
             st->flag = -1;
         } else if (k >= 2 && c[0][0] == 'D') strlcpy(g_done, c[1], sizeof g_done);
     }
-    fclose(f);
-    snprintf(path, sizeof path, "%s/tracker.tsv", dir);  // C <name> <x> <y> <group> <flag>
-    if ((f = fopen(path, "r"))) {
+    if (rando_text_open(&f, "tracker")) {  // C <name> <x> <y> <group> <flag>
         static char big[16384];
-        while (fgets(big, sizeof big, f)) {
+        while (rando_text_gets(big, sizeof big, &f)) {
             if (big[0] != 'C' || big[1] != '\t') continue;
             big[strcspn(big, "\r\n")] = 0;
             char *c[6] = {0};
@@ -111,18 +109,17 @@ static void load(void) {
             for (int i = 0; i < g_nsteps; i++)
                 if (!strcmp(g_steps[i].loc, c[1])) g_steps[i].flag = atoi(c[5]);
         }
-        fclose(f);
     }
-    snprintf(path, sizeof path, "%s/flags.tsv", dir);
-    if ((f = fopen(path, "r"))) {
+    if (rando_text_open(&f, "flags")) {  // (name, index per line; blank lines skipped, up to the first that isn't one)
         char name[128];
         int idx, fcap = 0;
-        while (fscanf(f, "%127s %d", name, &idx) == 2) {
+        while (rando_text_gets(line, sizeof line, &f)) {
+            if (!line[strspn(line, " \t\r\n")]) continue;
+            if (sscanf(line, "%127s %d", name, &idx) != 2) break;
             if (g_nflags == fcap) g_flags = realloc(g_flags, (fcap = fcap ? fcap * 2 : 256) * sizeof *g_flags);
             strlcpy(g_flags[g_nflags].name, name, sizeof g_flags[0].name);
             g_flags[g_nflags++].idx = idx;
         }
-        fclose(f);
     }
     LOG("[hint] %d steps (closing entry %s)\n", g_nsteps, g_done);
 }

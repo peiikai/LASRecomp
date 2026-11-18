@@ -35,6 +35,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 #define MAXSPOTS 160  // (31 spots + a "shell" row per digsanity tile holding a Secret Seashell: up to 81; 18 apple slots)
 #define T_SHELL 0x87
@@ -114,10 +115,10 @@ static int load_locked(void) {
     char path[512], line[1024];
     // (apple_trees.tsv: Applesanity's tree slots, the same columns - kind "apple", flown out by apple_trees.c)
     for (int file = 0; file < 2; file++) {
-        snprintf(path, sizeof path, "%s/%s", dir, file ? "apple_trees.tsv" : "shell_spots.tsv");
-        FILE *f = fopen(path, "r");
-        if (!f) continue;
-        while (fgets(line, sizeof line, f) && n < MAXSPOTS) {
+        snprintf(path, sizeof path, "%s: %s", dir, file ? "apple_trees" : "shell_spots");
+        RandoText f;
+        if (!rando_text_open(&f, file ? "apple_trees" : "shell_spots")) continue;
+        while (rando_text_gets(line, sizeof line, &f) && n < MAXSPOTS) {
             line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
             if (line[0] == '#') continue;
             char *col[17], *save = NULL;
@@ -147,8 +148,7 @@ static int load_locked(void) {
             for (int k = 0; k < 5; k++) s->pool[k] = -1;
             s->fly_t = -1;
         }
-        if (n == MAXSPOTS && fgets(line, sizeof line, f)) LOG("[shells] warning: more than %d rows, the rest ignored\n", MAXSPOTS);
-        fclose(f);
+        if (n == MAXSPOTS && rando_text_gets(line, sizeof line, &f)) LOG("[shells] warning: more than %d rows, the rest ignored\n", MAXSPOTS);
         LOG("[shells] %d spots hold the seed's items (%s)\n", n, path);
     }
     __atomic_store_n(&g_n, n, __ATOMIC_RELEASE);

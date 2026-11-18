@@ -380,16 +380,19 @@ static void walls_load(void) {
     const char *dir = rando_seed_dir();
     char path[1024];
     if (!dir) return;
-    snprintf(path, sizeof path, "%s/roam.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
+    snprintf(path, sizeof path, "%s: roam", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "roam")) return;
     g_walls = calloc(512, sizeof *g_walls);
-    char cells[128];
+    char cells[128], line[512];
     WallScreen w;
-    while (g_nwalls < 512 && fscanf(f, "%f\t%f\t%f\t%d\t%d\t%127s", &w.x0, &w.z0, &w.ts, &w.w, &w.h, cells) == 6)
+    // one screen per line, up to the first line that isn't one (blank lines skipped)
+    while (g_nwalls < 512 && rando_text_gets(line, sizeof line, &f)) {
+        if (!line[strspn(line, " \t\r\n")]) continue;
+        if (sscanf(line, "%f\t%f\t%f\t%d\t%d\t%127s", &w.x0, &w.z0, &w.ts, &w.w, &w.h, cells) != 6) break;
         if (w.w * w.h <= (int)sizeof w.cells && (int)strlen(cells) == w.w * w.h)
             memcpy(w.cells, cells, (size_t)(w.w * w.h)), g_walls[g_nwalls++] = w;
-    fclose(f);
+    }
 }
 
 #define GOHMA_BODY 1.0f  // (half its width)

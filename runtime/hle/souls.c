@@ -26,6 +26,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 // GA(PLAYER_STATUS_PTR): PlayerStatus*: current level name at +0
 
@@ -52,10 +53,10 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char p[1024], line[256];
-    snprintf(p, sizeof p, "%s/souls.tsv", dir);
-    FILE *f = fopen(p, "r");
-    if (!f) return;
-    while (fgets(line, sizeof line, f)) {
+    snprintf(p, sizeof p, "%s: souls", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "souls")) return;
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
         Soul *s = &g_souls[g_nsouls];
         Wall *w = &g_walls[g_nwalls];
@@ -101,7 +102,6 @@ static void load(void) {
             g_nsouls++;
         }
     }
-    fclose(f);
     LOG("[souls] %d souls, %d walled rooms (%d shutters) in this seed\n", g_nsouls, g_nwalls, g_ndoors);
 }
 

@@ -20,6 +20,7 @@
 #include "../hle.h"
 #include "../platform.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 // GA(PLAYER_STATUS_PTR): PlayerStatus*: current level name at +0
 
@@ -53,12 +54,12 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char path[512];
-    snprintf(path, sizeof path, "%s/door_jumps.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
+    snprintf(path, sizeof path, "%s: door_jumps", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "door_jumps")) return;
     char line[256];
     int cap = 0;
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         if (line[0] == '#') continue;
         Jump j;
         char cell[8], side[4], tcell[8], tside[4];
@@ -101,7 +102,6 @@ static void load(void) {
         if (g_njumps == cap) g_jumps = realloc(g_jumps, sizeof(Jump) * (cap = cap ? cap * 2 : 64));
         g_jumps[g_njumps++] = j;
     }
-    fclose(f);
     LOG("[doorjump] %d mismatched doorways from %s\n", g_njumps, path);
 }
 

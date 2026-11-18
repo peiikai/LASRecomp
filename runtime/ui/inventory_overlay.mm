@@ -63,18 +63,19 @@ RT_ON_RESET(inventory_overlay_reset) { g_trade_loaded = 0; g_items_frame = 0, g_
 static void load_trade_flags(void) {
     g_trade_loaded = 1;
     for (int i = 0; i < 14; i++) g_trade_flag[i] = g_trade_done[i] = -1;
-    char path[512];
-    snprintf(path, sizeof path, "%s/flags.tsv", rando_seed_dir());
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    char name[96];
+    RandoText f;
+    if (!rando_seed_dir() || !rando_text_open(&f, "flags")) return;
+    char name[96], line[256];
     int idx;
-    while (fscanf(f, "%95s %d", name, &idx) == 2)
+    // name, index per line, up to the first line that isn't one (blank lines skipped)
+    while (rando_text_gets(line, sizeof line, &f)) {
+        if (!line[strspn(line, " \t\r\n")]) continue;
+        if (sscanf(line, "%95s %d", name, &idx) != 2) break;
         for (int i = 0; i < 14; i++) {
             if (kTrade[i].flag && !strcmp(kTrade[i].flag, name)) g_trade_flag[i] = idx;
             if (kTrade[i].done && !strcmp(kTrade[i].done, name)) g_trade_done[i] = idx;
         }
-    fclose(f);
+    }
 }
 
 static bool flag_set(int i) { return i >= 0 && i < 2048 && (LD8(EVENT_FLAGS + (i >> 3)) >> (i & 7)) & 1; }

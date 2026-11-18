@@ -132,13 +132,13 @@ static void load(void) {
     const char *e = ENV("LARECOMP_ENEMY_RANDOM");
     if (e && !strcmp(e, "0")) { LOG("[enemyrand] off (LARECOMP_ENEMY_RANDOM=0)\n"); return; }
     char p[600];
-    snprintf(p, sizeof p, "%s/enemies_random.tsv", dir);
-    FILE *f = fopen(p, "r");
-    if (!f) return;  // (a Seeded seed)
+    snprintf(p, sizeof p, "%s: enemies_random", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "enemies_random")) return;  // (a Seeded seed)
     g_files = calloc(MAXFILE, sizeof *g_files);
     g_slots = calloc(MAXSLOT, sizeof *g_slots);
     char line[1024];
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
         char *tab = strchr(line, '\t');
         if (line[0] == '#' || !tab) continue;
@@ -207,7 +207,6 @@ static void load(void) {
             g_files[g_nfiles - 1].n++;
         }
     }
-    fclose(f);
     for (int fi = 0; fi < g_nfiles; fi++) {  // (each record's key, from the seed's file)
         RFile *rf = &g_files[fi];
         char hp[800];

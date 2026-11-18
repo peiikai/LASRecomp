@@ -20,6 +20,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 uint64_t renderer_present_count(void);
 int doorjump_chaos_pairs(const char *level, int *ids, int max);
@@ -110,11 +111,11 @@ RT_ON_RESET(chaos_overlay_cells_reset) { g_ncells = -1; }
 static bool cell_shift(const char *lv, int col, int row, float *x, float *y) {
     if (g_ncells < 0) {
         g_ncells = 0;
-        char p[512];
         const char *dir = rando_seed_dir();
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/dungeon_map.tsv", dir), fopen(p, "r")) : NULL;
+        RandoText f;
+        bool have = dir && rando_text_open(&f, "dungeon_map");
         char line[128], cell[8];
-        while (f && g_ncells < 640 && fgets(line, sizeof line, f)) {
+        while (have && g_ncells < 640 && rando_text_gets(line, sizeof line, &f)) {
             MapCell &m = g_cells[g_ncells];
             if (sscanf(line, "%23[^\t]\t%7[^\t]\t%f\t%f", m.level, cell, &m.x, &m.y) == 4 && strlen(cell) == 3) {
                 m.row = (cell[0] - '0') * 10 + (cell[1] - '0');
@@ -122,7 +123,6 @@ static bool cell_shift(const char *lv, int col, int row, float *x, float *y) {
                 g_ncells++;
             }
         }
-        if (f) fclose(f);
     }
     for (int i = 0; i < g_ncells; i++)
         if (g_cells[i].col == col && g_cells[i].row == row && !strcmp(g_cells[i].level, lv)) {

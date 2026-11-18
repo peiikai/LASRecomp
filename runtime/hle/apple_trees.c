@@ -21,6 +21,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 #define T_APPLE 0x136
 #define T_GREEN_APPLE 0x135
@@ -76,9 +77,10 @@ static int load(void) {
         int n = 0;
         const char *dir = rando_seed_dir();
         char path[512], line[1024];
-        snprintf(path, sizeof path, "%s/apple_trees.tsv", dir ? dir : ".");
-        FILE *f = dir ? fopen(path, "r") : NULL;
-        while (f && fgets(line, sizeof line, f) && n < MAXROWS) {
+        snprintf(path, sizeof path, "%s: apple_trees", dir ? dir : ".");
+        RandoText f;
+        bool have = dir && rando_text_open(&f, "apple_trees");
+        while (have && rando_text_gets(line, sizeof line, &f) && n < MAXROWS) {
             line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
             if (line[0] == '#') continue;
             char *col[18], *save = NULL;
@@ -102,7 +104,6 @@ static int load(void) {
             r->tree = t;
             g_trees[t].row[r->slot] = n++;
         }
-        if (f) fclose(f);
         if (n) LOG("[apples] %d apple tree slots hold the seed's items (%d trees)\n", n, g_ntrees);
         __atomic_store_n(&g_nrows, n, __ATOMIC_RELEASE);
     }

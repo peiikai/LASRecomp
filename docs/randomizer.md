@@ -42,7 +42,8 @@ The rules for every stage:
   "format": "lasrecomp-seed",
   "version": 1,
   "seed_id": "MBHMM-13FR6-2000W-40GAZ-X700Z",
-  "settings": { "escape-bottle": true, "keysanity": "all", "seashell-total": 50, ... }
+  "settings": { "escape-bottle": true, "keysanity": "all", "seashell-total": 50, ... },
+  "tables": { "pots": ["ArmosShrine\t5.25\t1.5\t30.75\t1291", ...], "door_jumps": [...], ... }
 }
 ```
 
@@ -52,8 +53,15 @@ The rules for every stage:
 - Seeds made before `seed.json` have `settings.json` + `seed_id.txt`: `rando_seed_load` reads them into the same
   record, so readers have one path.
 - `build/lasrando convert <seed folder>` prints a folder's record as `seed.json` (`make lasrando`).
-- Later versions add the seed's tables (pots, digs, door jumps, tracker, ...) and its placements to the record. A
-  newer version number is read as far as this build understands it.
+- `tables`: the data the runtime's hooks read, each the lines of one tab-separated table (`apple_trees`, `bushes`,
+  `digs`, `door_jumps`, `dungeon_map`, `enemies_random`, `flags`, `flags_ext`, `hints`, `pots`, `quick_pickups`,
+  `roam`, `rocks`, `shell_spots`, `shopsanity`, `souls`, `tracker`, `triforce`). Each row format is documented at its
+  reader. Readers use `rando_text_open` / `rando_text_gets`, which read a table the way `fgets` reads a file, so the
+  parsing is the same as when these were files (an older folder's `*.tsv` files are read into the record).
+- The spoiler (`spoiler.txt`, `spoiler_view.txt`, `spoiler.html`) stays a set of files next to the record: it is for
+  people to read.
+- Later versions add the seed's placements and the code patches to the record. A newer version number is read as far
+  as this build understands it.
 
 ## Random numbers
 
@@ -66,6 +74,7 @@ compiler (see `uniform()`).
 
 - `tools/test_pyrandom.cpp`: the random numbers against CPython.
 - `tools/test_seed_record.c`: the seed record answers every setting the runtime reads exactly as the older
-  `settings.json` readers did, for older folders and for their `seed.json`. With no arguments it uses generated
+  `settings.json` readers did, and every table reads line for line as `fgets` read its file (at several buffer sizes,
+  CRLF seeds included), for older folders and for their `seed.json`. With no arguments it uses generated
   folders; give it seed folders to check those.
 - Randomizer changes still need several generated seeds checked in game (CONTRIBUTING "Testing your change").
