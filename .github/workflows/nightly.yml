@@ -86,14 +86,20 @@ jobs:
               echo "- Android: \`android.apk\`, installed as its own app, LAS Recomp Nightly, beside the release one"
               echo "- iPhone and iPad: \`iOS.laskit\`, made into the app with a nightly desktop build of the same date"
               # Changes: the pull requests merged since the previous round, newest round first, with the earlier
-              # rounds' lists kept (the last 30), so a player several nightlies behind sees everything in the start
-              # screen's update dialog. Each round starts with a "nightly-changes: <stamp>" line; the dialog shows the
-              # rounds newer than its own build (runtime/ui/update_notes.h).
+              # rounds' lists kept, so a player several nightlies behind sees everything in the start screen's update
+              # dialog. Each round starts with a "nightly-changes: <stamp>" line; the dialog shows the rounds newer
+              # than its own build (runtime/ui/update_notes.h).
+              # Kept: the rounds since the newest feature release (vX.Y.0 or beta_N; hotfixes like v0.6.1 only carry
+              # fixes, so they wipe nothing), at most 90 so the notes stay under GitHub's size limit.
+              # Left out: release-line forward merges ("Merge release/x into develop"); the pull requests they carry
+              # are listed on their own. Older lists are cleaned of them too.
               CHANGES=
               if [ -n "$RSHA" ]; then
-                CHANGES=$(gh api "repos/$GH_REPO/compare/$RSHA...$SHA" --jq '.commits[] | select(.parents | length > 1) | .commit.message | capture("^Merge pull request #(?<n>[0-9]+)[^\n]*\n\n(?<t>[^\n]+)") | "- \(.t) (#\(.n))"' 2>/dev/null | tac || true)
+                CHANGES=$(gh api "repos/$GH_REPO/compare/$RSHA...$SHA" --jq '.commits[] | select(.parents | length > 1) | .commit.message | capture("^Merge pull request #(?<n>[0-9]+)[^\n]*\n\n(?<t>[^\n]+)") | select(.t | startswith("Merge release/") | not) | "- \(.t) (#\(.n))"' 2>/dev/null | tac || true)
               fi
-              OLD=$(awk '/^<!-- nightly-changes: [0-9][0-9]* -->$/ { n++ } n && n < 30 && !/^To report a problem/' <<< "$BODY" | sed '/^<!-- nightly-round:/,$d')
+              FEAT=$(gh api "repos/$GH_REPO/releases?per_page=30" --jq '[.[] | select((.prerelease or .draft) | not) | select(.tag_name | test("^(v[0-9]+\\.[0-9]+\\.0|beta_[0-9]+)$"))][0].published_at // empty' 2>/dev/null || true)
+              CUT=0; [ -n "$FEAT" ] && CUT=$(date -u -d "$FEAT" +%Y%m%d%H%M)
+              OLD=$(awk -v cut="$CUT" '/^<!-- nightly-changes: [0-9][0-9]* -->$/ { n++; keep = ($3 + 0 > cut + 0 && n < 90) } keep && !/^To report a problem/' <<< "$BODY" | sed -e '/^<!-- nightly-round:/,$d' -e '/^- Merge release\//d')
               if [ -n "$CHANGES" ] || [ -n "$OLD" ]; then
                 echo; echo "## Changes"; echo
                 if [ -n "$CHANGES" ]; then
