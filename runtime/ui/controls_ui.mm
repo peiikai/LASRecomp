@@ -34,10 +34,10 @@ void menu_toggle(void);  // menu.mm
 }
 
 // ------------------------------------------------------------------ Configure inputs: what's on it
-enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, CAT_MENU, CAT_LAS, N_CAT };
-static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad"), LN("Open menu"),
-                                              LN("LAS Menu")};
-static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad", "menu", "lasmenu"};  // (LARECOMP_CONTROLS_SUB)
+// (LAS Menu: its buttons, then the shortcuts that open it - Open menu was a category of its own, user 2026-11-18)
+enum { CAT_BUTTONS, CAT_TRIGGERS, CAT_STICKS, CAT_DPAD, CAT_LAS, N_CAT };
+static const char *const k_cat_name[N_CAT] = {LN("Buttons"), LN("Triggers"), LN("Sticks"), LN("D-pad"), LN("LAS Menu")};
+static const char *const k_cat_hook[N_CAT] = {"buttons", "triggers", "sticks", "dpad", "lasmenu"};  // (LARECOMP_CONTROLS_SUB)
 
 // section: a header before this row; fixed: a key that can't be changed (slot -1)
 struct Bind { int slot; const char *label; const char *section; const char *fixed; };
@@ -63,10 +63,6 @@ static int cat_rows(int cat, bool pad, Bind *out) {
     case CAT_DPAD:
         add(BIND_UP, LN("Up")), add(BIND_DOWN, LN("Down")), add(BIND_LEFT, LN("Left")), add(BIND_RIGHT, LN("Right"));
         break;
-    case CAT_MENU:  // (F1 and Esc stay: whatever the controller's shortcuts are, the menu can always be reached)
-        if (pad) add(BIND_MENU_1, LN("Shortcut 1")), add(BIND_MENU_2, LN("Shortcut 2"));
-        else out[n++] = {-1, LN("Shortcut 1"), NULL, "F1"}, out[n++] = {-1, LN("Shortcut 2"), NULL, "Esc"};
-        break;
     case CAT_LAS:  // (the keyboard's are fixed: Enter, Esc)
         if (pad)
             for (int a = BIND_UI_CONFIRM; a < BIND_UI_END; a++) add(a, bind_input_name(a));
@@ -74,13 +70,16 @@ static int cat_rows(int cat, bool pad, Bind *out) {
             static const char *const fixed[][2] = {{LN("Confirm"), "Enter"}, {LN("Back"), "Esc"}};
             for (auto &f : fixed) out[n++] = {-1, f[0], NULL, f[1]};
         }
+        // the shortcuts that open it (F1 and Esc stay: whatever the controller's shortcuts are, the menu can always be
+        // reached)
+        if (pad) add(BIND_MENU_1, LN("Shortcut 1"), LN("Open menu")), add(BIND_MENU_2, LN("Shortcut 2"));
+        else out[n++] = {-1, LN("Shortcut 1"), LN("Open menu"), "F1"}, out[n++] = {-1, LN("Shortcut 2"), NULL, "Esc"};
         break;
     }
     return n;
 }
 static int slot_cat(int slot) {
-    if (slot >= BIND_UI_CONFIRM) return CAT_LAS;
-    if (slot >= BIND_MENU_1) return CAT_MENU;
+    if (slot >= BIND_MENU_1) return CAT_LAS;  // (its buttons, and the shortcuts that open it)
     Bind b[16];
     for (int c = 0; c < N_CAT; c++)
         for (int i = 0, n = cat_rows(c, false, b); i < n; i++)
@@ -255,9 +254,19 @@ static void configure_inputs(float scale) {
         Bind rows[16];  // (the most: the keyboard's Sticks, 10)
         int n = cat_rows(g_cat, g_dev_pad, rows);
         opt_section(k_cat_name[g_cat]);
-        bool in_right = false;
+        bool in_right = false, on_shortcut = false;  // (the cursor / mouse on Shortcut 1 / 2: their hint)
+        // LAS Menu: back to the controller's own conventions, under its buttons (before the shortcuts that open it)
+        auto conventions = [&]() {
+            if (!g_bind_ui_custom) opt_disable_next();
+            if (opt_action("Reset to controller conventions", "", NULL)) {
+                bind_capture_cancel();
+                bind_ui_reset();
+            }
+            if (ImGui::IsItemFocused()) in_right = true;
+        };
         for (int i = 0; i < n; i++) {
             const Bind &b = rows[i];
+            if (g_cat == CAT_LAS && g_dev_pad && b.slot == BIND_MENU_1) conventions();
             if (b.section) opt_section(b.section);
             if (b.fixed) {
                 opt_disable_next();
@@ -297,6 +306,7 @@ static void configure_inputs(float scale) {
             ImGui::PopID();
             if (i == 0) take_focus(FOCUS_RIGHT);
             if (ImGui::IsItemFocused()) in_right = true;
+            if (menu && (ImGui::IsItemFocused() || ImGui::IsItemHovered())) on_shortcut = true;
             if (waiting && !ImGui::IsItemVisible()) ImGui::SetScrollHereY(0.5f);  // (a capture started by a test hook)
             // X (the top button) / Delete / Backspace / right click: clear a menu shortcut (#591: Home free for overlays)
             if (menu && !waiting && cd < 0 &&
@@ -314,21 +324,13 @@ static void configure_inputs(float scale) {
                 else { msg[0] = 0; bind_capture_begin(dev, b.slot); }
             }
         }
-        if (g_cat == CAT_LAS && g_dev_pad) {  // (at the bottom of the list: back to the controller's own conventions)
-            if (!g_bind_ui_custom) opt_disable_next();
-            if (opt_action("Reset to controller conventions", "", NULL)) {
-                bind_capture_cancel();
-                bind_ui_reset();
-            }
-            if (ImGui::IsItemFocused()) in_right = true;
-        }
         g_in_right = in_right;
         if (cd == dev && cs >= BIND_MENU_1 && cs < BIND_UI_CONFIRM) ImGui::TextDisabled("%s", L("Press one button, or two together. Esc cancels."));
         else if (cd == dev) ImGui::TextDisabled("%s", L("Esc cancels."));
         else if (msg[0]) ImGui::TextDisabled("%s", msg);
-        else if (g_cat == CAT_MENU && g_dev_pad)
+        else if (g_cat == CAT_LAS && g_dev_pad && on_shortcut)  // (not on the menu's own buttons: they don't clear)
             ImGui::TextDisabled(L("%s or Delete clears a shortcut."), L(bind_pad_label(bind_ui_host(BIND_UI_OPTION), fam)));
-        else if (g_cat == CAT_MENU) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
+        else if (g_cat == CAT_LAS && !g_dev_pad) ImGui::TextDisabled("%s", L("F1 and Esc always open this menu."));
     }
     opt_split_end();
     if (back) bind_capture_cancel(), g_sub = false, g_focus = FOCUS_CONFIGURE, g_in_right = false, msg[0] = 0;
