@@ -191,6 +191,17 @@ jobs:
       - name: Sparkle feed
         env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}' }
         run: tools/sparkle_appcast.sh nightly build/dist/*-macOS.dmg
+      # (the plan job has written this round's notes: their "## Changes" go into the feed, so Sparkle's window shows
+      # them; tools/sparkle_notes.sh. A commit without the script keeps the release page link. Never fatal: on a
+      # failure the feed is left as it was, with the release page link, and the .dmg still goes up.)
+      - name: Notes in the Sparkle feed
+        env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
+        run: |
+          [ -x tools/sparkle_notes.sh ] || exit 0
+          if ! { gh release view nightly --json body -q .body > build/nightly-body.md &&
+                 tools/sparkle_notes.sh build/dist/appcast-macOS.xml nightly build/nightly-body.md; }; then
+            echo "::warning::release notes not added to appcast-macOS.xml: it keeps the release page link"
+          fi
       - name: Publish
         env: { GH_TOKEN: '${{ github.token }}', GH_REPO: '${{ github.repository }}' }
         run: tools/nightly_publish.sh build/dist/*-macOS.dmg macOS.dmg
