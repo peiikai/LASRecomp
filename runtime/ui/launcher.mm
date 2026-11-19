@@ -151,6 +151,15 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 #else
 #define LARECOMP_PLATFORM "linux-x86_64"
 #endif
+// This platform in release and nightly file names (LAS.Recomp-<version>-<this>.<ext>). The same as LARECOMP_PLATFORM,
+// which names the update manifest (update-<platform>.txt: builds out there fetch it by that name, so it never changes),
+// except Windows x64, whose files say windows-x64 since the nightly of 2026-11 (launchers pick a file by system and
+// processor). Nightlies of that time also carry the zip as -windows.zip, for the builds before that (nightly.yml).
+#if defined(_WIN32) && !defined(_M_ARM64)
+#define LARECOMP_FILE_PLATFORM "windows-x64"
+#else
+#define LARECOMP_FILE_PLATFORM LARECOMP_PLATFORM
+#endif
 extern "C" const char *larecomp_version(void) { return LARECOMP_VERSION; }  // (the shader caches' tag)
 
 // ------------------------------------------------------------------ update check
@@ -249,7 +258,7 @@ static void *update_thread(void *) {
     }
     if (LARECOMP_EXPERIMENTAL_STAMP && best.empty() && newest_experimental(body, LARECOMP_PLATFORM) > LARECOMP_EXPERIMENTAL_STAMP)
         best = "experimental";
-    if (LARECOMP_NIGHTLY_STAMP && newest_nightly(body, LARECOMP_PLATFORM) > LARECOMP_NIGHTLY_STAMP) best = "nightly";
+    if (LARECOMP_NIGHTLY_STAMP && newest_nightly(body, LARECOMP_FILE_PLATFORM) > LARECOMP_NIGHTLY_STAMP) best = "nightly";
     if (!best.empty()) fprintf(stderr, "[launcher] update available: %s (this build %s)\n", best.c_str(), LARECOMP_VERSION);
     pthread_mutex_lock(&g_update_lock);
     g_update_tag = best;

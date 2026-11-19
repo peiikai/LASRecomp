@@ -235,11 +235,10 @@ jobs:
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
-      # (a release's zip says x64, as launchers pick a file by system and processor; the self-updater takes the name from
-      #  its manifest, update-windows.txt, which keeps its name. Nightlies keep "-windows.zip": shipped nightly builds
-      #  find newer ones by "-windows." in the name, runtime/ui/update_tags.h)
+      # (the zip says x64, as launchers pick a file by system and processor; the self-updater takes the name from its
+      #  manifest, update-windows.txt, which keeps its name)
       - name: Release zip
-        run: make -j"$(nproc)" dist WINZIP=windows-x64
+        run: make -j"$(nproc)" dist
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"

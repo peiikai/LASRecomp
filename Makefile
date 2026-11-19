@@ -388,8 +388,8 @@ ios-sim-test: ios-sim
 dmg: app
 	tools/make_dmg.sh
 
-# Windows: build/dist/LAS Recomp-<version>-windows.zip (releases: WINZIP=windows-x64, .github/workflows/release.yml),
-# top folder "LAS Recomp/": the exe, the seed generator
+# Windows: build/dist/LAS Recomp-<version>-windows-x64.zip (before 2026-11: -windows.zip; the update manifest is still
+# update-windows.txt), top folder "LAS Recomp/": the exe, the seed generator
 # helper (make rando-helper), what the start screen builds the game code with on the player's machine (make gen-helper,
 # tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the exe's import library)
 # and the DLLs they load (runs without MSYS2). No game code. The exe is a release build in $(WIN_B):
@@ -405,7 +405,7 @@ dmg: app
 DIST     := build/dist/LAS Recomp
 WIN_B    := build/win-release
 # the zip's platform name, as the update check names it (runtime/ui/launcher.mm LARECOMP_PLATFORM)
-WINZIP   := windows$(if $(filter aarch64,$(WINARCH)),-arm64)
+WINZIP   := windows-$(if $(filter aarch64,$(WINARCH)),arm64,x64)
 deps-windows:
 	tools/build_deps_windows.sh
 dist:

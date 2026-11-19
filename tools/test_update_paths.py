@@ -64,7 +64,7 @@ def nightly_build(stamp, commit):
                           'LARECOMP_EXPERIMENTAL_STAMP': '0LL', 'LARECOMP_NIGHTLY_STAMP': f'{stamp}LL'})
 
 
-PLATS = ['macOS.dmg', 'windows.zip', 'linux-x86_64.AppImage', 'android.apk', 'iOS.laskit']
+PLATS = ['macOS.dmg', 'windows-x64.zip', 'linux-x86_64.AppImage', 'android.apk', 'iOS.laskit']  # (windows.zip before 2026-11)
 
 
 def release(tag, aarch64):
@@ -77,7 +77,7 @@ def nightly_round(rels, stamp, commit):
     for r in rels:
         if r['tag_name'] == 'nightly':
             r['assets'] = [{'name': f'LAS.Recomp-nightly-{stamp}-{commit}-{p}'}
-                           for p in PLATS + ['linux-aarch64.AppImage', 'windows-arm64.zip']]
+                           for p in PLATS + ['linux-aarch64.AppImage', 'windows-arm64.zip', 'windows.zip']]  # (+ the handover copy)
     return rels
 
 
