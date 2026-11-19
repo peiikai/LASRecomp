@@ -496,6 +496,7 @@ def main():
     result = {}
     errors = []
     stage('Shuffling items', 0.04)
+    record.checkpoint('prefill', {'settings': settings, 'item_defs': item_defs, 'logic_defs': logic_defs})
     sh = ItemShuffler(out_dir, settings['seed'], settings['logic'], settings, item_defs, copy.deepcopy(logic_defs))
     # Speed: LAS rebuilds each condition with regexes and eval()s the string on every check (millions of times
     # per seed). Same semantics, compiled once: condition string -> code object evaluated with the same locals.
@@ -570,6 +571,8 @@ def main():
         print('SHUFFLE ERROR', errors, file=sys.stderr)
         sys.exit(1)
     print('placements ready', flush=True)
+    record.checkpoint('postfill', {'placements': result['placements'], 'randstate': result['randstate'],
+                                   'settings': settings})
     if os.environ.get('LARECOMP_TEST_SWAP'):  # (test: <location>=<item>,...: that item swapped into that location)
         pl = result['placements']
         done = set()

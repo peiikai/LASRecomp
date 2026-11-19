@@ -15,6 +15,10 @@
 //                                                  each ported generator step (runtime/rando/apply/) run from the
 //                                                  Python's state just before it (tools/rando/record.py's write log)
 //                                                  and its writes compared with the Python's, write by write
+//   lasrando solve-check <prefill.json> <postfill.json>
+//                                                  the native item fill (runtime/rando/solve/) from a recorded run's
+//                                                  state before LAS's fill, compared with what the Python made
+//                                                  (placements, indexes, random state, settings)
 //
 // Build: make lasrando (build/lasrando).
 #include <stdio.h>
@@ -36,13 +40,15 @@
 #include "../runtime/rando/fmt/lvb.h"
 #include "../runtime/rando/apply/seed_build.h"
 #include "../runtime/rando/seed.h"
+#include "../runtime/rando/solve/check.h"
 #include "../third_party/yyjson/yyjson.h"
 
 static int usage(void) {
     fprintf(stderr, "usage: lasrando convert <seed folder> [<out.json>]\n"
                     "       lasrando get <seed folder> <key>...\n"
                     "       lasrando dump <romfs> <decisions.json> <out folder>\n"
-                    "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n");
+                    "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n"
+                    "       lasrando solve-check <prefill.json> <postfill.json>\n");
     return 2;
 }
 
@@ -192,6 +198,7 @@ int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "dump")) return dump(argv[2], argv[3], argv[4]);
     if (argc >= 5 && !strcmp(argv[1], "check-steps")) return check_steps(argv[2], argv[3], argv[4]);
     if (argc >= 4 && !strcmp(argv[1], "repack")) return repack(argv[2], argv[3]);
+    if (argc >= 4 && !strcmp(argv[1], "solve-check")) return rando::solve::solve_check(argv[2], argv[3]);
     if (argc < 3) return usage();
     const RandoSeed *s = rando_seed_load(argv[2]);
     if (!s) { fprintf(stderr, "%s: no seed there\n", argv[2]); return 1; }

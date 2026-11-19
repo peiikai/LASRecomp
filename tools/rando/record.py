@@ -125,6 +125,25 @@ def finish():
             json.dump(_log, f, indent=0)
 
 
+def _ordered(v):
+    """JSON-able, keeping Python's iteration order: a set becomes a list in the order Python iterates it (the
+    solver's parity checks need that order, not a sorted one)."""
+    if isinstance(v, (set, frozenset, list, tuple)):
+        return [_ordered(x) for x in v]
+    if isinstance(v, dict):
+        return {str(k): _ordered(x) for k, x in v.items()}
+    return v
+
+
+def checkpoint(name, obj):
+    """With LARECOMP_RECORD: <folder>/<name>.json, the generator's state at a point the native solver is checked
+    at (prefill: settings, items and logic as LAS's fill gets them; postfill: placements and the random state)."""
+    if not _dir:
+        return
+    with _real_open(os.path.join(_dir, name + '.json'), 'w') as f:
+        json.dump(_ordered(obj), f)
+
+
 def _plain(v):
     if isinstance(v, (set, frozenset)):
         return sorted(_plain(x) for x in v)
