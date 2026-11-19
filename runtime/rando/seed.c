@@ -136,6 +136,19 @@ static RandoSeed *load_folder(const char *dir) {
         yyjson_mut_obj_add_val(m, tables, kTables[i][0], rows);
     }
     yyjson_mut_obj_add_val(m, root, "tables", tables);
+    // the decisions the runtime builds the seed's files from (tools/rando/record.py; seeds before it have none)
+    snprintf(p, sizeof p, "%s/decisions.json", dir);
+    size_t dlen;
+    char *draw = read_all(p, &dlen);
+    if (draw) {
+        yyjson_doc *dd = yyjson_read(draw, dlen, 0);
+        free(draw);
+        if (dd && yyjson_is_obj(yyjson_doc_get_root(dd)))
+            yyjson_mut_obj_add_val(m, root, "decisions", yyjson_val_mut_copy(m, yyjson_doc_get_root(dd)));
+        else
+            fprintf(stderr, "[rando] %s/decisions.json: not JSON; the seed's files come from its folder\n", dir);
+        yyjson_doc_free(dd);
+    }
     yyjson_doc *doc = yyjson_mut_doc_imut_copy(m, NULL);
     yyjson_mut_doc_free(m);
     return doc ? wrap(doc, 0) : NULL;
@@ -207,6 +220,11 @@ char *rando_text_gets(char *buf, int cap, RandoText *t) {
 }
 
 const char *rando_seed_id(const RandoSeed *s) { return s ? s->id : ""; }
+
+char *rando_seed_decisions_json(const RandoSeed *s, size_t *len) {
+    yyjson_val *d = s ? yyjson_obj_get(yyjson_doc_get_root(s->doc), "decisions") : NULL;
+    return yyjson_is_obj(d) ? yyjson_val_write(d, 0, len) : NULL;
+}
 int rando_seed_format(const RandoSeed *s) { return s ? s->format : 0; }
 
 char *rando_seed_json(const RandoSeed *s, size_t *len) {

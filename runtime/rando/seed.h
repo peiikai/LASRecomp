@@ -46,7 +46,11 @@ bool rando_text_open(RandoText *t, const char *table);                     // th
 char *rando_text_gets(char *buf, int cap, RandoText *t);
 bool rando_seed_has_table(const RandoSeed *s, const char *table);
 
-const char *rando_seed_id(const RandoSeed *s);  // the seed ID that regenerates it ("" if unknown)
+const char *rando_seed_id(const RandoSeed *s);
+
+// The seed's decisions as JSON (malloc'd; NULL: the seed has none - its files come from its folder). The runtime
+// builds the seed's game files from them (runtime/rando/apply/, docs/randomizer.md).
+char *rando_seed_decisions_json(const RandoSeed *s, size_t *len);  // the seed ID that regenerates it ("" if unknown)
 int rando_seed_format(const RandoSeed *s);      // 1 = seed.json; 0 = an older folder read into the record
 
 // The record as seed.json (pretty-printed, malloc'd, NUL-terminated): `lasrando convert` writes it for older folders.
