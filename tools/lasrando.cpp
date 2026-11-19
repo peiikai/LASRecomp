@@ -7,6 +7,10 @@
 //   lasrando repack <kind> <out folder> < paths     each listed game file read and written back by the format code
 //                                                  (kind: leb, leb-grid, lvb, gsheet, msbt, sarc, bfevfl), to <out folder>/<the path as listed>;
 //                                                  tools/rando/test_formats.py compares that with the Python's
+//   lasrando dump <romfs> <decisions.json> <out folder>
+//                                                  the seed's game-file changes, built in memory as the game will
+//                                                  (every ported step in the generator's order), written to
+//                                                  <out>/romfs and <out>/exefs: what the runtime serves
 //   lasrando check-steps <romfs> <decisions.json> <record folder>
 //                                                  each ported generator step (runtime/rando/apply/) run from the
 //                                                  Python's state just before it (tools/rando/record.py's write log)
@@ -37,6 +41,7 @@
 static int usage(void) {
     fprintf(stderr, "usage: lasrando convert <seed folder> [<out.json>]\n"
                     "       lasrando get <seed folder> <key>...\n"
+                    "       lasrando dump <romfs> <decisions.json> <out folder>\n"
                     "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n");
     return 2;
 }
@@ -153,7 +158,38 @@ static int check_steps(const std::string &romfs, const std::string &decisions, c
     return bad ? 1 : 0;
 }
 
+// lasrando dump: the full build, written out (tools/rando/test_apply.py compares it with a seed folder)
+static int dump(const std::string &romfs, const std::string &decisions, const std::string &out) {
+    std::string dj;
+    if (!slurp(decisions, dj)) { fprintf(stderr, "can't read %s\n", decisions.c_str()); return 2; }
+    rando::Decisions d;
+    if (!d.load(dj)) { fprintf(stderr, "bad decisions\n"); return 2; }
+    rando::SeedBuild b([&](const std::string &p, std::string &o) { return slurp(romfs + "/" + p, o); }, d);
+    b.set_game_list([&](const std::string &dir, std::vector<std::string> &names) { return list_dir(romfs + "/" + dir, names); });
+    for (const rando::BuildStep &st : rando::build_steps()) {
+        if (!rando::build_step_known(st.name)) { fprintf(stderr, "step %s has no place in the order\n", st.name); return 1; }
+        if (!rando::build_step_runs(st.name, d)) continue;
+        size_t before = b.writes().size();
+        try {
+            st.run(b);
+        } catch (const std::exception &e) {
+            fprintf(stderr, "%s: %s\n", st.name, e.what());
+            return 1;
+        }
+        if (getenv("LASRANDO_STEPS") && b.writes().size() > before)
+            fprintf(stderr, "  %-60s %zu writes\n", st.name, b.writes().size() - before);
+    }
+    for (const auto &f : b.files()) {
+        std::string dst = out + "/" + (f.first.compare(0, 6, "exefs/") ? "romfs/" + f.first : f.first);
+        mkdirs(dst);
+        std::ofstream(dst, std::ios::binary) << f.second;
+    }
+    fprintf(stderr, "%zu files, %zu writes\n", b.files().size(), b.writes().size());
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc >= 5 && !strcmp(argv[1], "dump")) return dump(argv[2], argv[3], argv[4]);
     if (argc >= 5 && !strcmp(argv[1], "check-steps")) return check_steps(argv[2], argv[3], argv[4]);
     if (argc >= 4 && !strcmp(argv[1], "repack")) return repack(argv[2], argv[3]);
     if (argc < 3) return usage();

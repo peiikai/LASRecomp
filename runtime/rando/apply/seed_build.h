@@ -122,5 +122,7 @@ struct BuildStep {
     void (*run)(SeedBuild &b);
 };
 const std::vector<BuildStep> &build_steps();  // (the ported ones, in the generator's order)
+bool build_step_known(const char *name);       // (the step has its place in that order)
+bool build_step_runs(const char *name, const Decisions &d);  // (las_headless.py runs it for this seed's settings)
 
 }  // namespace rando
