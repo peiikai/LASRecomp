@@ -367,7 +367,7 @@ def section_rooms(sd, seed_dir, out):
         f = l.rstrip('\n').split('\t')
         if len(f) < 3 or f[0] not in LEVEL_D:
             continue
-        lv, cell, room = f
+        lv, cell, room = f[:3]  # (a 4th column marks a room's second copy: dungeon_gen.py)
         src_lv, _, src_cell = room.rpartition('_')
         if room == f'{lv}_{cell}' or src_lv not in LEVEL_D:
             continue
