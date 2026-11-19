@@ -20,8 +20,8 @@ playing exactly as before:
 |---|---|---|
 | 1 | seed record + one runtime API; Python's `random` in C++ | in progress |
 | 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | done: rooms, level configs, data sheets, messages, archives, event flows, texture banks |
-| 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | done but dungeon room shuffle: every step built natively, file for file as the generator |
-| 4 | asset builds (dungeon room shuffle, textures) in the runtime | textures done (chest looks, title logo); dungeon room shuffle next |
+| 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | done: every step built natively, file for file as the generator |
+| 4 | asset builds (dungeon room shuffle, textures) in the runtime | done: textures (chest looks, title logo), dungeon rooms; room texture banks are built when the game reads them |
 | 5 | native solver | done: the whole generator, dungeon room shuffle's planning and room logic included, file for file as today |
 | 6 | generation in the app everywhere; Python leaves the builds | |
 
