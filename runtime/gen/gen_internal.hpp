@@ -306,7 +306,16 @@ class Module {
     uint32_t image_word(uint64_t a) const { return nso.u32(a - base); }
     bool in_text(uint64_t a) const { return lo <= a && a < hi && a % 4 == 0; }
     uint32_t word(uint64_t a) const { return words[(a - lo) / 4]; }
-    const Insn &lift(uint64_t a);
+    // gen.Module.lift: the instruction at a (an unsupported one becomes a trap)
+    Insn lift(uint64_t a);
+    // What the function scan needs of it (kind and integer target), cached: the full text of every instruction of
+    // the main module would take over a gigabyte, and the scan asks again and again.
+    struct Brief {
+        Kind kind;
+        bool lifted = false;
+        uint64_t target;
+    };
+    const Brief &brief(uint64_t a);
 
     // (the rest of gen.Module lives in module.cpp)
     struct Impl;

@@ -17,6 +17,7 @@
 
 #include "game_addresses.h"
 #include "gamelib.h"
+#include "gen/lasgen.h"
 #include "paths.h"
 #include "platform.h"
 #include "rt.h"
@@ -70,33 +71,13 @@ static void end_all(void) {
     pthread_mutex_unlock(&g_plock);
 }
 
-static PlatProc spawn_proc(char **argv, const char *log, bool generator) {
+static PlatProc spawn(char **argv, const char *log) {
     pthread_mutex_lock(&g_plock);
-    PlatProc p = 0;
-    if (!g_quitting) {
-#ifdef _WIN32
-        // The generator runs with Control Flow Guard and shadow stacks off even when Windows forces them on for every
-        // program (#337; tools/win_longjmp.py, #779)
-        if (generator) {
-            unsigned long error = 0, ss_error = 0;
-            p = plat_spawn_no_cfg((const char *const *)argv, log, false, &error, &ss_error);
-            static bool told;
-            if (p && !told) {
-                told = true;
-                if (!error && !ss_error) LOG("[gamebuild] generator started with Control Flow Guard and shadow stacks off\n");
-                else if (!error) LOG("[gamebuild] generator started with Control Flow Guard off: shadow stacks could not be turned off for it (error %lu)\n", ss_error);
-                else LOG("[gamebuild] generator started normally: Control Flow Guard could not be turned off for it (error %lu)\n", error);
-            }
-        } else
-#endif
-        p = plat_spawn((const char *const *)argv, log, false);
-    }
-    (void)generator;
+    PlatProc p = g_quitting ? 0 : plat_spawn((const char *const *)argv, log, false);
     if (p && g_nprocs < MAX_PROCS) g_procs[g_nprocs++] = p;
     pthread_mutex_unlock(&g_plock);
     return p;
 }
-static PlatProc spawn(char **argv, const char *log) { return spawn_proc(argv, log, false); }
 
 // plat_proc_wait without blocking, then forgotten once it has ended
 static int finished(PlatProc p) {
@@ -143,10 +124,9 @@ static void args_free(Args *a) {
 
 // ------------------------------------------------------------------ the tools
 typedef struct {
-    char gen[1100], gen_script[1100];  // generator: lasgen, or (source checkout) the venv's python + tools/gen.py
-    char cc[1100];                     // compiler: zig (as `zig cc`), or LARECOMP_CC / clang
+    char cc[1100];  // compiler: zig (as `zig cc`), or LARECOMP_CC / clang
     bool zig;
-    char inc[1100], entry[1100], hle[1100];  // headers the game code includes, tools/gamelib_entry.c, HLE names
+    char inc[1100], entry[1100];  // headers the game code includes, tools/gamelib_entry.c
 #ifdef _WIN32
     char implib[1100];  // the .exe's import library (the runtime functions the game code calls)
     char zig_rt[1100];  // the release's zig: its runtime built ahead of time (zig/rt, tools/zig_slim.sh), "" = none
@@ -164,38 +144,26 @@ static bool file_exists(const char *p) {
 }
 
 #ifdef __ANDROID__
-// Android: the app's own. The launchers and native libraries are in nativeLibraryDir (LARECOMP_NATIVE_LIB_DIR: the only
-// place Android runs programs from, so they ship as lib*.so), the rest in LARECOMP_GEN_DIR (the activity unpacks it from
-// the APK: Python's standard library, the bindings, tools/, zig's lib/, the headers). android/deps/build_gen_deps.sh.
-// From LASRecompAndroid by mamcjr (MIT).
+// Android: the app's own. The compiler is in nativeLibraryDir (LARECOMP_NATIVE_LIB_DIR: the only place Android runs
+// programs from, so it ships as libzig.so), the rest in LARECOMP_GEN_DIR (the activity unpacks it from the APK: zig's
+// lib/, the headers). android/deps/build_gen_deps.sh. From LASRecompAndroid by mamcjr (MIT).
 static bool find_tools(Tools *t) {
     memset(t, 0, sizeof *t);
     const char *lib = getenv("LARECOMP_NATIVE_LIB_DIR"), *gen = getenv("LARECOMP_GEN_DIR");
     if (!lib || !*lib || !gen || !*gen) return false;
-    snprintf(t->gen, sizeof t->gen, "%s/libpymain.so", lib);
-    snprintf(t->gen_script, sizeof t->gen_script, "%s/tools/gen.py", gen);
     snprintf(t->cc, sizeof t->cc, "%s/libzig.so", lib);
     t->zig = true;
     snprintf(t->inc, sizeof t->inc, "%s/gamelib-src", gen);
     snprintf(t->entry, sizeof t->entry, "%s/gamelib-src/gamelib_entry.c", gen);
-    snprintf(t->hle, sizeof t->hle, "%s/gamelib-src/hle_symbols.txt", gen);
-    return file_exists(t->gen) && file_exists(t->cc);  // (the rest: once unpacked - gamebuild_run waits for it)
+    return file_exists(t->cc);  // (the rest: once unpacked - gamebuild_run waits for it)
 }
 
-// The helpers' environment: the generator's Python (its home, the bindings and tools), the native libraries the
-// bindings load, zig's lib/ (it looks next to itself, which is nativeLibraryDir), scratch space in the build folder
+// The compiler's environment: zig's lib/ (it looks next to itself, which is nativeLibraryDir), scratch space in the
+// build folder
 static void android_env(const char *work) {
     const char *lib = getenv("LARECOMP_NATIVE_LIB_DIR"), *gen = getenv("LARECOMP_GEN_DIR");
     char v[2400];
-    snprintf(v, sizeof v, "%s/python", gen);
-    setenv("PYTHONHOME", v, 1);
-    snprintf(v, sizeof v, "%s/site:%s/tools", gen, gen);
-    setenv("PYTHONPATH", v, 1);
-    setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
     setenv("LD_LIBRARY_PATH", lib, 1);
-    setenv("LIBCAPSTONE_PATH", lib, 1);
-    setenv("LIBUNICORN_PATH", lib, 1);
-    setenv("LIBLZ4_PATH", lib, 1);
     setenv("TMPDIR", work, 1);
     setenv("HOME", work, 1);
     snprintf(v, sizeof v, "%s/zig/lib", gen);
@@ -300,13 +268,7 @@ static bool mark_cold(const char *src) {
 #else
 static bool find_tools(Tools *t) {
     memset(t, 0, sizeof *t);
-    const char *e = getenv("LARECOMP_GEN");
-    if (e && *e) snprintf(t->gen, sizeof t->gen, "%s", e);
-    else if (!rt_resource("lasgen" SEP "lasgen" PLAT_EXE_SUFFIX, NULL, t->gen, sizeof t->gen) &&
-             !(rt_resource(NULL, "tools/" PLAT_VENV_PYTHON, t->gen, sizeof t->gen) &&
-               rt_resource(NULL, "tools/gen.py", t->gen_script, sizeof t->gen_script)))
-        return false;
-    e = getenv("LARECOMP_CC");
+    const char *e = getenv("LARECOMP_CC");
     if (e && *e) snprintf(t->cc, sizeof t->cc, "%s", e);
     else if (rt_resource("zig" SEP "zig" PLAT_EXE_SUFFIX, NULL, t->cc, sizeof t->cc)) t->zig = true;
 #ifndef _WIN32
@@ -314,8 +276,7 @@ static bool find_tools(Tools *t) {
 #endif
     else return false;
     if (!rt_resource("gamelib-src" SEP "cpu.h", "runtime/cpu.h", t->inc, sizeof t->inc) ||
-        !rt_resource("gamelib-src" SEP "gamelib_entry.c", "tools/gamelib_entry.c", t->entry, sizeof t->entry) ||
-        !rt_resource("gamelib-src" SEP "hle_symbols.txt", "runtime/hle/hle_symbols.txt", t->hle, sizeof t->hle))
+        !rt_resource("gamelib-src" SEP "gamelib_entry.c", "tools/gamelib_entry.c", t->entry, sizeof t->entry))
         return false;
     char *s = strrchr(t->inc, '/'), *b = strrchr(t->inc, '\\');
     if (b > s) s = b;
@@ -498,35 +459,94 @@ static void compiler(Args *a, const Tools *t) {
     else if (t->zig && ZIG_TARGET[0]) add(a, "-target"), add(a, ZIG_TARGET);
 }
 
-// ------------------------------------------------------------------ generator progress (its log)
+// ------------------------------------------------------------------ the generator (runtime/gen/), on threads
+// The game's code embedded at build time (the Makefile / CMake make these C strings): the functions the sdk module's
+// HLE replaces, and the randomizer's code variants
+static const char k_hle_symbols[] =
+#include "hle_symbols.inc"
+    ;
+static const char k_patch_variants[] =
+#include "patch_variants.inc"
+    ;
+
 typedef struct {
     const char *name;
-    char log[1100], out[1100];
-    PlatProc p;
-    int exit;                // -1 while running
-    int files;               // chunk files written so far (complete)
+    char log[1100], out[1100], nso[1100];
+    bool dyn_base, simd_asm;
+    pthread_t th;
+    bool started;
+    volatile int cancel;
+    FILE *logf;             // its lines (gen_<name>.log), as the helper's output was
+    pthread_mutex_t lock;   // the fields below, written by its thread
+    int exit;               // -1 while running
+    int files;              // chunk files written so far (complete)
     unsigned long long ci, n;  // functions written / all
+    char why[512];          // what went wrong (exit 1)
 } Gen;
 
-static void read_gen_log(Gen *g) {
-    FILE *f = fopen(g->log, "rb");
-    if (!f) return;
-    static char buf[1 << 16];
-    fseek(f, 0, SEEK_END);
-    long size = ftell(f);
-    long from = size > (long)sizeof buf - 1 ? size - (long)sizeof buf + 1 : 0;
-    fseek(f, from, SEEK_SET);
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[n] = 0;
-    const char *last = NULL;
-    for (const char *p = strstr(buf, ": progress "); p; p = strstr(p + 1, ": progress ")) last = p;
+static void gen_line(void *ud, const char *line) {
+    Gen *g = ud;
+    if (g->logf) fprintf(g->logf, "%s\n", line), fflush(g->logf);
+    const char *p = strstr(line, ": progress ");
     unsigned long long ci, all;
     int files;
-    if (last && sscanf(last, ": progress %llu/%llu files %d", &ci, &all, &files) == 3) {
+    if (p && sscanf(p, ": progress %llu/%llu files %d", &ci, &all, &files) == 3) {
+        pthread_mutex_lock(&g->lock);
         g->ci = ci, g->n = all;
         if (files > g->files) g->files = files;
+        pthread_mutex_unlock(&g->lock);
     }
+}
+
+static void *gen_thread(void *arg) {
+    Gen *g = arg;
+    LasgenOptions o;
+    lasgen_defaults(&o);
+    o.name = g->name;
+    o.nso = g->nso;
+    o.base = strcmp(g->name, "sdk") ? 0x7000000000ull : 0x7004000000ull;
+    o.outdir = g->out;
+    if (!strcmp(g->name, "sdk")) o.hle_text = k_hle_symbols;
+    o.patch_variants_text = k_patch_variants;
+#if defined(__aarch64__) || defined(_M_ARM64)
+    o.simd = "asm";
+#else
+    o.simd = g->simd_asm ? "asm" : "c";
+#endif
+    o.dyn_base = g->dyn_base;
+    o.log = gen_line;
+    o.ud = g;
+    o.cancel = &g->cancel;
+    char why[512];
+    bool ok = lasgen_run(&o, why, sizeof why);
+    if (!ok && g->logf) fprintf(g->logf, "%s\n", why), fflush(g->logf);
+    pthread_mutex_lock(&g->lock);
+    if (!ok) snprintf(g->why, sizeof g->why, "%s", why);
+    g->exit = ok ? 0 : 1;
+    pthread_mutex_unlock(&g->lock);
+    return NULL;
+}
+
+static bool gen_start(Gen *g) {
+    g->logf = fopen(g->log, "w");
+    pthread_mutex_init(&g->lock, NULL);
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, 8u << 20);
+    g->started = pthread_create(&g->th, &at, gen_thread, g) == 0;
+    pthread_attr_destroy(&at);
+    if (!g->started && g->logf) fclose(g->logf), g->logf = NULL;
+    return g->started;
+}
+
+// Stops it if it still runs (cancel), waits for its thread
+static void gen_end(Gen *g) {
+    if (!g->started) return;
+    g->cancel = 1;
+    pthread_join(g->th, NULL);
+    g->started = false;
+    if (g->logf) fclose(g->logf), g->logf = NULL;
+    pthread_mutex_destroy(&g->lock);
 }
 
 static void log_tail(const char *path, char *out, size_t n) {  // the last line of a log (an error message)
@@ -547,7 +567,7 @@ static void log_tail(const char *path, char *out, size_t n) {  // the last line 
 
 // A helper that failed (plat_proc_wait's r != 0): its log's last line for our log, and how it ended when that says
 // nothing or a signal ended it (the system killing it for memory writes nothing). A signal also gives the player why.
-static bool g_killed, g_cfg_stopped;
+static bool g_killed;
 static void helper_failed(const char *what, int r, const char *log, char *why, size_t why_size) {
     char last[300], how[120] = "";
     log_tail(log, last, sizeof last);
@@ -576,7 +596,6 @@ static void helper_failed(const char *what, int r, const char *log, char *why, s
 }
 
 bool gamebuild_killed(void) { return g_killed; }
-bool gamebuild_cfg_stopped(void) { return g_cfg_stopped; }
 
 // ------------------------------------------------------------------ compiling
 typedef struct {
@@ -647,7 +666,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
     uint64_t t0 = plat_now_ns();
     static bool registered;
     if (!registered) registered = true, atexit(end_all);
-    g_killed = false, g_cfg_stopped = false;
+    g_killed = false;
     bool ios = o->target == GAMEBUILD_IOS;
     if (!gamelib_full_id_for(ios ? GAMELIB_IOS_ID : GAMELIB_ID, game_dir, g_full_id, sizeof g_full_id)) {
         snprintf(why, why_size, LN("the game files' exefs/main is missing or unreadable"));
@@ -702,10 +721,9 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         snprintf(rp, sizeof rp, "%s" SEP "gamelib_entry.receipt", work);
         update = stat(rp, &st) == 0;
     }
-    const char *gen_inputs[5] = {input_paths[0], input_paths[1], t.gen, t.hle};
-    int ngen = 4;
-    if (t.gen_script[0]) gen_inputs[ngen++] = t.gen_script;
-    if (!build_cache_prepare_generation(cache, lib_id, gen_inputs, ngen, why, why_size)) {
+    // (the generator itself and the data it embeds are part of lib_id: GAMELIB_SRCS in the Makefile)
+    const char *gen_inputs[2] = {input_paths[0], input_paths[1]};
+    if (!build_cache_prepare_generation(cache, lib_id, gen_inputs, 2, why, why_size)) {
         build_cache_failed(cache);
         build_cache_close(cache);
         return false;
@@ -747,12 +765,10 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         setenv("ZIG_LOCAL_CACHE_DIR", zc, 1);
 #endif
     }
-    LOG("[gamebuild] generator %s%s%s, compiler %s%s, %d jobs\n", t.gen, t.gen_script[0] ? " " : "", t.gen_script,
-        t.cc, t.zig ? " cc" : "", o->jobs);
+    LOG("[gamebuild] compiler %s%s, %d jobs\n", t.cc, t.zig ? " cc" : "", o->jobs);
 
-    // 1. the generator, both modules at once; their finished files are compiled while it goes on
+    // 1. the generator, both modules at once (a thread each); their finished files are compiled while it goes on
     Gen gens[2] = {{.name = "main"}, {.name = "sdk"}};
-    static const char *const base[2] = {"0x7000000000", "0x7004000000"};
     bool ok = true;
     for (int i = 0; i < 2 && ok; i++) {
         Gen *g = &gens[i];
@@ -764,28 +780,13 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
             LOG("[gamebuild] reused generated %s: %d chunks\n", g->name, g->files);
             continue;
         }
-        char nso[1100];
-        snprintf(nso, sizeof nso, "%s" SEP "exefs" SEP "%s", game_dir, g->name);
-        Args a = {0};
-        add(&a, t.gen);
-        if (t.gen_script[0]) add(&a, t.gen_script);
-        add(&a, g->name);
-        add(&a, nso);
-        add(&a, base[i]);
-        add(&a, g->out);
-        if (i == 1) { add(&a, "--hle"); add(&a, t.hle); }
+        snprintf(g->nso, sizeof g->nso, "%s" SEP "exefs" SEP "%s", game_dir, g->name);
 #ifdef LARECOMP_DYN_BASE
-        add(&a, "--dyn-base");  // (rt.h: the window moves; the library follows it)
+        g->dyn_base = true;  // (rt.h: the window moves; the library follows it)
 #endif
-        if (ios) {  // (the iOS app: AArch64 inline asm whatever this desktop is, and the moving window: rt.h)
-            add(&a, "--simd"), add(&a, "asm");
-#ifndef LARECOMP_DYN_BASE
-            add(&a, "--dyn-base");
-#endif
-        }
-        g->p = spawn_proc(a.v, g->log, true);
-        args_free(&a);
-        if (!g->p) { snprintf(why, why_size, LN("the game code builder didn't start")); ok = false; }
+        if (ios) g->simd_asm = g->dyn_base = true;  // (the iOS app: AArch64 inline asm whatever this desktop is, and
+                                                    // the moving window: rt.h)
+        if (!gen_start(g)) { snprintf(why, why_size, LN("the game code builder didn't start")); ok = false; }
     }
 
     Units units = {0};
@@ -810,28 +811,26 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         unsigned long long written = 0;
         for (int i = 0; i < 2; i++) {
             Gen *g = &gens[i];
-            if (g->exit < 0) {
-                read_gen_log(g);
-                int r = finished(g->p);
+            int files = g->files;
+            unsigned long long gci = g->ci, gn = g->n;
+            if (g->started) {
+                pthread_mutex_lock(&g->lock);
+                int r = g->exit;
+                files = g->files, gci = g->ci, gn = g->n;
+                pthread_mutex_unlock(&g->lock);
                 if (r >= 0) {
-                    g->exit = r;
-                    read_gen_log(g);
+                    gen_end(g);
                     if (r != 0) {
-                        char what[64];
-                        snprintf(what, sizeof what, "generator (%s)", g->name);
                         snprintf(why, why_size, LN("the game code couldn't be prepared"));
-                        helper_failed(what, r, g->log, why, why_size);
-#ifdef _WIN32
-                        if (r == PLAT_PROC_FAST_FAIL) g_cfg_stopped = true;  // (#337)
-#endif
+                        LOG("[gamebuild] generator failed: %s\n", g->why);
                         ok = false;
-                    } else if (!build_cache_save_generation(cache, g->name, g->files, why, why_size)) {
+                    } else if (!build_cache_save_generation(cache, g->name, files, why, why_size)) {
                         ok = false;
                     }
                 }
             }
             if (g->exit != 0) gens_done = false;
-            for (; queued[i] < g->files; queued[i]++) {
+            for (; queued[i] < files; queued[i]++) {
                 char src[1100], stem[64];
                 snprintf(stem, sizeof stem, "%s_%03d", g->name, queued[i]);
                 snprintf(src, sizeof src, "%s" SEP "%s.c", g->out, stem);
@@ -844,7 +843,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
                 add_unit(&units, src, work, stem);
                 tables[i] = true;
             }
-            gen_frac += g->exit == 0 ? 0.5 : g->n ? 0.5 * (double)g->ci / (double)g->n : 0;
+            gen_frac += g->exit == 0 ? 0.5 : gn ? 0.5 * (double)gci / (double)gn : 0;
         }
         if (!ok) break;
         for (int k = 0; k < units.n; k++) written += units.u[k].bytes;
@@ -898,8 +897,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         sleep_ms(50);
     }
     for (int k = 0; k < nrun; k++) stop(run[k].p);  // (a failure: the rest is of no use - the failure shows at once)
-    for (int i = 0; i < 2; i++)
-        if (gens[i].p && gens[i].exit < 0) stop(gens[i].p);
+    for (int i = 0; i < 2; i++) gen_end(&gens[i]);
 
     // 2. link
     if (ok) {

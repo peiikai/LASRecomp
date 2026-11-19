@@ -15,7 +15,9 @@ typedef struct LasgenOptions {
     uint64_t base;       // its load address
     const char *outdir;  // where the C goes (created)
     const char *hle;     // hle_symbols.txt (sdk), or NULL
+    const char *hle_text;  // or its contents (then hle is not read)
     const char *patch_variants;  // the randomizer's code variants (tools/rando/patch_variants.json), or NULL
+    const char *patch_variants_text;  // or its contents
     const char *simd;    // "asm" (AArch64 hosts) or "c"
     bool dyn_base;       // guest addresses relative to the window the runtime picks (Android, iOS)
     // cutting the files when the module has no saved cuts (or new_chunk_bounds)

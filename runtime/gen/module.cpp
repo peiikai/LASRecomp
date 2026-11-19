@@ -82,7 +82,7 @@ struct Scan {
 using Counter = std::vector<std::pair<std::string, int>>;  // (insertion order, as Python's Counter prints)
 
 struct Module::Impl {
-    std::vector<std::unique_ptr<Insn>> cache;
+    std::vector<Brief> cache;
     Counter stats;
     std::unique_ptr<Emu> mu;
     std::set<uint64_t> refs;  // gen.Module._refs
@@ -107,17 +107,27 @@ Module::Module(const std::string &name_, const std::string &path, uint64_t base_
 
 Module::~Module() = default;
 
-const Insn &Module::lift(uint64_t a) {
-    auto &slot = impl->cache[(a - lo) / 4];
-    if (!slot) {
-        try {
-            slot = std::make_unique<Insn>(lifter.lift(word(a), a));
-        } catch (const Unsupported &e) {
-            impl->count("unsupported");
-            slot = std::make_unique<Insn>(Insn::trap("rt_udf(c, " + gaddr(a) + "); /* " + e.what() + " */"));
-        }
+Insn Module::lift(uint64_t a) {
+    try {
+        return lifter.lift(word(a), a);
+    } catch (const Unsupported &e) {
+        return Insn::trap("rt_udf(c, " + gaddr(a) + "); /* " + e.what() + " */");
     }
-    return *slot;
+}
+
+const Module::Brief &Module::brief(uint64_t a) {
+    Brief &b = impl->cache[(a - lo) / 4];
+    if (!b.lifted) {
+        try {
+            Insn i = lifter.lift(word(a), a);
+            b.kind = i.kind, b.target = i.target;
+        } catch (const Unsupported &) {
+            impl->count("unsupported");  // (gen.py counts each address once, as it caches the result)
+            b.kind = Kind::trap, b.target = 0;
+        }
+        b.lifted = true;
+    }
+    return b;
 }
 
 // The generator proper: the parts of gen.Module that only module.cpp uses.
@@ -137,7 +147,7 @@ class Gen {
 
   private:
     bool lift_kind_in(uint64_t a, std::initializer_list<Kind> ks) {
-        Kind k = m.lift(a).kind;
+        Kind k = m.brief(a).kind;
         for (Kind x : ks)
             if (k == x) return true;
         return false;
@@ -313,7 +323,7 @@ bool Gen::jump_table_fallthrough(uint64_t br_pc, uint64_t entry, uint64_t end, s
             cmp = a, have_cmp = true;
             break;
         }
-        if (m.lift(a).kind != Kind::op) return false;
+        if (m.brief(a).kind != Kind::op) return false;
         a -= 4;
     }
     if (!have_cmp) return false;
@@ -373,7 +383,7 @@ Scan Gen::scan(uint64_t entry, uint64_t end) {
     r.labels.insert(entry);
     bool terminated = false;
     for (uint64_t a = entry; a < end; a += 4) {
-        const Insn &ins = m.lift(a);
+        const Module::Brief &ins = m.brief(a);
         if (ins.kind == Kind::b || ins.kind == Kind::bcond) {
             uint64_t t = ins.target;
             if (entry <= t && t < end) r.labels.insert(t);
@@ -435,12 +445,17 @@ std::vector<std::string> Gen::emit_function(uint64_t entry, uint64_t end, const 
         return out;
     }
     out.push_back("    FN_ENTER(" + gaddr(entry) + ");");
-    std::vector<const AsmInsn *> batch;
+    std::vector<std::shared_ptr<AsmInsn>> batch;  // (kept alive here: each lifted Insn is a temporary)
     auto &refs = m.impl->refs;
+    auto emit_batch = [&] {
+        std::vector<const AsmInsn *> b;
+        for (auto &x : batch) b.push_back(x.get());
+        return emit_asm_batch(b);
+    };
 
     auto flush = [&] {
         if (!batch.empty()) {
-            out.push_back("    " + emit_asm_batch(batch));
+            out.push_back("    " + emit_batch());
             batch.clear();
         }
     };
@@ -505,7 +520,7 @@ std::vector<std::string> Gen::emit_function(uint64_t entry, uint64_t end, const 
     Kind last = Kind::op;
     bool have_last = false;
     for (uint64_t a = entry; a < end; a += 4) {
-        const Insn &ins = m.lift(a);
+        const Insn ins = m.lift(a);
         if (labels->count(a)) {
             flush();
             out.push_back("L_" + hexs(a) + ":;");
@@ -556,13 +571,13 @@ std::vector<std::string> Gen::emit_function(uint64_t entry, uint64_t end, const 
         Kind k = ins.kind;
         if (k == Kind::asm_) {
             if (batch.size() >= 24) flush();
-            batch.push_back(ins.asm_.get());
+            batch.push_back(ins.asm_);
             try {
-                emit_asm_batch(batch);
+                emit_batch();
             } catch (const Unsupported &) {
                 batch.pop_back();
                 flush();
-                batch.push_back(ins.asm_.get());
+                batch.push_back(ins.asm_);
             }
             last = k, have_last = true;
             continue;
@@ -655,14 +670,21 @@ static const std::vector<SavedBounds> &saved_bounds() {
 }
 
 // patch_variants.json "code": {"0x6a62f8": ["0x34000240", ...], ...} (offsets from the module base)
-static std::map<uint64_t, std::vector<uint32_t>> load_rando_code(const char *path) {
-    std::map<uint64_t, std::vector<uint32_t>> out;
-    if (!path) return out;
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return out;  // (gen.py: only when the file exists)
+// A file's contents; false if it can't be read
+static bool read_file(const char *path, std::string &out) {
+    std::ifstream f(fs::u8path(path), std::ios::binary);
+    if (!f) return false;
     std::stringstream ss;
     ss << f.rdbuf();
-    std::string s = ss.str();
+    out = ss.str();
+    return true;
+}
+
+static std::map<uint64_t, std::vector<uint32_t>> load_rando_code(const char *path, const char *text) {
+    std::map<uint64_t, std::vector<uint32_t>> out;
+    std::string s;
+    if (text) s = text;
+    else if (!path || !read_file(path, s)) return out;  // (gen.py: only when the file exists)
     // A small reader for this file's shape: the "code" object of string keys and string arrays.
     size_t p = s.find("\"code\"");
     if (p == std::string::npos) throw GenError("patch_variants.json has no code");
@@ -755,13 +777,15 @@ static void run(const LasgenOptions &o) {
         r.log("%s: game version %s (build %.16s), address table %s", name.c_str(), gv->label, gv->build_id,
               version.c_str());
     }
-    auto rando_code = load_rando_code(o.patch_variants);
+    auto rando_code = load_rando_code(o.patch_variants, o.patch_variants_text);
     Gen g(m, ps, rando_code);
     std::vector<uint64_t> starts = g.boundaries();
     std::map<uint64_t, std::string> hle;
-    if (o.hle) {
-        std::ifstream f(o.hle);
-        if (f) {
+    std::string hle_text;
+    if (o.hle_text) hle_text = o.hle_text;
+    if (o.hle_text || (o.hle && read_file(o.hle, hle_text))) {
+        {
+            std::istringstream f(hle_text);
             std::set<std::string> want;
             std::string l;
             while (std::getline(f, l)) {

@@ -77,10 +77,13 @@ GENFLAGS := $(GENFLAGS_BASE)
 # (strip: with no generated code the space between the two would be all that's left, and $(if) takes a lone space as
 # true. No comment after the value: make keeps the spaces before it)
 GEN_SRC  := $(strip $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c))
+# The game code generator (runtime/gen/): in the app (the start screen's setup runs it) and the lasgen tool (cli.cpp)
+LASGEN_SRC := $(filter-out runtime/gen/cli.cpp,$(wildcard runtime/gen/*.cpp))
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
 RT_SRC   := $(wildcard runtime/*.c runtime/*.cpp) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp runtime/rando/apply/*.cpp runtime/rando/solve/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
-RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/rando/*.h runtime/rando/fmt/*.h runtime/rando/apply/*.h runtime/rando/solve/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
+            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp runtime/rando/apply/*.cpp runtime/rando/solve/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c \
+            $(LASGEN_SRC)
+RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/gen/*.h runtime/gen/*.hpp runtime/gen/*.inc runtime/rando/*.h runtime/rando/fmt/*.h runtime/rando/apply/*.h runtime/rando/solve/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
             $(wildcard runtime/nvn/maxwell/*.h) $(wildcard runtime/nvn/vulkan/*.h) $(wildcard runtime/ui/*.h) $(wildcard runtime/ui/mobile/*.h) \
             $(wildcard runtime/ui/lang/*.inc)
 UI_SRC   := $(wildcard runtime/ui/*.mm) $(wildcard runtime/ui/mobile/*.mm)  # (mobile/: the touch layer, empty off PLAT_TOUCH)
@@ -202,8 +205,9 @@ endif
 
 # GAMELIB_ID: what the game code library is built from (the generator, the headers it is compiled against, the
 # flags). A library with another id is rebuilt by the start screen, never loaded.
-GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/chunk_bounds.py \
-                tools/simd_c.py tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
+GAMELIB_SRCS := runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) \
+                $(sort $(wildcard runtime/gen/*.cpp runtime/gen/*.hpp runtime/gen/*.h runtime/gen/*.inc)) \
+                tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
 GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 # The library's own id adds the game's main build ID (what `make gen` generated from: $(GEN)/main/main_build_id.txt),
@@ -260,6 +264,17 @@ $(B)/inc/smaa_hlsl.inc: third_party/smaa/SMAA.hlsl
 	LC_ALL=C tr -d '\r' < $< | LC_ALL=C tr '\200-\377' '?' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
 $(B)/rt/nvn/smaa_data.o: $(B)/inc/smaa_hlsl.inc
 $(B)/rt/nvn/smaa_data.o: RTFLAGS += -I$(B)/inc -Ithird_party/smaa/Textures
+
+# The generator's data (runtime/gamebuild.c): the functions the sdk module's HLE replaces, the randomizer's code
+# variants, as C strings
+$(B)/inc/hle_symbols.inc: runtime/hle/hle_symbols.txt
+	@mkdir -p $(dir $@)
+	(LC_ALL=C tr -d '\r' < $< | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'; echo '""') > $@
+$(B)/inc/patch_variants.inc: tools/rando/patch_variants.json
+	@mkdir -p $(dir $@)
+	(LC_ALL=C tr -d '\r' < $< | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'; echo '""') > $@
+$(B)/rt/gamebuild.o: $(B)/inc/hle_symbols.inc $(B)/inc/patch_variants.inc
+$(B)/rt/gamebuild.o: RTFLAGS += -I$(B)/inc
 
 # The shader preparation's variant list (runtime/nvn/shader_prep.h: no shader code, hashes and pipeline state only)
 # as a C string for runtime/nvn/shader_prep.c
@@ -325,9 +340,9 @@ $(B)/rt/zipfile.o: RTFLAGS += -I$(MINIZ)
 # Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
 PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
 
-gen:
-	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
+gen: $(LASGEN)
+	$(LASGEN) sdk extracted/exefs/sdk 0x7004000000 $(GEN)/sdk --hle runtime/hle/hle_symbols.txt $(GENSIMD)
+	$(LASGEN) main extracted/exefs/main 0x7000000000 $(GEN)/main $(GENSIMD)
 
 gen-objs: $(GEN_OBJ)
 
@@ -458,6 +473,15 @@ $(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/
 	$(CC) -std=gnu11 -O2 -c runtime/nvn/tegra.c -o build/lasrando.o/tegra.o
 	$(CXX) -std=c++17 -O2 -pthread $(LASRANDO_CXX) build/lasrando.o/seed.o build/lasrando.o/json.o build/lasrando.o/sha512.o build/lasrando.o/tegra.o -o $@
 
+# The game code generator on the command line (runtime/gen/cli.cpp; the app runs the same code in-process): `make gen`,
+# tools/test_gen_cpp.py
+LASGEN := build/lasgen$(if $(filter windows,$(PLATFORM)),.exe)
+lasgen: $(LASGEN)
+$(LASGEN): $(wildcard runtime/gen/*.cpp runtime/gen/*.hpp runtime/gen/*.h runtime/gen/*.inc) runtime/game_addresses/versions.h \
+           $(wildcard runtime/game_addresses/patches_v*.h)
+	@mkdir -p $(dir $@)
+	$(CXX) -std=c++17 -O2 $(filter %.cpp,$^) -o $@
+
 # The game code generator, the same way (tools/lasgen.spec): build/helper/lasgen/, shipped as lasgen/ next to the exe or
 # in Contents/Resources. The start screen's setup runs it on the player's own game files (runtime/gamebuild.c).
 gen-helper: build/gen-venv/.ok
@@ -487,7 +511,7 @@ tarball:
 smoketest:
 	tools/linux/smoketest.sh
 
-.PHONY: dmg all gen gen-helper lasrando gen-objs runtime-objs deps deps-windows app dist appimage appimages tarball smoketest
+.PHONY: dmg all gen gen-helper lasrando lasgen gen-objs runtime-objs deps deps-windows app dist appimage appimages tarball smoketest
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c
