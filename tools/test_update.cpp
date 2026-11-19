@@ -93,7 +93,7 @@ static void manifest_tests() {
         CHECK(!upd_parse_manifest(sign(buf), g_pk, &r, &why), "refused: %s", buf);
     }
     // paths
-    const char *ok_paths[] = {"lasrecomp.exe", "zig/lib/std/a.zig", "rando-gen/_internal/x.pyd", "README.md", "saves.txt"};
+    const char *ok_paths[] = {"lasrecomp.exe", "zig/lib/std/a.zig", "lasgen/_internal/x.pyd", "README.md", "saves.txt"};
     for (const char *p : ok_paths) CHECK(upd_safe_path(p), "app path %s", p);
     const char *no_paths[] = {"", "/abs", "a//b", "a/./b", "a/../b", "C:/x", "a\\b", "dir/", "rando/x", "SAVE/x",
                               "cache/pipelines", "fonts/a.ttf", "data_root.txt", "lasrecomp-backup-1.log", ".lasrecomp-update/x",

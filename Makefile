@@ -20,21 +20,17 @@ endif
 # the oldest iOS the app runs on: the one place it's spelled (tools/build_deps_ios.sh, tools/bundle_ios.sh and the
 # start screen's iOS game-code build, runtime/gamebuild.c, all take it from here). 16.4: Metal's BC pixel formats.
 IOS_MIN   ?= 16.4
-# the embedded CPython's version (BeeWare's Python-<PYV>-iOS-support): the one place it's spelled
-PYV       ?= 3.13
 ifeq ($(PLATFORM),ios)
-# IOS_SIM=1: the iOS Simulator (arm64) instead of a device - the start screen and the embedded Python for CI (the
-# game itself is not run there); `make deps-ios-sim` first. Same sources, the simulator SDK and slice.
+# IOS_SIM=1: the iOS Simulator (arm64) instead of a device - a build check for CI (the game itself is not run
+# there); `make deps-ios-sim` first. Same sources, the simulator SDK.
 ifdef IOS_SIM
 IOS_SDKNAME := iphonesimulator
 IOS_TRIPLE  := arm64-apple-ios$(IOS_MIN)-simulator
-IOS_SLICE   := ios-arm64_x86_64-simulator
 B         ?= build/ios-sim
 DEPS      ?= $(CURDIR)/build/deps-ios-sim
 else
 IOS_SDKNAME := iphoneos
 IOS_TRIPLE  := arm64-apple-ios$(IOS_MIN)
-IOS_SLICE   := ios-arm64
 B         ?= build/ios
 DEPS      ?= $(CURDIR)/build/deps-ios
 endif
@@ -121,21 +117,18 @@ GAMELIB_LDFLAGS := -dynamiclib -undefined dynamic_lookup  # (the runtime functio
 GAMELIB_SHARED := -shared -Wl,-undefined,dynamic_lookup  # (the same, for the start screen's build: zig cc)
 else ifeq ($(PLATFORM),ios)
 EXE      := $(B)/lasrecomp
-# the embedded CPython (BeeWare's Python.xcframework, `make deps-ios`): the seed generator runs in-process
-PYFW     := $(DEPS)/Python.xcframework/$(IOS_SLICE)
-DEPINC   := -I$(DEPS)/include -I$(PYFW)/include/python$(PYV) -DLARECOMP_PY_VERSION='"$(PYV)"'
+DEPINC   := -I$(DEPS)/include
 # SDL3 static: the frameworks it uses; FFmpeg static (the LGPL subset). The game code is its own dylib, as on
 # macOS, embedded as Frameworks/LASGame.framework by tools/bundle_ios.sh (the app itself holds none of it);
 # -export_dynamic keeps the runtime functions it calls visible to dyld.
 LDFLAGS  := -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lavutil -lswscale -lbz2 -lz -liconv \
-            -F$(PYFW) -framework Python \
             -Wl,-export_dynamic -Wl,-rpath,@executable_path/Frameworks \
             -framework Foundation -framework UIKit -framework Metal $(if $(IOS_SIM),,-framework MetalFX) -framework QuartzCore \
             -framework CoreGraphics -framework ImageIO -framework UniformTypeIdentifiers -framework CoreMedia \
             -framework CoreVideo -framework AVFoundation -framework AudioToolbox -framework CoreAudio \
             -framework CoreHaptics -framework GameController -framework CoreMotion -framework CoreBluetooth \
             -framework OpenGLES -framework Security -framework CoreText
-BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_python.m runtime/platform/ios_picker.m \
+BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_picker.m \
                runtime/platform/ios_bookmark.m runtime/platform/ios_prompt.m
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
@@ -348,21 +341,21 @@ $(B)/rt/platform/windows_rc.o: runtime/platform/windows.rc docs/icon/icon.ico ru
 VERSION  := $(shell sed -n 's/^\#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
 
 # macOS: build/LAS Recomp.app, runs on macOS $(APP_MIN)+: the game rebuilt for that in build/mac15 against build/deps
-# (`make deps`: SDL3, LGPL FFmpeg, keystone, Python, from pinned sources), the generator helper when built
-# (`make rando-helper` after `make deps`), packaged by tools/bundle_macos.sh. No game files or fonts.
+# (`make deps`: SDL3, LGPL FFmpeg, Python, from pinned sources), the game code generator helper when built
+# (`make gen-helper` after `make deps`), packaged by tools/bundle_macos.sh. No game files or fonts.
 APP_MIN  := 15.0
 APP_B    := build/mac15
 deps:
 	MACOS_MIN=$(APP_MIN) tools/build_deps_macos.sh
 deps-ios:
-	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
+	IOS_MIN=$(IOS_MIN) tools/build_deps_ios.sh
 deps-ios-sim:
-	SIM=1 IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/build_deps_ios.sh
+	SIM=1 IOS_MIN=$(IOS_MIN) tools/build_deps_ios.sh
 # iOS: build/ios/LAS Recomp.app and build/dist/LAS Recomp-<version>-iOS.ipa, signed with TEAM_ID / PROFILE
 # (tools/bundle_ios.sh); DEVICE=<devicectl id> installs and launches it. Holds the game code: for your own devices only.
 ipa:
 	$(MAKE) PLATFORM=ios
-	IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp build/ios/lasgame.dylib
+	IOS_MIN=$(IOS_MIN) tools/bundle_ios.sh build/ios/lasrecomp build/ios/lasgame.dylib
 app:
 	@[ -f build/deps/lib/libSDL3.0.dylib ] || { echo "make deps first"; exit 1; }
 	$(MAKE) B=$(APP_B) MACOS_MIN=$(APP_MIN) DEPS=$(CURDIR)/build/deps $(APP_B)/lasrecomp
@@ -373,24 +366,22 @@ app:
 # Needs `make deps-ios`; the kit needs the five linkers (tools/fetch_lld.sh for each LLD_TARGET).
 ios-skeleton:
 	$(MAKE) PLATFORM=ios build/ios/lasrecomp
-	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) tools/bundle_ios.sh build/ios/lasrecomp
+	SKELETON=1 APP="build/ios-skeleton/LAS Recomp.app" IOS_MIN=$(IOS_MIN) tools/bundle_ios.sh build/ios/lasrecomp
 ios-kit: ios-skeleton $(MINIZ)/.fetched  # (the kit carries miniz's licence: the desktops' export reads it with miniz)
 	tools/ios_kit.sh
-# The simulator app (build/ios-sim/LAS Recomp.app, no game code, ad-hoc signed) and its run of the embedded
-# Python's self-test (tools/test_ios_sim.sh): what CI does on a Mac runner. Needs `make deps-ios-sim`.
+# The simulator app (build/ios-sim/LAS Recomp.app, no game code, ad-hoc signed): what CI builds on a Mac runner.
+# Needs `make deps-ios-sim`.
 ios-sim:
 	$(MAKE) PLATFORM=ios IOS_SIM=1 build/ios-sim/lasrecomp
-	SKELETON=1 IOS_SIM=1 APP="build/ios-sim/LAS Recomp.app" IOS_MIN=$(IOS_MIN) PYV=$(PYV) DEPS=build/deps-ios-sim tools/bundle_ios.sh build/ios-sim/lasrecomp
-ios-sim-test: ios-sim
-	tools/test_ios_sim.sh "build/ios-sim/LAS Recomp.app"
+	SKELETON=1 IOS_SIM=1 APP="build/ios-sim/LAS Recomp.app" IOS_MIN=$(IOS_MIN) DEPS=build/deps-ios-sim tools/bundle_ios.sh build/ios-sim/lasrecomp
 
 # macOS release disk image (the .app + an Applications shortcut to drag it onto): build/dist/LAS Recomp-<v>-macOS.dmg
 dmg: app
 	tools/make_dmg.sh
 
 # Windows: build/dist/LAS Recomp-<version>-windows-x64.zip (before 2026-11: -windows.zip; the update manifest is still
-# update-windows.txt), top folder "LAS Recomp/": the exe, the seed generator
-# helper (make rando-helper), what the start screen builds the game code with on the player's machine (make gen-helper,
+# update-windows.txt), top folder "LAS Recomp/": the exe, what the start screen builds the game code with on the
+# player's machine (make gen-helper,
 # tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the exe's import library)
 # and the DLLs they load (runs without MSYS2). No game code. The exe is a release build in $(WIN_B):
 # linked against the LGPL FFmpeg from `make deps-windows` (MSYS2's is a GPLv3 build) and without a console window
@@ -400,7 +391,7 @@ dmg: app
 # out: every Vulkan driver installs the loader in System32. Saves, seeds and game files go next to the exe at run time.
 # Needs: Windows 10+ x64, a Vulkan 1.3 driver, an AVX2 CPU (GENARCH x86-64-v3; checked at startup).
 # ARM64 (experimental, from an MSYS2 CLANGARM64 shell): the same steps give LAS Recomp-<version>-windows-arm64.zip; its
-# helpers are built with an x64 Python 3.12 (RANDO_PY=...: capstone / unicorn have no ARM64 Windows wheels) and run
+# helper is built with an x64 Python 3.12 (GEN_PY=...: capstone / unicorn have no ARM64 Windows wheels) and runs
 # under emulation, everything else is ARM64.
 DIST     := build/dist/LAS Recomp
 WIN_B    := build/win-release
@@ -410,7 +401,6 @@ deps-windows:
 	tools/build_deps_windows.sh
 dist:
 	@[ -f build/deps-win/lib/libavcodec.dll.a ] || { echo "make deps-windows first (LGPL FFmpeg)"; exit 1; }
-	@[ -d build/helper/rando-gen ] || { echo "make rando-helper first (the seed generator)"; exit 1; }
 	@[ -d build/helper/lasgen ] || { echo "make gen-helper first (the game code generator)"; exit 1; }
 	@[ -x build/zig/zig.exe ] || { echo "tools/fetch_zig.sh first (the compiler)"; exit 1; }
 	$(MAKE) B=$(WIN_B) DEPS=$(CURDIR)/build/deps-win RELEASE=1 $(WIN_B)/lasrecomp.exe
@@ -429,7 +419,6 @@ dist:
 	cp third_party/fonts/DejaVu/LICENSE "$(DIST)/DejaVu-LICENSE.txt"
 	cp README.md LICENSE "$(DIST)/"  # (licenses and source links of the bundled components: README "License")
 	cp tools/recomplauncher.json "$(DIST)/"  # (launchers read it next to the program: docs/debug-hooks.md "Command line")
-	cp -R build/helper/rando-gen "$(DIST)/"
 	PATH="$(CURDIR)/build/deps-win/bin:$$PATH" ldd $(WIN_B)/lasrecomp.exe | awk '(/ucrt64/ || /clangarm64/ || /deps-win/) && !/vulkan-1/ {print $$3}' | sort -u | \
 	    xargs -I{} cp -u {} "$(DIST)/"
 	! ls "$(DIST)" | grep -iE 'x264|x265|xvid|postproc'  # (no GPL codec libraries in the release)
@@ -442,29 +431,18 @@ dist:
 	    else /c/Windows/System32/tar.exe -a -cf "LAS Recomp-$(VERSION)-$(WINZIP).zip" "LAS Recomp"; fi
 	@echo "build/dist/LAS Recomp-$(VERSION)-$(WINZIP).zip"
 
-# Seed generator as a standalone helper, so players need no Python: build/helper/rando-gen/ (rando-gen[.exe] +
-# _internal/), frozen by PyInstaller from tools/rando/rando_gen.spec in its own venv (build/rando-venv). Ship the
-# rando-gen folder next to the exe (Windows) or as "LAS Recomp.app"/Contents/Resources/rando-gen (runtime/ui/rando_tab.mm
-# generator_cmd). PyInstaller only builds for the OS it runs on.
-# macOS arm64: the relocatable Python 3.12 and keystone from `make deps` (macOS 11+ / 15+: the helper runs where the
-#   app does); without them Homebrew's python@3.12 and keystone (then only on the macOS they were built for). The
-#   keystone wheel has no dylib: KEYSTONE_LIB tells rando_gen.spec which one to take.
-# Windows x86-64 (untested): from the MSYS2 shell with a python.org CPython 3.12 (MSYS2's Python has no oead wheel),
-#   e.g. make rando-helper RANDO_PY="/c/Users/<you>/AppData/Local/Programs/Python/Python312/python.exe"
+# The Python the game code generator helper is frozen with (gen-helper, below), in its own venv (build/gen-venv).
+# macOS arm64: the relocatable Python 3.12 from `make deps` (macOS 11+: the helper runs where the app does); without it
+#   Homebrew's python@3.12 (then only on the macOS it was built for).
+# Windows: a python.org CPython 3.12 from the MSYS2 shell, e.g.
+#   make gen-helper GEN_PY="/c/Users/<you>/AppData/Local/Programs/Python/Python312/python.exe"
 ifeq ($(PLATFORM),macos)
-RANDO_PY  ?= $(firstword $(wildcard build/deps/python/bin/python3.12) python3.12)
-export KEYSTONE_LIB ?= $(wildcard $(CURDIR)/build/deps/lib/libkeystone.dylib)
-RANDO_VPY := build/rando-venv/bin/python
+GEN_PY  ?= $(firstword $(wildcard build/deps/python/bin/python3.12) python3.12)
+GEN_VPY := build/gen-venv/bin/python
 else
-RANDO_PY  ?= py -3.12
-RANDO_VPY := build/rando-venv/Scripts/python.exe
+GEN_PY  ?= py -3.12
+GEN_VPY := build/gen-venv/Scripts/python.exe
 endif
-
-rando-helper: build/rando-venv/.ok
-	$(if $(filter windows,$(PLATFORM)),USERPROFILE="$$(cygpath -w ~ 2>/dev/null || echo $$HOME)") \
-	$(RANDO_VPY) -m PyInstaller --noconfirm --clean --log-level WARN --distpath build/helper --workpath build/pyinstaller \
-	    tools/rando/rando_gen.spec
-	@du -sh build/helper/rando-gen
 
 # The randomizer's command-line tool (tools/lasrando.c): the game's own seed code (runtime/rando/) on the command line,
 # for converting older seed folders to seed.json, checks and tests. Plain C, no game files.
@@ -482,20 +460,16 @@ $(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/
 
 # The game code generator, the same way (tools/lasgen.spec): build/helper/lasgen/, shipped as lasgen/ next to the exe or
 # in Contents/Resources. The start screen's setup runs it on the player's own game files (runtime/gamebuild.c).
-gen-helper: build/rando-venv/.ok build/rando-venv/.gen-ok
+gen-helper: build/gen-venv/.ok
 	$(if $(filter windows,$(PLATFORM)),USERPROFILE="$$(cygpath -w ~ 2>/dev/null || echo $$HOME)") \
-	$(RANDO_VPY) -m PyInstaller --noconfirm --clean --log-level WARN --distpath build/helper --workpath build/pyinstaller \
+	$(GEN_VPY) -m PyInstaller --noconfirm --clean --log-level WARN --distpath build/helper --workpath build/pyinstaller \
 	    tools/lasgen.spec
-	$(if $(filter windows,$(PLATFORM)),$(RANDO_VPY) tools/pe_no_cfg.py build/helper/lasgen/lasgen.exe)
+	$(if $(filter windows,$(PLATFORM)),$(GEN_VPY) tools/pe_no_cfg.py build/helper/lasgen/lasgen.exe)
 	@du -sh build/helper/lasgen
 
-build/rando-venv/.gen-ok: build/rando-venv/.ok
-	$(RANDO_VPY) -m pip install -q capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5
-	touch $@
-
-build/rando-venv/.ok: third_party/LAS-Randomizer/requirements.txt
-	$(RANDO_PY) -m venv build/rando-venv
-	$(RANDO_VPY) -m pip install -q -r third_party/LAS-Randomizer/requirements.txt pyinstaller==6.22.3
+build/gen-venv/.ok:
+	$(GEN_PY) -m venv build/gen-venv
+	$(GEN_VPY) -m pip install -q pyinstaller==6.22.3 capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5
 	touch $@
 
 # Linux: build/dist/LAS Recomp-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04 containers (podman) with SDL3, LGPL
@@ -513,7 +487,7 @@ tarball:
 smoketest:
 	tools/linux/smoketest.sh
 
-.PHONY: dmg all gen gen-helper lasrando gen-objs runtime-objs deps deps-windows app dist rando-helper appimage appimages tarball smoketest
+.PHONY: dmg all gen gen-helper lasrando gen-objs runtime-objs deps deps-windows app dist appimage appimages tarball smoketest
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c

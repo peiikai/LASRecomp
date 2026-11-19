@@ -53,7 +53,7 @@ enum class GenStatus {
     Failed = 1,       // the fill (or a setting) failed: las_headless.py's exit 1
     BuildFailed = 2,  // a file-writing step failed: its exit 2 ('MODS ERROR')
     Unbeatable = 3,   // the playthrough check found the seed unbeatable: its exit 3
-    RoomShuffle = 4,  // (no longer returned: dungeon room shuffle is native; kept for callers that check it)
+    // (4: retired - dungeon room shuffle was handed to the Python generator before it was native)
     Cancelled = 5,
     WriteFailed = 6,  // GenerateOutput::write said no
 };

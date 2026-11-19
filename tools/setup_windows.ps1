@@ -41,7 +41,7 @@ if ($arm) {
 if (-not (Test-Path "$root\tools\venv\Scripts\python.exe")) { & $py -m venv "$root\tools\venv" }
 & "$root\tools\venv\Scripts\python.exe" -m pip install -q lz4 capstone unicorn
 
-# Randomizer (LAS-Randomizer's own venv, used by the Randomizer tab's seed generator)
+# Randomizer tests (LAS-Randomizer's own venv: tools/rando compares the app's seeds with its Python generator)
 $las = "$root\third_party\LAS-Randomizer"
 if (-not (Test-Path "$las\venv\Scripts\python.exe")) { & $py -m venv "$las\venv" }
 & "$las\venv\Scripts\python.exe" -m pip install -q -r "$las\requirements.txt"
@@ -51,7 +51,7 @@ git -C $root config core.autocrlf false
 git -C $root config core.eol lf
 if ($arm) {
     Write-Host 'Done. Build from an MSYS2 CLANGARM64 shell (or put C:\msys64\clangarm64\bin;C:\msys64\usr\bin first on PATH): make -j'
-    Write-Host "Helpers (x64 Python, no py launcher): make rando-helper RANDO_PY=`"$($py -replace '\\', '/')`" (same for gen-helper)"
+    Write-Host "Helpers (x64 Python, no py launcher): make gen-helper GEN_PY=`"$($py -replace '\\', '/')`""
 } else {
     Write-Host 'Done. Build from an MSYS2 UCRT64 shell (or put C:\msys64\ucrt64\bin;C:\msys64\usr\bin first on PATH): make -j'
 }

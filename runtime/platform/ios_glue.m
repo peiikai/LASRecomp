@@ -53,7 +53,7 @@ static void perform_shortcut(id self, SEL sel, UIWindowScene *scene, UIApplicati
 }
 // (SDL's own class and method: src/video/uikit/SDL_uikitappdelegate.m, SDLUIKitSceneDelegate's
 //  scene:willConnectToSession:options:, SDL 3.4.18. A rename there must not pass as "no quick actions": the app ends
-//  at launch, and tools/test_ios_sim.sh finds no log.)
+//  at launch.)
 __attribute__((constructor)) static void hook_shortcut_launch(void) {
     Class cls = objc_getClass("SDLUIKitSceneDelegate");
     Method m = class_getInstanceMethod(cls, @selector(scene:willConnectToSession:options:));

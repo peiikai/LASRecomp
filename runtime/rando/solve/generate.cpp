@@ -479,7 +479,6 @@ int generate_main(const std::string &romfs, const std::string &request, const st
     switch (r.status) {
     case GenStatus::BuildFailed: return 2;
     case GenStatus::Unbeatable: return 3;
-    case GenStatus::RoomShuffle: return 4;
     default: return 1;
     }
 }

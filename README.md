@@ -178,12 +178,11 @@ Requirements: Apple Silicon, Xcode command line tools (clang), [Homebrew](https:
 Python 3.12.
 
 1. Build: `make -j10` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j10` again.
-2. Randomizer: create the Python environment for LAS-Randomizer, from `third_party/LAS-Randomizer`:
-   `python3.12 -m venv venv && venv/bin/pip install -r requirements.txt`.
+2. Randomizer tests (optional; the app makes seeds itself): the Python environment for LAS-Randomizer, from
+   `third_party/LAS-Randomizer`: `python3.12 -m venv venv && venv/bin/pip install -r requirements.txt`.
 3. Run: `./build/lasrecomp extracted` (start screen) or `./build/lasrecomp extracted --play` (straight into the game).
-4. Package: `make deps` (once: SDL3, FFmpeg, keystone and Python from pinned sources, built for macOS 15),
-   `make rando-helper` (the seed generator as a standalone helper, so players need no Python), `make gen-helper` and
-   `tools/fetch_zig.sh` (what the start screen builds the game code with), then `make app` ->
+4. Package: `make deps` (once: SDL3, FFmpeg and Python from pinned sources, built for macOS 15), `make gen-helper`
+   and `tools/fetch_zig.sh` (what the start screen builds the game code with), then `make app` ->
    `build/LAS Recomp.app` (macOS 15+, Apple Silicon) and `make dmg` -> `build/dist/LAS Recomp-<version>-macOS.dmg`.
 
 ### Windows
@@ -198,8 +197,8 @@ that page.
 2. Build, from an MSYS2 UCRT64 shell (or Git Bash with `export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"`):
    `make -j` -> `build/lasrecomp.exe`. Set up your game files (above), then `make gen` and `make -j` again.
 3. Run: `./build/lasrecomp.exe extracted`, from a shell with `C:\msys64\ucrt64\bin` on PATH (for the DLLs).
-4. Package: `make deps-windows` (once: LGPL FFmpeg), `make rando-helper RANDO_PY="<path to python.org Python 3.12>"`
-   (MSYS2's Python has no oead wheel), then `make dist` -> `build/dist/LAS Recomp-<version>-windows-x64.zip`.
+4. Package: `make deps-windows` (once: LGPL FFmpeg), `make gen-helper`, `tools/fetch_zig.sh`, then `make dist` ->
+   `build/dist/LAS Recomp-<version>-windows-x64.zip`.
 
 ### Linux
 
@@ -317,14 +316,11 @@ none of their files are used):
   Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
 - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) - the Windows and Linux upscaler
   option, ported to GLSL (MIT)
-- [oead](https://github.com/zeldamods/oead) and [evfl](https://github.com/zeldamods/evfl) - Nintendo file formats, used by LAS-Randomizer
-- [PyInstaller](https://pyinstaller.org) - packs the seed generator into a standalone helper (GPL 2.0+ with the
-  bootloader exception, which allows distributing the packed program). The helper bundles CPython (PSF License),
-  oead / evfl (GPL 2.0+), [Keystone](https://www.keystone-engine.org) (GPL 2.0; Python bindings BSD), quicktex
-  (LGPL 3), Pillow (MIT-CMU), PyYAML (MIT) and appdirs (MIT)
-- The iOS app has no helper: it embeds [BeeWare's](https://beeware.org) build of CPython 3.13 for iOS (PSF License;
-  with bzip2, libffi, mpdecimal, OpenSSL and XZ for the standard library) and the same generator packages, built for
-  iOS, inside the app, and links SDL 3 and FFmpeg statically. Their licence texts ship in the app (`LICENSES/`).
+- [oead](https://github.com/zeldamods/oead) and [evfl](https://github.com/zeldamods/evfl) - Nintendo file formats,
+  used by LAS-Randomizer (the randomizer's tests only: no release ships them)
+- [PyInstaller](https://pyinstaller.org) - packs the game code generator into a standalone helper (GPL 2.0+ with the
+  bootloader exception, which allows distributing the packed program)
+- The iOS app has no helper: it links SDL 3 and FFmpeg statically. Their licence texts ship in the app (`LICENSES/`).
 - [Zig](https://ziglang.org) - its C compiler (`zig cc`: Clang and LLD) builds the game code on the player's
   machine during setup (MIT; LLVM, Clang, LLD: Apache 2.0 with LLVM exceptions)
 - The game code generator (`tools/gen.py`) is packed by PyInstaller into a standalone helper too. It bundles CPython,
@@ -365,34 +361,22 @@ LAS Recomp's own code (the recompiler tools, the runtime, the randomizer additio
 Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically, and statically in the iOS app), the
 Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions; its C library headers keep their own
 licenses), the iOS kit's Mach-O linker (LLD as built by the Rust project: Apache 2.0 with LLVM exceptions), miniz
-(MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), yyjson (MIT: seed files), rgbcx (MIT: randomizer textures), Sparkle (MIT: the macOS updater), and the generator helpers' bundled libraries listed under Credits (oead / evfl / Keystone in the seed
-generator and Unicorn in the game code generator are under the GPL, versions in the table below: each helper is a separate program the game runs, and its
-sources are this repository plus those projects' published sources). The iOS app is the exception: iOS runs no helper
-processes, so it embeds CPython and the seed generator's packages - oead, evfl and Keystone (GPL 2.0+ / GPL 2.0),
-quicktex (LGPL 3), Pillow, PyYAML, appdirs - and links SDL 3 and FFmpeg (LGPL 2.1+) statically; the app's `LICENSES/`
-folder carries each one's licence text, its sources are this repository plus the versions in the table (the LGPL
-libraries can be relinked: `make deps-ios` builds them from source, `make ipa` the app), and the game code library it
-embeds is built from the player's own game files and never shared. The license covers LAS Recomp's code only - it grants
+(MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), yyjson (MIT: seed files), rgbcx (MIT: randomizer textures), Sparkle (MIT: the macOS updater), and the game code generator helper's bundled libraries listed under Credits (Unicorn
+is under the GPL, version in the table below: the helper is a separate program the game runs, and its sources are this
+repository plus those projects' published sources). The iOS app has no helper: it links SDL 3 and FFmpeg (LGPL 2.1+)
+statically; the app's `LICENSES/` folder carries each one's licence text, its sources are this repository plus the
+versions in the table (the LGPL libraries can be relinked: `make deps-ios` builds them from source, `make ipa` the
+app), and the game code library it embeds is built from the player's own game files and never shared. The license covers LAS Recomp's code only - it grants
 nothing for Nintendo's game, which you must supply yourself.
 
 ### Source code of bundled third-party components
 
-Release builds include these components; their source code for the exact versions shipped is available here. The
-seed generator's packages are in the desktops' helper and inside the iOS app alike:
+Release builds include these components; their source code for the exact versions shipped is available here.
 
 | Component | Version | License | Source |
 |---|---|---|---|
-| Keystone (seed generator; on iOS built with `tools/patches/keystone-0.9.2.patch`) | 0.9.2 | GPL 2.0 (Python bindings: BSD) | https://github.com/keystone-engine/keystone/releases/tag/0.9.2 |
-| oead (seed generator) | 1.3.0 | GPL 2.0+ | https://github.com/zeldamods/oead/releases/tag/v1.3.0 |
-| evfl (seed generator) | 1.2.0 | GPL 2.0+ | https://github.com/zeldamods/evfl/releases/tag/v1.2.0 |
-| quicktex (seed generator) | 0.2.1 | LGPL 3.0 | https://github.com/drewcassidy/quicktex/releases/tag/v0.2.1 |
-| Pillow (seed generator; on iOS BeeWare's wheel) | 10.4.0 | MIT-CMU | https://github.com/python-pillow/Pillow/releases/tag/10.4.0, https://pypi.anaconda.org/beeware/simple/pillow/ |
-| PyYAML (seed generator) | 6.0.2 | MIT | https://pypi.org/project/PyYAML/6.0.2/ |
-| appdirs (seed generator) | 1.4.4 | MIT | https://pypi.org/project/appdirs/1.4.4/ |
-| pybind11 (oead's and quicktex's Python bindings, built into them on iOS) | 3.1.0 | BSD 3-clause | https://github.com/pybind/pybind11/releases/tag/v3.1.0 |
-| PyInstaller (packs the seed and game code generators) | 6.22.3 | GPL 2.0+ with bootloader exception | https://github.com/pyinstaller/pyinstaller/releases/tag/v6.22.3 |
-| CPython (seed and game code generators) | 3.12.14 (macOS), 3.12.10 (Windows), 3.12.15 (Linux), 3.14.8 (Android) | PSF | https://github.com/python/cpython/releases/tag/v3.12.14, https://github.com/python/cpython/releases/tag/v3.12.10, https://github.com/python/cpython/releases/tag/v3.12.15, https://github.com/python/cpython/releases/tag/v3.14.8 |
-| CPython for iOS, BeeWare's Python-Apple-support build (the iOS app's seed generator; with bzip2 1.0.8, libffi 3.4.7, mpdecimal 4.0.0, OpenSSL 3.5.9, XZ 5.6.4) | 3.13.16 (b16) | PSF; bzip2, libffi (MIT), mpdecimal (BSD 2-clause), OpenSSL (Apache 2.0), XZ (0BSD / public domain) | https://github.com/beeware/Python-Apple-support/releases/tag/3.13-b16, https://github.com/python/cpython/releases/tag/v3.13.16 |
+| PyInstaller (packs the game code generator) | 6.22.3 | GPL 2.0+ with bootloader exception | https://github.com/pyinstaller/pyinstaller/releases/tag/v6.22.3 |
+| CPython (game code generator) | 3.12.14 (macOS), 3.12.10 (Windows), 3.12.15 (Linux), 3.14.8 (Android) | PSF | https://github.com/python/cpython/releases/tag/v3.12.14, https://github.com/python/cpython/releases/tag/v3.12.10, https://github.com/python/cpython/releases/tag/v3.12.15, https://github.com/python/cpython/releases/tag/v3.14.8 |
 | Zig (builds the game code during setup; includes LLVM, Clang, LLD) | 0.17.0 | MIT; LLVM: Apache 2.0 with LLVM exceptions | https://ziglang.org/download/0.17.0/zig-0.17.0.tar.xz |
 | LLD, as rust-lld (iOS kit: links the iOS game code on each desktop) | Rust 1.91.0 (LLVM 21.1.2) | Apache 2.0 with LLVM exceptions | https://static.rust-lang.org/dist/rustc-1.91.0-src.tar.xz, https://github.com/rust-lang/llvm-project |
 | miniz (reads the iOS kit, writes the .ipa) | 3.0.2 | MIT | https://github.com/richgel999/miniz/releases/tag/3.0.2 |
@@ -411,5 +395,5 @@ seed generator's packages are in the desktops' helper and inside the iOS app ali
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
 
 The exact build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_macos.sh`,
-`tools/build_deps_windows.sh`, `tools/linux/build_deps.sh`, `tools/build_deps_ios.sh` and `tools/rando/rando_gen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the
+`tools/build_deps_windows.sh`, `tools/linux/build_deps.sh`, `tools/build_deps_ios.sh` and `tools/lasgen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the
 compiler runtime from MSYS2's UCRT64 packages (https://packages.msys2.org, which links each package's source).

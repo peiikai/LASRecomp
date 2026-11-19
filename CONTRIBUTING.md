@@ -89,8 +89,10 @@ them, then `make -j10`. The randomizer needs its Python environment in
   - `nvn/` - the graphics layer: command recording (`cmdbuf.c`), Metal (`renderer.m`, `metal.m`) and Vulkan
     (`vulkan/`) backends, the shader translator (`maxwell/translate.c`)
   - `ui/` - the ImGui overlay menu and the start screen
-- `tools/rando/` - randomizer tooling around LAS-Randomizer: the headless driver (`las_headless.py`), dungeon room
-  shuffle (`dungeon_gen.py`, `room_logic.py`), entrances, pots / bushes / digs, shop, souls, pets.
+- `runtime/rando/` - the randomizer: seed generation (`solve/`), the game files a seed changes (`apply/`), the file
+  formats (`fmt/`). See [docs/randomizer.md](docs/randomizer.md).
+- `tools/rando/` - the Python generator the app's seeds are tested against: the headless driver (`las_headless.py`),
+  dungeon room shuffle (`dungeon_gen.py`, `room_logic.py`), entrances, pots / bushes / digs, shop, souls, pets.
 - `third_party/LAS-Randomizer` - the vendored randomizer (MIT, with local changes marked "LAS Recomp" in comments).
 
 ## Testing your change

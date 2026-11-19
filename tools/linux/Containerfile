@@ -1,10 +1,10 @@
 # Build environment for the Linux AppImages (tools/linux/appimage.sh): Ubuntu 22.04, so the result runs on glibc 2.35+.
 # Built once per arch (podman build --arch amd64 / arm64). The host's arch builds its own AppImage in its image. An
 # aarch64 AppImage on an x86-64 host: the amd64 image cross-compiles it, the arm64 image is that build's sysroot (the
-# same -dev packages) and freezes the arm64 seed generator helper (PyInstaller only builds for the machine it runs on).
+# same -dev packages) and freezes the arm64 game code generator helper (PyInstaller only builds for the machine it runs on).
 FROM docker.io/library/ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
-# Python 3.12 for the seed generator helper (tools/linux/rando_helper.sh): a python-build-standalone build (needs only
+# Python 3.12 for the game code generator helper (tools/linux/gen_helper.sh): a python-build-standalone build (needs only
 # glibc 2.17, ships a shared libpython for PyInstaller), pinned by release and SHA-256. To bump: pick the newest release
 # at https://github.com/astral-sh/python-build-standalone/releases, take the 3.12.x install_only_stripped lines for
 # x86_64-unknown-linux-gnu and aarch64-unknown-linux-gnu from its SHA256SUMS file, and update these four ARGs.

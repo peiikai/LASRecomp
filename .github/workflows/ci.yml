@@ -166,8 +166,6 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
-      - name: iOS extension frameworks layout
-        run: python3 tools/test_ios_frameworks.py
       - name: Randomizer Field region table
         run: python3 tools/test_field_regions.py
       - name: Randomizer room shuffle ledges
@@ -313,8 +311,6 @@ jobs:
         run: python3 tools/test_vulkan_overlay.py
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
-      - name: iOS extension frameworks layout
-        run: python3 tools/test_ios_frameworks.py
       - name: Randomizer Field region table
         run: python3 tools/test_field_regions.py
       - name: Randomizer room shuffle ledges
@@ -435,18 +431,17 @@ jobs:
         run: |
           brew install ninja
           make deps
-          make rando-helper && make gen-helper
+          make gen-helper
           tools/fetch_zig.sh
           make -j"$(sysctl -n hw.ncpu)" app
       - name: Finished macOS app launches (dynamic-library loading)
         run: python3 tools/smoke_macos_app.py "build/LAS Recomp.app"
 
-  # The iOS app itself (make PLATFORM=ios: the Metal renderer, the in-process seed generator) and the skeleton app
-  # the iOS kit holds (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static
-  # SDL3 / FFmpeg / CPython and the generator's packages (tools/build_deps_ios.sh, ~15 min) are cached by that
-  # script's hash. Then the same app for the iOS Simulator (make ios-sim: the simulator SDK's deps, cached alike)
-  # runs there with the embedded Python's self-test (tools/test_ios_sim.sh): every native package imported and
-  # exercised in a real iOS process. The game is not run in the simulator (no game files; the macOS job runs it).
+  # The iOS app itself (make PLATFORM=ios: the Metal renderer) and the skeleton app the iOS kit holds
+  # (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static SDL3 / FFmpeg
+  # (tools/build_deps_ios.sh) are cached by that script's hash. Then the same app for the iOS Simulator (make ios-sim:
+  # the simulator SDK's deps, cached alike) is built. The game is not run in the simulator (no game files; the macOS
+  # job runs it).
   ios:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -454,56 +449,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Packages
-        run: brew install ninja python@3.13
-      - name: A script as a process in the embedded Python (runtime/platform/ios_pyproc.py, on this Mac's Python)
-        run: python3.13 tools/test_ios_pyproc.py
+        run: brew install ninja
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4
         with:
-          path: |
-            build/deps-ios
-            !build/deps-ios/pyvenv
-          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
-      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+          path: build/deps-ios
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch') }}
+      - name: Deps (SDL3, FFmpeg)
         run: make deps-ios
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true'
         with:
-          path: |
-            build/deps-ios
-            !build/deps-ios/pyvenv
+          path: build/deps-ios
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: App and skeleton build
         run: make -j"$(sysctl -n hw.ncpu)" ios-skeleton
-      - name: Skeleton holds no game code and no symlinks; keystone's framework is there
+      - name: Skeleton holds no game code and no symlinks
         run: |
           A="build/ios-skeleton/LAS Recomp.app"
           [ ! -e "$A/Frameworks/LASGame.framework/LASGame" ] || { echo "::error::game library in the skeleton"; exit 1; }
           if nm "$A/lasrecomp" | grep ' _f_70' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
           links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the app (an iOS install drops them): $links"; exit 1; }
-          [ -f "$A/Frameworks/keystone.libkeystone.framework/keystone.libkeystone" ] || { echo "::error::keystone's framework missing"; exit 1; }
           codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
           du -sh "$A"
       - name: Simulator deps cache
         id: deps-sim
         uses: actions/cache/restore@v4
         with:
-          path: |
-            build/deps-ios-sim
-            !build/deps-ios-sim/pyvenv
-          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
+          path: build/deps-ios-sim
+          key: deps-ios-sim-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch') }}
       - name: Simulator deps
         run: make deps-ios-sim
       - uses: actions/cache/save@v4
         if: steps.deps-sim.outputs.cache-hit != 'true'
         with:
-          path: |
-            build/deps-ios-sim
-            !build/deps-ios-sim/pyvenv
+          path: build/deps-ios-sim
           key: ${{ steps.deps-sim.outputs.cache-primary-key }}
-      - name: Simulator app, the embedded Python's self-test in it
-        run: make -j"$(sysctl -n hw.ncpu)" ios-sim-test
+      - name: Simulator app
+        run: make -j"$(sysctl -n hw.ncpu)" ios-sim
 
   windows:
     needs: changes

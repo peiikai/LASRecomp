@@ -133,7 +133,7 @@ jobs:
             build/deps
             !build/deps/src
           key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/build_deps_macos.sh') }}
-      - name: Deps (SDL3, LGPL FFmpeg, keystone, Python)
+      - name: Deps (SDL3, LGPL FFmpeg, Python)
         run: make deps
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true'
@@ -142,14 +142,13 @@ jobs:
             build/deps
             !build/deps/src
           key: ${{ steps.deps.outputs.cache-primary-key }}
-      # (keystone-engine has no macOS arm64 wheel: pip builds it, then keeps it in its cache)
       - name: pip cache
         uses: actions/cache@v4
         with:
           path: ~/Library/Caches/pip
-          key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'Makefile') }}
-      - name: Generator helpers
-        run: make rando-helper && make gen-helper
+          key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
+      - name: Game code generator helper
+        run: make gen-helper
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       - name: App and disk image
@@ -231,7 +230,7 @@ jobs:
       - name: Generator helpers
         run: |
           PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+          make gen-helper GEN_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
@@ -307,7 +306,7 @@ jobs:
       - name: Generator helpers
         run: |
           PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+          make gen-helper GEN_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
@@ -340,23 +339,19 @@ jobs:
         with:
           ref: ${{ needs.check.outputs.sha }}
       - name: Packages
-        run: brew install ninja python@3.13
+        run: brew install ninja
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4
         with:
-          path: |
-            build/deps-ios
-            !build/deps-ios/pyvenv
-          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}  # (as ci.yml's)
-      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+          path: build/deps-ios
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch') }}  # (as ci.yml's)
+      - name: Deps (SDL3, FFmpeg)
         run: make deps-ios
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true'
         with:
-          path: |
-            build/deps-ios
-            !build/deps-ios/pyvenv
+          path: build/deps-ios
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Toolchain cache (the zig archive, the five lld archives)
         uses: actions/cache@v4
@@ -385,7 +380,6 @@ jobs:
           K=$(ls build/dist/*-iOS.laskit)
           zipinfo -1 "$K" | grep -q '^Payload/LAS Recomp.app/Info.plist$' || { echo "::error::no Payload/LAS Recomp.app in the kit"; exit 1; }
           links=$(zipinfo "$K" | grep '^l.* Payload/' || true); [ -z "$links" ] || { echo "::error::symlink entries in the kit's app: $links"; exit 1; }
-          zipinfo -1 "$K" | grep -q '^Payload/LAS Recomp.app/Frameworks/keystone.libkeystone.framework/keystone.libkeystone$' || { echo "::error::keystone's framework missing from the kit"; exit 1; }
           for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows aarch64-windows; do
             zipinfo -1 "$K" | grep -q "^lld/$t/bin/lld" || { echo "::error::no linker for $t in the kit"; exit 1; }
           done
@@ -425,16 +419,16 @@ jobs:
         with:
           path: build/linux/${{ matrix.arch }}/deps
           key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
-      # the helpers' wheels (arm64: oead and keystone-engine built from source, no wheels on PyPI)
+      # the helper's wheels
       - name: Wheels cache
         id: wheels
         uses: actions/cache/restore@v4
         with:
           path: build/linux/${{ matrix.arch }}/wheels
-          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'tools/linux/rando_helper.sh', 'tools/linux/Containerfile') }}
+          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/gen_helper.sh', 'tools/linux/Containerfile') }}
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
-      # saved once complete (shaderc: build_deps.sh's last part; .ok: the helpers' wheels all installed), even when a
+      # saved once complete (shaderc: build_deps.sh's last part; .ok: the helper's wheels all installed), even when a
       # later part of the build fails
       - uses: actions/cache/save@v4
         if: always() && steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
@@ -442,7 +436,7 @@ jobs:
           path: build/linux/${{ matrix.arch }}/deps
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - uses: actions/cache/save@v4
-        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/rando-venv/.ok', matrix.arch)) != ''
+        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/gen-venv/.ok', matrix.arch)) != ''
         with:
           path: build/linux/${{ matrix.arch }}/wheels
           key: ${{ steps.wheels.outputs.cache-primary-key }}

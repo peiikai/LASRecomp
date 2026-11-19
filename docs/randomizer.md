@@ -12,18 +12,20 @@ The randomizer is moving to one design:
 3. **The runtime applies the seed in memory**: when the game reads a file a seed changes, the runtime builds the
    changed version from the game's own file and the record. No game files are written to the seed folder.
 
-Today the seeds are still made by the vendored LAS-Randomizer driven by `tools/rando/las_headless.py` (Python), which
-writes changed game files into the seed folder. The move happens in stages. Each stage keeps every seed, old and new,
-playing exactly as before:
+Seeds used to be made by the vendored LAS-Randomizer driven by `tools/rando/las_headless.py` (Python), which wrote
+changed game files into the seed folder. The move happened in stages, each keeping every seed, old and new, playing
+exactly as before. All six are done: the app makes and applies every seed itself, on every platform, and no build
+ships Python for the randomizer (the game code generator, `tools/gen.py`, is still Python). The Python generator stays
+in the repository as the reference the parity tests compare with.
 
 | stage | what | state |
 |---|---|---|
-| 1 | seed record + one runtime API; Python's `random` in C++ | in progress |
+| 1 | seed record + one runtime API; Python's `random` in C++ | done |
 | 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | done: rooms, level configs, data sheets, messages, archives, event flows, texture banks |
 | 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | done: every step built natively, file for file as the generator |
 | 4 | asset builds (dungeon room shuffle, textures) in the runtime | done: textures (chest looks, title logo), dungeon rooms; room texture banks are built when the game reads them |
 | 5 | native solver | done: the whole generator, dungeon room shuffle's planning and room logic included, file for file as today |
-| 6 | generation in the app everywhere; Python leaves the builds | |
+| 6 | generation in the app everywhere; Python leaves the builds | done: no seed generator helper, no embedded Python on iOS, no randomizer modules on Android |
 
 The rules for every stage:
 

@@ -35,13 +35,12 @@ Vulkan, shaderc DLLs).
 
 ## Package
     make deps-windows   # once: the LGPL FFmpeg the zip ships (build/deps-win; MSYS2's own FFmpeg is GPL)
-    make rando-helper   # the seed generator without Python (build/helper/rando-gen)
     make gen-helper     # the game code generator without Python (build/helper/lasgen)
     tools/fetch_zig.sh  # the compiler the start screen builds the game code with (build/zig)
     make dist           # -> build/dist/LAS Recomp-<version>-windows-x64.zip (no game code inside)
 
 The zip's `LAS Recomp/` folder holds `lasrecomp.exe` (icon from `docs/icon/icon.ico`, via windres),
-`rando-gen/` and the MSYS2 DLLs. No installer: game files, saves, seeds and settings are kept next to the exe, so
+`lasgen/`, `zig/` and the MSYS2 DLLs. No installer: game files, saves, seeds and settings are kept next to the exe, so
 the folder must be writable (the app says so and quits if it isn't, e.g. under Program Files). A source checkout
 with `extracted/` in the starting folder keeps using that folder instead.
 
@@ -51,16 +50,15 @@ instead of UCRT64, plus an x64 Python 3.12 in `%LOCALAPPDATA%\Programs\Python\Py
 capstone have no ARM64 Windows wheels, so the Python tools run under Windows' x64 emulation).
 
 Build from an MSYS2 CLANGARM64 shell, or with `/c/msys64/clangarm64/bin` first on PATH. The steps are the same as
-above, except that the helpers need that Python passed in (there is no `py` launcher):
+above, except that the helper needs that Python passed in (there is no `py` launcher):
 
     PY64=/c/Users/<you>/AppData/Local/Programs/Python/Python312-x64/python.exe
     make deps-windows
-    make rando-helper RANDO_PY="$PY64"
-    make gen-helper RANDO_PY="$PY64"
+    make gen-helper GEN_PY="$PY64"
     tools/fetch_zig.sh  # (zig for aarch64-windows)
     make dist           # -> build/dist/LAS Recomp-<version>-windows-arm64.zip
 
-Everything in the zip is ARM64 except the two helpers (`lasgen`, `rando-gen`), which are x64. AArch64 FP/SIMD
+Everything in the zip is ARM64 except the game code generator helper (`lasgen`), which is x64. AArch64 FP/SIMD
 instructions stay inline assembly (`--simd asm`), as on the Mac. The ARM64 zip is not part of the normal releases.
 It is built by `.github/workflows/nightly.yml` for the nightly page, and by `release.yml` test builds that name
 `windows-arm64`.

@@ -111,9 +111,7 @@ static void scan(void) {
 #endif
 }
 
-// ---- generation: native (runtime/rando/solve/generate.h, on a worker thread), or the Python generator in a background
-// process (tools/rando/las_headless.py: dungeon room shuffle, which isn't native yet; LARECOMP_RANDO_PYTHON=1 forces it)
-static PlatProc g_gen_pid;
+// ---- generation: the native generator (runtime/rando/solve/generate.h) on a worker thread
 static struct {
     std::thread thread;
     std::atomic<bool> running{false}, finished{false}, cancel{false};
@@ -122,7 +120,7 @@ static struct {
     std::string label;
     rando::solve::GenerateResult result;
 } g_native;
-static bool gen_running(void) { return g_gen_pid || g_native.running; }
+static bool gen_running(void) { return g_native.running; }
 static std::string g_gen_seed, g_gen_status;
 static float g_gen_frac;
 static double g_gen_start;
@@ -432,57 +430,7 @@ static std::string clean_name(const char *in) {  // a seed name as a folder name
     return n;
 }
 
-// The seed generator: the standalone helper (tools/rando/rando_gen.spec, `make rando-helper`; no Python needed) next to
-// the executable or in the .app's Resources (LARECOMP_RANDO_GEN=<path>: that one), else (source tree) the LAS venv
-// running tools/rando/las_headless.py. Either takes <romfs> <seed dir> <request.json> and prints
-// `stage <fraction> <label>` lines.
-static std::vector<std::string> generator_cmd(void) {
-    if (const char *g = getenv("LARECOMP_RANDO_GEN")) return {g};
-#ifdef __ANDROID__
-    // Android: no rando-gen (PyInstaller has no Android target): the app's own Python runs tools/rando/las_headless.py
-    // from the files the activity unpacks into LARECOMP_GEN_DIR, with the modules android/deps/build_gen_deps.sh builds
-    // in its site/. Its environment is the game code builder's (runtime/gamebuild.c android_env: the same values, so a
-    // build running meanwhile is unaffected); the room shuffle's scratch folder and Python's temp files go in internal
-    // storage, as Android's shared storage, where the seed is written, has no symlinks.
-    const char *lib = getenv("LARECOMP_NATIVE_LIB_DIR"), *gen = getenv("LARECOMP_GEN_DIR");
-    if (lib && *lib && gen && *gen) {
-        std::string g = gen, tmp = g + "/../rando_tmp";
-        mkdir(tmp.c_str(), 0700);
-        setenv("PYTHONHOME", (g + "/python").c_str(), 1);
-        setenv("PYTHONPATH", (g + "/site:" + g + "/tools").c_str(), 1);
-        setenv("PYTHONDONTWRITEBYTECODE", "1", 1);
-        setenv("LD_LIBRARY_PATH", lib, 1);
-        setenv("LARECOMP_RANDO_SCRATCH", tmp.c_str(), 1);
-        return {std::string(lib) + "/libpymain.so", g + "/tools/rando/las_headless.py"};
-    }
-#endif
-    char p[1024], s[1024];  // (runtime/paths.h: <exe dir>/rando-gen/, <exe dir>/../Resources/rando-gen/, the source tree)
-#if PLAT_IOS
-    // the script itself: plat_spawn runs it in the embedded Python (runtime/platform/ios_python.m)
-    if (rt_resource("rando-gen/las_headless.py", NULL, p, sizeof p)) return {p};
-#endif
-    if (rt_resource("rando-gen/rando-gen" PLAT_EXE_SUFFIX, NULL, p, sizeof p)) return {p};
-    if (rt_resource(NULL, "third_party/LAS-Randomizer/" PLAT_VENV_PYTHON, p, sizeof p) &&
-        rt_resource(NULL, "tools/rando/las_headless.py", s, sizeof s)) return {p, s};
-    return {"third_party/LAS-Randomizer/" PLAT_VENV_PYTHON, "tools/rando/las_headless.py"};
-}
-
-// the Python generator (tools/rando/las_headless.py) in a background process: `stage` lines in generate.log
-static void start_python_generation(const std::string &romfs, const std::string &dir, const std::string &req, const std::string &log) {
-    std::vector<std::string> cmd = generator_cmd();
-    std::vector<const char *> argv;
-    for (auto &a : cmd) argv.push_back(a.c_str());
-    for (const char *a : {romfs.c_str(), dir.c_str(), req.c_str(), (const char *)NULL}) argv.push_back(a);
-    setenv("PYTHONHASHSEED", "0", 1);  // (set iteration order must not differ between runs: same ID, same seed)
-    g_gen_pid = plat_spawn(argv.data(), log.c_str(), false);
-    int rc = !g_gen_pid;
-    g_gen_failed = g_gen_done = rc != 0;
-    g_gen_status = rc ? L("Couldn't start the seed generator. rando-gen might be missing.") : L("Starting...");
-    if (rc) g_gen_pid = 0;
-}
-
-// the native generator on a worker thread; its stages go to generate.log as the Python's do. A request it can't make
-// yet (dungeon room shuffle) goes to the Python generator (poll_generation).
+// the native generator on a worker thread; its stages go to generate.log (`stage <fraction> <label>` lines)
 static void start_native_generation(const std::string &romfs, const std::string &dir, const std::string &req, const std::string &log) {
     if (g_native.thread.joinable()) g_native.thread.join();
     g_native.running = true, g_native.finished = false, g_native.cancel = false;
@@ -620,14 +568,13 @@ static void start_generation(void) {
     std::string log = dir + "/generate.log";
     std::string romfs = g_romfs_dir ? g_romfs_dir : "extracted/romfs";
     auto abs = [](std::string &p) { if (p[0] != '/' && !(p.size() > 1 && p[1] == ':')) p = std::string(rt_data_root()) + "/" + p; };
-    abs(romfs), abs(dir), abs(req);  // (the helper / script change directory: absolute, in the data root)
+    abs(romfs), abs(dir), abs(req);  // (absolute, in the data root)
     g_gen_seed = g_opts.seed;
     g_gen_frac = 0;
     g_gen_start = ImGui::GetTime();
     g_gen_failed = g_gen_done = false;
     g_gen_status = L("Starting...");
-    if (getenv("LARECOMP_RANDO_PYTHON") && atoi(getenv("LARECOMP_RANDO_PYTHON"))) start_python_generation(romfs, dir, req, log);
-    else start_native_generation(romfs, dir, req, log);
+    start_native_generation(romfs, dir, req, log);
 }
 
 static void finish_generation(bool failed, const std::string &status) {
@@ -640,50 +587,19 @@ static void finish_generation(bool failed, const std::string &status) {
 }
 
 static void poll_generation(void) {
-    if (g_native.running) {
-        {
-            std::lock_guard<std::mutex> lk(g_native.lock);
-            if (g_native.frac > 0) g_gen_frac = g_native.frac;
-            if (!g_native.label.empty()) g_gen_status = L_line(g_native.label) + "...";
-        }
-        if (!g_native.finished) return;
-        g_native.thread.join();
-        g_native.running = false;
-        rando::solve::GenerateResult r = g_native.result;
-        if (r.status == rando::solve::GenStatus::RoomShuffle) {  // (not native yet: the Python generator makes it)
-            std::string dir = std::string(rt_data_root()) + "/rando/" + g_gen_seed, romfs = g_romfs_dir ? g_romfs_dir : "extracted/romfs";
-            if (romfs[0] != '/' && !(romfs.size() > 1 && romfs[1] == ':')) romfs = std::string(rt_data_root()) + "/" + romfs;
-            start_python_generation(romfs, dir, dir + "/request.json", dir + "/generate.log");
-            return;
-        }
-        if (r.status == rando::solve::GenStatus::Done) finish_generation(false, strf(L("Seed \"%s\" ready."), g_gen_seed.c_str()));
-        else if (!r.player_error.empty()) finish_generation(true, L_line(r.player_error));
-        else finish_generation(true, strf(L("Seed generation failed. The details are in rando/%s/generate.log."), g_gen_seed.c_str()));
-        return;
+    if (!g_native.running) return;
+    {
+        std::lock_guard<std::mutex> lk(g_native.lock);
+        if (g_native.frac > 0) g_gen_frac = g_native.frac;
+        if (!g_native.label.empty()) g_gen_status = L_line(g_native.label) + "...";
     }
-    if (!g_gen_pid) return;
-    std::string log = read_file("rando/" + g_gen_seed + "/generate.log");
-    size_t p = log.rfind("\nstage ");  // `stage <fraction> <label>` lines from tools/rando/las_headless.py
-    if (p != std::string::npos) {
-        size_t e = log.find('\n', p + 1);
-        std::string line = log.substr(p + 7, e == std::string::npos ? std::string::npos : e - p - 7);
-        g_gen_frac = (float)atof(line.c_str());
-        size_t sp = line.find(' ');
-        if (sp != std::string::npos) g_gen_status = L_line(line.substr(sp + 1)) + "...";
-    }
-    int st = plat_proc_wait(g_gen_pid, false);
-    if (st >= 0) {
-        g_gen_pid = 0;
-        g_gen_failed = st != 0;
-        g_gen_done = true;
-        g_gen_status = g_gen_failed ? strf(L("Seed generation failed. The details are in rando/%s/generate.log."), g_gen_seed.c_str())
-                                    : strf(L("Seed \"%s\" ready."), g_gen_seed.c_str());
-        size_t e = g_gen_failed ? log.rfind("\nerror ") : std::string::npos;  // (a reason the player can act on)
-        if (e != std::string::npos) g_gen_status = L_line(log.substr(e + 7, log.find('\n', e + 1) - e - 7));
-        g_scanned = false;
-        g_opts.seed[0] = 0;
-        g_opts.rng = new_rng();  // next seed: a fresh ID
-    }
+    if (!g_native.finished) return;
+    g_native.thread.join();
+    g_native.running = false;
+    rando::solve::GenerateResult r = g_native.result;
+    if (r.status == rando::solve::GenStatus::Done) finish_generation(false, strf(L("Seed \"%s\" ready."), g_gen_seed.c_str()));
+    else if (!r.player_error.empty()) finish_generation(true, L_line(r.player_error));
+    else finish_generation(true, strf(L("Seed generation failed. The details are in rando/%s/generate.log."), g_gen_seed.c_str()));
 }
 
 // ---- UI helpers (same look as the other tabs)

@@ -4,8 +4,8 @@ import appdirs
 import platform
 
 # check if user is running a precompiled binary
-# [LAS Recomp: the PyInstaller seed generator (tools/rando/rando_gen.spec) keeps the source layout under sys._MEIPASS
-#  and must behave exactly like the source run (same spoiler format, no user-data dir): it takes the branch below]
+# [LAS Recomp: a PyInstaller build (the seed generator helper LAS Recomp shipped until the app made seeds itself) keeps
+#  the source layout under sys._MEIPASS and must behave exactly like the source run: it takes the branch below]
 if getattr(sys, "frozen", False) and not hasattr(sys, '_MEIPASS'):
     IS_RUNNING_FROM_SOURCE = False
     ROOT_PATH = os.path.dirname(sys.executable)
