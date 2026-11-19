@@ -475,6 +475,7 @@ typedef struct {
     bool dyn_base, simd_asm;
     pthread_t th;
     bool started;
+    uint64_t t0;            // when it started (plat_now_ns)
     volatile int cancel;
     FILE *logf;             // its lines (gen_<name>.log), as the helper's output was
     pthread_mutex_t lock;   // the fields below, written by its thread
@@ -528,6 +529,7 @@ static void *gen_thread(void *arg) {
 }
 
 static bool gen_start(Gen *g) {
+    g->t0 = plat_now_ns();
     g->logf = fopen(g->log, "w");
     pthread_mutex_init(&g->lock, NULL);
     pthread_attr_t at;
@@ -765,7 +767,7 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
         setenv("ZIG_LOCAL_CACHE_DIR", zc, 1);
 #endif
     }
-    LOG("[gamebuild] compiler %s%s, %d jobs\n", t.cc, t.zig ? " cc" : "", o->jobs);
+    LOG("[gamebuild] generator built in, compiler %s%s, %d jobs\n", t.cc, t.zig ? " cc" : "", o->jobs);
 
     // 1. the generator, both modules at once (a thread each); their finished files are compiled while it goes on
     Gen gens[2] = {{.name = "main"}, {.name = "sdk"}};
@@ -819,6 +821,9 @@ bool gamebuild_run(const char *game_dir, const GameBuildOpts *o, char *why, size
                 files = g->files, gci = g->ci, gn = g->n;
                 pthread_mutex_unlock(&g->lock);
                 if (r >= 0) {
+                    if (r == 0)
+                        LOG("[gamebuild] generated %s: %d files in %.1fs\n", g->name, files,
+                            (double)(plat_now_ns() - g->t0) / 1e9);
                     gen_end(g);
                     if (r != 0) {
                         snprintf(why, why_size, LN("the game code couldn't be prepared"));
