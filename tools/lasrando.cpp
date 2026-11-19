@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <dirent.h>
 #include <sys/stat.h>
 
 #include <fstream>
@@ -80,6 +81,15 @@ static bool slurp(const std::string &path, std::string &out) {
     return true;
 }
 
+static bool list_dir(const std::string &path, std::vector<std::string> &names) {  // (os.listdir)
+    DIR *d = opendir(path.c_str());
+    if (!d) return false;
+    while (struct dirent *e = readdir(d))
+        if (strcmp(e->d_name, ".") && strcmp(e->d_name, "..")) names.push_back(e->d_name);
+    closedir(d);
+    return true;
+}
+
 // lasrando check-steps: every ported step against the record (tools/rando/test_apply.py drives it)
 static int check_steps(const std::string &romfs, const std::string &decisions, const std::string &rec) {
     std::string dj, lj;
@@ -97,12 +107,21 @@ static int check_steps(const std::string &romfs, const std::string &decisions, c
     };
     int bad = 0;
     for (const rando::BuildStep &st : rando::build_steps()) {
+        // (a step named "a|b|c" is one generator call whose writes the log names by the helper that wrote them: its
+        // writes start at the first one named a and go on while named a, b or c; "p>a|b|c": writes named p just
+        // before that one belong to it too)
+        std::string nm = st.name, pre;
+        if (nm.find('>') != std::string::npos) pre = "|" + nm.substr(0, nm.find('>')) + "|", nm = nm.substr(nm.find('>') + 1);
+        std::string anchor = nm.substr(0, nm.find('|')), names = "|" + nm + "|";
+        auto in = [&](const std::string &set, size_t i) { return set.find("|" + step_of(i) + "|") != std::string::npos; };
         size_t k = 0;
-        while (k < n && step_of(k) != st.name) k++;
+        while (k < n && step_of(k) != anchor) k++;
         if (k == n) { printf("%-50s not in this seed's run\n", st.name); continue; }
+        while (k > 0 && in(pre, k - 1)) k--;
         size_t end = k;
-        while (end < n && step_of(end) == st.name) end++;
+        while (end < n && (in(names, end) || in(pre, end))) end++;
         rando::SeedBuild b([&](const std::string &p, std::string &out) { return slurp(romfs + "/" + p, out); }, d);
+        b.set_game_list([&](const std::string &dir, std::vector<std::string> &names) { return list_dir(romfs + "/" + dir, names); });
         for (size_t i = 0; i < k; i++) {  // the Python's files just before the step
             std::string bytes;
             slurp(rec + "/" + std::to_string(i) + ".bin", bytes);

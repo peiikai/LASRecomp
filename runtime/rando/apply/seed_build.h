@@ -66,7 +66,16 @@ public:
     static std::string path_of(const std::string &file_name);
 
     bool read_bytes(const std::string &path, std::string &out) const;  // the latest written, else the game's
+    // the game's own file, whatever this seed wrote (a step reading the original game, as the Python's rom path)
+    bool read_game(const std::string &path, std::string &out) const { return game_(path, out); }
     void write_bytes(const std::string &path, const std::string &bytes);
+
+    // lists a folder of the game's files: the names in it (files and folders); false: no such folder
+    using GameList = std::function<bool(const std::string &dir, std::vector<std::string> &names)>;
+    void set_game_list(GameList list) { list_ = std::move(list); }
+    // the names in a folder (os.listdir), sorted: the game's (none without set_game_list) / the files written there
+    std::vector<std::string> list_game(const std::string &dir) const;
+    std::vector<std::string> list_written(const std::string &dir) const;
 
     // by file name, as mod_generator.readFile / writeFile
     LebRoom read_room(const std::string &name);
@@ -99,6 +108,7 @@ private:
     std::string need(const std::string &path) const;  // (throws when the file isn't there)
 
     GameRead game_;
+    GameList list_;
     const Decisions &d_;
     std::map<std::string, std::string> files_;  // path -> bytes written
     std::vector<Write> log_;

@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 #include "../../../third_party/yyjson/yyjson.h"
@@ -91,6 +92,23 @@ std::string SeedBuild::need(const std::string &path) const {
 void SeedBuild::write_bytes(const std::string &path, const std::string &bytes) {
     files_[path] = bytes;
     log_.push_back({path, bytes});
+}
+
+std::vector<std::string> SeedBuild::list_game(const std::string &dir) const {
+    std::vector<std::string> names;
+    if (list_ && !list_(dir, names)) names.clear();
+    std::sort(names.begin(), names.end());
+    return names;
+}
+
+std::vector<std::string> SeedBuild::list_written(const std::string &dir) const {
+    std::vector<std::string> names;
+    const std::string pre = dir + "/";
+    for (auto it = files_.lower_bound(pre); it != files_.end() && !it->first.compare(0, pre.size(), pre); ++it) {
+        std::string n = it->first.substr(pre.size(), it->first.find('/', pre.size()) - pre.size());
+        if (names.empty() || names.back() != n) names.push_back(n);
+    }
+    return names;  // (sorted: the map's order, a folder's files together)
 }
 
 SeedBuild::ItemInfo SeedBuild::item_info(const std::string &check, bool with_model) {

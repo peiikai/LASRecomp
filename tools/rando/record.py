@@ -49,12 +49,15 @@ def _idgen():
 
 class _Tee:
     def __init__(self, f, rel):
-        self._f, self._rel = f, rel
+        self._f, self._rel, self._done = f, rel, False
 
     def write(self, b):
         return self._f.write(b)
 
     def close(self):
+        if self._done:
+            return None
+        self._done = True
         r = self._f.close()
         # (the bytes as written to disk, not the write() calls joined: writers seek back to fill in offsets - evfl)
         with _real_open(self._f.name, 'rb') as f:
@@ -65,6 +68,12 @@ class _Tee:
         _log.append({'n': n, 'path': self._rel, 'sha256': hashlib.sha256(data).hexdigest(), 'step': _step(),
                      'idgen': _idgen()})
         return r
+
+    def __del__(self):  # (open(p, 'wb').write(...) without a close: dungeon_gen, rooms, environments)
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def __enter__(self):
         return self
