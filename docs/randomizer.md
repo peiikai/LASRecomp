@@ -22,7 +22,7 @@ playing exactly as before:
 | 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | done: rooms, level configs, data sheets, messages, archives, event flows, texture banks |
 | 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | done but dungeon room shuffle: every step built natively, file for file as the generator |
 | 4 | asset builds (dungeon room shuffle, textures) in the runtime | textures done (chest looks, title logo); dungeon room shuffle next |
-| 5 | native solver | in progress: the whole generator but dungeon room shuffle, file for file as today |
+| 5 | native solver | done: the whole generator, dungeon room shuffle's planning and room logic included, file for file as today |
 | 6 | generation in the app everywhere; Python leaves the builds | |
 
 The rules for every stage:
@@ -90,7 +90,10 @@ apart from the textures' pixel data, and the pixels are compared within a small 
 and the item / logic pool (`prepare`), the entrance randomizer (`entrances`), LAS's fill (`shuffler`, `logic`), the
 post-fill outputs (`outputs`: playthrough check, hints, route, spoiler, tracker), then the seed build in decide mode
 (`runtime/rando/apply/decide.h`: the file-writing steps make the generator's random draws themselves and record them as
-the seed's decisions). Dungeon room shuffle isn't native yet: generate() says so and the caller uses the Python.
+the seed's decisions). Dungeon room shuffle (`rooms*.cpp`): dungeon_gen's planning and room_logic, with the
+layout retries; what the Python reads from the game's rooms comes from `tools/rando/export_room_data.py --romfs`
+(`room_game_data.cpp`), checked by `lasrando prepare-check <romfs> <request> <record> [placements.json]` against
+a recorded run (the room plan, and the settings, items and logic the fill starts from).
 
 - `build/lasrando generate <romfs> <request.json> <out> [--legacy]`: a seed folder (seed.json, the code patches, the
   spoiler); `--legacy` also writes the Python's files (romfs/, the tables, settings.json, ...).

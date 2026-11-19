@@ -208,6 +208,7 @@ GenerateResult generate_once(const Value &request, const GameFiles &game, const 
         finish_prefill(st, shuffled);
         for (const std::string &s : st.said) say(s);
     } catch (const std::exception &e) {
+        if (cancelled()) return fail(GenStatus::Cancelled, "cancelled");  // (plan_rooms stops when asked)
         return fail(GenStatus::Failed, e.what());
     }
     if (cancelled()) return fail(GenStatus::Cancelled, "cancelled");
