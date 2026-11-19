@@ -508,8 +508,8 @@ static void start_native_generation(const std::string &romfs, const std::string 
         }
         if (lf) {
             for (const std::string &l : r.log) fprintf(lf, "%s\n", l.c_str());
-            fprintf(lf, r.status == rando::solve::GenStatus::Done ? "done (native, %.2f s)\n" : "error %s\n",
-                    r.status == rando::solve::GenStatus::Done ? r.seconds : 0.0, r.error.c_str());
+            if (r.status == rando::solve::GenStatus::Done) fprintf(lf, "done (native, %.2f s)\n", r.seconds);
+            else fprintf(lf, "error %s\n", r.error.c_str());
             fclose(lf);
         }
         LOG("[rando] native generator: %s%s%s (%.2f s)\n", r.status == rando::solve::GenStatus::Done ? "seed made" : "stopped",
