@@ -20,7 +20,7 @@ playing exactly as before:
 |---|---|---|
 | 1 | seed record + one runtime API; Python's `random` in C++ | in progress |
 | 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | done: rooms, level configs, data sheets, messages, archives, event flows, texture banks |
-| 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | |
+| 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | in progress: every step but room shuffle and textures built natively, file for file as the generator; the runtime's side next |
 | 4 | asset builds (dungeon room shuffle, textures) in the runtime | |
 | 5 | native solver | |
 | 6 | generation in the app everywhere; Python leaves the builds | |
@@ -62,6 +62,21 @@ The rules for every stage:
   people to read.
 - Later versions add the seed's placements and the code patches to the record. A newer version number is read as far
   as this build understands it.
+
+## Seed build
+
+`runtime/rando/apply/`: a seed's game-file changes made in memory, step by step as the generator makes them
+(`seed_build.h`: reads see the last write or the game's file, one event-name counter, no random draws: the generator's
+choices come from the seed's decisions). Each step is a port of one generator function, in group files
+(`las_*.cpp`, `ours_*.cpp`), ordered and gated as the generator runs them (`steps.cpp`).
+
+- `tools/rando/record.py`: the generator writes `decisions.json` (placements, trap looks, enemy rolls, prices, hint
+  picks, ...); with `LARECOMP_RECORD=<folder>` it also logs every file it writes, in order.
+- `build/lasrando check-steps <romfs> <decisions.json> <record>`: each ported step run from the generator's state just
+  before it, its writes compared byte for byte.
+- `build/lasrando dump <romfs> <decisions.json> <out>` and `tools/rando/test_apply.py <romfs> <seed folder>...`: a
+  whole seed built natively against the folder the generator wrote, file for file.
+- Generated tables (`tools/rando/export_*.py --check`) keep the C++ copies of Python data in step.
 
 ## Random numbers
 
