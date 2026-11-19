@@ -235,8 +235,11 @@ jobs:
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
+      # (a release's zip says x64, as launchers pick a file by system and processor; the self-updater takes the name from
+      #  its manifest, update-windows.txt, which keeps its name. Nightlies keep "-windows.zip": shipped nightly builds
+      #  find newer ones by "-windows." in the name, runtime/ui/update_tags.h)
       - name: Release zip
-        run: make -j"$(nproc)" dist
+        run: make -j"$(nproc)" dist WINZIP=windows-x64
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -247,7 +250,7 @@ jobs:
       # the self-updater's signed manifest (tools/update_manifest.sh; none without the key: Download only)
       - name: Update manifest
         env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.check.outputs.version }}' }
-        run: tools/update_manifest.sh "$VERSION" windows build/dist/*-windows.zip "build/dist/LAS Recomp"
+        run: tools/update_manifest.sh "$VERSION" windows build/dist/*-windows-x64.zip "build/dist/LAS Recomp"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -640,7 +643,7 @@ jobs:
           [ "$(ls | grep -v -- '-linux-aarch64\.tar\.gz$' | wc -l)" = $N ] || { echo "::error::expected $N files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
           for f in *; do
-            case $f in *-macOS.dmg) p=macos ;; *-windows.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
+            case $f in *-macOS.dmg) p=macos ;; *-windows-x64.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
                         *-linux-aarch64.AppImage) p=linux-aarch64 ;; *-iOS.laskit) p=ios ;; *-android.apk) p=android ;;
                         *-linux-x86_64.tar.gz) p=linux ;; *-linux-aarch64.tar.gz) p=linux-aarch64 ;;
                         *-windows-arm64.zip) p=windows-arm64 ;;
@@ -650,7 +653,8 @@ jobs:
           for m in ../manifests/*; do  # (a manifest or feed goes up only with its platform's file)
             [ -f "$m" ] || continue
             plat=$(basename "$m"); plat=${plat#update-}; plat=${plat#appcast-}; plat=${plat%.*}
-            ls ./*-"$plat".zip ./*-"$plat".AppImage ./*-"$plat".dmg >/dev/null 2>&1 || rm "$m"
+            f=$plat; [ "$plat" = windows ] && f=windows-x64  # (update-windows.txt: the x64 zip)
+            ls ./*-"$f".zip ./*-"$plat".AppImage ./*-"$plat".dmg >/dev/null 2>&1 || rm "$m"
           done
           MANIFESTS=(); for m in ../manifests/*; do [ -f "$m" ] && MANIFESTS+=("$m"); done
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)
