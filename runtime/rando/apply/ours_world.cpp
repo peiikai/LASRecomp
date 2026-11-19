@@ -6,6 +6,11 @@
 //
 // The lists of checks and the random draws come from the decisions' "ours-world" field
 // (tools/rando/record_ours_world.py says what each holds); everything else is worked out from the files, as there.
+// In decide mode (decide.h) each step first works its key out as the Python does - the -sanity scans on LAS's logic
+// (ours_world_scan.cpp), the entrance shuffle's result, the modules' own random streams - and sets it, then goes on
+// as in apply mode. Both modes write the modules' tables (pots.tsv, digs.tsv, shell_spots.tsv, ... and their lines
+// in check_flags.tsv / flags_ext), as the Python writes them; the tables a dungeon room shuffle rewrites (pots.tsv,
+// bushes.tsv after dungeon_gen) stay as they were before it.
 //
 // tools/rando/record.py logs a write when its file is closed: environments.apply (and dungeon_gen's rooms) write with
 // open(p, 'wb').write(...) and no close, so their writes aren't in the log (environments.apply: "not in this seed's
@@ -27,8 +32,11 @@
 #include <stdexcept>
 
 #include "../../../third_party/yyjson/yyjson.h"
+#include "../solve/value.h"
+#include "decide.h"
 #include "item_get.h"
 #include "las_data.h"
+#include "ours_world_lib.h"
 #include "steps.h"
 
 namespace rando {
@@ -55,13 +63,25 @@ void write_room_at(SeedBuild &b, const std::string &path, LebRoom &r) { b.write_
 int32_t flag_index(const GStruct &row) { return at(row, "index").i; }
 GStruct flag_row(const std::string &symbol, int32_t index) { return {{"symbol", gs(symbol)}, {"index", gi(index)}}; }
 
-// seed_tables.next_flag: after every index the sheet has below the Chaos map letters (3800)
-int32_t next_flag(const GSheet &sheet) {
+// seed_tables.next_flag: after every index the sheet has below the Chaos map letters (3800); one past the game's 2048
+// is noted in the seed's flags_ext (the runtime's extended flags)
+int32_t next_flag(SeedBuild &b, const GSheet &sheet) {
     int32_t m = INT32_MIN;
     for (const GStruct &v : sheet.values)
         if (flag_index(v) < 3800) m = std::max(m, flag_index(v));
     if (m + 1 >= 3800) throw std::runtime_error("out of GlobalFlags indices");
+    if (m + 1 >= 2048) b.table_append("flags_ext", "event flag " + std::to_string(m + 1) + "\n");
     return m + 1;
+}
+
+using solve::List;
+using solve::Value;
+
+Value parse_value(const std::string &json) { return Value::parse_json(json.data(), json.size()); }
+std::string hex_lower(uint64_t key) {  // f'{key:x}'
+    char buf[24];
+    snprintf(buf, sizeof buf, "%llx", (unsigned long long)key);
+    return buf;
 }
 
 // Python's float // (floor of the exact quotient, as float_floor_div does it)
@@ -221,7 +241,29 @@ void pots_call(SeedBuild &b, const PotKind &k, yyjson_val *locs) {
     b.write_flow("SinkingSword.bfevfl", fl);
 }
 
+// decide mode: las_headless calls pots.apply for the pots, the bushes and the rocks that have locations, each with
+// the locations its module's scan + add_to_logic made, in that dict's order
+void decide_pots(SeedBuild &b, Decider &dc) {
+    Value s = parse_value(sanity_json(b)), calls = Value::new_list();
+    const std::pair<const char *, const char *> kinds[] = {{"LARPot", "pots"}, {"LARBush", "bushes"}, {"LARRock", "rocks"}};
+    for (const auto &kd : kinds) {
+        const Value &locs = s.at(kd.second);
+        if (!locs.len()) continue;
+        Value call = Value::new_dict(), l = Value::new_list();
+        for (const auto &e : locs.dict()) {
+            const Value &p = e.value;
+            l.list().push_back(Value(List{Value(e.key), p.at("level"), p.at("room"),
+                                          Value(hex_lower(strtoull(p.at("key").s().c_str(), nullptr, 16)))}));
+        }
+        call.set("prefix", kd.first);
+        call.set("locs", l);
+        calls.list().push_back(call);
+    }
+    if (calls.len()) dc.set_ours_world("pots", calls.json());
+}
+
 void pots(SeedBuild &b) {
+    if (Decider *dc = b.decider()) decide_pots(b, *dc);
     size_t i, n;
     yyjson_val *call;
     yyjson_arr_foreach(ow(b, "pots"), i, n, call) {
@@ -231,6 +273,14 @@ void pots(SeedBuild &b) {
             if (prefix == x.prefix) k = &x;
         if (!k) throw std::runtime_error("pots: unknown kind " + prefix);
         pots_call(b, *k, yyjson_obj_get(call, "locs"));
+        // the module's tables after its call: its write_tsv over the seed's rooms, and bushes.apply's / rocks.apply's
+        // flags_ext note (bushes.apply opens it with 'w': what was there before is gone, as the Python)
+        if (k->cut) {
+            if (prefix == "LARBush") b.table_write("flags_ext", "bushsanity: event flags 2048+ (runtime/hle/flags_ext.c)\n");
+            else b.table_append("flags_ext", "rocksanity: event flags 2048+ (runtime/hle/flags_ext.c)\n");
+        }
+        const std::string table = prefix == "LARPot" ? "pots.tsv" : prefix == "LARBush" ? "bushes.tsv" : "rocks.tsv";
+        b.table_write(table, pots_tsv(b, k->prefix, k->cut ? k->hide : 0.0));
     }
 }
 
@@ -245,9 +295,55 @@ int actor_tile(const LebActor &a, const std::pair<int, int> &rc) {  // (row-majo
     return tz * 10 + tx;
 }
 
+// digs.tsv: every dig tile of the Field by tile id (a check's item columns, '-' elsewhere), and digs.apply's
+// flags_ext note (opened with 'w': what was there before is gone, as the Python)
+void dig_tables(SeedBuild &b, yyjson_val *locs, const std::map<std::string, std::vector<std::string>> &cols) {
+    std::map<int, std::string> by_tile;
+    size_t i, n;
+    yyjson_val *l;
+    yyjson_arr_foreach(locs, i, n, l)
+        by_tile[dig_tile_id(jstr(yyjson_arr_get(l, 1)), (int)yyjson_get_sint(yyjson_arr_get(l, 2)))] = jstr(yyjson_arr_get(l, 0));
+    std::vector<DigTile> tiles = dig_scan(b);
+    std::stable_sort(tiles.begin(), tiles.end(),
+                     [](const DigTile &x, const DigTile &y) { return dig_tile_id(x.room, x.tile) < dig_tile_id(y.room, y.tile); });
+    std::string out = "# screen\ttile\ty\titem\tmodel\tname\tentry\tshell\tscale\tturn\tblocker (tools/rando/digs.py)\n";
+    for (const DigTile &t : tiles) {
+        std::vector<std::string> c(7, "-");
+        auto name = by_tile.find(dig_tile_id(t.room, t.tile));
+        if (name != by_tile.end() && cols.count(name->second)) c = cols.at(name->second);
+        out += t.room.substr(t.room.rfind('_') + 1) + "\t" + std::to_string(t.tile) + "\t" + py_g(t.y);
+        for (const std::string &x : c) out += "\t" + x;
+        out += "\t" + (t.blocker.empty() ? std::string("-") : t.blocker) + "\n";
+    }
+    b.table_write("digs.tsv", out);
+    b.table_write("flags_ext", "digsanity / bushsanity: event flags 2048+ (runtime/hle/flags_ext.c)\n");
+}
+
+// decide mode: the digsanity checks (digs.add_to_logic's locations), by tile id
+void decide_digs(SeedBuild &b, Decider &dc) {
+    Value s = parse_value(sanity_json(b));
+    std::vector<std::pair<int, Value>> rows;
+    for (const auto &e : s.at("digs").dict()) {
+        const Value &v = e.value;
+        rows.push_back({dig_tile_id(v.at("room").s(), (int)v.at("tile").i()),
+                        Value(List{Value(e.key), v.at("room"), v.at("tile"), v.at("y"), v.at("blocker"), v.get("shell")})});
+    }
+    std::stable_sort(rows.begin(), rows.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
+    Value out = Value::new_list();
+    for (auto &r : rows) out.list().push_back(r.second);
+    dc.set_ours_world("digs", out.json());
+}
+
+const char *const DIG_SHELLS = "ours_world.dig_shells";  // (carry: digs.SHELLS for seashell_spots.apply)
+
 void digs(SeedBuild &b) {
+    if (Decider *dc = b.decider()) decide_digs(b, *dc);
     yyjson_val *locs = ow(b, "digs");
     const Decisions &d = b.decisions();
+    // digs.tsv's item columns per check (label, model path, model name, entry, seashell, scale, turn); a buried
+    // Secret Seashell's tile has none
+    std::map<std::string, std::vector<std::string>> cols;
+    std::string shells;  // digs.SHELLS: location, seashell index, found flag (GOT_FLAG_BASE + tile id)
     GSheet sheet = b.read_sheet("GlobalFlags.gsheet");
     std::set<int32_t> used;
     for (const GStruct &v : sheet.values) used.insert(flag_index(v));
@@ -273,22 +369,36 @@ void digs(SeedBuild &b) {
         if (!yyjson_is_null(yyjson_arr_get(l, 5))) taken[room].insert(tile);
         const std::string item = placed(d, name);
         if (item == "seashell" && !blocker) {  // the game's own buried shell, with the index LAS gave it
-            buried[room].push_back({tile, y, b.item_info(name, true).index});
+            int index = b.item_info(name, true).index;
+            buried[room].push_back({tile, y, index});
+            shells += name + "\t" + std::to_string(index) + "\t" + std::to_string(4096 + 256 * 80 + dig_tile_id(room, tile)) + "\n";
             continue;
         }
         SeedBuild::ItemInfo it = b.item_info(name, true);
         bool quick = starts(it.key, "Rup") || quick_item(item) || item == "dig-rupee-1" || item == "dig-rupee-5" ||
                      item == "dig-rupee-20";
         auto key = std::make_tuple(it.key, it.index, quick);
-        if (entries.count(key)) continue;  // one entry per distinct item, shared by every tile holding it
-        const std::string entry = "LARDig" + std::to_string(entries.size());
-        entries[key] = entry;
-        std::string get = give(f, it, quick);
-        f.add_entry_point(entry);
-        std::string destroy = f.action("SinkingSword", "Destroy", {}, get);
-        f.insert_after(entry, destroy);
+        if (!entries.count(key)) {  // one entry per distinct item, shared by every tile holding it
+            const std::string entry = "LARDig" + std::to_string(entries.size());
+            entries[key] = entry;
+            std::string get = give(f, it, quick);
+            f.add_entry_point(entry);
+            std::string destroy = f.action("SinkingSword", "Destroy", {}, get);
+            f.insert_after(entry, destroy);
+        }
+        static const std::map<std::string, std::string> NAMES = {
+            {"dig-rupee-1", "1 Rupee"}, {"dig-rupee-5", "5 Rupees"}, {"dig-rupee-20", "20 Rupees"},
+            {"pot-heart", "Recovery Heart"}, {"pot-arrows", "Arrows"}, {"pot-bombs", "Bombs"},
+            {"pot-powder", "Magic Powder"}};  // (digs.NAMES)
+        auto label = NAMES.find(item);
+        double size = 1.0, turn = 0;
+        lookup(MODEL_SIZES, it.model_name, size), lookup(MODEL_ROTATIONS, it.model_name, turn);
+        cols[name] = {label != NAMES.end() ? label->second : pretty_item(item), it.model_path, it.model_name,
+                      entries[key], it.key == "Seashell" ? "1" : "0", py_g(size), py_g(turn)};
     }
     b.write_flow("SinkingSword.bfevfl", fl);
+    b.carry()[DIG_SHELLS] = shells;
+    dig_tables(b, locs, cols);
     if (buried.empty() && taken.empty()) return;
     std::string tmpl_bytes;
     if (!b.read_game("region_common/level/Field/Field_11F.leb", tmpl_bytes)) throw std::runtime_error("digs: no Field_11F");
@@ -347,7 +457,7 @@ void underwater(SeedBuild &b) {
     std::set<std::string> names;
     for (const GStruct &v : sheet.values) names.insert(at(v, "symbol").s);
     for (const char *fl : {"KanaletSunkenShellGet", "TaltalSunkenShellGet"})
-        if (!names.count(fl)) sheet.values.push_back(flag_row(fl, next_flag(sheet)));
+        if (!names.count(fl)) sheet.values.push_back(flag_row(fl, next_flag(b, sheet)));
     b.write_sheet("GlobalFlags.gsheet", sheet);
 
     EventFlow fl = b.read_flow("SinkingSword.bfevfl");
@@ -444,11 +554,45 @@ void add_drop(GSheet &drops, const std::string &base, const std::string &key, co
     drops.values.push_back(e);
 }
 
+// decide mode: the Secret Seashell spots no -sanity check took (seashell_spots.locations), by seashell index, and
+// where each is (seashell_spots.scan); vanilla: Shellsanity off
+void decide_shell_spots(SeedBuild &b, Decider &dc, const std::map<int64_t, ShellSpot> &spots) {
+    Value s = parse_value(sanity_json(b));
+    std::vector<std::pair<int64_t, std::string>> locs;
+    for (const auto &e : s.at("shells").dict()) locs.push_back({e.value.i(), e.key});
+    std::string missing;
+    for (const auto &l : locs)
+        if (!spots.count(l.first)) missing += (missing.empty() ? "" : ", ") + l.second;
+    if (!missing.empty()) throw std::runtime_error("Secret Seashell spots not found in the rooms: " + missing);
+    std::stable_sort(locs.begin(), locs.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
+    Value list = Value::new_list();
+    for (const auto &l : locs) {
+        const ShellSpot &p = spots.at(l.first);
+        list.list().push_back(Value(List{Value(l.second), Value((long long)l.first), Value(p.kind), Value(p.level),
+                                         Value(p.room), Value(hex_lower(p.key)), Value(p.param)}));
+    }
+    Value out = Value::new_dict();
+    out.set("vanilla", !setting_or(b.decisions(), "shellsanity", false));
+    out.set("spots", list);
+    dc.set_ours_world("shell-spots", out.json());
+}
+
 void seashell_spots(SeedBuild &b) {
+    const std::map<int64_t, ShellSpot> spots = shell_scan(b);
+    if (Decider *dc = b.decider()) decide_shell_spots(b, *dc, spots);
     yyjson_val *rec = ow(b, "shell-spots");
     if (!rec) return;
     const Decisions &d = b.decisions();
     bool vanilla = yyjson_get_bool(yyjson_obj_get(rec, "vanilla"));
+    // shell_spots.tsv; check_flags.tsv: each spot's found flag (tracker.py)
+    std::string rows = "# location\tindex\tkind\tlevel\troom\tx\ty\tz\tmodel\tname\tentry\tflag\tflag index\tshell\tscale"
+                       "\tturn  (tools/rando/seashell_spots.py)\n",
+                checks;
+    auto shell_row = [&](const std::string &name, int index, const std::string &level, const std::string &room,
+                         const std::string &flag, int32_t flag_index) {
+        rows += name + "\t" + std::to_string(index) + "\tshell\t" + level + "\t" + room + "\t-\t-\t-\t-\t-\t-\t" + flag +
+                "\t" + std::to_string(flag_index) + "\t1\t1\t0\n";
+    };
     GSheet sheet = b.read_sheet("GlobalFlags.gsheet");
     std::map<std::string, int32_t> names;
     for (const GStruct &v : sheet.values) names[at(v, "symbol").s] = flag_index(v);
@@ -470,11 +614,15 @@ void seashell_spots(SeedBuild &b) {
         if (!vanilla && !d.item_at(name)) continue;
         const std::string flag = "LARShellSpot" + std::to_string(index);
         if (!names.count(flag)) {
-            names[flag] = next_flag(sheet);
+            names[flag] = next_flag(b, sheet);
             sheet.values.push_back(flag_row(flag, names[flag]));
         }
-        if (vanilla) continue;
+        checks += name + "\t" + std::to_string(names[flag]) + "\n";
         if (yyjson_arr_size(s) < 7) throw std::runtime_error("seashell spots: " + name + " not found in the rooms");
+        if (vanilla) {  // (its own shell, its own index: nothing to edit)
+            shell_row(name, index, jstr(yyjson_arr_get(s, 3)), jstr(yyjson_arr_get(s, 4)), flag, names[flag]);
+            continue;
+        }
         const std::string kind = jstr(yyjson_arr_get(s, 2));
         LebRoom &r = room_of(room_path(jstr(yyjson_arr_get(s, 3)), jstr(yyjson_arr_get(s, 4))));
         uint64_t key = jkey(yyjson_arr_get(s, 5));
@@ -493,6 +641,7 @@ void seashell_spots(SeedBuild &b) {
                 param = str_param("LARShell" + std::to_string(it.index));
                 add_drop(drops, "Seashell0", "LARShell" + std::to_string(it.index), "Seashell", it.index);
             }
+            shell_row(name, it.index, jstr(yyjson_arr_get(s, 3)), jstr(yyjson_arr_get(s, 4)), flag, names[flag]);
             continue;
         }
         if (kind == "dig") {  // (no buried shell: the runtime brings the item up when the spot is dug)
@@ -507,16 +656,75 @@ void seashell_spots(SeedBuild &b) {
         std::string get = give(f, it, starts(it.key, "Rup"));
         f.add_entry_point(name);
         f.action_chain(name, {{"EventFlags", "SetFlag", {{"symbol", flag}, {"value", true}}}, {"SinkingSword", "Destroy", {}}}, get);
+        auto where = spots.find(index);  // (where the item shows: the scan's)
+        if (where == spots.end()) throw std::runtime_error("seashell spots: " + name + " not found in the rooms");
+        double size = 1.0, turn = 0;
+        lookup(MODEL_SIZES, it.model_name, size), lookup(MODEL_ROTATIONS, it.model_name, turn);
+        rows += name + "\t" + std::to_string(index) + "\t" + kind + "\t" + jstr(yyjson_arr_get(s, 3)) + "\t" +
+                jstr(yyjson_arr_get(s, 4)) + "\t" + py_g(where->second.x) + "\t" + py_g(where->second.y) + "\t" +
+                py_g(where->second.z) + "\t" + it.model_path + "\t" + it.model_name + "\t" + name + "\t" + flag + "\t" +
+                std::to_string(names[flag]) + "\t" + (it.key == "Seashell" ? "1" : "0") + "\t" + py_g(size) + "\t" +
+                py_g(turn) + (kind == "hole" ? "\t" + hex_lower(key) : std::string()) + "\n";
+    }
+    // the digsanity tiles holding a Secret Seashell (digs.SHELLS, when the seed has dig checks): found once owned
+    if (setting_or(d, "digs", false)) {
+        auto sh = b.carry().find(DIG_SHELLS);
+        std::string lines = sh == b.carry().end() ? std::string() : sh->second;
+        for (size_t pos = 0; pos < lines.size();) {
+            size_t end = lines.find('\n', pos);
+            std::string line = lines.substr(pos, end - pos);
+            size_t t1 = line.find('\t'), t2 = line.find('\t', t1 + 1);
+            rows += line.substr(0, t2) + "\tshell\t-\t-\t-\t-\t-\t-\t-\t-\t-\t" + line.substr(t2 + 1) + "\t1\t1\t0\n";
+            pos = end + 1;
+        }
     }
     for (auto &r : rooms) write_room_at(b, r.first, r.second);
     b.write_sheet("GlobalFlags.gsheet", sheet);
     b.write_sheet("ItemDrop.gsheet", drops);
     b.write_flow("SinkingSword.bfevfl", fl);
+    b.table_write("shell_spots.tsv", rows);
+    b.table_append("check_flags.tsv", checks);
+    b.table_append("flags_ext", "seashell spots: found flags set by the runtime (runtime/hle/shell_spots.c)\n");
 }
 
 // ======== apple_trees.apply
 
+// apple_trees.apply's slots: every placed apple-tree-<screen>-<slot>, sorted
+std::vector<std::string> apple_locs(const Decisions &d) {
+    std::vector<std::string> locs;
+    yyjson_obj_iter pit = yyjson_obj_iter_with(d.raw("placements"));
+    for (yyjson_val *k; (k = yyjson_obj_iter_next(&pit));)
+        if (starts(jstr(k), "apple-tree-")) locs.push_back(jstr(k));
+    std::sort(locs.begin(), locs.end());
+    return locs;
+}
+
+// decide mode: the look a trap hanging in a tree takes - a random real item of the seed
+// (random.Random(f'{seed}-apple-looks'), one draw per trap slot in name order)
+void decide_apple_looks(SeedBuild &b, Decider &dc) {
+    const Decisions &d = b.decisions();
+    std::set<std::string> placed_items;
+    yyjson_obj_iter pit = yyjson_obj_iter_with(d.raw("placements"));
+    for (yyjson_val *k; (k = yyjson_obj_iter_next(&pit));)
+        if (yyjson_is_str(yyjson_obj_iter_get_val(k))) placed_items.insert(jstr(yyjson_obj_iter_get_val(k)));
+    std::set<std::pair<std::string, std::string>> look_set;
+    for (const std::string &it : placed_items) {
+        const Decisions::ItemDef *def = d.item_def(it);
+        if (def && !def->model_path.empty() && !ends(def->key, "Trap")) look_set.insert({def->model_path, def->model_name});
+    }
+    std::vector<std::pair<std::string, std::string>> looks(look_set.begin(), look_set.end());
+    PyRandom rng = dc.stream("apple-looks");
+    Value picks = Value::new_dict();
+    for (const std::string &name : apple_locs(d))
+        if (ends(item_key_at(d, name), "Trap") && !looks.empty()) {
+            const auto &pick = rng.choice(looks);
+            picks.set(name, Value(List{Value(pick.first), Value(pick.second)}));
+        }
+    dc.set_ours_world("apple-looks", picks.json());
+}
+
 void apple_trees(SeedBuild &b) {
+    if (Decider *dc = b.decider()) decide_apple_looks(b, *dc);
     yyjson_val *looks = ow(b, "apple-looks");
     if (!looks) return;
     const Decisions &d = b.decisions();
@@ -528,20 +736,34 @@ void apple_trees(SeedBuild &b) {
     }
     EventFlow fl = b.read_flow("SinkingSword.bfevfl");
     Flow f(b, fl.flowchart);
-    std::vector<std::string> locs;  // (apple_trees.scan's slots: every one placed)
-    yyjson_obj_iter pit = yyjson_obj_iter_with(d.raw("placements"));
-    for (yyjson_val *k; (k = yyjson_obj_iter_next(&pit));)
-        if (starts(jstr(k), "apple-tree-")) locs.push_back(jstr(k));
-    std::sort(locs.begin(), locs.end());
+    std::map<std::string, AppleTree> trees;  // (by room: where each slot's item lands, the tree's key)
+    for (AppleTree &t : apple_scan(b)) trees[t.room] = t;
+    std::string rows = "# location\tindex\tkind\tlevel\troom\tx\ty\tz\tmodel\tname\tentry\tflag\tflag index\tshell\tscale"
+                       "\tturn\ttree\tslot  (tools/rando/apple_trees.py)\n",
+                checks;
+    const std::vector<std::string> locs = apple_locs(d);
     std::map<std::tuple<std::string, int, bool>, std::string> tails;
-    for (const std::string &name : locs) {  // apple-tree-<screen>-<slot>
+    for (size_t n = 0; n < locs.size(); n++) {  // apple-tree-<screen>-<slot>
+        const std::string &name = locs[n];
         const std::string flag = "LARApple" + name.substr(11, 3) + name.substr(15);
-        int32_t index = next_flag(sheet);
+        int32_t index = next_flag(b, sheet);
         sheet.values.push_back(flag_row(flag, index));
+        checks += name + "\t" + std::to_string(index) + "\n";
         SeedBuild::ItemInfo it = b.item_info(name, true);
         // (a trap looks like a random real item of the seed: the recorded draw)
         yyjson_val *look = yyjson_obj_get(looks, name.c_str());
         if (ends(it.key, "Trap") && look) it.model_path = jstr(yyjson_arr_get(look, 0)), it.model_name = jstr(yyjson_arr_get(look, 1));
+        auto tree = trees.find("Field_" + name.substr(11, 3));
+        size_t slot = (size_t)atoi(name.substr(15).c_str()) - 1;
+        if (tree == trees.end() || slot >= tree->second.landings.size())
+            throw std::runtime_error("apple trees: no tree for " + name);
+        const auto &xyz = tree->second.landings[slot];
+        double size = 1.0, turn = 0;
+        lookup(MODEL_SIZES, it.model_name, size), lookup(MODEL_ROTATIONS, it.model_name, turn);
+        rows += name + "\t" + std::to_string(100 + n) + "\tapple\tField\t" + tree->first + "\t" + py_g(xyz[0]) + "\t" +
+                py_g(xyz[1]) + "\t" + py_g(xyz[2]) + "\t" + it.model_path + "\t" + it.model_name + "\t" + name + "\t" +
+                flag + "\t" + std::to_string(index) + "\t" + (it.key == "Seashell" ? "1" : "0") + "\t" + py_g(size) +
+                "\t" + py_g(turn) + "\t" + hex_lower(tree->second.key) + "\t" + std::to_string(slot) + "\n";
         bool quick = starts(it.key, "Rup") || quick_item(placed(d, name));
         auto tk = std::make_tuple(it.key, it.index, quick);
         if (!tails.count(tk)) {
@@ -555,11 +777,159 @@ void apple_trees(SeedBuild &b) {
     b.write_sheet("GlobalFlags.gsheet", sheet);
     b.write_sheet("ItemDrop.gsheet", drops);
     b.write_flow("SinkingSword.bfevfl", fl);
+    b.table_write("apple_trees.tsv", rows);  // (INDEX_BASE 100 + n: never a seashell index)
+    b.table_append("check_flags.tsv", checks);
 }
 
 // ======== entrance_logic.apply_rooms (its write_room: las_headless.write_room)
 
+// decide mode: the entrance shuffle's result `ent` ([doors, {door: interior it leads into}, {interior: door it exits
+// to}], None without a tier-2 shuffle). Until the native shuffle feeds the build, it comes from the recorded run's
+// 'post_entrances' checkpoint (Decider::input). nullptr: no shuffle.
+yyjson_doc *post_entrances(SeedBuild &b, Decider &dc, yyjson_val *&ent) {
+    ent = nullptr;
+    const std::string *pe = dc.input("post_entrances.json");
+    if (!pe) {
+        if (setting_int(b.decisions(), "entrance-tier", 0) >= 2) throw std::runtime_error("decide: no post_entrances.json");
+        return nullptr;
+    }
+    yyjson_doc *doc = yyjson_read(pe->data(), pe->size(), 0);
+    if (!doc) throw std::runtime_error("decide: bad post_entrances.json");
+    ent = yyjson_obj_get(yyjson_doc_get_root(doc), "ent");
+    if (!ent || !yyjson_is_arr(ent) || !yyjson_arr_size(ent)) ent = nullptr;  // (`if ent:`)
+    return doc;
+}
+
+// entrance_logic.apply_rooms' base(): re.match(r'(.+_\d\d[A-Z])', r).group(1), else r (greedy: the last such cell)
+std::string zone_base(const std::string &r) {
+    for (size_t p = r.size() >= 4 ? r.size() - 4 : 0; p >= 1 && p + 3 < r.size(); p--) {
+        if (r[p] == '_' && isdigit((unsigned char)r[p + 1]) && isdigit((unsigned char)r[p + 2]) && r[p + 3] >= 'A' && r[p + 3] <= 'Z')
+            return r.substr(0, p + 4);
+        if (p == 1) break;
+    }
+    return r;
+}
+
+LebParam zone_param(yyjson_val *p) {  // (a loading_zones.json parameter as apply_rooms sets it: str -> bytes)
+    if (yyjson_is_str(p)) return str_param(jstr(p));
+    if (yyjson_is_real(p)) return LebParam::of_float(yyjson_get_real(p));
+    return LebParam::of_int((uint32_t)yyjson_get_sint(p));
+}
+Value param_value(const LebParam &p) {  // (as the record writes it: bytes decoded)
+    if (p.kind == LebParam::Str) return Value(std::string(p.s.begin(), p.s.end()));
+    if (p.kind == LebParam::Float) return Value(p.f);
+    return Value((long long)p.i);
+}
+
+// decide mode: entrance_logic.apply_rooms - door d's field zone gets interior entry[d]'s entry parameters, every zone
+// of interior t leading back outside gets the return parameters of interior exit[t]; each room it writes, in order,
+// with the zones that changed against the room as it was
+void decide_entrance_rooms(SeedBuild &b, Decider &dc) {
+    yyjson_val *ent;
+    yyjson_doc *doc = post_entrances(b, dc, ent);
+    if (!ent) {
+        yyjson_doc_free(doc);
+        return;
+    }
+    const std::string zj = loading_zones_json();
+    yyjson_doc *zdoc = yyjson_read(zj.data(), zj.size(), 0);
+    yyjson_val *zones = yyjson_doc_get_root(zdoc);
+    auto zone_params = [&](const std::string &room, int64_t index) -> yyjson_val * {
+        size_t i, n;
+        yyjson_val *z;
+        yyjson_arr_foreach(zones, i, n, z)
+            if (jstr(yyjson_arr_get(z, 1)) == room && yyjson_get_sint(yyjson_arr_get(z, 2)) == index) return yyjson_arr_get(z, 3);
+        throw std::runtime_error("entrances: no loading zone " + room + " " + std::to_string(index));
+    };
+    yyjson_val *doors = yyjson_arr_get(ent, 0), *entry = yyjson_arr_get(ent, 1), *exit_ = yyjson_arr_get(ent, 2);
+    std::map<std::string, yyjson_val *> by_id, field, ret_params;
+    std::map<std::string, std::vector<std::pair<std::string, int64_t>>> returns;
+    size_t i, n;
+    yyjson_val *d;
+    yyjson_arr_foreach(doors, i, n, d) {
+        const std::string id = jstr(yyjson_obj_get(d, "id"));
+        by_id[id] = d;
+        field[id] = zone_params(jstr(yyjson_obj_get(d, "field_room")), yyjson_get_sint(yyjson_obj_get(d, "zone_index")));
+        yyjson_val *rz = yyjson_obj_get(d, "return_zone");
+        auto &ret = returns[id];
+        if (jstr(yyjson_obj_get(d, "type")) == "connector") {  // (several doors of one cave: the zone named per door)
+            std::vector<yyjson_val *> rzs = {rz};
+            yyjson_val *other = yyjson_obj_get(d, "other_return_zones");
+            if (!py_truthy(other)) other = yyjson_is_obj(rz) ? yyjson_obj_get(rz, "other_return_zones") : nullptr;
+            size_t k, kn;
+            yyjson_val *o;
+            if (py_truthy(other)) yyjson_arr_foreach(other, k, kn, o) rzs.push_back(o);
+            for (yyjson_val *r : rzs) ret.push_back({jstr(yyjson_obj_get(r, "room")), yyjson_get_sint(yyjson_obj_get(r, "index"))});
+            ret_params[id] = zone_params(ret[0].first, ret[0].second);
+            continue;
+        }
+        const std::string to = zone_base(py_truthy(rz) ? jstr(yyjson_obj_get(rz, "target")) : jstr(yyjson_obj_get(d, "field_room")));
+        const std::string level = jstr(yyjson_obj_get(d, "dest_level"));
+        size_t k, kn;
+        yyjson_val *z;
+        yyjson_arr_foreach(zones, k, kn, z) {
+            yyjson_val *ps = yyjson_arr_get(z, 3);
+            if (jstr(yyjson_arr_get(z, 0)) != level || jstr(yyjson_arr_get(ps, 0)) != "Field" ||
+                zone_base(jstr(yyjson_arr_get(ps, 1))) != to)
+                continue;
+            if (ret.empty()) ret_params[id] = ps;
+            ret.push_back({jstr(yyjson_arr_get(z, 1)), yyjson_get_sint(yyjson_arr_get(z, 2))});
+        }
+    }
+    std::vector<std::pair<std::string, std::vector<std::pair<int64_t, yyjson_val *>>>> edits;  // (dicts in order)
+    auto edit = [&](const std::string &room, int64_t idx, yyjson_val *params) {
+        auto e = std::find_if(edits.begin(), edits.end(), [&](const auto &x) { return x.first == room; });
+        if (e == edits.end()) edits.push_back({room, {}}), e = edits.end() - 1;
+        auto z = std::find_if(e->second.begin(), e->second.end(), [&](const auto &x) { return x.first == idx; });
+        if (z == e->second.end()) e->second.push_back({idx, params});
+        else z->second = params;
+    };
+    yyjson_obj_iter it = yyjson_obj_iter_with(entry);
+    for (yyjson_val *k; (k = yyjson_obj_iter_next(&it));) {
+        yyjson_val *door = by_id.at(jstr(k));
+        edit(jstr(yyjson_obj_get(door, "field_room")), yyjson_get_sint(yyjson_obj_get(door, "zone_index")),
+             field.at(jstr(yyjson_obj_iter_get_val(k))));
+    }
+    it = yyjson_obj_iter_with(exit_);
+    for (yyjson_val *k; (k = yyjson_obj_iter_next(&it));) {
+        const std::string c = jstr(yyjson_obj_iter_get_val(k));
+        if (!ret_params.count(c)) continue;
+        for (const auto &r : returns[jstr(k)]) edit(r.first, r.second, ret_params[c]);
+    }
+    Value out = Value::new_list();
+    for (const auto &e : edits) {
+        const std::string path = room_path(room_level(e.first), e.first);
+        LebRoom before = read_room_at(b, path), after = read_room_at(b, path);
+        std::vector<LebActor *> zb, za;
+        for (LebActor &a : before.actors)
+            if (a.type == 0x190) zb.push_back(&a);
+        for (LebActor &a : after.actors)
+            if (a.type == 0x190) za.push_back(&a);
+        for (const auto &ze : e.second) {
+            if (ze.first < 0 || (size_t)ze.first >= za.size()) continue;
+            size_t pi, pn;
+            yyjson_val *p;
+            yyjson_arr_foreach(ze.second, pi, pn, p)
+                if (pi < 8) za[(size_t)ze.first]->params[pi] = zone_param(p);
+        }
+        Value changed = Value::new_list();
+        for (size_t z = 0; z < za.size(); z++) {
+            bool same = true;
+            for (int p = 0; p < 8; p++) same = same && za[z]->params[p] == zb[z]->params[p];
+            if (same) continue;
+            Value ps = Value::new_list();
+            for (int p = 0; p < 8; p++) ps.list().push_back(param_value(za[z]->params[p]));
+            changed.list().push_back(Value(List{Value((long long)z), ps}));
+        }
+        out.list().push_back(Value(List{Value(e.first), changed}));
+    }
+    yyjson_doc_free(zdoc);
+    yyjson_doc_free(doc);
+    dc.set_ours_world("entrance-rooms", out.json());
+}
+
 void entrance_rooms(SeedBuild &b) {
+    if (Decider *dc = b.decider()) decide_entrance_rooms(b, *dc);
     size_t i, n, j, m;
     yyjson_val *e, *z;
     yyjson_arr_foreach(ow(b, "entrance-rooms"), i, n, e) {
@@ -588,6 +958,15 @@ void entrance_rooms(SeedBuild &b) {
 
 // entrance_logic.raft_shop_to_dock: the paid ride starts at the vanilla dock whatever the shop's exit
 void raft_shop(SeedBuild &b) {
+    if (Decider *dc = b.decider()) {  // (decide mode: the shop's exit shuffled)
+        yyjson_val *ent;
+        yyjson_doc *doc = post_entrances(b, *dc, ent);
+        if (ent) {
+            const char *to = yyjson_get_str(yyjson_obj_get(yyjson_arr_get(ent, 2), "raft-shop"));
+            dc->set_ours_world("raft-shop-moved", to && strcmp(to, "raft-shop") ? "true" : "false");
+        }
+        yyjson_doc_free(doc);
+    }
     if (!yyjson_get_bool(ow(b, "raft-shop-moved"))) return;
     const std::string path = "region_common/event/RaftShopMan.bfevfl";
     if (!b.files().count(path)) {  // (a copy of the game's first)
@@ -743,7 +1122,7 @@ void miniboss_guard(SeedBuild &b) {
     for (const GStruct &v : sheet.values)
         if (at(v, "symbol").s == "OverworldMinibossMarker") idx = flag_index(v);
     if (idx < 0) {
-        idx = next_flag(sheet);
+        idx = next_flag(b, sheet);
         sheet.values.push_back(flag_row("OverworldMinibossMarker", idx));
         b.write_sheet("GlobalFlags.gsheet", sheet);
     }
@@ -847,9 +1226,7 @@ void chest_sweep(SeedBuild &b) {
 // ======== environments.apply: each room's environment preset another of its kind (top-down / side view)
 
 void environments(SeedBuild &b) {
-    yyjson_val *picks = ow(b, "environments");
-    if (!picks) return;
-    static const std::set<std::string> topdown = {
+    static const std::vector<std::string> topdown = {
         "AncientRuins", "AncientRuins2", "AncientRuinsDark", "Banana", "Bear", "BedRoom", "Cemetery", "Christine",
         "Crane", "Cucco", "Default", "Desert", "Dog", "DreamShrine", "DrWright", "DungeonSmall", "DungeonSmallTalTal",
         "DungeonSmallUnderground", "DungeonSmallWater", "DungeonSmallWaterDark", "Event1", "Event2", "EventEnding",
@@ -861,11 +1238,28 @@ void environments(SeedBuild &b) {
         "Lv09BaseDark", "Lv10Base", "Lv11Base", "Madam", "MadBattersWell", "Magic", "MagicDark", "MagicField",
         "MamuCave", "MamuCaveDark", "MarinTarin", "MoriblinCave", "MysteriousForest", "Photo", "Quaduplet", "Rabbit",
         "RapidFlow", "RapidsRide", "Richard", "Schule", "Seashell", "Shop", "TalTalMountain", "TelBox",
-        "ToronboShores", "Tracy", "Ulrira", "Underwater", "Zora"};  // (environments.TOPDOWN_ENVIRONMENTS)
-    static const std::set<std::string> side = {
+        "ToronboShores", "Tracy", "Ulrira", "Underwater", "Zora"};  // (environments.TOPDOWN_ENVIRONMENTS, in order)
+    static const std::vector<std::string> side = {
         "Angler", "KanaletCastleEnter", "Lv01Side", "Lv02Side", "Lv02Side2", "Lv03Side", "Lv04Side", "Lv04Side2",
         "Lv04Side3", "Lv05Side", "Lv05Side2", "Lv06Side", "Lv07Side", "Lv08Side", "Lv08Side2", "Lv08Side3",
         "MamboCave"};  // (environments.SIDESCROLLER_ENVIRONMENTS)
+    auto in = [](const std::vector<std::string> &l, const std::string &t) { return std::find(l.begin(), l.end(), t) != l.end(); };
+    if (Decider *dc = b.decider()) {  // (decide mode: the same draws over the same files, before any is written)
+        PyRandom rng = dc->stream("environments");
+        Value picks = Value::new_list();
+        for (const std::string &lv : b.list_game("region_common/level")) {
+            std::string bytes;
+            if (!b.read_bytes("region_common/level/" + lv + "/" + lv + ".lvb", bytes)) continue;
+            for (const LvbZone &z : LvbLevel::parse(bytes).zones) {
+                const std::string t(z.room_type.begin(), z.room_type.end());
+                if (in(topdown, t)) picks.list().push_back(Value(rng.choice(topdown)));
+                else if (in(side, t)) picks.list().push_back(Value(rng.choice(side)));
+            }
+        }
+        dc->set_ours_world("environments", picks.json());
+    }
+    yyjson_val *picks = ow(b, "environments");
+    if (!picks) return;
     size_t next = 0;
     for (const std::string &lv : b.list_game("region_common/level")) {
         const std::string path = "region_common/level/" + lv + "/" + lv + ".lvb";
@@ -875,7 +1269,7 @@ void environments(SeedBuild &b) {
         bool edited = false;
         for (LvbZone &z : level.zones) {
             const std::string t(z.room_type.begin(), z.room_type.end());
-            if (!topdown.count(t) && !side.count(t)) continue;
+            if (!in(topdown, t) && !in(side, t)) continue;
             const std::string pick = jstr(yyjson_arr_get(picks, next++));
             if (pick.empty()) throw std::runtime_error("environments: fewer draws recorded than rooms");
             z.room_type = Bytes(pick.begin(), pick.end());

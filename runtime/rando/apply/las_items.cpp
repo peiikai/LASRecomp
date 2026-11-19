@@ -711,6 +711,7 @@ void chest_contents(SeedBuild &b) {
     std::string aspect = d.setting_str("chest-aspect");
     if (aspect == "camc")  // (its texture models are copied from LAS's resources: not ported)
         throw std::runtime_error("las: chest-aspect camc isn't ported");
+    decide_chest_looks(b);
     yyjson_val *looks = d.raw("chest-looks");  // LAS Recomp chest looks (mod_generator.CHEST_LOOK)
     auto look = [&](const std::string &room) {
         yyjson_val *v = room.empty() ? yyjson_obj_get(looks, "panel") : yyjson_obj_get(yyjson_obj_get(looks, "rooms"), room.c_str());

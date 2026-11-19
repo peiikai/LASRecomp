@@ -22,6 +22,7 @@ extern const StrTable DUNGEON, DUNGEON_KEY, LEVEL_DUNGEON, AREA, ITEM, DUNGEON_I
 extern const ListTable AREA_WORDS;
 extern const std::vector<const char *> PLURAL, BOSSES;
 extern const std::vector<std::pair<const char *, bool>> GET_TEXT, DONE_TEXT;
+extern const StrTable ACTOR_NAME;  // (the landmarks' Field actor name prefixes)
 // seed_hints.py
 extern const StrTable FIELD_OWLS, DUNGEON_OWLS, SPLIT, QUEST_EN, QUEST_LABEL;
 extern const text::TextTable T;

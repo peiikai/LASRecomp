@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A seed built natively (`lasrando dump`: what the runtime serves) against the same seed made by the Python generator
 (docs/randomizer.md, stage 3). Every game file the generator wrote must be there with the same bytes, and nothing
-else; files only steps not yet ported write are listed apart.
+else; files only steps not yet ported write are listed apart. The seed's tables (seed.json "tables": pots.tsv, flags_ext,
+...) too, each the same as the folder's.
 
 usage: python3 tools/rando/test_apply.py <romfs> <seed folder made by las_headless.py> [...]
 (the seed folder holds decisions.json, romfs/ and exefs/). Exit status 1 on any difference. Needs `make lasrando`.
@@ -16,6 +17,11 @@ TOOL = os.path.join(ROOT, 'build', 'lasrando.exe' if os.name == 'nt' else 'lasra
 # written by steps that are not ported yet (stage 4: textures, the title logo, dungeon room shuffle)
 NOT_PORTED = ('romfs/region_common/ui/StartUp.arc', 'romfs/region_common/actor/ObjTreasureBoxKey.bfres',
               'romfs/region_common/actor/ObjTreasureBoxPlain.bfres')
+# the tables the steps write (runtime/rando/apply/decide_check.cpp SEED_TABLES); hints.tsv needs hint_steps.json's step
+# numbers, which the decisions don't hold: made in decide mode only (lasrando decide-check)
+TABLES = ('pots.tsv', 'bushes.tsv', 'rocks.tsv', 'digs.tsv', 'shell_spots.tsv', 'apple_trees.tsv', 'shopsanity.tsv',
+          'souls.tsv', 'triforce.tsv', 'quick_pickups.tsv', 'flags.tsv', 'flags_ext', 'roam.tsv',
+          'enemies_random.tsv', 'check_flags.tsv')
 
 
 def files(top):
@@ -62,8 +68,19 @@ def main():
             for rel in sorted(set(got) - set(want)):
                 extra += 1
                 notes.append(f'extra {rel}')
+            tsame = 0
+            for t in TABLES:
+                w, g = os.path.join(seed, t), os.path.join(out, t)
+                if not os.path.exists(w) and not os.path.exists(g):
+                    continue
+                if os.path.exists(w) and os.path.exists(g) and open(w, 'rb').read() == open(g, 'rb').read():
+                    tsame += 1
+                    continue
+                differ += 1
+                notes.append(f'table {t}: ' + ('missing' if not os.path.exists(g) else 'extra' if not os.path.exists(w)
+                                                else 'differs'))
             print(f'{os.path.basename(seed.rstrip("/"))}: {same} files the same, {differ} different, {missing} missing,'
-                  f' {extra} extra ({later} from steps not ported yet)')
+                  f' {extra} extra ({later} from steps not ported yet); {tsame} tables the same')
             for n in notes[:8]:
                 print('   ', n)
             bad += differ + missing + extra

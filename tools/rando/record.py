@@ -141,7 +141,7 @@ def checkpoint(name, obj):
     if not _dir:
         return
     with _real_open(os.path.join(_dir, name + '.json'), 'w') as f:
-        json.dump(_ordered(obj), f)
+        json.dump(_ordered(obj), f, default=repr)  # (anything else JSON can't hold: as Python prints it)
 
 
 def _plain(v):

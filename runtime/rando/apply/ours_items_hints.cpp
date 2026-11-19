@@ -4,7 +4,12 @@
 // What the solver worked out comes from the decisions (tools/rando/record_ours_items.py): "hint-sheet" (the steps as
 // hint_sheet.apply's texts see them: landmarks and shuffled doors filled in, and the ways into the dungeons) and
 // "seed-hints" (seed_hints.json's hints, door names, the ways in). The texts are composed here as the Python does,
-// tables from ours_items_hints_data.cpp (tools/rando/export_ours_items_hints.py).
+// tables from ours_items_hints_data.cpp (tools/rando/export_ours_items_hints.py). Decide mode makes the two decisions
+// first (ours_items_decide.cpp).
+//
+// hints.tsv (the runtime's steps: entry, location, item, copy n, the gated groups it needs) takes the copy numbers and
+// needs from hint_steps.json, which the decisions don't hold: it is made only when the build has that file (decide
+// mode: Decider::input).
 //
 // Python quirks kept (each makes the same file):
 //   - hint_sheet._src / seed_hints._flow_path copy a game file into the seed before reading it: a write of the game's
@@ -21,6 +26,7 @@
 #include <stdexcept>
 
 #include "../../../third_party/yyjson/yyjson.h"
+#include "decide.h"
 #include "ours_items_hints_data.h"
 #include "ours_items_lib.h"
 
@@ -575,6 +581,10 @@ void show_entries(SeedBuild &b, const std::string &file, const std::vector<std::
 }  // namespace
 
 void hint_sheet_apply(SeedBuild &b) {
+    if (b.decider()) {
+        std::string rec = decide_hint_sheet(b);
+        if (!rec.empty()) b.decider()->set("hint-sheet", rec);
+    }
     yyjson_val *hs = b.decisions().raw("hint-sheet");
     if (!hs) return;  // (no hint_steps.json)
     std::vector<Step> steps;
@@ -652,6 +662,26 @@ void hint_sheet_apply(SeedBuild &b) {
         }
         write_msbt(b, rel, m);
     }
+
+    // hints.tsv: S <entry> <location> <item> <copy n> <gated groups it needs, or ->; D <entry>
+    const std::string *sj = b.decider() ? b.decider()->input("hint_steps.json") : nullptr;
+    if (!sj) return;
+    yyjson_doc *doc = yyjson_read(sj->data(), sj->size(), 0);
+    if (!doc) throw std::runtime_error("hint sheet: bad hint_steps.json");
+    std::string tsv;
+    size_t i = 0;
+    yyjson_val *st;
+    yyjson_arr_iter si = yyjson_arr_iter_with(yyjson_obj_get(yyjson_doc_get_root(doc), "steps"));
+    while ((st = yyjson_arr_iter_next(&si)) && i < steps.size()) {
+        std::string needs;
+        yyjson_val *nv;
+        yyjson_arr_iter ni = yyjson_arr_iter_with(yyjson_obj_get(st, "needs"));
+        while ((nv = yyjson_arr_iter_next(&ni))) needs += (needs.empty() ? "" : ",") + std::string(yyjson_get_str(nv));
+        tsv += "S\t" + names[i++] + "\t" + jstr(st, "loc") + "\t" + jstr(st, "item") + "\t" +
+               std::to_string(yyjson_get_sint(yyjson_obj_get(st, "n"))) + "\t" + (needs.empty() ? "-" : needs) + "\n";
+    }
+    yyjson_doc_free(doc);
+    b.table_write("hints.tsv", tsv + "D\t" + DONE + "\n");
 }
 
 // ======== seed_hints.py
@@ -902,6 +932,7 @@ void phone_flow(SeedBuild &b, size_t n) {
         }
         if (!any) throw std::runtime_error("seed hints: no flags");  // (max() of nothing)
         if (top + 1 >= 3800) throw std::runtime_error("out of GlobalFlags indices");
+        if (top + 1 >= 2048) b.table_append("flags_ext", "event flag " + std::to_string(top + 1) + "\n");  // (flags_ext.c)
         sheet.values.push_back({{"symbol", las::gs(fl)}, {"index", las::gi(top + 1)}});
     }
     b.write_sheet("GlobalFlags.gsheet", sheet);
@@ -952,6 +983,10 @@ std::string phone_opening(const std::string &raw) {
 }  // namespace
 
 void seed_hints_apply(SeedBuild &b) {
+    if (b.decider()) {
+        std::string rec = decide_seed_hints(b);
+        if (!rec.empty()) b.decider()->set("seed-hints", rec);
+    }
     yyjson_val *sh = b.decisions().raw("seed-hints");
     if (!sh) return;  // (no seed_hints.json)
     std::vector<Hint> hints;

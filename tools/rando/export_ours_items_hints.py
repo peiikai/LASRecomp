@@ -96,6 +96,7 @@ def generate():
     L.append(str_list('BOSSES', sorted(hs['BOSSES'])))
     L.append(segs('GET_TEXT', hs['GET_TEXT']))
     L.append(segs('DONE_TEXT', hs['DONE_TEXT']))
+    L.append(str_table('ACTOR_NAME', {k.decode(): v for k, v in hs['ACTOR_NAME'].items()}))
     L.append('// seed_hints.py')
     for n in ('FIELD_OWLS', 'DUNGEON_OWLS', 'SPLIT', 'QUEST_EN', 'QUEST_LABEL'):
         L.append(str_table(n, sh[n]))

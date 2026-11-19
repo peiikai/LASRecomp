@@ -25,6 +25,8 @@ void pets_apply(SeedBuild &b);
 void escape_bottle_apply(SeedBuild &b);
 void souls_apply(SeedBuild &b);  // ours_items_souls.cpp
 void triforce_apply(SeedBuild &b);
+void souls_write_spots(SeedBuild &b);
+void triforce_write_spots(SeedBuild &b);
 void hint_sheet_apply(SeedBuild &b);  // ours_items_hints.cpp
 void seed_hints_apply(SeedBuild &b);
 void keysanity_text_apply(SeedBuild &b);  // ours_items_texts.cpp
@@ -32,6 +34,14 @@ void refill_gets_apply(SeedBuild &b);
 void bomb_bag_text_apply(SeedBuild &b);
 void powder_bag_text_apply(SeedBuild &b);
 void silent_pickups_apply(SeedBuild &b);
+void quick_pickups_apply(SeedBuild &b);  // ours_items_tables.cpp
+void seed_tables_write_flags(SeedBuild &b);
+
+// decide mode (decide.h; ours_items_decide.cpp): the decisions hint_sheet.apply / seed_hints.apply record, made from
+// hint_steps.json / seed_hints.json and the entrance shuffle as their Python makes them (JSON text; "" when the
+// Python records nothing)
+std::string decide_hint_sheet(SeedBuild &b);
+std::string decide_seed_hints(SeedBuild &b);
 
 }  // namespace ours
 }  // namespace rando

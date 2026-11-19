@@ -10,7 +10,8 @@
 //   lasrando dump <romfs> <decisions.json> <out folder>
 //                                                  the seed's game-file changes, built in memory as the game will
 //                                                  (every ported step in the generator's order), written to
-//                                                  <out>/romfs and <out>/exefs: what the runtime serves
+//                                                  <out>/romfs and <out>/exefs: what the runtime serves, and
+//                                                  the seed's tables (<out>/pots.tsv, ...)
 //   lasrando check-steps <romfs> <decisions.json> <record folder>
 //                                                  each ported generator step (runtime/rando/apply/) run from the
 //                                                  Python's state just before it (tools/rando/record.py's write log)
@@ -19,6 +20,10 @@
 //                                                  the native item fill (runtime/rando/solve/) from a recorded run's
 //                                                  state before LAS's fill, compared with what the Python made
 //                                                  (placements, indexes, random state, settings)
+//   lasrando decide-check <romfs> <record folder> <seed folder> [<out>]
+//                                                  the seed built in decide mode (runtime/rando/apply/decide.h) from
+//                                                  the fill's result, against the Python's: decisions.json (every
+//                                                  field), the tables and the files (decide_check.h)
 //
 // Build: make lasrando (build/lasrando).
 #include <stdio.h>
@@ -38,9 +43,13 @@
 #include "../runtime/rando/fmt/msbt.h"
 #include "../runtime/rando/fmt/sarc.h"
 #include "../runtime/rando/fmt/lvb.h"
+#include "../runtime/rando/apply/decide_check.h"
 #include "../runtime/rando/apply/seed_build.h"
 #include "../runtime/rando/seed.h"
 #include "../runtime/rando/solve/check.h"
+#include "../runtime/rando/solve/outputs.h"
+#include "../runtime/rando/solve/prepare.h"
+#include "../runtime/rando/solve/entrances.h"
 #include "../third_party/yyjson/yyjson.h"
 
 static int usage(void) {
@@ -48,7 +57,8 @@ static int usage(void) {
                     "       lasrando get <seed folder> <key>...\n"
                     "       lasrando dump <romfs> <decisions.json> <out folder>\n"
                     "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n"
-                    "       lasrando solve-check <prefill.json> <postfill.json>\n");
+                    "       lasrando solve-check <prefill.json> <postfill.json>\n"
+                    "       lasrando decide-check <romfs> <record folder> <seed folder> [<out folder>]\n");
     return 2;
 }
 
@@ -190,15 +200,21 @@ static int dump(const std::string &romfs, const std::string &decisions, const st
         mkdirs(dst);
         std::ofstream(dst, std::ios::binary) << f.second;
     }
+    mkdirs(out + "/x");
+    for (const auto &t : b.tables()) std::ofstream(out + "/" + t.first, std::ios::binary) << t.second;  // (seed.json "tables")
     fprintf(stderr, "%zu files, %zu writes\n", b.files().size(), b.writes().size());
     return 0;
 }
 
 int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "dump")) return dump(argv[2], argv[3], argv[4]);
+    if (argc >= 4 && !strcmp(argv[1], "entrances-check")) return rando::solve::entrances_check(argv[2], argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "check-steps")) return check_steps(argv[2], argv[3], argv[4]);
     if (argc >= 4 && !strcmp(argv[1], "repack")) return repack(argv[2], argv[3]);
+    if (argc >= 5 && !strcmp(argv[1], "decide-check")) return rando::decide_check(argv[2], argv[3], argv[4], argc > 5 ? argv[5] : "");
     if (argc >= 4 && !strcmp(argv[1], "solve-check")) return rando::solve::solve_check(argv[2], argv[3]);
+    if (argc >= 5 && !strcmp(argv[1], "outputs-check")) return rando::solve::outputs_check(argv[2], argv[3], argv[4]);
+    if (argc >= 5 && !strcmp(argv[1], "prepare-check")) return rando::solve::prepare_check(argv[2], argv[3], argv[4]);
     if (argc < 3) return usage();
     const RandoSeed *s = rando_seed_load(argv[2]);
     if (!s) { fprintf(stderr, "%s: no seed there\n", argv[2]); return 1; }

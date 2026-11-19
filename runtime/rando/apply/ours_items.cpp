@@ -1,5 +1,6 @@
 // LAS Recomp's item steps: shopsanity, trendsanity, pets, souls, Triforce, Escape Bottle, Hint Sheet, hints, keysanity / bag texts, refills, silent and quick pickups: the generator's steps ported (seed_build.h); each makes exactly the writes its Python does
-// (lasrando check-steps, tools/rando/test_apply.py).
+// (lasrando check-steps, tools/rando/test_apply.py), and the seed's tables it writes (shopsanity.tsv, souls.tsv,
+// triforce.tsv, hints.tsv, quick_pickups.tsv, flags.tsv and their lines of check_flags.tsv / flags_ext).
 //
 // Each step is one call of las_headless.py into a tools/rando module; its name lists the functions the write log
 // names its writes by (the innermost writing one): "a|b" (writes from the first one named a on), "p>a|b" (and writes
@@ -26,6 +27,11 @@ std::vector<BuildStep> steps_ours_items() {
         {"bomb_bag_text.apply|bomb_bag_text.add_message", bomb_bag_text_apply},
         {"powder_bag_text.apply|bomb_bag_text.add_message", powder_bag_text_apply},
         {"silent_pickups._flow", silent_pickups_apply},
+        // (tables only: no file writes)
+        {"souls.write_spots", souls_write_spots},
+        {"triforce.write_spots", triforce_write_spots},
+        {"quick_pickups.apply", quick_pickups_apply},
+        {"seed_tables.write_flags", seed_tables_write_flags},
     };
 }
 

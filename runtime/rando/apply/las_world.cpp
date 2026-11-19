@@ -2,12 +2,12 @@
 // Dungeon's blue rupees, dungeon entrances and their map icons, level configs, music, enemies, open Mabe, water zones,
 // the rapids, the code patches: the generator's steps ported (seed_build.h); each makes exactly the writes its Python
 // does (lasrando check-steps, tools/rando/test_apply.py). Ported from LAS-Randomizer's RandomizerCore/mod_generator.py
-// and Randomizers/{small_keys, golden_leaves, heart_pieces, instruments, owls, tunic_swap, rupees, enemies}.py, with
-// LAS Recomp's additions there (mini-boss kits and rails, remove_actors, dungeon exits) (MIT, Owen-Splat and
-// contributors).
+// and Randomizers/{small_keys, golden_leaves, heart_pieces, instruments, owls, tunic_swap, rupees}.py, with LAS
+// Recomp's additions there (dungeon exits) (MIT, Owen-Splat and contributors). The enemies are las_enemies.cpp's.
 //
 // The generator's random draws come from the decisions (tools/rando/record_las_world.py): the trap models, the songs,
-// what randomizeEnemies did to each room's actors ("enemies") and makeExefsPatches' chest enemy ("chest-enemy").
+// what randomizeEnemies did to each room's actors ("enemies") and makeExefsPatches' chest enemy ("chest-enemy"); in
+// decide mode (decide.h) the chest enemy is drawn here.
 // The code patches come assembled from las_world_data.cpp (tools/rando/export_las_world_tables.py).
 //
 // Python quirks kept for the same files:
@@ -25,8 +25,10 @@
 #include <stdexcept>
 
 #include "../../../third_party/yyjson/yyjson.h"
+#include "decide.h"
 #include "item_get.h"
 #include "las_data.h"
+#include "las_enemies.h"
 #include "las_world_data.h"
 #include "steps.h"
 
@@ -107,7 +109,7 @@ void small_key_rooms(SeedBuild &b, Flow &f, bool rooms) {
         const std::string room = kv.first, file = std::string(kv.second) + ".leb";
         LebRoom r;
         if (rooms) r = b.read_room(file);
-        SeedBuild::ItemInfo it = b.item_info(room, rooms);
+        SeedBuild::ItemInfo it = b.item_info(room, rooms, room != "pothole-final");  // (pothole: trap_models)
         if (room == "pothole-final" && rooms) {
             LebActor &act = r.actors.at(42);
             act.type = 0xA9;  // (a small key)
@@ -335,7 +337,7 @@ void instruments(SeedBuild &b) {
     for (const auto &kv : INSTRUMENT_ROOMS) {
         const std::string room = kv.first, file = std::string(kv.second) + ".leb";
         LebRoom r = b.read_room(file);
-        SeedBuild::ItemInfo it = b.item_info(room, true);
+        SeedBuild::ItemInfo it = b.item_info(room, true, true);
         std::string destination;
         const std::string cur = room_level(kv.second);
         if (py_truthy(exits)) {  // (LAS Recomp: dungeon doors mixed with houses - outside its exit door)
@@ -512,7 +514,7 @@ void lv10_rupees(SeedBuild &b) {
     LebRoom r = b.read_room("Lv10ClothesDungeon_08D.leb");
     for (int i = 0; i < 28; i++) {
         const std::string n = std::to_string(i + 1), entry = "Lv10Rupee_" + n;
-        SeedBuild::ItemInfo it = b.item_info("D0-rupee-" + n, true);
+        SeedBuild::ItemInfo it = b.item_info("D0-rupee-" + n, true, true);
         set_rupee_params(r, it.model_path, it.model_name, entry, it.key, i);
         // rupees.makeEventChanges
         f.add_entry_point(entry);
@@ -627,239 +629,6 @@ void event_music(SeedBuild &b) {
     }
 }
 
-// ======== randomizeEnemies (what its draws did: the decisions' "enemies", tools/rando/record_las_world.py)
-
-// LAS Recomp's mini-boss kits (enemies.MINIBOSS_KITS): the arena room and the actor types copied from it
-struct Kit { uint16_t type; const char *arena; std::vector<uint16_t> with; };
-const std::vector<Kit> &kits() {
-    static const std::vector<Kit> k = {
-        {0x5C, "Lv06FaceShrine_05F", {0x1E4}},  // Smasher's iron ball
-        {0x51, "Lv01TailCave_06G", {0x11A}},    // Rolling Bones' spike bar
-        {0x58, "Lv04AnglersTunnel_03E", {}},    // Cue Ball (its rail)
-        {0x57, "Field_13O", {}},                // Lanmola (his rail)
-    };
-    return k;
-}
-const uint8_t KIT_KEY_TAG = 0x6B;  // (copied kit actors get keys of their own)
-const uint16_t RAIL_FIT = 0x58;    // (Cue Ball circles a 4-point rail fitted to the room)
-
-uint32_t crc32(const std::string &s) {  // zlib.crc32
-    uint32_t c = 0xFFFFFFFFu;
-    for (unsigned char ch : s) {
-        c ^= ch;
-        for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1)));
-    }
-    return ~c;
-}
-
-uint16_t get_u16(const Bytes &d, size_t at) { return (uint16_t)read_le(d, at, 2); }
-void set_u16(Bytes &d, size_t at, uint16_t v) { d[at] = (char)(v & 0xFF), d[at + 1] = (char)(v >> 8); }
-void set_u32(Bytes &d, size_t at, uint32_t v) {
-    for (int i = 0; i < 4; i++) d[at + i] = (char)((v >> (8 * i)) & 0xFF);
-}
-void set_f32(Bytes &d, size_t at, double v) {  // struct.pack_into('<f')
-    float f = (float)v;
-    uint32_t u;
-    memcpy(&u, &f, 4);
-    set_u32(d, at, u);
-}
-
-FixedHash &section(LebRoom &r, const char *name) {
-    FhEntry *e = r.fh.find(name);
-    if (!e || !e->sub) throw std::runtime_error(std::string("las: room has no ") + name + " section");
-    return *e->sub;
-}
-
-// enemies.fit_rail: the 4-point rail of the actor becomes the largest rectangle of free tiles with its tile as a
-// corner; the actor moves onto that corner
-void fit_rail(LebRoom &room, size_t mi, FixedHash &points, FhEntry &rail) {
-    const FhEntry *grid = room.fh.find("grid");
-    if (!grid || !grid->sub) return;
-    const FhEntry *data = nullptr, *info = nullptr;
-    for (const FhEntry &e : grid->sub->entries) {
-        if (e.name == "data") data = &e;
-        else if (e.name == "info") info = &e;
-    }
-    if (!info || !data) throw std::runtime_error("las: grid without data / info");
-    const int height = (int)read_le(info->data, 0, 2), width = (int)read_le(info->data, 2, 2);
-    const double ts = read_f32(info->data, 4), gx = read_f32(info->data, 8), gz = read_f32(info->data, 0xC);
-    if (height != 8) return;  // (a side view: 2, or not a grid the Python reads)
-    LebActor &act = room.actors[mi];
-    auto free = [&](int row, int col) {
-        if (!(0 <= row && row < height && 0 <= col && col < width)) return false;
-        size_t t = 0x10 * (size_t)(row * width + col);
-        uint8_t f1 = (uint8_t)read_le(data->data, t, 1), f3 = (uint8_t)read_le(data->data, t + 2, 1);
-        return !((f1 & 2) || (f1 & 1) || (f3 & 4));  // (collision, deep water / lava, water / lava)
-    };
-    const int c0 = (int)((act.pos[0] - gx) / ts), r0 = (int)((act.pos[2] - gz) / ts);
-    int best = -1, bw = 0, bh = 0, bdx = 0, bdz = 0;
-    for (int w = 7; w > 1; w--)
-        for (int h = 5; h > 1; h--)
-            for (const auto &dd : {std::make_pair(1, 1), std::make_pair(1, -1), std::make_pair(-1, 1), std::make_pair(-1, -1)}) {
-                const int dx = dd.first, dz = dd.second;
-                const int cmin = std::min(c0, c0 + dx * w), cmax = std::max(c0, c0 + dx * w);
-                const int rmin = std::min(r0, r0 + dz * h), rmax = std::max(r0, r0 + dz * h);
-                bool ok = true;
-                for (int cc = cmin; cc <= cmax && ok; cc++)
-                    ok = free(r0, cc) && free(r0 + dz * h, cc);
-                for (int rr = rmin; rr <= rmax && ok; rr++)
-                    ok = free(rr, c0) && free(rr, c0 + dx * w);
-                if (ok && (best < 0 || w * h > best)) best = w * h, bw = w, bh = h, bdx = dx, bdz = dz;
-            }
-    if (best < 0) return;
-    auto ctr = [&](int rr, int cc, double &x, double &z) {
-        volatile double px = (cc + 0.5) * ts, pz = (rr + 0.5) * ts;  // (kept apart from the add: the Python rounds twice)
-        x = gx + px, z = gz + pz;
-    };
-    double cx[4], cz[4];
-    ctr(r0, c0, cx[0], cz[0]);
-    ctr(r0 + bdz * bh, c0, cx[1], cz[1]);
-    ctr(r0 + bdz * bh, c0 + bdx * bw, cx[2], cz[2]);
-    ctr(r0, c0 + bdx * bw, cx[3], cz[3]);
-    const size_t n = std::min<size_t>(4, get_u16(rail.data, 0x2C));
-    for (size_t k = 0; k < n; k++) {
-        size_t pi = get_u16(rail.data, 0x30 + 2 * k);
-        Bytes &pd = points.entries.at(pi).data;
-        set_f32(pd, 0, cx[k]), set_f32(pd, 4, act.pos[1] + 0.2), set_f32(pd, 8, cz[k]);
-    }
-    act.pos[0] = cx[0], act.pos[2] = cz[0];
-}
-
-// enemies.add_miniboss_kit: the kit actors of room.actors[mi]'s mini-boss copied from its arena (same offsets, linked
-// as there), every kit actor's rails copied with their points
-void add_miniboss_kit(LebRoom &room, size_t mi, const Kit &kit, LebRoom &arena, const std::string &room_name) {
-    const uint16_t type = room.actors.at(mi).type;
-    size_t src_i = arena.actors.size();
-    for (size_t i = 0; i < arena.actors.size(); i++)
-        if (arena.actors[i].type == type) { src_i = i; break; }
-    if (src_i == arena.actors.size()) throw std::runtime_error("las: no mini-boss in its arena " + std::string(kit.arena));
-    const LebActor src = arena.actors[src_i];
-    std::vector<size_t> take = {src_i};
-    for (size_t i = 0; i < arena.actors.size(); i++)
-        for (uint16_t t : kit.with)
-            if (arena.actors[i].type == t) { take.push_back(i); break; }
-    std::map<size_t, size_t> newidx = {{src_i, mi}};
-    const double ax = room.actors[mi].pos[0], ay = room.actors[mi].pos[1], az = room.actors[mi].pos[2];
-    const uint32_t room_id = room.actors[mi].room_id;
-    const uint64_t crc = crc32(room_name) & 0xFFFFFF;
-    for (size_t t = 1; t < take.size(); t++) {
-        LebActor a = arena.actors[take[t]];
-        a.key = ((uint64_t)KIT_KEY_TAG << 56) | (crc << 32) | ((uint64_t)(room.actors.size() & 0xFFFF) << 16) | (a.key & 0xFFFF);
-        char hex[18];
-        snprintf(hex, sizeof hex, "-%016llX", (unsigned long long)a.key);
-        a.name = a.name.substr(0, a.name.find('-')) + hex;
-        a.pos[0] = ax + (a.pos[0] - src.pos[0]), a.pos[1] = ay + (a.pos[1] - src.pos[1]), a.pos[2] = az + (a.pos[2] - src.pos[2]);
-        a.room_id = room_id;
-        room.actors.push_back(a);
-        newidx[take[t]] = room.actors.size() - 1;
-    }
-    FixedHash &sp = section(arena, "point"), &sr = section(arena, "rail");
-    FixedHash &dp = section(room, "point"), &dr = section(room, "rail");
-    std::map<uint32_t, uint32_t> rail_map, point_map;
-    for (size_t i : take) {
-        const LebLinks &srl = arena.actors[i].links;
-        LebLinks &rl = room.actors[newidx[i]].links;
-        std::vector<LebLinks::ActorLink> s1;
-        for (const auto &s : srl.actors)
-            if (newidx.count(s.actor)) { auto n = s; n.actor = (uint32_t)newidx[s.actor]; s1.push_back(n); }
-        std::vector<uint32_t> s3;
-        for (uint32_t j : srl.ids)
-            if (newidx.count(j)) s3.push_back((uint32_t)newidx[j]);
-        rl.actors = s1, rl.ids = s3;
-        std::vector<LebLinks::RailLink> rails;
-        for (const auto &s2 : srl.rails) {
-            const uint32_t ri = s2.rail;
-            if (!rail_map.count(ri)) {
-                FhEntry rail = sr.entries.at(ri);
-                Bytes &d = rail.data;
-                for (size_t k = 0, n = get_u16(d, 0x2C); k < n; k++) {
-                    const uint16_t pi = get_u16(d, 0x30 + 2 * k);
-                    if (!point_map.count(pi)) {
-                        FhEntry pt = sp.entries.at(pi);
-                        const double x = read_f32(pt.data, 0), y = read_f32(pt.data, 4), z = read_f32(pt.data, 8);
-                        set_f32(pt.data, 0, ax + (x - src.pos[0]));
-                        set_f32(pt.data, 4, ay + (y - src.pos[1]));
-                        set_f32(pt.data, 8, az + (z - src.pos[2]));
-                        dp.entries.push_back(pt);
-                        point_map[pi] = (uint32_t)dp.entries.size() - 1;
-                    }
-                    set_u16(d, 0x30 + 2 * k, (uint16_t)point_map[pi]);
-                }
-                for (size_t k = 0; k < 4; k++)  // (string params point into the names, which repack rebuilds: ints)
-                    set_u32(d, 0xC + 8 * k, 0), set_u32(d, 0x10 + 8 * k, 3);
-                dr.entries.push_back(rail);
-                rail_map[ri] = (uint32_t)dr.entries.size() - 1;
-            }
-            LebLinks::RailLink n = s2;
-            n.rail = rail_map[ri];
-            if (point_map.count(s2.point)) n.point = point_map[s2.point];
-            rails.push_back(n);
-        }
-        rl.rails = rails;
-        rl.x = (uint8_t)rl.actors.size(), rl.y = (uint8_t)rl.ids.size(), rl.z = (uint8_t)rl.rails.size();
-    }
-    LebActor &act = room.actors[mi];
-    if (act.type == RAIL_FIT && !act.links.rails.empty())
-        fit_rail(room, mi, section(room, "point"), section(room, "rail").entries.at(act.links.rails[0].rail));
-}
-
-LebParam json_param(yyjson_val *v) {
-    if (yyjson_is_str(v)) return str_param(yyjson_get_str(v));
-    if (yyjson_is_real(v)) return LebParam::of_float(yyjson_get_real(v));
-    if (yyjson_is_int(v)) return LebParam::of_int((uint32_t)yyjson_get_sint(v));
-    throw std::runtime_error("las: bad enemy parameter in the decisions");
-}
-
-void enemies(SeedBuild &b) {
-    if (!S(b, "randomize-enemies") && !S(b, "randomize-enemy-sizes")) return;
-    yyjson_val *rooms = b.decisions().raw("enemies"), *entry;
-    if (!yyjson_is_arr(rooms)) throw std::runtime_error("las: no enemies recorded (tools/rando/record_las_world.py)");
-    yyjson_arr_iter it = yyjson_arr_iter_with(rooms);
-    std::map<uint16_t, LebRoom> arenas;
-    while ((entry = yyjson_arr_iter_next(&it))) {
-        const char *name = yyjson_get_str(yyjson_arr_get(entry, 0));
-        if (!name) throw std::runtime_error("las: bad enemies entry");
-        const std::string room = name, file = room + ".leb";
-        LebRoom r = b.read_room(file);
-        yyjson_val *acts = yyjson_arr_get(entry, 1), *a;
-        yyjson_arr_iter ai = yyjson_arr_iter_with(acts);
-        while ((a = yyjson_arr_iter_next(&ai))) {
-            const size_t e = (size_t)yyjson_get_uint(yyjson_obj_get(a, "e"));
-            LebActor &act = r.actors.at(e);
-            if (yyjson_obj_get(a, "sw")) act.switches[0] = {4, 0};  // (a stair guard: the stairs stay open)
-            if (yyjson_val *t = yyjson_obj_get(a, "t")) {
-                act.type = (uint16_t)yyjson_get_uint(t);
-                yyjson_val *p = yyjson_obj_get(a, "p");
-                if (yyjson_arr_size(p) != 8) throw std::runtime_error("las: enemy parameters aren't 8 in " + room);
-                for (size_t i = 0; i < 8; i++) act.params[i] = json_param(yyjson_arr_get(p, i));
-                act.links.e = (uint8_t)yyjson_get_uint(yyjson_obj_get(a, "re"));
-                act.rot[1] = 0;  // (facing the screen)
-                act.scale[0] = act.scale[1] = act.scale[2] = 1.0;
-            }
-            if (yyjson_obj_get(a, "m")) {
-                const Kit *kit = nullptr;
-                for (const Kit &k : kits())
-                    if (k.type == act.type) kit = &k;
-                if (kit) {
-                    auto ar = arenas.find(kit->type);
-                    if (ar == arenas.end()) {  // (the game's own room, whatever this seed made of it)
-                        std::string bytes;
-                        if (!b.read_game(SeedBuild::path_of(std::string(kit->arena) + ".leb"), bytes))
-                            throw std::runtime_error(std::string("las: no arena room ") + kit->arena);
-                        ar = arenas.emplace(kit->type, LebRoom::parse(bytes)).first;
-                    }
-                    add_miniboss_kit(r, e, *kit, ar->second, room);
-                }
-            }
-            if (yyjson_val *s = yyjson_obj_get(a, "s")) {
-                LebActor &ac = r.actors.at(e);  // (the kit may have moved the list)
-                ac.scale[0] = ac.scale[1] = ac.scale[2] = yyjson_get_num(s);
-            }
-        }
-        b.write_room(file, r);
-    }
-}
-
 // ======== openMabe: the grass, monsters and rocks in the way out of Mabe Village go
 
 void open_mabe(SeedBuild &b) {
@@ -948,6 +717,9 @@ void exefs_patches(SeedBuild &b) {
     const Decisions &d = b.decisions();
     if (d.setting_str("platform") == "console")  // (LAS Recomp's seeds are always the emulator layout)
         throw std::runtime_error("las: console patches (.ips) aren't made here");
+    if (Decider *dc = b.decider())
+        if (S(b, "randomize-enemies"))  // (assemble.preSetup draws it from the shared stream as it is now)
+            dc->set("chest-enemy", std::to_string(draw_chest_enemy(dc->shared())));
     int chest = -1;
     if (yyjson_val *c = d.raw("chest-enemy")) chest = (int)yyjson_get_sint(c);
     b.write_bytes("exefs/1.0.0.pchtxt", pchtxt(d, "AE16F71E002AF8CB059A9A74C4D90F34BA984892", chest));
@@ -973,11 +745,13 @@ std::vector<BuildStep> steps_las_world() {
         {"mod_generator.changeLevelConfigs", level_configs},
         {"mod_generator.makeMusicChanges", music},
         {"mod_generator.makeEventMusicChanges", event_music},
-        {"mod_generator.randomizeEnemies", enemies},
+        {"mod_generator.randomizeEnemies", randomize_enemies},  // (las_enemies.cpp)
         {"mod_generator.openMabe", open_mabe},
         {"mod_generator.fixWaterLoadingZones", water_zones},
         {"mod_generator.fixRapidsRespawn", rapids_respawn},
         {"mod_generator.makeExefsPatches", exefs_patches},
+        {"roam.write", write_roam},  // (las_enemies.cpp: tables only)
+        {"enemy_random.write", write_enemy_random},
     };
 }
 

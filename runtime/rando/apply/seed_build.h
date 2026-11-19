@@ -5,7 +5,8 @@
 // last written bytes, or the game's when this seed hasn't written it (each read parses afresh: an edit not written
 // back is lost, as there); a write stores the serialised bytes. Steps run in the generator's order, and the event
 // name counter (an added event is named AutoEvent<n>, one counter for the whole seed) runs through all of them.
-// Nothing here draws a random number: the generator's choices come from the decisions.
+// Nothing here draws a random number: the generator's choices come from the decisions (apply mode), or are made by a
+// Decider (decide.h: decide mode).
 #pragma once
 #include <stdint.h>
 
@@ -47,11 +48,20 @@ public:
     // themselves (tools/rando/record_<group>.py)
     yyjson_val *raw(const std::string &field) const;
 
+    // decide mode (decide.h): a field set by the build itself (raw() reads it in place of the loaded one)
+    void set_field(const std::string &field, const std::string &json);
+    void drop_field(const std::string &field);  // (a loaded field the build decides: unread until set)
+    std::vector<std::string> field_names() const;  // (sorted)
+
 private:
+    std::map<std::string, yyjson_doc *> set_;
+    std::map<std::string, bool> dropped_;
     yyjson_doc *doc_ = nullptr;
     yyjson_val *root_ = nullptr;
     std::map<std::string, ItemDef> defs_;
 };
+
+class Decider;
 
 class SeedBuild {
 public:
@@ -61,6 +71,23 @@ public:
     SeedBuild(GameRead game, const Decisions &d) : game_(std::move(game)), d_(d) {}
 
     const Decisions &decisions() const { return d_; }
+    // decide mode (decide.h): nullptr in apply mode
+    void set_decider(Decider *dc) { dc_ = dc; }
+    Decider *decider() const { return dc_; }
+
+    // the seed folder's tables (<seed>/<name>: pots.tsv, flags_ext, ...; seed.json "tables"), as the generator writes
+    // them: open(name, 'w') / open(name, 'a') / os.remove
+    void table_write(const std::string &name, const std::string &text) { tables_[name] = text; }
+    void table_append(const std::string &name, const std::string &text) { tables_[name] += text; }
+    void table_remove(const std::string &name) { tables_.erase(name); }
+    const std::string *table(const std::string &name) const {
+        auto it = tables_.find(name);
+        return it == tables_.end() ? nullptr : &it->second;
+    }
+    const std::map<std::string, std::string> &tables() const { return tables_; }
+    // what a step leaves for a later one of this build, by name (the generator's in-memory values, such as
+    // mod_generator.enemy_random for enemy_random.write): not part of the seed
+    std::map<std::string, std::string> &carry() { return carry_; }
 
     // the romfs path of a file the generator names by its file name alone (mod_generator.getRelativeDir)
     static std::string path_of(const std::string &file_name);
@@ -91,8 +118,9 @@ public:
 
     // mod_generator.getItemInfo: the item at a check, its index, and (with_model) its model - a trap's from the
     // decisions (the generator drew it there, once per call)
+    // (dungeon: the pool getItemInfo gets is dungeon_trap_models - small keys, instruments, the Color Dungeon's rupees)
     struct ItemInfo { std::string key; int index = -1; std::string model_path, model_name; };
-    ItemInfo item_info(const std::string &check, bool with_model);
+    ItemInfo item_info(const std::string &check, bool with_model, bool dungeon = false);
     uint32_t idgen() const { return idgen_; }
 
     // the generator's state at a point of its run (the parity checks start a step there): files already written and
@@ -110,6 +138,9 @@ private:
     GameRead game_;
     GameList list_;
     const Decisions &d_;
+    Decider *dc_ = nullptr;
+    std::map<std::string, std::string> tables_;
+    std::map<std::string, std::string> carry_;
     std::map<std::string, std::string> files_;  // path -> bytes written
     std::vector<Write> log_;
     uint32_t idgen_ = 0;

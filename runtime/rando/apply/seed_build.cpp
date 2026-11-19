@@ -7,11 +7,15 @@
 #include <stdexcept>
 
 #include "../../../third_party/yyjson/yyjson.h"
+#include "decide.h"
 
 namespace rando {
 
 // ---- decisions
-Decisions::~Decisions() { yyjson_doc_free(doc_); }
+Decisions::~Decisions() {
+    yyjson_doc_free(doc_);
+    for (auto &f : set_) yyjson_doc_free(f.second);
+}
 
 bool Decisions::load(const std::string &json) {
     yyjson_doc_free(doc_);
@@ -64,7 +68,33 @@ bool Decisions::trap_model(const std::string &check, size_t n, std::string &path
     return true;
 }
 
-yyjson_val *Decisions::raw(const std::string &field) const { return yyjson_obj_get(root_, field.c_str()); }
+yyjson_val *Decisions::raw(const std::string &field) const {
+    auto it = set_.find(field);
+    if (it != set_.end()) return yyjson_doc_get_root(it->second);
+    if (dropped_.count(field)) return nullptr;
+    return yyjson_obj_get(root_, field.c_str());
+}
+
+void Decisions::set_field(const std::string &field, const std::string &json) {
+    yyjson_doc *doc = yyjson_read(json.data(), json.size(), 0);
+    if (!doc) throw std::runtime_error("decide: bad JSON for " + field);
+    auto it = set_.find(field);
+    if (it != set_.end()) yyjson_doc_free(it->second), set_.erase(it);
+    set_[field] = doc;
+}
+
+void Decisions::drop_field(const std::string &field) { dropped_[field] = true; }
+
+std::vector<std::string> Decisions::field_names() const {
+    std::vector<std::string> v;
+    yyjson_val *k;
+    yyjson_obj_iter it = yyjson_obj_iter_with(root_);
+    while ((k = yyjson_obj_iter_next(&it)))
+        if (!dropped_.count(yyjson_get_str(k)) && !set_.count(yyjson_get_str(k))) v.push_back(yyjson_get_str(k));
+    for (const auto &f : set_) v.push_back(f.first);
+    std::sort(v.begin(), v.end());
+    return v;
+}
 
 // ---- files
 std::string SeedBuild::path_of(const std::string &f) {
@@ -111,7 +141,7 @@ std::vector<std::string> SeedBuild::list_written(const std::string &dir) const {
     return names;  // (sorted: the map's order, a folder's files together)
 }
 
-SeedBuild::ItemInfo SeedBuild::item_info(const std::string &check, bool with_model) {
+SeedBuild::ItemInfo SeedBuild::item_info(const std::string &check, bool with_model, bool dungeon) {
     const std::string *item = d_.item_at(check);
     if (!item) throw std::runtime_error("seed build: nothing placed at " + check);
     const Decisions::ItemDef *def = d_.item_def(*item);
@@ -121,6 +151,10 @@ SeedBuild::ItemInfo SeedBuild::item_info(const std::string &check, bool with_mod
     r.index = d_.index_at(check);
     if (!with_model) return r;
     if (r.key.size() >= 4 && !r.key.compare(r.key.size() - 4, 4, "Trap")) {
+        if (dc_) {  // (decide mode: random.choice(list(trap_models)) on the shared stream)
+            dc_->draw_trap(check, dungeon, r.model_path, r.model_name);
+            return r;
+        }
         if (!d_.trap_model(check, trap_draws_[check]++, r.model_path, r.model_name))
             throw std::runtime_error("seed build: no trap model recorded for " + check);
     } else {

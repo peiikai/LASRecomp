@@ -10,8 +10,11 @@
 namespace rando {
 
 // The generator's order: mod_generator.run(), then tools/rando/las_headless.py main() after it. A step registered
-// as "a|b" or "p>a|b" sorts by its first name after any ">".
+// as "a|b" or "p>a|b" sorts by its first name after any ">". Some steps write only the seed's tables
+// (SeedBuild::table_write: souls.write_spots, roam.write, quick_pickups.apply, ...) and some only decide
+// (randomizeMusic): lasrando check-steps finds no writes of theirs in the log.
 static const char *const kOrder[] = {
+    "mod_generator.randomizeMusic",  // (decide mode: the songs; ModsProcess.run draws them first)
     "mod_generator.makeGeneralLEBChanges", "mod_generator.makeGeneralDatasheetChanges",
     "mod_generator.makeGeneralEventChanges", "mod_generator.makeChestContentFixes", "mod_generator.tarinChanges",
     "mod_generator.sinkingSwordChanges", "mod_generator.walrusChanges", "mod_generator.christineChanges",
@@ -34,10 +37,11 @@ static const char *const kOrder[] = {
     // las_headless.py main(), after mod_generator
     "shopsanity.apply", "trendsanity.apply", "pets.apply", "souls.apply", "triforce.apply", "pots.apply",
     "las_headless.write_room", "entrance_logic.raft_shop_to_dock", "dungeon_gen.write_all", "escape_bottle.apply",
-    "hint_sheet.apply", "seed_hints._owl_flows", "digs.apply", "underwater.apply", "seashell_spots.apply",
-    "apple_trees.apply", "keysanity_text.apply", "miniboss_guard.apply", "refill_gets.apply", "bomb_bag_text.apply",
+    "hint_sheet.apply", "seed_hints._owl_flows", "souls.write_spots", "triforce.write_spots", "digs.apply",
+    "underwater.apply", "seashell_spots.apply", "apple_trees.apply", "keysanity_text.apply", "roam.write",
+    "miniboss_guard.apply", "enemy_random.write", "refill_gets.apply", "bomb_bag_text.apply",
     "powder_bag_text.apply", "silent_pickups._flow", "chest_looks.write_models", "chest_looks.sweep",
-    "fast_egg.apply", "environments.apply",
+    "fast_egg.apply", "quick_pickups.apply", "seed_tables.write_flags", "environments.apply",
 };
 
 static size_t order_of(const char *name) {
@@ -53,7 +57,7 @@ static size_t order_of(const char *name) {
 const std::vector<BuildStep> &build_steps() {
     static const std::vector<BuildStep> all = [] {
         std::vector<BuildStep> v;
-        for (auto group : {steps_las_general, steps_las_items, steps_las_world, steps_ours_items, steps_ours_world})
+        for (auto group : {las::steps_las_decide, steps_las_general, steps_las_items, steps_las_world, steps_ours_items, steps_ours_world})
             for (const BuildStep &s : group()) v.push_back(s);
         std::stable_sort(v.begin(), v.end(), [](const BuildStep &a, const BuildStep &b) { return order_of(a.name) < order_of(b.name); });
         return v;

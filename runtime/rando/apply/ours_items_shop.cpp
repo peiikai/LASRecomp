@@ -1,13 +1,15 @@
 // LAS Recomp's item steps: shopsanity, trendsanity, pets, the Escape Bottle (tools/rando/shopsanity.py, trendsanity.py,
 // pets.py, escape_bottle.py), ported (ours_items.cpp).
 //
-// Decisions read (tools/rando/record_ours_items.py): shop-prices (the six goods' prices, shopsanity's draws).
+// Decisions read (tools/rando/record_ours_items.py): shop-prices (the six goods' prices, shopsanity's draws; decide
+// mode draws them: decide.h).
 // The pets come from the settings as pets.enabled reads them; the Glossary / System texts from the seed's files.
 #include <string.h>
 
 #include <stdexcept>
 
 #include "../../../third_party/yyjson/yyjson.h"
+#include "decide.h"
 #include "item_get.h"
 #include "las_data.h"
 #include "ours_items_lib.h"
@@ -44,6 +46,8 @@ struct ShopCheck { const char *loc; int slot, price; };
 const ShopCheck SHOP[] = {{"shop-slot1", 0, 20}, {"shop-slot2", 1, 10}, {"shop-slot3-1st", 2, 200},
                           {"shop-slot4", 3, 10}, {"shop-slot5-1st", 4, 999}, {"shop-slot6", 5, 200}};
 const int ITEM_ID_BASE = 230;
+const int RANDOM_PRICES[] = {10, 20, 30, 40, 50, 60, 80, 100, 120, 150, 180, 200, 250, 300, 350, 400, 500, 600, 750, 980};
+const std::vector<int64_t> RANDOM_WEIGHTS = {4, 6, 6, 6, 8, 6, 8, 9, 8, 8, 6, 7, 5, 5, 3, 3, 2, 2, 1, 1};
 
 const data::StrTable UI_NAME = {
     {"SwordLv1", "Sword1"}, {"SwordLv2", "Sword2"}, {"PowerBraceletLv1", "Bracelet1"}, {"PowerBraceletLv2", "Bracelet2"},
@@ -150,6 +154,14 @@ void shopsanity_apply(SeedBuild &b) {
     const Decisions &d = b.decisions();
     std::string mode = d.setting_str("shopsanity");
     if (mode != "vanilla" && mode != "random") return;
+    if (Decider *dc = b.decider(); dc && mode == "random") {
+        // (its own stream, one choices() per good in CHECKS order: the draws don't depend on anything else)
+        PyRandom rng = dc->stream("shop");
+        std::string json = "[";
+        for (int n = 0; n < 6; n++)
+            json += (n ? "," : "") + std::to_string(RANDOM_PRICES[rng.choices_index(RANDOM_WEIGHTS)]);
+        dc->set("shop-prices", json + "]");
+    }
     yyjson_val *prices = d.raw("shop-prices");
     std::vector<Shop> checks;
     for (int n = 0; n < 6; n++) {
@@ -167,7 +179,7 @@ void shopsanity_apply(SeedBuild &b) {
     std::vector<std::string> names;
     for (const Shop &c : checks) names.push_back(N("LARShop", c.n));
     for (const Shop &c : checks) names.push_back(N("LARShopSteal", c.n));
-    alloc_flags(flags, names);
+    std::vector<std::pair<std::string, int>> idx = alloc_flags(flags, names);  // (LARShop<n>, then LARShopSteal<n>)
     b.write_sheet("GlobalFlags.gsheet", flags);
 
     GSheet items = b.read_sheet("Items.gsheet");
@@ -235,6 +247,17 @@ void shopsanity_apply(SeedBuild &b) {
         b.write_flow("PlayerStart.bfevfl", flow);
     }
     shop_texts(b, checks);
+
+    // shopsanity.tsv (runtime/hle/shopsanity.c) and check_flags.tsv (the tracker's location -> done flag), appended
+    std::string tsv, done;
+    for (size_t i = 0; i < checks.size(); i++) {
+        const Shop &c = checks[i];
+        tsv += "item\t" + std::to_string(c.item_id) + "\t" + std::to_string(idx[i].second) + "\t" +
+               std::to_string(idx[checks.size() + i].second) + "\n";
+        done += c.loc + "\t" + std::to_string(idx[i].second) + "\n";
+    }
+    b.table_append("shopsanity.tsv", tsv);
+    b.table_append("check_flags.tsv", done);
 }
 
 // ======== trendsanity.py
@@ -277,7 +300,7 @@ void trendsanity_apply(SeedBuild &b) {
     for (int n = 0; n < N; n++) names.push_back(nm("LARPrize", n));
     for (int n = 0; n < N; n++) names.push_back(nm("LARPrizeGive", n));
     names.push_back("LARPrizeOff");
-    alloc_flags(flags, names);
+    std::vector<std::pair<std::string, int>> idx = alloc_flags(flags, names);  // (LARPrize<n>, LARPrizeGive<n>, Off)
     b.write_sheet("GlobalFlags.gsheet", flags);
 
     GSheet sheet = b.read_sheet("CranePrize.gsheet");
@@ -347,6 +370,16 @@ void trendsanity_apply(SeedBuild &b) {
     f.insert_after("Event1", nxt);
     f.insert_after("Event2", "Event1");
     b.write_flow("PrizeCommon.bfevfl", flow);
+
+    // shopsanity.tsv's prize rows (255: the runtime adds nothing) and check_flags.tsv, appended after shopsanity's
+    std::string tsv, done;
+    for (const Got &c : checks) {
+        tsv += "prize\t" + std::to_string(FIRST_ROW + c.n) + "\t" + std::to_string(idx[(size_t)c.n].second) + "\t" +
+               std::to_string(idx[(size_t)(N + c.n)].second) + "\t255\n";
+        done += std::string(CHECKS[c.n].loc) + "\t" + std::to_string(idx[(size_t)c.n].second) + "\n";
+    }
+    b.table_append("shopsanity.tsv", tsv);
+    b.table_append("check_flags.tsv", done);
 }
 
 // ======== pets.py

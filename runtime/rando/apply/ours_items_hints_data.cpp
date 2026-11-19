@@ -211,6 +211,22 @@ const std::vector<std::pair<const char *, bool>> GET_TEXT = {{"You got the ", fa
 
 const std::vector<std::pair<const char *, bool>> DONE_TEXT = {{"Nothing left to find. Go wake the Wind Fish!", false}};
 
+const StrTable ACTOR_NAME = {
+    {"ObjSignboard-", "a signpost"},
+    {"ObjFieldOwlS", "an owl statue"},
+    {"ObjWeathercock", "the weathervane"},
+    {"ObjGhostsGrave", "the Ghost's grave"},
+    {"ObjMarthaSta", "the mermaid statue"},
+    {"ObjWarpManbo", "a warp hole"},
+    {"ObjDesertBone", "the whale bones"},
+    {"ObjTabahlTree", "a lone tree"},
+    {"ObjRaft-", "the raft"},
+    {"ObjGrave-", "a gravestone"},
+    {"ObjTreasureBox", "a treasure chest"},
+    {"ObjCactus-", "a cactus"},
+    {"ObjDesertTree", "a lone tree"},
+};
+
 // seed_hints.py
 const StrTable FIELD_OWLS = {
     {"examine_tarutaru", "WestTalTalStoneOwl"},

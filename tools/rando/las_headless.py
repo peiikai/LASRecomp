@@ -344,6 +344,7 @@ def main():
         from RandomizerCore.Randomizers import item_get as _tri_get
         _tri_get.TRIFORCE_NEEDED = tri_needed
 
+    record.checkpoint('pre_entrances', {'settings': settings, 'item_defs': item_defs, 'logic_defs': logic_defs})
     # ---- LAS Recomp entrance randomizer: dungeon entrances are LAS's own 'shuffle-dungeons' (its own lever in the
     # menu); tier 2 = single-entrance interiors and connector caves, with or without the dungeons (tier 1 = the old
     # "dungeons only" level: turns shuffle-dungeons on; tier 3 was "+ connector caves" on its own: same as 2 now)
@@ -435,6 +436,8 @@ def main():
 
     # ---- Dungeon room shuffle (Coupled / Decoupled): the layouts are planned first, the item logic follows them
     # (tools/rando/room_logic.py), the same layouts are written into the seed after LAS's files
+    record.checkpoint('post_entrances', {'settings': settings, 'item_defs': item_defs, 'logic_defs': logic_defs,
+                                         'ent': ent})
     room_mode = settings['dungeon-room-shuffle']
     room_plan = None
     room_attempt = 0
