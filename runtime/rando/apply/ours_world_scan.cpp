@@ -7,6 +7,7 @@
 //     room, so the host's own tile always counts as taken (when it isn't grass, an enemy, a tag, an area, an item).
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>

@@ -20,6 +20,7 @@
 //   - a room in Random mode is written even when no draw changed it (its slots make it edited).
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>

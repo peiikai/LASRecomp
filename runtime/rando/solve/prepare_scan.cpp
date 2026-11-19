@@ -3,6 +3,7 @@
 // from tools/rando/export_solve_data.py (prep_data()).
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>

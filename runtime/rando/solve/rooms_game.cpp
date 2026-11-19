@@ -5,6 +5,7 @@
 // (level_cells) and where each floor sits on the pause-menu map (map_shifts, map_anims). Ported from tools/rando
 // (dungeon_gen.py, room_logic.py, rooms.py); each read once per generation, as the Python's caches do.
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <algorithm>
