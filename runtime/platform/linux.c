@@ -854,3 +854,4 @@ const char *plat_cloud_synced(const char *dir) { (void)dir; return NULL; }
 // End the process at once, skipping the library teardown: as on Windows, the GPU driver's threads crashed in exit()
 // while the game's threads still submitted work.
 void plat_terminate(void) { _exit(0); }
+void plat_terminate_code(int code) { _exit(code); }

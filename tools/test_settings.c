@@ -8,6 +8,14 @@ bool bind_settings_load(const char *key, const char *val) { (void)key; (void)val
 void bind_settings_save(FILE *file) { (void)file; }
 
 int main(int argc, char **argv) {
+    if (argc >= 2 && !strcmp(argv[1], "run-settings")) {  // LARECOMP_SET (--set): applied, never saved over the file's
+        settings_load();                                     // values unless changed in the menu ("change": volume)
+        if (argc == 3 && !strcmp(argv[2], "change")) g_settings.volume = 0.25f;
+        g_settings.reverb = !g_settings.reverb;  // (another setting changed in the menu: saved as usual)
+        settings_save();
+        settings_save();  // (twice: the file's own lines stay for every save)
+        return 0;
+    }
     if (argc == 2 && !strcmp(argv[1], "upscaler-auto")) {  // "upscaler = auto" / no upscaler line: the GPU's default
         settings_load();
         assert(g_settings.upscaler_auto);

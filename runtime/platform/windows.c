@@ -1013,3 +1013,4 @@ const char *plat_cloud_synced(const char *dir) {
 
 // End the process at once, skipping DLL teardown (from an atexit handler, after flushing). Exit status 0.
 void plat_terminate(void) { publish_log(); TerminateProcess(GetCurrentProcess(), 0); }
+void plat_terminate_code(int code) { publish_log(); TerminateProcess(GetCurrentProcess(), (UINT)code); }

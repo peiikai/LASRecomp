@@ -161,6 +161,8 @@ const char *touch_control_name(int i);  // the on-screen controls' ini names (to
 
 void settings_load(void);
 void settings_save(void);
+// The settings as larecomp.ini would hold them, with this run's --set ones (malloc'd; NULL: couldn't): --list-settings
+char *settings_text(void);
 // At device init: the defaults that depend on the GPU. integrated (Vulkan: an integrated GPU; never on macOS): plain
 // bilinear upscaling instead of the sharp upscaler, whose pass at the window's size costs as much as the game's frame
 // there (UHD 770: FSR 1 + SMAA 8 ms of GPU per frame at 1080p, 20 ms at 4K), and Dynamic resolution instead of Match

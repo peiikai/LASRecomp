@@ -3,14 +3,18 @@
 // Data root: everything the app writes or the user brings - extracted/ (game files), rando/ (seeds), save/,
 // cache/ (shaders / pipelines), fonts/ (imported), larecomp.ini. rt_paths_init() picks it and makes it the
 // working directory, so the rest of the runtime opens those by their relative names. In order:
-//   1. LARECOMP_DATA_ROOT (tests, scratch installs)
+//   1. --data-dir <folder> / LARECOMP_DATA_ROOT (launchers, tests, scratch installs; runtime/main.c)
+//      --new-data-dir <folder> / LARECOMP_NEW_DATA_DIR (a launcher's game folder): that folder when it has data, or
+//      when the rules below find none (a new player); else the rules below (a player who played before keeps theirs)
 //   2. dev / portable mode: the starting directory already has extracted/ (a source checkout: `./build/lasrecomp
 //      extracted`, the test scripts) - used as is
 //   3. the folder named in data_root.txt in the platform's folder (4), chosen on the start screen (never inside the
 //      app); asks to try again / use the default when it's missing (a drive not connected)
 //   4. macOS: ~/Library/Application Support/com.peiikai.lasrecomp (the .app bundle itself is never written to)
 //      Windows: the folder of the .exe (portable, no installer); refuses to start, with a message, if not writable
-//      Linux: $XDG_DATA_HOME/lasrecomp (~/.local/share/lasrecomp)
+//      Linux: <file>.AppImage.home/.local/share/lasrecomp when that folder is next to the AppImage (the AppImage
+//      runtime's portable mode); the tarball's own folder when it has portable.txt (like the Windows zip); else
+//      $XDG_DATA_HOME/lasrecomp (~/.local/share/lasrecomp)
 //      LARECOMP_DATA_HOME (tests) stands in for it.
 //
 // Resources: files that ship with the app (helper programs, the window icon) - next to the executable (the
