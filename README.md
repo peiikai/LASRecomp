@@ -178,10 +178,8 @@ Requirements: Apple Silicon, Xcode command line tools (clang), [Homebrew](https:
 Python 3.12.
 
 1. Build: `make -j10` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j10` again.
-2. Randomizer tests (optional; the app makes seeds itself): the Python environment for LAS-Randomizer, from
-   `third_party/LAS-Randomizer`: `python3.12 -m venv venv && venv/bin/pip install -r requirements.txt`.
-3. Run: `./build/lasrecomp extracted` (start screen) or `./build/lasrecomp extracted --play` (straight into the game).
-4. Package: `make deps` (once: SDL3, FFmpeg and Python from pinned sources, built for macOS 15), `make gen-helper`
+2. Run: `./build/lasrecomp extracted` (start screen) or `./build/lasrecomp extracted --play` (straight into the game).
+3. Package: `make deps` (once: SDL3, FFmpeg and Python from pinned sources, built for macOS 15), `make gen-helper`
    and `tools/fetch_zig.sh` (what the start screen builds the game code with), then `make app` ->
    `build/LAS Recomp.app` (macOS 15+, Apple Silicon) and `make dmg` -> `build/dist/LAS Recomp-<version>-macOS.dmg`.
 
@@ -192,8 +190,8 @@ Requirements: Windows 10+ x86-64, a CPU with AVX2 and a GPU with Vulkan 1.3. Mor
 that page.
 
 1. One-time setup, in PowerShell from the repo root: `powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1`.
-   It installs MSYS2 (UCRT64: clang, make, SDL3, FFmpeg, Vulkan, shaderc), Python 3.12 for the tools and the
-   randomizer (`third_party\LAS-Randomizer\venv`) and switches the clone to LF line endings.
+   It installs MSYS2 (UCRT64: clang, make, SDL3, FFmpeg, Vulkan, shaderc), Python 3.12 for the tools and switches
+   the clone to LF line endings.
 2. Build, from an MSYS2 UCRT64 shell (or Git Bash with `export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"`):
    `make -j` -> `build/lasrecomp.exe`. Set up your game files (above), then `make gen` and `make -j` again.
 3. Run: `./build/lasrecomp.exe extracted`, from a shell with `C:\msys64\ucrt64\bin` on PATH (for the DLLs).
@@ -278,8 +276,9 @@ without touching the installed game, your game files or your saves.
 
 Thanks also to everyone who reports issues and tests builds. Your logs and screenshots find most of the bugs.
 
-**LAS-Randomizer** - the randomizer at the heart of this project's randomizer features, vendored (with local
-changes) in `third_party/LAS-Randomizer` under the MIT license. Huge thanks to its authors and community:
+**LAS-Randomizer** - the randomizer at the heart of this project's randomizer features, ported to C++ in
+`runtime/rando/` under its MIT license (`third_party/LAS-Randomizer/LICENSE.txt`). Huge thanks to its authors and
+community:
 - **Owen_Splat** - LAS-Randomizer (https://github.com/Owen-Splat/LAS-Randomizer)
 - **Glan** - created the original early builds of the randomizer (https://github.com/la-switch/LAS-Randomizer)
 - **ProfessorLaw** - additional programming
@@ -316,8 +315,6 @@ none of their files are used):
   Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
 - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) - the Windows and Linux upscaler
   option, ported to GLSL (MIT)
-- [oead](https://github.com/zeldamods/oead) and [evfl](https://github.com/zeldamods/evfl) - Nintendo file formats,
-  used by LAS-Randomizer (the randomizer's tests only: no release ships them)
 - [PyInstaller](https://pyinstaller.org) - packs the game code generator into a standalone helper (GPL 2.0+ with the
   bootloader exception, which allows distributing the packed program)
 - The iOS app has no helper: it links SDL 3 and FFmpeg statically. Their licence texts ship in the app (`LICENSES/`).

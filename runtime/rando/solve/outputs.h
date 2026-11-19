@@ -80,12 +80,19 @@ private:
     std::unique_ptr<Impl> d_;
 };
 
-// lasrando outputs-check <romfs> <record folder> <seed folder>: the fill rerun from <record>/prefill.json (checked
-// against postfill.json), every output rebuilt and compared byte for byte with the seed folder's. 0 when all match.
-int outputs_check(const std::string &romfs, const std::string &record, const std::string &seed_dir);
-
 // Python's json.dumps(v) (indent < 0) / json.dumps(v, indent=n): ensure_ascii, float repr, dict order kept
 std::string py_json(const Value &v, int indent = -1);
+
+// Every text the spoiler view and the check tracker can show, for the translation tables (tools/menu_strings.py reads
+// them through `lasrando strings`). composed: a part of a line runtime/ui/i18n.mm's L_line puts together; otherwise
+// a whole line, %s where a value goes (outputs_strings.cpp: keep its fixed lines in step with outputs_view.cpp and
+// outputs_tracker.cpp).
+struct TextKey {
+    const char *group;  // "spoiler" / "tracker"
+    bool composed;
+    std::string text;
+};
+std::vector<TextKey> text_keys();
 
 }  // namespace solve
 }  // namespace rando

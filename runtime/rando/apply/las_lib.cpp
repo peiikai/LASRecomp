@@ -458,7 +458,7 @@ std::vector<std::string> starting_items(const Decisions &d) {
 
 std::string song(const Decisions &d, const std::string &bgm) {
     const char *s = yyjson_get_str(yyjson_obj_get(d.raw("songs"), bgm.c_str()));
-    if (!s) throw std::runtime_error("las: no song recorded for " + bgm + " (record with tools/rando/record_las_items.py)");
+    if (!s) throw std::runtime_error("las: no song recorded for " + bgm + " in the seed's decisions");
     return s;
 }
 

@@ -1,5 +1,5 @@
-// The tables of the seed's text outputs (outputs.h): the Python's own constants, as C++. outputs_data.cpp is generated
-// by tools/rando/export_outputs_data.py (--check tells whether it is current).
+// The tables of the seed's text outputs (outputs.h): the Python's own constants, as C++. outputs_data.cpp was generated
+// from the Python; it is edited directly now.
 #pragma once
 #include <stdint.h>
 

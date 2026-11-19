@@ -648,7 +648,7 @@ void roll_all(SeedBuild &b, const Pools &P, PyRandom *rng, std::string &record, 
     std::map<std::string, std::set<size_t>> minis;  // (apply mode: room -> the actors the roll made mini-bosses)
     if (!rng) {
         yyjson_val *rooms = b.decisions().raw("enemies"), *entry, *a;
-        if (!yyjson_is_arr(rooms)) throw std::runtime_error("las: no enemies recorded (tools/rando/record_las_world.py)");
+        if (!yyjson_is_arr(rooms)) throw std::runtime_error("las: no enemies in the seed's decisions");
         yyjson_arr_iter it = yyjson_arr_iter_with(rooms);
         while ((entry = yyjson_arr_iter_next(&it))) {
             const char *name = yyjson_get_str(yyjson_arr_get(entry, 0));
@@ -687,7 +687,7 @@ void roll_all(SeedBuild &b, const Pools &P, PyRandom *rng, std::string &record, 
 // what randomizeEnemies' draws did (the decisions' "enemies", recorded or decided), done to the rooms
 void apply_enemies(SeedBuild &b) {
     yyjson_val *rooms = b.decisions().raw("enemies"), *entry;
-    if (!yyjson_is_arr(rooms)) throw std::runtime_error("las: no enemies recorded (tools/rando/record_las_world.py)");
+    if (!yyjson_is_arr(rooms)) throw std::runtime_error("las: no enemies in the seed's decisions");
     yyjson_arr_iter it = yyjson_arr_iter_with(rooms);
     std::map<uint16_t, LebRoom> arenas;
     while ((entry = yyjson_arr_iter_next(&it))) {

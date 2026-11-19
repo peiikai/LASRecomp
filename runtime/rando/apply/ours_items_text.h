@@ -1,7 +1,7 @@
 // LAS Recomp's message helpers for the ported item steps (ours_items*.cpp): tools/rando/loc_text.py (our sentences in
 // every language, fitted to the message box; the game's own names of items and places) and the message tokens of
-// tools/rando/keysanity_text.py (_tokens). The tables are generated from loc_text.py
-// (ours_items_text_data.cpp, tools/rando/export_ours_items_text.py --check).
+// tools/rando/keysanity_text.py (_tokens). The tables (ours_items_text_data.cpp) were generated from loc_text.py; they
+// are edited directly now.
 //
 // Texts are raw MSBT UTF-8 with the game's control tags, as the Python's bytes; lengths of our sentences count Unicode
 // code points, as Python's len() of a str.

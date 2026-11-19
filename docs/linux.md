@@ -90,11 +90,6 @@ passes the matching `--simd`. A cross build (`ARCH=aarch64` on an x86-64 machine
 keeps its own `generated-aarch64/` and `build/aarch64/`. Distributions that name shaderc's library
 `libshaderc_shared.so` need `SHADERC=-lshaderc_shared`.
 
-The randomizer from a source checkout uses LAS-Randomizer's own venv (Python 3.12):
-
-    python3.12 -m venv third_party/LAS-Randomizer/venv
-    third_party/LAS-Randomizer/venv/bin/pip install -r third_party/LAS-Randomizer/requirements.txt
-
 ## AppImages
 Needs podman, and for the other arch's AppImage QEMU user emulation with binfmt (`sudo apt install podman qemu-user
 qemu-user-binfmt`).

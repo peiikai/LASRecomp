@@ -112,6 +112,10 @@ std::set<std::string> str_set(const Value &v);
 std::vector<std::string> sorted_keys(const Value &d);
 
 void build_tracker(Ctx &c, const Value &settings_json);
+// the names the spoiler view and the tracker give an item / a location (outputs_view.cpp, outputs_tracker.cpp)
+std::string spoiler_item_name(const std::string &item);
+std::string spoiler_location_name(const std::string &loc);
+std::string tracker_check_name(const std::string &name);
 void build_spoiler_view(Ctx &c, const Value &settings_json);
 std::string door_name_of(const std::string &dest_level);  // hint_sheet.door_name for a door's dest_level
 

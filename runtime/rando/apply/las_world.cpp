@@ -699,7 +699,7 @@ std::string pchtxt(const Decisions &d, const char *build_id, int chest_enemy) {
         if (p.setting && !cond_met(d, p.setting, p.state)) continue;
         const char *text = p.text;
         if (!text) {
-            if (chest_enemy < 0) throw std::runtime_error("las: no chest enemy recorded (tools/rando/record_las_world.py)");
+            if (chest_enemy < 0) throw std::runtime_error("las: no chest enemy in the seed's decisions");
             for (const auto &v : *p.variants)
                 if (v.first == chest_enemy) text = v.second;
             if (!text) throw std::runtime_error("las: chest enemy " + std::to_string(chest_enemy) + " isn't one of LAS's");

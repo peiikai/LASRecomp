@@ -60,11 +60,5 @@ void finish_prefill(Prepared &st, const std::vector<std::string> &shuffled = {})
 // GameFiles reading a romfs folder on disk
 GameFiles game_files_dir(const std::string &romfs);
 
-// lasrando prepare-check <romfs> <request.json> <record folder>: prepare() against pre_entrances.json and, for a seed
-// without room shuffle, finish_prefill() from post_entrances.json against prefill.json. 0 when both are exact.
-// room_plan_file: a room-shuffle run's placements.json (LARECOMP_CHECK_ONLY) or decisions.json, for its room plan
-int prepare_check(const std::string &romfs, const std::string &request, const std::string &record,
-                  const std::string &room_plan_file = "");
-
 }  // namespace solve
 }  // namespace rando

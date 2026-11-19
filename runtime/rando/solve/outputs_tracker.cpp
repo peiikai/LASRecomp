@@ -356,6 +356,8 @@ std::map<int, Cell> map_shifts(Ctx &c) {
 
 }  // namespace
 
+std::string tracker_check_name(const std::string &name) { return display_name(name); }
+
 void build_tracker(Ctx &c, const Value &settings) {
     using namespace odata;
     const Value logic = Value::parse_json(c.file("logic.json")->data(), c.file("logic.json")->size());

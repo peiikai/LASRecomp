@@ -59,8 +59,7 @@ if it has moved since you branched.
 See the README's "Building from source" for macOS, [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows,
 [docs/linux.md](docs/linux.md) for Linux and [docs/android.md](docs/android.md) for Android.
 In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start screen, `make gen` once to recompile the game code from
-them, then `make -j10`. The randomizer needs its Python environment in
-`third_party/LAS-Randomizer/venv`.
+them, then `make -j10`.
 
 ## More documentation
 
@@ -91,9 +90,7 @@ them, then `make -j10`. The randomizer needs its Python environment in
   - `ui/` - the ImGui overlay menu and the start screen
 - `runtime/rando/` - the randomizer: seed generation (`solve/`), the game files a seed changes (`apply/`), the file
   formats (`fmt/`). See [docs/randomizer.md](docs/randomizer.md).
-- `tools/rando/` - the Python generator the app's seeds are tested against: the headless driver (`las_headless.py`),
-  dungeon room shuffle (`dungeon_gen.py`, `room_logic.py`), entrances, pots / bushes / digs, shop, souls, pets.
-- `third_party/LAS-Randomizer` - the vendored randomizer (MIT, with local changes marked "LAS Recomp" in comments).
+- `third_party/LAS-Randomizer` - the licence of LAS-Randomizer (MIT), whose randomizer `runtime/rando/` is ported from.
 
 ## Testing your change
 
@@ -129,11 +126,8 @@ untranslated text shows in English.
 
 `python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
 
-`third_party/LAS-Randomizer/venv/bin/python tools/test_keysanity_text.py [<romfs>]` checks that keysanity dungeon
-items picked up anywhere, floor key spots included, get a message naming their dungeon.
-
 The randomizer's native random numbers: `tools/test_pyrandom.cpp` (build line at its top) checks
-`runtime/rando/pyrandom.h` against CPython's `random` with the vectors in `tools/rando/pyrandom_golden.txt`, without
+`runtime/rando/pyrandom.h` against values recorded from CPython's `random` (`tools/rando/pyrandom_golden.txt`), without
 game data. Seed IDs must keep giving the same seeds, so a mismatch is a bug in the C++ side.
 `tools/test_seed_record.c` (build line at its top) checks that seed records (`runtime/rando/seed.h`) answer every
 setting the runtime reads as the older `settings.json` readers did, without game data. How seeds are made and applied,

@@ -402,6 +402,9 @@ std::string entrance_name(const std::string &door) {
 
 }  // namespace
 
+std::string spoiler_item_name(const std::string &item) { return pretty_item(item); }
+std::string spoiler_location_name(const std::string &loc) { return pretty_loc(loc); }
+
 void build_spoiler_view(Ctx &c, const Value &settings) {
     const std::string *sp = c.file("spoiler.txt");
     if (!sp) return;

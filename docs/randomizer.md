@@ -2,9 +2,9 @@
 
 This page is for contributors. Players: see the README.
 
-## Where it is going
+## Design
 
-The randomizer is moving to one design:
+The randomizer is built on one design:
 
 1. **A native solver** (C++, inside the app on every platform) turns a seed ID and its settings into placements and
    every other decision a seed needs.
@@ -12,11 +12,11 @@ The randomizer is moving to one design:
 3. **The runtime applies the seed in memory**: when the game reads a file a seed changes, the runtime builds the
    changed version from the game's own file and the record. No game files are written to the seed folder.
 
-Seeds used to be made by the vendored LAS-Randomizer driven by `tools/rando/las_headless.py` (Python), which wrote
-changed game files into the seed folder. The move happened in stages, each keeping every seed, old and new, playing
-exactly as before. All six are done: the app makes and applies every seed itself, on every platform, and no build
-ships Python for the randomizer (the game code generator, `tools/gen.py`, is still Python). The Python generator stays
-in the repository as the reference the parity tests compare with.
+Seeds used to be made by the vendored LAS-Randomizer (Python) driven by LAS Recomp's own Python modules, which wrote
+changed game files into the seed folder. The move to this design happened in six stages, each proven against the
+Python generator file for file, so every seed ID gives the same seed as before. The Python is gone from the repository
+since (the last commit with it: 989114e1); the C++ is the only randomizer now, and its data tables (the files the
+exporters once generated: `*_data.cpp`) are edited directly.
 
 | stage | what | state |
 |---|---|---|
@@ -27,11 +27,10 @@ in the repository as the reference the parity tests compare with.
 | 5 | native solver | done: the whole generator, dungeon room shuffle's planning and room logic included, file for file as today |
 | 6 | generation in the app everywhere; Python leaves the builds | done: no seed generator helper, no embedded Python on iOS, no randomizer modules on Android |
 
-The rules for every stage:
+The rules:
 
-- **Same seeds.** A seed ID gives the same seed as before (placements, hints, spoiler, game changes). The parity
-  harness compares the new pipeline with the Python generator over many seeds; any difference is a bug until proven
-  otherwise. Bugs found along the way are proven in game, then fixed in both.
+- **Same seeds.** A seed ID gives the same seed in every version (placements, hints, spoiler, game changes). A change
+  that would move a seed is a new option or a new seed ID format, never a silent change to old IDs.
 - **Older seeds keep working.** Seed folders made by older versions load as they always did.
 - **One random-number stream per purpose**, never a shared global one, and no clock or platform state in a seed.
 
@@ -69,46 +68,36 @@ The rules for every stage:
 
 `runtime/rando/apply/`: a seed's game-file changes made in memory, step by step as the generator makes them
 (`seed_build.h`: reads see the last write or the game's file, one event-name counter, no random draws: the generator's
-choices come from the seed's decisions). Each step is a port of one generator function, in group files
+choices come from the seed's decisions, `decisions.json`). Each step is one group of changes, in group files
 (`las_*.cpp`, `ours_*.cpp`), ordered and gated as the generator runs them (`steps.cpp`).
 
-- `tools/rando/record.py`: the generator writes `decisions.json` (placements, trap looks, enemy rolls, prices, hint
-  picks, ...); with `LARECOMP_RECORD=<folder>` it also logs every file it writes, in order.
-- `build/lasrando check-steps <romfs> <decisions.json> <record>`: each ported step run from the generator's state just
-  before it, its writes compared byte for byte.
-- `build/lasrando dump <romfs> <decisions.json> <out>` and `tools/rando/test_apply.py <romfs> <seed folder>...`: a
-  whole seed built natively against the folder the generator wrote, file for file.
-- Generated tables (`tools/rando/export_*.py --check`) keep the C++ copies of Python data in step.
+- `build/lasrando dump <romfs> <decisions.json> <out>`: a whole seed built as the runtime builds it, written out.
+- `build/lasrando serve-check <romfs> <decisions.json> <dump folder>`: the build the runtime does (files built when
+  the game reads them) read back in pieces and compared with `dump`'s, with load time and memory.
 
-Textures (`textures.cpp`: chest looks' recoloured chests, the title logo): the image steps (Pillow's colour
-conversion, blur, paste and bilinear resize in `fmt/texture.cpp`) give the Python's pixels exactly; the compression is
-rgbcx (`third_party/rgbcx`, MIT) where the generator used quicktex (LGPL, so not ported). Those files are byte-identical
-apart from the textures' pixel data, and the pixels are compared within a small error:
-`build/lasrando texture-check <python file> <native file> <romfs path>` (test_apply.py and test_generate.py use it).
+Textures (`textures.cpp`: chest looks' recoloured chests, the title logo): the image steps (colour conversion, blur,
+paste and bilinear resize in `fmt/texture.cpp`, as Pillow does them) and rgbcx compression (`third_party/rgbcx`, MIT).
 
 ## Native generator
 
-`runtime/rando/solve/`: the seed generator in C++ (`generate.h`), in `tools/rando/las_headless.py`'s order: settings
-and the item / logic pool (`prepare`), the entrance randomizer (`entrances`), LAS's fill (`shuffler`, `logic`), the
-post-fill outputs (`outputs`: playthrough check, hints, route, spoiler, tracker), then the seed build in decide mode
-(`runtime/rando/apply/decide.h`: the file-writing steps make the generator's random draws themselves and record them as
-the seed's decisions). Dungeon room shuffle (`rooms*.cpp`): dungeon_gen's planning and room_logic, with the
-layout retries; what the Python reads from the game's rooms (tile grids, actors, stairs, textures, map pages) is read
-from the player's own files when the planning starts (`rooms_game.cpp`; `lasrando room-facts <romfs>` prints it),
-our own tables come from `tools/rando/export_room_data.py`; checked by `lasrando prepare-check <romfs> <request> <record> [placements.json]` against
-a recorded run (the room plan, and the settings, items and logic the fill starts from).
+`runtime/rando/solve/`: the seed generator (`generate.h`): settings and the item / logic pool (`prepare`), the
+entrance randomizer (`entrances`), LAS's fill (`shuffler`, `logic`), the post-fill outputs (`outputs`: playthrough
+check, hints, route, spoiler, tracker), then the seed build in decide mode (`runtime/rando/apply/decide.h`: the
+file-writing steps make the generator's random draws themselves and record them as the seed's decisions). Dungeon room
+shuffle (`rooms*.cpp`): the layout planning and room logic, with the layout retries; what it needs from the game's
+rooms (tile grids, actors, stairs, textures, map pages) is read from the player's own files when the planning starts
+(`rooms_game.cpp`; `lasrando room-facts <romfs>` prints it).
 
 - `build/lasrando generate <romfs> <request.json> <out> [--legacy]`: a seed folder (seed.json, the code patches, the
-  spoiler); `--legacy` also writes the Python's files (romfs/, the tables, settings.json, ...).
-- `tools/rando/test_generate.py <romfs> <request.json>...`: the Python and the native generator on the same request,
-  every file compared. Per part: `lasrando prepare-check`, `entrances-check`, `solve-check`, `outputs-check`,
-  `decide-check` against `tools/rando/record.py`'s checkpoints.
+  spoiler); `--legacy` also writes a seed folder's older files (romfs/, the tables, settings.json, ...).
+- `build/lasrando strings`: every text the spoiler view and the check tracker can show (`outputs_strings.cpp`), which
+  `tools/menu_strings.py` reads for the translation tables. A new spoiler or tracker line goes there too.
 - `runtime/rando/sha512.c`: the SHA-512 behind `random.seed(str)` (written from FIPS 180-4).
 
 ## Random numbers
 
-`runtime/rando/pyrandom.h` is Python's `random.Random`, bit for bit: today's seed IDs were made by Python, and the
-native solver must give the same seeds. `tools/test_pyrandom.cpp` checks it against CPython 3.12
+`runtime/rando/pyrandom.h` is Python's `random.Random`, bit for bit: the seed IDs players have were made by the Python
+generator, and they must keep giving the same seeds. `tools/test_pyrandom.cpp` checks it against CPython 3.12
 (`tools/rando/pyrandom_golden.txt`). Float sums that Python rounds twice must not be fused into one multiply-add by the
 compiler (see `uniform()`).
 
@@ -117,18 +106,15 @@ compiler (see `uniform()`).
 `runtime/rando/fmt/`: the game's data files, read and written by the same code in the game and in `lasrando`.
 
 - `fixed_hash`, `leb` (rooms), `lvb` (level configs): ported from LAS-Randomizer's Python (MIT, credited in each file).
-- `msbt` (messages): ported from our `tools/rando/msbt.py`.
-- `gsheet` (data sheets), `sarc` (archives), `bfevfl` (event flows), `bntx` (texture banks, with the merge, subset,
-  rename and pixel-copy operations of `tools/rando/bntx_merge.py`): written for LAS Recomp from the format; they lay
-  files out exactly as oead 1.3 / evfl 1.2 / LAS's bundled BNTX editor do (GPL code: read for the layout only, no code copied).
-
-Each writer produces the same bytes as the Python code seeds are made with today, so the two pipelines can be compared
-file by file. `tools/rando/test_formats.py <romfs> [kind ...]` checks that on every game file of a kind (or on a seed's
-`romfs/`), with the LAS venv's Python and `make lasrando`; texture banks: `tools/test_bntx_formats.py <romfs> [<seed romfs> ...]`.
+- `msbt` (messages): ported from LAS Recomp's own earlier Python.
+- `gsheet` (data sheets), `sarc` (archives), `bfevfl` (event flows), `bntx` (texture banks, with merge, subset, rename
+  and pixel-copy operations): written for LAS Recomp from the format; they lay files out exactly as oead 1.3 / evfl 1.2 /
+  LAS's bundled BNTX editor do (GPL code: read for the layout only, no code copied).
 
 ## Tests
 
-- `tools/test_pyrandom.cpp`: the random numbers against CPython.
+- `tools/test_pyrandom.cpp`: the random numbers against values recorded from CPython 3.12
+  (`tools/rando/pyrandom_golden.txt`).
 - `tools/test_seed_record.c`: the seed record answers every setting the runtime reads exactly as the older
   `settings.json` readers did, and every table reads line for line as `fgets` read its file (at several buffer sizes,
   CRLF seeds included), for older folders and for their `seed.json`. With no arguments it uses generated

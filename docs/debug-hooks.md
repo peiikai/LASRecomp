@@ -375,7 +375,6 @@ Read by scripts in `tools/`, not by the app.
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_ROMFS` | folder | The extracted game's romfs folder, for the Python tests that read game files (`test_field_regions.py`, `test_room_crossing.py`, `test_room_ledges.py`). |
 | `LARECOMP_MIN_FREE_GB` | GB | `tools/game_slot.sh`: free memory to wait for before a test copy starts (default 10). |
 
 Narrow one-off probes (memory dumps and watches at fixed addresses, single-shader skips, per-feature tuning, menu

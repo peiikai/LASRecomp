@@ -1,4 +1,4 @@
-// runtime/rando/pyrandom.h against CPython: replays tools/rando/pyrandom_golden.txt (tools/rando/pyrandom_golden.py)
+// runtime/rando/pyrandom.h against CPython: replays tools/rando/pyrandom_golden.txt (values recorded from CPython 3.12)
 // and checks every result. No game files.
 // Build + run (from the repo root):
 //   c++ -std=c++17 -O1 -Iruntime tools/test_pyrandom.cpp -o build/test-pyrandom && build/test-pyrandom

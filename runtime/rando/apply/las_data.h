@@ -1,6 +1,5 @@
 // LAS-Randomizer's constant tables (RandomizerCore/Randomizers/data.py, MIT, Owen-Splat and contributors), for the
-// ported generator steps (seed_build.h). las_data.cpp is generated from the Python by tools/rando/export_las_data.py
-// (--check tells whether it is current), so the two can't drift.
+// generator steps (seed_build.h). las_data.cpp was generated from the Python; it is edited directly now.
 //
 // Each Python dict is a table of (key, value) in the dict's order: the steps walk them in that order, as the Python.
 #pragma once

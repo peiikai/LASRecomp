@@ -70,8 +70,7 @@ Seeds are made in the app (`runtime/rando/solve/`: the item placement, a C++ por
 with LAS Recomp's additions - dungeon room shuffle, entrances, pots, bushes, digs, shops) and written as a seed record
 (`seed.json`); the game files a seed changes are built from it in memory when the game reads them
 (`runtime/rando/apply/`). The runtime side (`runtime/rando.c`, `runtime/hle/`) loads the seed and handles what can't be
-done with data alone. The Python generator (`tools/rando/las_headless.py`, `third_party/LAS-Randomizer`) stays as the
-reference the tests compare the app's seeds with: [randomizer.md](randomizer.md).
+done with data alone. More in [randomizer.md](randomizer.md).
 
 ## Debugging
 
