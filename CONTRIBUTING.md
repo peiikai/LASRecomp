@@ -70,10 +70,14 @@ them, then `make -j10`.
 
 ## Project layout
 
-- `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
-  `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
-  word, so a wrong address fails loudly instead of silently. `tools/chunk_bounds.py` holds where the C is split into
-  files (made with `gen.py --new-chunk-bounds`; new cuts make every file compile once).
+- `runtime/gen/` - the recompiler: translates the game's executables into C (`generated/`, never committed). The app
+  runs it during setup; `make lasgen` builds it as a command-line tool (`make gen`). `runtime/gen/patches.cpp` holds
+  code patches applied during generation; every patch site checks the original instruction word, so a wrong address
+  fails loudly instead of silently. `runtime/gen/chunk_bounds.inc` holds where the C is split into files (made with
+  `lasgen --new-chunk-bounds`; new cuts make every file compile once).
+- `tools/gen.py` and its modules - the Python generator the C++ one was ported from, kept as the reference until the
+  port has shipped. A change to the generator, a patch or the chunk cuts goes into both, and
+  `tools/test_gen_cpp.py build/lasgen <game folder>` must report the C identical.
 - `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
   by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
   patch generator (read by `tools/game_addresses.py`, part of the game-library identity) and `runtime_<version>.h`

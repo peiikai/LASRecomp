@@ -18,7 +18,7 @@ Needs the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 
 
 ```
 bash android/deps/build_deps.sh        # SDL3, shaderc, volk, Vulkan headers, FFmpeg for arm64 (once)
-bash android/deps/build_gen_deps.sh    # the game code builder: Python, its modules, zig (once)
+bash android/deps/build_gen_deps.sh    # the game code builder's compiler: zig (once)
 cd android && ./gradlew assembleDebug  # android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -62,10 +62,10 @@ fails (or, worse, Gradle quietly keeps the old library).
   Android yet.
 - The game files folder comes from Android's folder picker (a `content://` folder, not a path): the setup copies
   exefs and romfs through the storage framework into the data folder.
-- The game code is built on the device as on the desktop (`runtime/gamebuild.c`): the generator runs on Python for
-  Android, and zig compiles for `aarch64-linux-musl` and links against `libmain.so`. Android runs programs only from
-  the app's native library folder, so Python's launcher and zig ship there as `lib*.so`; the rest is unpacked from
-  `assets/gen.zip` at the first start after an install or update. The library is loaded from a copy in internal
+- The game code is built on the device as on the desktop (`runtime/gamebuild.c`): the generator runs inside the app
+  (`runtime/gen/`), and zig compiles for `aarch64-linux-musl` and links against `libmain.so`. Android runs programs
+  only from the app's native library folder, so zig ships there as `libzig.so`; its library and the headers are
+  unpacked from `assets/gen.zip` at the first start after an install or update. The library is loaded from a copy in internal
   storage, since shared storage is mounted noexec.
 - The randomizer's seeds are made in the app itself (`runtime/rando/solve/`), as on every platform: no Python.
 

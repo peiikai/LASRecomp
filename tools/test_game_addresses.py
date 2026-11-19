@@ -20,7 +20,6 @@ import os
 from pathlib import Path
 import re
 import shlex
-import shutil
 import struct
 import subprocess
 import sys
@@ -271,17 +270,6 @@ others = [(n, (gc/'romfs'/n).stat().st_size if (gc/'romfs'/n).exists() else 9)
 assert romfs_check(bid0, others + [('main', copies[0][1]), ('main', copies[0][1] + 1)], gc) == (
     [f'odd {n} {z}' for n, z in others] + ['copy main', f'odd main {copies[0][1] + 1}'], 3836)
 
-# Same resource location used by tools/lasgen.spec in the frozen helper.
-bundled = tmp/'bundle/runtime/game_addresses'
-bundled.mkdir(parents=True)
-shutil.copyfile(TABLE_DIR/'versions.h', bundled/'versions.h')
-for key in VERSIONS:
-    shutil.copyfile(table_path(key), bundled/table_path(key).name)
-check = ('import sys; sys._MEIPASS=sys.argv[1]; sys.path.insert(0,sys.argv[2]); '
-         'import game_addresses as g; g.select_build_id(sys.argv[3]); print(g.ADDRESS.HAS_ITEM)')
-for key, (label, bid) in VERSIONS.items():
-    output = subprocess.check_output([sys.executable, '-c', check, str(tmp/'bundle'), str(ROOT/'tools'), bid])
-    assert int(output) == tables[key][0]['HAS_ITEM']
 bad = tmp/'bad.h'
 for content in ('', 'GA_ADDR(BAD, 123)\n', 'GA_ADDR(DUP, 0x123)\n'*2):
     bad.write_text(content)

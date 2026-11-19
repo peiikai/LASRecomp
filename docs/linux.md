@@ -76,7 +76,6 @@ yourself: `make SHADERC=-lshaderc_shared` (or `-lshaderc`).
 
 Then from the repo root:
 
-    python3 -m venv tools/venv && tools/venv/bin/pip install lz4 capstone unicorn
     make -j         # the start screen only (no game code yet): set up the game files there, or put extracted/ here
     make gen        # once: recompile the game from your own game files
     make -j         # -> build/lasrecomp and the game code library build/lasgame.so
@@ -103,10 +102,7 @@ SDL3, an LGPL-only FFmpeg (only the movie codecs, as on Windows / macOS), and sh
 (`tools/linux/build_deps.sh`), then the game against them (`tools/linux/package.sh`). This machine's arch is built
 natively in one container of that arch (the release does both archs that way, on an arm64 runner for aarch64).
 aarch64 on an x86-64 machine is cross-compiled in the amd64 container against the arm64 image's root filesystem
-(`build/linux/aarch64/sysroot`), with only the game code generator helper (`tools/linux/gen_helper.sh`, PyInstaller
-builds for the machine it runs on) frozen in the arm64 container under QEMU (its wheels cached in
-`build/linux/aarch64/wheels`). The
-generated game code comes from the host (`generated/`, `generated-aarch64/`; `make appimage` runs `make gen` for it
+(`build/linux/aarch64/sysroot`). The generated game code comes from the host (`generated/`, `generated-aarch64/`; `make appimage` runs `make gen` for it
 when missing).
 
 Release check of the x86-64 AppImage (`make smoketest`, tools/linux/smoketest.sh, ~7 minutes on this kind of machine):
@@ -117,7 +113,7 @@ RELEASE or NOT READY; `build/smoke/sheet.png` shows every screenshot. It needs `
 save outside git (`~/.local/share/lasrecomp-smoketest/save`, or `LARECOMP_SMOKE_SAVE`): copy `save/` from any build
 after starting a new game once.
 
-The AppImage holds `lasrecomp`, `lasgen/`, `zig/`, the start screen font and the bundled libraries (SDL3,
+The AppImage holds `lasrecomp`, `zig/`, the start screen font and the bundled libraries (SDL3,
 FFmpeg, shaderc). Not bundled: glibc, libstdc++, the Vulkan loader and the GPU drivers (always the system's). No game
 files or fonts.
 

@@ -1,6 +1,6 @@
 # One-time setup of a Windows machine for building LARecomp (see docs/BUILD-windows.md).
 # Installs MSYS2 (clang, lld, make, SDL3, FFmpeg, Vulkan loader/headers, shaderc) and Python 3.12, then creates
-# tools/venv (lifter: unicorn, capstone, lz4). Safe to re-run.
+# tools/venv (the Python tests: unicorn, capstone, lz4). Safe to re-run.
 # On Windows on ARM (experimental): MSYS2 CLANGARM64 instead of UCRT64, and an x64 Python 3.12 (unicorn / capstone
 # have no ARM64 Windows wheels; it runs under emulation).
 $ErrorActionPreference = 'Stop'
@@ -46,7 +46,6 @@ git -C $root config core.autocrlf false
 git -C $root config core.eol lf
 if ($arm) {
     Write-Host 'Done. Build from an MSYS2 CLANGARM64 shell (or put C:\msys64\clangarm64\bin;C:\msys64\usr\bin first on PATH): make -j'
-    Write-Host "Helpers (x64 Python, no py launcher): make gen-helper GEN_PY=`"$($py -replace '\\', '/')`""
 } else {
     Write-Host 'Done. Build from an MSYS2 UCRT64 shell (or put C:\msys64\ucrt64\bin;C:\msys64\usr\bin first on PATH): make -j'
 }
