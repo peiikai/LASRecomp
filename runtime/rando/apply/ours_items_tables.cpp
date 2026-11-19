@@ -1,6 +1,7 @@
 // LAS Recomp's item steps that only write the seed's tables: quick pickups (tools/rando/quick_pickups.py apply) and
 // flags.tsv (seed_tables.py write_flags), ported (ours_items.cpp). Both read the seed's files as the generator left
 // them (the seed's copy, else the game's) and write nothing into the game files.
+#include <stdio.h>
 #include <string.h>
 
 #include <map>

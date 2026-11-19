@@ -19,6 +19,7 @@
 //   - makeExefsPatches: a setting turns a patch on only when it equals True / False (an int 1 / 0 does too, a string
 //     never), Stealing's "always" / "never" counting as True / False (assemble.preSetup).
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <map>

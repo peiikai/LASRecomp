@@ -1,8 +1,10 @@
 // tools/rando/dungeon_gen.py's Coupled / Decoupled planning (plan_all_chaos and what it calls), ported (rooms.h).
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <regex>

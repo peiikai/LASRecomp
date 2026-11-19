@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
+#include <iterator>
 #include <mutex>
 
 namespace rando {

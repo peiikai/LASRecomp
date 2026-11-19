@@ -1,8 +1,10 @@
 // tools/rando/room_logic.py, ported (rooms.h): the item logic of shuffled dungeons, from their room graphs.
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <functional>
 #include <map>
 #include <memory>

@@ -13,6 +13,7 @@
 // text); with no Tarin flow the record is empty; the landmark is null (recorded) when nothing is near.
 #include <ctype.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
