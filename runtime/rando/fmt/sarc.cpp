@@ -28,7 +28,7 @@ static uint32_t name_hash(uint32_t mult, const std::string &name) {
 static bool pow2(uint32_t a) { return a && !(a & (a - 1)); }
 static uint32_t align_up(uint32_t v, uint32_t a) { return (v + a - 1) / a * a; }
 
-Sarc Sarc::parse(const std::string &d) {
+Sarc Sarc::parse(const std::string &d, const std::function<bool(const std::string &)> &keep) {
     if (d.size() < 0x14 || d.compare(0, 4, "SARC")) throw std::runtime_error("sarc: bad magic");
     if (rd(d, 4, 2) != 0x14) throw std::runtime_error("sarc: header size");
     if (rd(d, 6, 2) != 0xFEFF) throw std::runtime_error("sarc: not little endian");
@@ -54,7 +54,7 @@ Sarc Sarc::parse(const std::string &d) {
             name = d.substr(at, z - at);
         }
         if (end < begin || (size_t)data_off + end > d.size()) throw std::out_of_range("sarc: file data");
-        s.files.emplace_back(name, d.substr(data_off + begin, end - begin));
+        s.files.emplace_back(name, !keep || keep(name) ? d.substr(data_off + begin, end - begin) : std::string());
         gcd = std::gcd(gcd, data_off + begin);
     }
     s.min_alignment = pow2(gcd) ? gcd : 4;

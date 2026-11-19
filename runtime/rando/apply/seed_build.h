@@ -63,6 +63,16 @@ private:
 
 class Decider;
 
+// A file made from the game's files alone, which the runtime builds when the game reads it rather than keeping it
+// (room shuffle's level texture banks: ~434 MB of a room seed). Today: the bank bntx_subset makes of these game
+// banks (in this order), keeping the textures named in `only`.
+struct DeferredFile {
+    std::vector<std::string> sources;  // (game romfs paths)
+    std::vector<std::string> only;     // (sorted)
+};
+// its bytes; read: the game's files (throws when one can't be read)
+std::string build_deferred(const DeferredFile &f, const std::function<bool(const std::string &, std::string &)> &read);
+
 class SeedBuild {
 public:
     // reads a game file by its romfs path ("region_common/level/Field/Field_16C.leb"); false: no such file
@@ -93,6 +103,11 @@ public:
     static std::string path_of(const std::string &file_name);
 
     bool read_bytes(const std::string &path, std::string &out) const;  // the latest written, else the game's
+    // a file the runtime can build later (DeferredFile): with defer on (the runtime's build) only its recipe is kept
+    // (deferred()); otherwise (the tools) it's built and written at once, as write_bytes
+    void write_deferred(const std::string &path, const DeferredFile &f);
+    void set_defer(bool on) { defer_ = on; }
+    const std::map<std::string, DeferredFile> &deferred() const { return deferred_; }
     // the game's own file, whatever this seed wrote (a step reading the original game, as the Python's rom path)
     bool read_game(const std::string &path, std::string &out) const { return game_(path, out); }
     void write_bytes(const std::string &path, const std::string &bytes);
@@ -144,6 +159,8 @@ private:
     std::map<std::string, std::string> tables_;
     std::map<std::string, std::string> carry_;
     std::map<std::string, std::string> files_;  // path -> bytes written
+    std::map<std::string, DeferredFile> deferred_;  // path -> its recipe (defer_ on)
+    bool defer_ = false;
     std::vector<Write> log_;
     bool keep_log_ = true;
     uint32_t idgen_ = 0;

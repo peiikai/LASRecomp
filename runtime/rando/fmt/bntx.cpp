@@ -86,7 +86,7 @@ std::vector<std::pair<int64_t, std::pair<uint16_t, uint16_t>>> resdic_build(cons
 
 // ---- reading ----
 
-Bntx Bntx::parse(const std::string &d) {
+Bntx Bntx::parse(const std::string &d, const std::unordered_set<std::string> *data_of) {
     if (d.size() < 0x20) throw std::runtime_error("bntx: too short");
     uint32_t bom = (uint32_t)rd(d, 0xC, 2);
     if (bom == 0xFFFE) throw std::runtime_error("bntx: big-endian banks are not supported");
@@ -173,7 +173,8 @@ Bntx Bntx::parse(const std::string &d) {
         for (int m = 1; m < t.num_mips; m++) t.mip_offsets.push_back(rd64(d, t.ptrs_addr + 8 * m) - first);
         if (first < 0) throw std::runtime_error("bntx: negative data pointer");
         uint64_t from = std::min<uint64_t>((uint64_t)first, d.size());
-        t.data = std::make_shared<const std::string>(d.substr(from, std::min<uint64_t>(t.image_size, d.size() - from)));
+        if (data_of && !data_of->count(t.name)) t.data = std::make_shared<const std::string>();  // (not wanted)
+        else t.data = std::make_shared<const std::string>(d.substr(from, std::min<uint64_t>(t.image_size, d.size() - from)));
         b.textures.push_back(std::move(t));
     }
 
@@ -461,10 +462,19 @@ std::string bntx_merge(const std::string &base, const std::vector<const std::str
 }
 
 std::string bntx_subset(const std::vector<const std::string *> &sources, const std::unordered_set<std::string> &only) {
-    if (sources.empty()) throw std::invalid_argument("bntx: subset of nothing");
+    return bntx_subset_from(
+        sources.size(), [&](size_t i, std::string &out) { return out = *sources[i], true; }, only);
+}
+
+std::string bntx_subset_from(size_t count, const std::function<bool(size_t, std::string &)> &read,
+                             const std::unordered_set<std::string> &only) {
+    if (!count) throw std::invalid_argument("bntx: subset of nothing");
     std::string first;
     {
-        Bntx b = Bntx::parse(*sources[0]);
+        std::string src;
+        if (!read(0, src)) throw std::runtime_error("bntx: a source bank can't be read");
+        Bntx b = Bntx::parse(src, &only);
+        std::string().swap(src);
         std::unordered_set<std::string> drop;
         for (const BntxTexture &t : b.textures)
             if (!only.count(t.name)) drop.insert(t.name);
@@ -484,9 +494,24 @@ std::string bntx_subset(const std::vector<const std::string *> &sources, const s
         b.rebuild_dict();
         first = b.save();
     }
-    // (the Python saves this and merges the other sources into the re-read file)
-    std::vector<const std::string *> rest(sources.begin() + 1, sources.end());
-    return bntx_merge(first, rest, &only);
+    // (the Python saves this and merges the other sources into the re-read file: bntx_merge, one source at a time)
+    Bntx b = Bntx::parse(first);
+    std::string().swap(first);
+    std::unordered_set<std::string> have;
+    for (const BntxTexture &t : b.textures) have.insert(t.name);
+    for (size_t i = 1; i < count; i++) {
+        std::string src;
+        if (!read(i, src)) throw std::runtime_error("bntx: a source bank can't be read");
+        Bntx o = Bntx::parse(src, &only);
+        std::string().swap(src);
+        for (BntxTexture &t : o.textures) {
+            if (have.count(t.name) || !only.count(t.name)) continue;
+            have.insert(t.name);
+            add_named(b, std::move(t));
+        }
+    }
+    b.rebuild_dict();
+    return b.save();
 }
 
 std::string bntx_copy_renamed(const std::string &base, const std::vector<std::pair<std::string, std::string>> &pairs) {

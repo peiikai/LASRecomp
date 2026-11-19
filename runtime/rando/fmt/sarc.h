@@ -12,6 +12,7 @@
 #pragma once
 #include <stdint.h>
 
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,7 +24,9 @@ struct Sarc {
     uint32_t min_alignment = 4;
     std::vector<std::pair<std::string, std::string>> files;  // (name, data) in table order
 
-    static Sarc parse(const std::string &data);  // throws on bad data (little-endian archives only)
+    // throws on bad data (little-endian archives only); keep: only the files it names get their bytes (the others
+    // none: a reader after a few files of a big archive)
+    static Sarc parse(const std::string &data, const std::function<bool(const std::string &)> &keep = nullptr);
     std::string write() const;                   // throws on an extension it can't align as oead does
 
     const std::string *get(const std::string &name) const;

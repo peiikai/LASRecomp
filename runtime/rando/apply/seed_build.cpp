@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <stdexcept>
+#include <unordered_set>
+
+#include "../fmt/bntx.h"
 
 #include "../../../third_party/yyjson/yyjson.h"
 #include "decide.h"
@@ -110,7 +113,21 @@ std::string SeedBuild::path_of(const std::string &f) {
 bool SeedBuild::read_bytes(const std::string &path, std::string &out) const {
     auto it = files_.find(path);
     if (it != files_.end()) { out = it->second; return true; }
+    auto d = deferred_.find(path);  // (no step reads one back today; built if one does)
+    if (d != deferred_.end()) { out = build_deferred(d->second, game_); return true; }
     return game_(path, out);
+}
+
+void SeedBuild::write_deferred(const std::string &path, const DeferredFile &f) {
+    if (!defer_) { write_bytes(path, build_deferred(f, game_)); return; }
+    files_.erase(path);
+    deferred_[path] = f;
+}
+
+std::string build_deferred(const DeferredFile &f, const std::function<bool(const std::string &, std::string &)> &read) {
+    std::unordered_set<std::string> only(f.only.begin(), f.only.end());
+    return bntx_subset_from(
+        f.sources.size(), [&](size_t i, std::string &out) { return read(f.sources[i], out); }, only);
 }
 
 std::string SeedBuild::need(const std::string &path) const {
@@ -120,6 +137,7 @@ std::string SeedBuild::need(const std::string &path) const {
 }
 
 void SeedBuild::write_bytes(const std::string &path, const std::string &bytes) {
+    deferred_.erase(path);
     files_[path] = bytes;
     if (keep_log_) log_.push_back({path, bytes});
 }
