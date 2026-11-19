@@ -12,6 +12,7 @@
 // --game checks the seeds and patch_variants.json against the game files). The file's @nsobid is checked here.
 #include "rando.h"
 #include "game_addresses.h"
+#include "rando/seed.h"
 
 #include <dirent.h>
 #include <pthread.h>
@@ -122,26 +123,24 @@ static void add_nice_bombs(void) {
 static void init(void) {
     settings_load();
     const char *seed = getenv("LARECOMP_RANDO_SEED") ? getenv("LARECOMP_RANDO_SEED") : g_settings.rando_seed;
-    if (!seed || !seed[0]) return;
+    if (!seed || !seed[0]) { rando_seed_activate(NULL); return; }
     snprintf(g_seed_dir, sizeof g_seed_dir, "rando/%s", seed);
     struct stat sb;
-    if (stat(g_seed_dir, &sb) || !S_ISDIR(sb.st_mode)) { LOG("[rando] seed folder %s missing; playing vanilla\n", g_seed_dir); return; }
+    if (stat(g_seed_dir, &sb) || !S_ISDIR(sb.st_mode)) {
+        LOG("[rando] seed folder %s missing; playing vanilla\n", g_seed_dir);
+        rando_seed_activate(NULL);
+        return;
+    }
     g_active = true;
+    rando_seed_activate(g_seed_dir);  // (its record: settings for every reader - runtime/rando/seed.h)
     char p[600];
     snprintf(p, sizeof p, "%s/exefs/1.0.0.pchtxt", g_seed_dir);
     load_pchtxt(p);
     add_nice_bombs();
     // the seed ID (the start screen writes it next to a seed it makes): it regenerates the same seed, so a log a
     // player attaches to an issue is enough to reproduce their seed
-    char id[96] = "";
-    snprintf(p, sizeof p, "%s/seed_id.txt", g_seed_dir);
-    FILE *f = fopen(p, "r");
-    if (f) {
-        if (!fgets(id, sizeof id, f)) id[0] = 0;
-        fclose(f);
-        id[strcspn(id, "\r\n")] = 0;
-    }
-    if (id[0]) LOG("[rando] seed \"%s\" active, seed ID %s\n", seed, id);
+    const char *id = rando_seed_id(rando_seed());
+    if (id[0]) LOG("[rando] seed \"%s\" active, seed ID %s%s\n", seed, id, rando_seed_format(rando_seed()) ? "" : " (older folder)");
     else LOG("[rando] seed \"%s\" active (no seed ID saved with it)\n", seed);
 }
 
@@ -177,7 +176,9 @@ bool rando_seed_there(const char *seed) {
     if (!seed || !seed[0] || seed[0] == '.' || strchr(seed, '/') || strchr(seed, '\\')) return false;
     char p[600];
     struct stat sb;
-    snprintf(p, sizeof p, "rando/%s/settings.json", seed);
+    snprintf(p, sizeof p, "rando/%s/seed.json", seed);  // a seed's record: its game files are built at load
+    if (!stat(p, &sb) && S_ISREG(sb.st_mode)) return true;
+    snprintf(p, sizeof p, "rando/%s/settings.json", seed);  // an older seed: settings.json and its game files
     if (stat(p, &sb) || !S_ISREG(sb.st_mode)) return false;
     snprintf(p, sizeof p, "rando/%s/romfs", seed);
     return !stat(p, &sb) && S_ISDIR(sb.st_mode);

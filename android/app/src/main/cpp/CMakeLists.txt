@@ -69,7 +69,7 @@ foreach(lib avcodec avformat avutil swscale)  # (FFmpeg, LGPL: the movies and th
     set_target_properties(${lib} PROPERTIES IMPORTED_LOCATION ${DEPS}/lib/lib${lib}.so)
 endforeach()
 
-file(GLOB RT_SRC ${R}/runtime/*.c ${R}/runtime/*.cpp ${R}/runtime/hle/*.c ${R}/runtime/services/*.c ${R}/runtime/nvn/*.c
+file(GLOB RT_SRC ${R}/runtime/*.c ${R}/runtime/*.cpp ${R}/runtime/hle/*.c ${R}/runtime/services/*.c ${R}/runtime/rando/*.c ${R}/runtime/rando/fmt/*.cpp ${R}/runtime/rando/apply/*.cpp ${R}/runtime/rando/solve/*.cpp ${R}/runtime/nvn/*.c
      ${R}/runtime/nvn/maxwell/*.c)
 file(GLOB VK_SRC ${R}/runtime/nvn/vulkan/*.c ${R}/runtime/nvn/vulkan/*.cpp)
 # libadrenotools (BSD-2; android/deps/build_deps.sh unpacks it): a custom Vulkan driver (Turnip) in a linker namespace of

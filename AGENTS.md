@@ -6,7 +6,7 @@
   - A host stands in for the Switch OS and services (`runtime/kernel.c`, `loader.c`, `services/`).
   - The game's NVN graphics are drawn with Metal on macOS, iPhone and iPad, and Vulkan on Windows, Linux and
     Android (`runtime/nvn/`).
-  - The randomizer and most features live in `runtime/hle/`, `runtime/ui/` and `tools/rando/`.
+  - The randomizer and most features live in `runtime/rando/`, `runtime/hle/` and `runtime/ui/`.
   - [README.md](README.md) is the player-facing page. [CONTRIBUTING.md](CONTRIBUTING.md) has the layout, building,
     tests and pull request rules.
 
@@ -27,7 +27,7 @@
   | Game behaviour or a new feature | `runtime/hle/` and the hooks in `tools/patches.py` and `runtime/hle/hooks.c` |
   | Saves | [docs/save-format.md](docs/save-format.md), `runtime/services/fs.c` |
   | Game addresses | CONTRIBUTING "Project layout" (`runtime/game_addresses/`, `GA(NAME)`, `tools/version_map.py`) |
-  | Randomizer logic | `tools/rando/` and `third_party/LAS-Randomizer` (local changes marked "LAS Recomp") |
+  | Randomizer logic | `runtime/rando/` (C++; seeds made and applied in the app): [docs/randomizer.md](docs/randomizer.md) |
   | Menu text | `python3 tools/menu_strings.py check` |
 
 - **No Nintendo files, ever.**

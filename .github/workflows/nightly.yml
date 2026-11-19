@@ -159,7 +159,7 @@ jobs:
             build/deps
             !build/deps/src
           key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/build_deps_macos.sh') }}
-      - name: Deps (SDL3, LGPL FFmpeg, keystone, Python)
+      - name: Deps (SDL3, LGPL FFmpeg, Python)
         run: make deps
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true'
@@ -172,9 +172,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Caches/pip
-          key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'Makefile') }}
-      - name: Generator helpers
-        run: make rando-helper && make gen-helper
+          key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
+      - name: Game code generator helper
+        run: make gen-helper
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       - name: App and disk image
@@ -220,23 +220,19 @@ jobs:
         env: { VERSION: '${{ needs.plan.outputs.version }}', STAMP: '${{ needs.plan.outputs.stamp }}' }
         run: tools/nightly_version.sh "$VERSION" "$STAMP"
       - name: Packages
-        run: brew install ninja python@3.13
+        run: brew install ninja
       - name: Deps cache
         id: deps
         uses: actions/cache/restore@v4
         with:
-          path: |
-            build/deps-ios
-            !build/deps-ios/pyvenv
-          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/keystone-0.9.2.patch', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch', 'third_party/LAS-Randomizer/requirements.txt') }}
-      - name: Deps (SDL3, FFmpeg, keystone, CPython, the generator's packages)
+          path: build/deps-ios
+          key: deps-ios-${{ hashFiles('tools/build_deps_ios.sh', 'tools/patches/SDL3-3.4.18-ios27-orientation.patch') }}
+      - name: Deps (SDL3, FFmpeg)
         run: make deps-ios
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true'
         with:
-          path: |
-            build/deps-ios
-            !build/deps-ios/pyvenv
+          path: build/deps-ios
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - name: Toolchain cache (the zig archive, the five lld archives)
         uses: actions/cache@v4
@@ -313,7 +309,7 @@ jobs:
       - name: Generator helpers
         run: |
           PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+          make gen-helper GEN_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       - name: Zip
@@ -392,7 +388,7 @@ jobs:
       - name: Generator helpers
         run: |
           PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make rando-helper RANDO_PY="$PY" && make gen-helper RANDO_PY="$PY"
+          make gen-helper GEN_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       - name: Zip
@@ -439,7 +435,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/linux/${{ matrix.arch }}/wheels
-          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'tools/linux/rando_helper.sh', 'tools/linux/Containerfile') }}
+          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/gen_helper.sh', 'tools/linux/Containerfile') }}
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
       - uses: actions/cache/save@v4
@@ -448,7 +444,7 @@ jobs:
           path: build/linux/${{ matrix.arch }}/deps
           key: ${{ steps.deps.outputs.cache-primary-key }}
       - uses: actions/cache/save@v4
-        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/rando-venv/.ok', matrix.arch)) != ''
+        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/gen-venv/.ok', matrix.arch)) != ''
         with:
           path: build/linux/${{ matrix.arch }}/wheels
           key: ${{ steps.wheels.outputs.cache-primary-key }}

@@ -22,6 +22,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 // GA(PLAYER_STATUS_PTR): PlayerStatus*: level name at +0, inventory bits at +0xa8
 extern uint64_t renderer_present_count(void);
@@ -57,16 +58,8 @@ static bool active(void) {
     const char *e = getenv("LARECOMP_ESCAPE");
     if (e) return on = atoi(e) != 0;
     on = 0;
-    const char *dir = rando_seed_dir();
-    if (!dir) return false;
-    char path[512], buf[16384];
-    snprintf(path, sizeof path, "%s/settings.json", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return false;
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[n] = 0;
-    on = strstr(buf, "\"escape-bottle\": true") != NULL;  // (older seeds: three normal bottles)
+    if (!rando_seed_dir() || !rando_seed()) return false;
+    on = rando_setting("escape-bottle");  // (older seeds: three normal bottles)
     LOG("[escape] Escape Bottle %s\n", on ? "on" : "off");
     return on;
 }

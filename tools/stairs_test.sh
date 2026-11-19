@@ -4,14 +4,13 @@
 # trigger's room (its own start - a side-view passage's is at its ladder top), then either the stick held up (a
 # ladder up out of a side-view passage: put at its foot, then climbing) or Link put next to the trigger and walked
 # into it (LARECOMP_PLACE: stairs in a room from each side, side-view exits at floor level from either side). PASS:
-# Link was in the target room at some point of the case. Cases: tools/rando/stairs_cases.py.
+# Link was in the target room at some point of the case. Cases: `lasrando room-cases stairs`.
 # Results: build/stairs_<seed>.txt (PASS / FAIL per case) + the run logs build/run_shot_stairs_<seed>_<level>.log.
 SEED=$1; shift
 P=${STAIRS_PERIOD:-1000}  # frames per case
-PY=${LAS_PY:-third_party/LAS-Randomizer/venv/bin/python3}
-[ -x "$PY" ] || PY=python3
 OUT=build/stairs_$SEED${STAIRS_JOB:+_$STAIRS_JOB}.txt; : > "$OUT"
-CASES=$(mktemp); "$PY" tools/rando/stairs_cases.py extracted/romfs "rando/$SEED" > "$CASES" || exit 1
+make -s lasrando >/dev/null || exit 1
+CASES=$(mktemp); build/lasrando room-cases stairs extracted/romfs "rando/$SEED" > "$CASES" || exit 1
 if [ -n "$STAIRS_ONLY" ]; then  # STAIRS_ONLY=<regex>: only the cases whose trigger room ("<room> <up|down>") matches
     awk -F'\t' -v re="$STAIRS_ONLY" '($3 " " $2) ~ re' "$CASES" > "$CASES.only"; mv "$CASES.only" "$CASES"
 fi

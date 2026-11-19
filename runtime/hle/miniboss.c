@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "../hle.h"
+#include "../rando/seed.h"
 
 void guest_call(Cpu *c, uint64_t addr);
 uint64_t doorjump_player(uint64_t frame);  // PlayerCollision component: position at +0x80
@@ -353,17 +354,7 @@ static void miniboss_marker_set(void) {
     if (g_marker == -2) {
         g_marker = -1;
         extern const char *rando_seed_dir(void);
-        const char *dir = rando_seed_dir();
-        char p[512];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            static char buf[1 << 16];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            const char *k = strstr(buf, "\"miniboss-marker-flag\":");
-            if (k) g_marker = atoi(k + strlen("\"miniboss-marker-flag\":"));
-        }
+        if (rando_seed_dir()) g_marker = (int)rando_setting_int("miniboss-marker-flag", -1);
     }
     if (g_marker < 0) return;
     uint8_t *fl = (uint8_t *)(uintptr_t)LD64(GA(FLAG_PTR));
@@ -389,16 +380,19 @@ static void walls_load(void) {
     const char *dir = rando_seed_dir();
     char path[1024];
     if (!dir) return;
-    snprintf(path, sizeof path, "%s/roam.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
+    snprintf(path, sizeof path, "%s: roam", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "roam")) return;
     g_walls = calloc(512, sizeof *g_walls);
-    char cells[128];
+    char cells[128], line[512];
     WallScreen w;
-    while (g_nwalls < 512 && fscanf(f, "%f\t%f\t%f\t%d\t%d\t%127s", &w.x0, &w.z0, &w.ts, &w.w, &w.h, cells) == 6)
+    // one screen per line, up to the first line that isn't one (blank lines skipped)
+    while (g_nwalls < 512 && rando_text_gets(line, sizeof line, &f)) {
+        if (!line[strspn(line, " \t\r\n")]) continue;
+        if (sscanf(line, "%f\t%f\t%f\t%d\t%d\t%127s", &w.x0, &w.z0, &w.ts, &w.w, &w.h, cells) != 6) break;
         if (w.w * w.h <= (int)sizeof w.cells && (int)strlen(cells) == w.w * w.h)
             memcpy(w.cells, cells, (size_t)(w.w * w.h)), g_walls[g_nwalls++] = w;
-    fclose(f);
+    }
 }
 
 #define GOHMA_BODY 1.0f  // (half its width)

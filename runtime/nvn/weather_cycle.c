@@ -28,6 +28,7 @@
 
 #include "../game_addresses.h"
 #include "../hle.h"
+#include "../rando/seed.h"
 #include "../rando.h"
 #include "../settings.h"
 
@@ -112,16 +113,7 @@ bool weather_cycle_on(void) {
     else if (g_settings.rando_seed[0]) dir = (snprintf(sdir, sizeof sdir, "rando/%s", g_settings.rando_seed), sdir);
     if (strcmp(dir ? dir : "", g_dir)) {  // (the seed's settings.json, read again when the seed changes)
         snprintf(g_dir, sizeof g_dir, "%s", dir ? dir : "");
-        g_on = 0;
-        char p[600];
-        static char buf[1 << 16];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            g_on = strstr(buf, "\"weather-cycle\": true") != NULL;
-        }
+        g_on = dir && rando_seed_dir_bool(dir, "weather-cycle");
         if (g_on) LOG("[weather] the seed's weather cycle is on\n");
     }
     bool on = g_on > 0;

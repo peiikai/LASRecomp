@@ -9,6 +9,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 
 
@@ -75,24 +76,11 @@ float rt_walk_speed(uint64_t player, float m, int site) {
 // tools/patches.py BUFF_REPLACE_SITE reads the flag as false here: the counters are never consumed (they stay at 255) and
 // the row's own lot table is rolled as usual. Anything else that would make one (ItemPowerPiece 0xb2 / ItemGuardianAcorn 0xb3) is
 // held back at the actor factory (souls.c).
-// a seed folder's settings.json says "no-buff-drops": true
-static int dir_no_buff(const char *dir) {
-    char p[512];
-    snprintf(p, sizeof p, "%s/settings.json", dir);
-    FILE *f = fopen(p, "rb");
-    if (!f) return 0;
-    static char buf[1 << 16];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    buf[n] = 0;
-    fclose(f);
-    return strstr(buf, "\"no-buff-drops\": true") != NULL;
-}
-
 static int g_no_buff = -1;  // the running seed has it (per seed: read again after an in-place reboot)
 static bool seed_no_buff(void) {
     if (g_no_buff < 0) {
         const char *dir = rando_seed_dir();
-        g_no_buff = dir ? dir_no_buff(dir) : 0;
+        g_no_buff = dir && rando_setting("no-buff-drops");
         LOG("[qol] no Guardian Acorns / Pieces of Power by the seed: %s\n", g_no_buff ? "ON" : "off");
     }
     return g_no_buff;
@@ -114,7 +102,7 @@ int rt_no_buff_seed_forced(void) {
         snprintf(last, sizeof last, "%s", g_settings.rando_seed);
         char dir[256];
         snprintf(dir, sizeof dir, "rando/%s", g_settings.rando_seed);
-        on = g_settings.rando_seed[0] && dir_no_buff(dir);
+        on = g_settings.rando_seed[0] && rando_seed_dir_bool(dir, "no-buff-drops");
     }
     return on;
 }
@@ -127,17 +115,7 @@ RT_ON_RESET(no_buff_reset) { g_no_buff = -1; }  // (seed switch)
 static int g_tunic_up = -1;  // (per seed)
 int rt_tunic_upgrades(void) {
     if (g_tunic_up < 0) {
-        g_tunic_up = 0;
-        const char *dir = rando_seed_dir();
-        char p[512];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            static char buf[1 << 16];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            g_tunic_up = strstr(buf, "\"tunic-upgrades\": true") != NULL;
-        }
+        g_tunic_up = rando_seed_dir() && rando_setting("tunic-upgrades");
         LOG("[qol] tunics as upgrades: %s\n", g_tunic_up ? "ON" : "off");
     }
     return g_tunic_up;
@@ -154,17 +132,7 @@ RT_ON_RESET(tunic_up_reset) { g_tunic_up = -1; }
 static int g_underwater = -1;  // (per seed)
 int rt_underwater_items(void) {
     if (g_underwater < 0) {
-        g_underwater = 0;
-        const char *dir = rando_seed_dir();
-        char p[512];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            static char buf[1 << 16];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            g_underwater = strstr(buf, "\"underwater-items\": true") != NULL;
-        }
+        g_underwater = rando_seed_dir() && rando_setting("underwater-items");
         LOG("[qol] underwater items: %s\n", g_underwater ? "ON" : "off");
     }
     return g_underwater;

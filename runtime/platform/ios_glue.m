@@ -53,7 +53,7 @@ static void perform_shortcut(id self, SEL sel, UIWindowScene *scene, UIApplicati
 }
 // (SDL's own class and method: src/video/uikit/SDL_uikitappdelegate.m, SDLUIKitSceneDelegate's
 //  scene:willConnectToSession:options:, SDL 3.4.18. A rename there must not pass as "no quick actions": the app ends
-//  at launch, and tools/test_ios_sim.sh finds no log.)
+//  at launch.)
 __attribute__((constructor)) static void hook_shortcut_launch(void) {
     Class cls = objc_getClass("SDLUIKitSceneDelegate");
     Method m = class_getInstanceMethod(cls, @selector(scene:willConnectToSession:options:));
@@ -75,8 +75,11 @@ static void shortcuts_apply(void) {
     NSMutableArray<NSDictionary *> *seeds = [NSMutableArray array];
     for (NSString *name in [NSFileManager.defaultManager contentsOfDirectoryAtPath:dir error:nil]) {
         if (!rando_seed_there(name.UTF8String)) continue;
-        NSString *p = [[dir stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"settings.json"];
-        NSDate *t = [NSFileManager.defaultManager attributesOfItemAtPath:p error:nil].fileModificationDate;
+        NSString *seed = [dir stringByAppendingPathComponent:name];
+        NSDate *t = [NSFileManager.defaultManager attributesOfItemAtPath:[seed stringByAppendingPathComponent:@"seed.json"]
+                                                                   error:nil].fileModificationDate;  // (its record; older: settings.json)
+        if (!t) t = [NSFileManager.defaultManager attributesOfItemAtPath:[seed stringByAppendingPathComponent:@"settings.json"]
+                                                                   error:nil].fileModificationDate;
         [seeds addObject:@{@"name": name, @"t": t ?: NSDate.distantPast}];
     }
     NSString *cur = @(g_settings.rando_seed);

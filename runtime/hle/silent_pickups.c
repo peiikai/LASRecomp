@@ -16,6 +16,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 #define SILENT_BASE 3000  // (tools/rando/silent_pickups.py)
 #define MARK_FLAG 432     // unused0432: set around the add of a native Secret Seashell (silent_pickups.py MARK_FLAG)
@@ -85,18 +86,8 @@ int silent_seashell_total(void) {
     if (!dir) return 50;
     if (strcmp(seed, dir)) {
         snprintf(seed, sizeof seed, "%s", dir);
-        total = 50;
-        char p[600];
-        snprintf(p, sizeof p, "%s/settings.json", dir);
-        FILE *f = fopen(p, "rb");
-        if (f) {
-            static char buf[1 << 17];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            const char *k = strstr(buf, "\"seashell-total\":");
-            if (k && atoi(k + 17) > 0) total = atoi(k + 17);
-        }
+        int64_t t = rando_setting_int("seashell-total", 0);
+        total = t > 0 ? (int)t : 50;
     }
     return total;
 }

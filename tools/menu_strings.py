@@ -7,10 +7,11 @@
     tools/menu_strings.py keys                  every English text, with where it comes from
 
 What counts as menu text: L("..."), LN("...") and L_line("...") literals, the literals of option row calls (opt_*),
-in runtime/ui and runtime/*.c; the Warp tab's places (runtime/ui/warp_data.h); the randomizer's progress lines
-(tools/rando/las_headless.py stage()); and the spoiler log's lines (tools/rando/spoiler_view.py), split into the parts
-i18n.mm's L_line puts together - "a  ->  b", "%s" patterns, "x (y)", "a: b", "a, b", "a / b". Spoiler logs in
-rando/ under a data root (LARECOMP_DATA or the main checkout's) add the location names real seeds have.
+in runtime/ui and runtime/*.c; the Warp tab's places (runtime/ui/warp_data.h); the randomizer's progress lines and
+messages (runtime/rando/solve: stage() labels, GIVE_UP_TEXT); and the spoiler view's and check tracker's text
+(`lasrando strings`, built when missing: runtime/rando/solve/outputs_strings.cpp), split into the parts i18n.mm's
+L_line puts together - "a  ->  b", "%s" patterns, "x (y)", "a: b", "a, b", "a / b". Spoiler logs in rando/ under a
+data root (LARECOMP_DATA or the main checkout's) add the location names real seeds have.
 """
 import ast
 import collections
@@ -18,6 +19,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -190,49 +192,20 @@ def py_strings(path, want):
 MARKUP = re.compile(r'^(# |## |### |- |  )')
 
 
+def lasrando_strings(group):
+    """`lasrando strings`: the spoiler view's / check tracker's texts, from the generator's own tables."""
+    exe = os.path.join(ROOT, 'build', 'lasrando' + ('.exe' if os.name == 'nt' else ''))
+    if not os.path.exists(exe):
+        subprocess.run(['make', '-C', ROOT, 'lasrando'], check=True, stdout=subprocess.DEVNULL)
+    out = subprocess.run([exe, 'strings'], check=True, capture_output=True, text=True, encoding='utf-8').stdout
+    for line in out.splitlines():
+        g, composed, text = line.split('\t', 2)
+        if g == group:
+            yield text, 'lasrando strings', composed == '1'
+
+
 def spoiler_keys():
-    sys.path.insert(0, os.path.join(ROOT, 'tools', 'rando'))
-    import spoiler_view as sv
-    import check_names as cn
-    path = os.path.join(ROOT, 'tools', 'rando', 'spoiler_view.py')
-    for s in py_strings(path, {'append'}):
-        s = MARKUP.sub('', s)
-        if s and re.search('[A-Za-z]', s) and s != '%s' and '  ->  ' not in s:
-            yield s, 'spoiler_view.py', '%s' not in s
-    yield "%s - enter through %s's entrance", 'spoiler_view.py', False  # (area_name: n += f"...")
-    yield "%s's Soul", 'spoiler_view.py', False
-    yield "%s' Soul", 'spoiler_view.py', False
-    yield '%s:', 'spoiler_view.py', False  # ("- Mabe Village:")
-    yield 'room %s', 'spoiler_view.py', False  # ("Double stalfos (room A3)", "Catfish's Maw, room D7": room shuffle)
-    yield 'The last of the %s Triforce pieces you need ends the game.', 'spoiler_view.py', False
-    yield '2nd', 'spoiler_view.py', True  # ("Shield (2nd)": the second copy of a progressive item)
-    for k in ('shop-slot3-2nd', 'shop-slot5-2nd', 'shop-slot5-3rd'):  # (the Town Tool Shop's next items: check_names.py)
-        yield cn.display_name(k), 'spoiler_view.py', True
-    import entrance_names
-    for v in entrance_names.NAMES.values():
-        yield v, 'spoiler_view.py', True
-    for v in sv.PLACE:
-        if v:
-            yield v, 'spoiler_view.py', True
-    for d in (sv.AREAS, sv.DUNGEONS, sv.DPREFIX):
-        for v in d.values():
-            yield v, 'spoiler_view.py', True
-    for k in sv.ITEMS:
-        yield sv.pretty_item(k), 'spoiler_view.py', True
-    for d in sv.DPREFIX:
-        for kind in ('small-key', 'nightmare-key', 'compass', 'map', 'stone-beak'):
-            yield sv.pretty_item(f'{d}-{kind}'), 'spoiler_view.py', True
-    # every location the randomizer has (real seeds add the numbered digs, bushes and pots below)
-    yml = os.path.join(ROOT, 'third_party', 'LAS-Randomizer', 'RandomizerCore', 'Data', 'locations.yml')
-    if os.path.exists(yml):
-        for m in re.finditer(r'^\s+-\s+([a-z0-9-]+)\s*$', open(yml).read(), re.M):
-            yield sv.pretty_loc(m.group(1)), 'spoiler_view.py', True
-            yield cn.display_name(m.group(1)), 'spoiler_view.py', True  # (the tracker's wording, used since 2026-11)
-    # dungeon checks in the tracker's wording ("Beetles"): every item location of LAS's logic
-    lg = os.path.join(ROOT, 'third_party', 'LAS-Randomizer', 'RandomizerCore', 'Data', 'logic.yml')
-    if os.path.exists(lg):
-        for m in re.finditer(r'^(D\d-[a-z0-9-]+):\s*\n\s+type:\s*(item|follower)\b', open(lg).read(), re.M):
-            yield cn.display_name(m.group(1)), 'spoiler_view.py', True
+    yield from lasrando_strings('spoiler')
     # settings ("Settings: " + the options that are on, dashes as spaces)
     for f in glob.glob(os.path.join(ROOT, 'runtime', 'ui', 'rando_tab.mm')) + glob.glob(os.path.join(ROOT, 'runtime', 'rando.c')):
         for m in re.finditer(r'"([a-z0-9]+(?:-[a-z0-9]+)+)"', open(f).read()):
@@ -253,21 +226,8 @@ def spoiler_keys():
 
 
 def tracker_keys():
-    """The check tracker's names (tools/rando/tracker.py writes them into rando/<seed>/tracker.tsv with check_names.py)."""
-    sys.path.insert(0, os.path.join(ROOT, 'tools', 'rando'))
-    import check_names as cn
-    import tracker
-    for v in list(cn.NAMES.values()) + list(cn.KIND_WORD.values()) + list(cn.HOUSES.values()) + [p for p in tracker.PLACE if p]:
-        yield v, 'tracker.py', True
-    for w in ('north', 'south', 'east', 'west', 'north-west', 'north-east', 'south-west', 'south-east', 'centre', 'middle',
-              'inside'):
-        yield w, 'tracker.py', False
-    for p in ('Trendy Game: prize %s', 'Pot (%s)', 'Pot in %s', '%s of 3'):
-        yield p, 'tracker.py', False
-    yml = os.path.join(ROOT, 'third_party', 'LAS-Randomizer', 'RandomizerCore', 'Data', 'locations.yml')
-    if os.path.exists(yml):
-        for m in re.finditer(r'^\s+-\s+([a-zA-Z0-9-]+)\s*$', open(yml).read(), re.M):
-            yield cn.display_name(m.group(1)), 'tracker.py', True
+    """The check tracker's names (`lasrando strings`; real seeds' rando/<seed>/tracker.tsv add the numbered checks)."""
+    yield from lasrando_strings('tracker')
     for r in (os.environ.get('LARECOMP_DATA', ''), ROOT, os.path.join(ROOT, '..', '..', '..')):
         for f in glob.glob(os.path.join(r, 'rando', '*', 'tracker.tsv')):
             for line in open(f, encoding='utf-8', errors='ignore'):
@@ -279,10 +239,16 @@ def tracker_keys():
 
 
 def rando_progress_keys():
-    path = os.path.join(ROOT, 'tools', 'rando', 'las_headless.py')
-    for s in py_strings(path, {'stage'}):
-        yield s, 'las_headless.py', False
-    yield 'Triforce hunt: %s', 'las_headless.py', False
+    """The generator's progress lines (stage("...") and its "%zu" labels) and the messages a player can act on."""
+    for f in sorted(glob.glob(os.path.join(ROOT, 'runtime', 'rando', 'solve', '*.cpp'))):
+        src = open(f, encoding='utf-8').read()
+        for m in re.finditer(r'\bstage\(\s*[^,()]+,\s*"((?:[^"\\]|\\.)*)"\s*\)', src):
+            yield m.group(1), 'generator', False
+        for m in re.finditer(r'snprintf\(label,\s*sizeof label,\s*"((?:[^"\\]|\\.)*)"', src):
+            yield re.sub(r'%(?:zu|d|u|lld|llu)', '%s', m.group(1)), 'generator', False
+        for m in re.finditer(r'GIVE_UP_TEXT\s*=\s*\n?\s*"((?:[^"\\]|\\.)*)"', src):
+            yield m.group(1), 'generator', False
+    yield 'Triforce hunt: %s', 'generator', False
 
 
 # ---- splitting a line into the parts L_line translates (as i18n.mm's compose)

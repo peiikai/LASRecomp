@@ -81,33 +81,6 @@ works on 120 Hz displays.
 
 What is still open or worth knowing. Fixed items are in git history.
 
-### Embedded Python (the seed generator)
-
-- **A script is a process only as far as [runtime/platform/ios_pyproc.py](../runtime/platform/ios_pyproc.py) makes
-  it one.** The generator's `os.chdir` and its re-run of itself through `subprocess` work unchanged, with these
-  shortcuts:
-  - The working directory is the thread's, through `pthread_chdir_np` / `pthread_fchdir_np` (in libSystem since
-    iOS 10, in no SDK header). A thread already running when another calls `chdir` stays where it was, and a `chdir`
-    from C code still moves the whole app.
-  - A child runs on the calling thread to its end before `Popen` returns: no pipe to a running child, no two at once,
-    and each waiting parent keeps its memory. Only this Python (`sys.executable`) with a script, `-m` or `-c` runs.
-  - The environment is swapped through `os.environ._data`, a private field of CPython's `os` module.
-
-  [tools/test_ios_pyproc.py](../tools/test_ios_pyproc.py) (CI) and the self-test's `process` step (CI's Simulator
-  run) fail when one of these stops holding.
-- **The generator's modules are reset by hand.** `ios_pyproc.py` drops every module under `rando-gen` (by real path)
-  and the PySide6 stubs from `sys.modules` before a run; the C extensions stay loaded. A sub-interpreter per run was
-  tried (b2013266) and taken back: oead and quicktex are pybind11 modules without `multiple_interpreters` support,
-  their types and pybind11's internals are process-wide, and CPython tightens the rules with every version. The reset
-  needs its two cases kept right (`/var` vs `/private/var` paths, the `RandomizerCore.Tools` namespace package); the
-  self-test's kill check covers them. `build_deps_ios.sh` pins pybind11 at what oead vendors and fails when the two
-  modules' `__pybind11_internals_vN` differ.
-- The native packages (keystone, oead, quicktex, PyYAML, Pillow) still have their own recipes in
-  `build_deps_ios.sh` with a hand-moved version.
-- [tools/test_ios_python.sh](../tools/test_ios_python.sh) `<devicectl id> <udid>` runs the self-test on a device and
-  compares a generated seed with the same seed generated on the computer. An incomplete romfs changes the output
-  without an error (`loc_text.Names` falls back to English when a language's `Place.msbt` is missing).
-
 ### Address space
 
 - **The window is one 5.25 GB piece, placed where the process has room.** Free address space differs by device and

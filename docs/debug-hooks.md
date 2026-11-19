@@ -151,7 +151,6 @@ Comma-separated entries, each starting with a frame:
 | `LARECOMP_RANDO_SEED` | seed folder name | Play this randomizer seed (`rando/<name>/`) instead of the one in the settings. Saves go to the seed's own folder unless `LARECOMP_SAVE_DIR` is set. |
 | `LARECOMP_RANDO_ID` | seed ID | Open the randomizer tab with that seed ID's options. |
 | `LARECOMP_RANDO_GEN_TEST` | `1` or `name[:seed ID]` | Generate a seed as soon as the randomizer tab is shown. |
-| `LARECOMP_RANDO_GEN` | file path | Use this seed generator program instead of the bundled one. |
 
 ### Loading a save from the command line
 
@@ -376,7 +375,6 @@ Read by scripts in `tools/`, not by the app.
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_ROMFS` | folder | The extracted game's romfs folder, for the Python tests that read game files (`test_field_regions.py`, `test_room_crossing.py`, `test_room_ledges.py`). |
 | `LARECOMP_MIN_FREE_GB` | GB | `tools/game_slot.sh`: free memory to wait for before a test copy starts (default 10). |
 
 Narrow one-off probes (memory dumps and watches at fixed addresses, single-shader skips, per-feature tuning, menu

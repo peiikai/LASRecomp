@@ -112,9 +112,6 @@ void plat_init(void) {
             ent > 0 ? "yes" : ent == 0 ? "NO" : "unknown");
     // (arguments and environment as on the desktop: `xcrun devicectl device process launch --environment-variables
     // '{"LARECOMP_...":"1"}' <bundle id> --play`; from the home screen there are none)
-    if (getenv("LARECOMP_IOS_PYTEST")) {  // the embedded Python's self-test (ios_python.m): its log lines, then on
-        plat_ios_python_selftest();
-    }
 }
 
 // The process's address space: the free gaps of 256 MB or more and the large regions, to the log (what the window
@@ -233,4 +230,14 @@ void plat_fatal_notice(void) {
     }
 }
 
-// (child processes: runtime/platform/ios_python.m - Python scripts as threads of the embedded interpreter)
+// Child processes: iOS apps can't start any (the seed generator runs in the app itself, runtime/rando/solve/generate.h;
+// the update check fetches with NSURLSession). plat_spawn always fails.
+PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
+    (void)argv, (void)log_path, (void)append_log;
+    return 0;
+}
+int plat_proc_wait(PlatProc p, bool block) {
+    (void)p, (void)block;
+    return 255;
+}
+void plat_proc_kill(PlatProc p) { (void)p; }

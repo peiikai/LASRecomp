@@ -23,7 +23,7 @@ run() {  # image, command...: the checkout mounted at /src
 
 if [ "$ARCH" = "$(uname -m)" ]; then  # native: one container of this arch does it all
     IMG=$(image "$PODARCH")
-    run "$IMG" tools/linux/rando_helper.sh "$ARCH"
+    run "$IMG" tools/linux/gen_helper.sh "$ARCH"
     run "$IMG" tools/linux/package.sh "$ARCH"
     exit 0
 fi
@@ -44,8 +44,8 @@ if [ "$ARCH" = aarch64 ]; then
         done
         touch "$S/.ok"
     fi
-    run "$ARM" tools/linux/rando_helper.sh aarch64
+    run "$ARM" tools/linux/gen_helper.sh aarch64
 else
-    run "$AMD" tools/linux/rando_helper.sh x86_64
+    run "$AMD" tools/linux/gen_helper.sh x86_64
 fi
 run "$AMD" tools/linux/package.sh "$ARCH"

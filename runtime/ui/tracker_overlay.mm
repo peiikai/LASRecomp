@@ -44,6 +44,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 uint64_t renderer_present_count(void);
 int kernel_data_regions(uint64_t *addr, uint64_t *size, int max);
@@ -222,11 +223,11 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char path[512];
-    snprintf(path, sizeof path, "%s/tracker.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
+    snprintf(path, sizeof path, "%s: tracker", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "tracker")) return;
     static char line[16384];
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: the generator writes CRLF, read here in binary mode)
         std::vector<char *> c;
         for (char *s = line, *t; (t = strsep(&s, "\t"));) c.push_back(t);
@@ -275,13 +276,14 @@ static void load(void) {
             for (auto &k : g_checks)
                 if (k.name == c[1]) k.seen_flag = atoi(c[2]), k.prog = atoi(c[3]) != 0;
     }
-    fclose(f);
-    snprintf(path, sizeof path, "%s/flags.tsv", dir);
-    if ((f = fopen(path, "r"))) {
+    if (rando_text_open(&f, "flags")) {  // (name, index per line, up to the first line that isn't one)
         char name[128];
         int idx;
-        while (fscanf(f, "%127s %d", name, &idx) == 2) g_flag_idx[name] = idx;
-        fclose(f);
+        while (rando_text_gets(line, sizeof line, &f)) {
+            if (!line[strspn(line, " \t\r\n")]) continue;
+            if (sscanf(line, "%127s %d", name, &idx) != 2) break;
+            g_flag_idx[name] = idx;
+        }
     }
     g_loaded = 1;
     LOG("[tracker] %zu logic nodes, %zu checks, %zu dungeons, %zu dungeon cells\n", g_nodes.size(), g_checks.size(),

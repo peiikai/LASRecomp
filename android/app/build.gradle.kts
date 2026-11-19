@@ -111,8 +111,7 @@ val prepareLasRecomp by tasks.registering {
 }
 // The game code builder's files, unpacked by the activity into <internal files>/gen (runtime/gamebuild.c): Python's
 // standard library, the generator's bindings, zig's lib/, the generator and the tables it reads, and the headers and
-// entry file the generated code is compiled with; and the seed generator with its modules. Nothing of the game: the
-// player's own files are the input.
+// entry file the generated code is compiled with. Nothing of the game: the player's own files are the input.
 val genZip by tasks.registering(Zip::class) {
     val g = deps.resolve("gen")
     archiveFileName.set("gen.zip")
@@ -127,18 +126,7 @@ val genZip by tasks.registering(Zip::class) {
                 "win_longjmp.py")  // (gen.py imports it everywhere; it only acts on Windows, #779)
         into("tools")
     }
-    // the seed generator (runtime/ui/rando_tab.mm; gen.py reads tools/rando/patch_variants.json too): tools/rando and
-    // LAS-Randomizer in their source layout (las_headless.py finds it at ../../third_party), as the desktop's rando-gen
-    // bundles them (tools/rando/rando_gen.spec)
-    from(repo.resolve("tools/rando")) {
-        include("*.py", "*.json", "*.yml", "*.txt")
-        into("tools/rando")
-    }
-    from(repo.resolve("third_party/LAS-Randomizer")) {
-        include("RandomizerCore/**", "Resources/**", "LICENSE.txt")
-        exclude("**/__pycache__/**", "**/._*", "**/.DS_Store")
-        into("third_party/LAS-Randomizer")
-    }
+    from(repo.resolve("tools/rando/patch_variants.json")) { into("tools/rando") }  // (gen.py reads it)
     from(repo.resolve("runtime/game_addresses")) { include("*.h"); into("runtime/game_addresses") }
     from(repo.resolve("runtime")) { include("cpu.h", "simd.h", "simd_fp.h", "gamelib.h", "hle/hle_symbols.txt"); into("gamelib-src")
         eachFile { if (name == "hle_symbols.txt") path = "gamelib-src/hle_symbols.txt" } }

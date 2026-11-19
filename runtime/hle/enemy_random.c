@@ -24,8 +24,34 @@
 #include "../game_addresses.h"
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/apply/build.h"
+#include "../rando/seed.h"
 
 extern uint64_t renderer_present_count(void);
+
+// A seed room file: the seed's built bytes (runtime/rando/apply/build.h) when it was built in memory, else its file in
+// the seed folder. The records' offsets are the same in both (the built files are the same bytes).
+typedef struct { int fd; const uint8_t *mem; size_t size; } SeedFile;
+static SeedFile seed_open(const char *rel, const char *host) {
+    SeedFile f = {-1, NULL, 0};
+    f.mem = rando_built_file(rel, &f.size);
+    if (!f.mem) f.fd = open(host, O_RDONLY);
+    return f;
+}
+static bool seed_ok(const SeedFile *f) { return f->mem || f->fd >= 0; }
+static ssize_t seed_pread(const SeedFile *f, void *buf, size_t n, uint64_t off) {
+    if (f->mem) {
+        if (off >= f->size) return 0;
+        size_t k = n < f->size - off ? n : (size_t)(f->size - off);
+        memcpy(buf, f->mem + off, k);
+        return (ssize_t)k;
+    }
+    return f->fd >= 0 ? pread(f->fd, buf, n, (off_t)off) : -1;
+}
+static void seed_close(SeedFile *f) {
+    if (f->fd >= 0) close(f->fd);
+    f->fd = -1, f->mem = NULL;
+}
 
 enum { NCLS = 8, MAXPICK = 64, MAXENEMY = 160, MAXFILE = 1024, MAXSLOT = 4096, REC = 0x88 };
 static const char *const kCls[NCLS] = {"land", "air", "air_field", "water", "water2D", "water-shallow", "tree", "hole"};
@@ -131,13 +157,13 @@ static void load(void) {
     const char *e = ENV("LARECOMP_ENEMY_RANDOM");
     if (e && !strcmp(e, "0")) { LOG("[enemyrand] off (LARECOMP_ENEMY_RANDOM=0)\n"); return; }
     char p[600];
-    snprintf(p, sizeof p, "%s/enemies_random.tsv", dir);
-    FILE *f = fopen(p, "r");
-    if (!f) return;  // (a Seeded seed)
+    snprintf(p, sizeof p, "%s: enemies_random", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "enemies_random")) return;  // (a Seeded seed)
     g_files = calloc(MAXFILE, sizeof *g_files);
     g_slots = calloc(MAXSLOT, sizeof *g_slots);
     char line[1024];
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
         char *tab = strchr(line, '\t');
         if (line[0] == '#' || !tab) continue;
@@ -206,17 +232,16 @@ static void load(void) {
             g_files[g_nfiles - 1].n++;
         }
     }
-    fclose(f);
     for (int fi = 0; fi < g_nfiles; fi++) {  // (each record's key, from the seed's file)
         RFile *rf = &g_files[fi];
         char hp[800];
         snprintf(hp, sizeof hp, "%s/romfs/%s", dir, rf->path);
         rf->host = strdup(hp);
-        int fd = open(hp, O_RDONLY);
+        SeedFile sf = seed_open(rf->path, hp);
         for (int si = 0; si < rf->n; si++)
-            if (fd < 0 || pread(fd, &g_slots[rf->first + si].key, 8, g_slots[rf->first + si].off) != 8)
+            if (seed_pread(&sf, &g_slots[rf->first + si].key, 8, g_slots[rf->first + si].off) != 8)
                 g_slots[rf->first + si].key = 0;
-        if (fd >= 0) close(fd);
+        seed_close(&sf);
     }
     const char *sd = ENV("LARECOMP_ENEMY_RANDOM_SEED");
     g_rng = sd ? strtoull(sd, NULL, 0) : ((uint64_t)time(NULL) << 20) ^ (uint64_t)(uintptr_t)&g_rng ^ (uint64_t)getpid();
@@ -340,7 +365,7 @@ static const char *base(const RFile *rf) { return strrchr(rf->path, '/') ? strrc
 static int rec_type(const Slot *s) { uint16_t t; memcpy(&t, s->rec + 0xC, 2); return t; }
 
 // One load of a room file: roll its actors (enemies.py shuffleEnemyActors, types part) into their records.
-static void roll(RFile *rf, int fd, const char *why) {
+static void roll(RFile *rf, const SeedFile *fd, const char *why) {
     int restr[96], nr = restr_start(rf, restr);
     char log[1024];
     int ll = snprintf(log, sizeof log, "[enemyrand] f%llu %s %s:", (unsigned long long)renderer_present_count(), why,
@@ -348,7 +373,7 @@ static void roll(RFile *rf, int fd, const char *why) {
     for (int si = 0; si < rf->n; si++) {
         Slot *s = &g_slots[rf->first + si];
         uint8_t seed[REC];
-        if (pread(fd, seed, REC, s->off) != REC) return;
+        if (seed_pread(fd, seed, REC, s->off) != REC) return;
         apply_pick(s, seed, pick_for(s, restr, &nr));
         s->fresh = 1;
         if (ll < (int)sizeof log - 32) ll += snprintf(log + ll, sizeof log - (size_t)ll, " %#x>%#x", s->vtype, rec_type(s));
@@ -358,10 +383,10 @@ static void roll(RFile *rf, int fd, const char *why) {
 
 // One actor of a room made again: a new pick for it alone, under the room's restrictions as enemies.py has them at
 // its place in the room, and the groups its room mates' current picks hold (one fly-bomb, one blocking enemy).
-static void roll_one(RFile *rf, int k, int fd) {
+static void roll_one(RFile *rf, int k, const SeedFile *fd) {
     Slot *s = &g_slots[rf->first + k];
     uint8_t seed[REC];
-    if (pread(fd, seed, REC, s->off) != REC) return;
+    if (seed_pread(fd, seed, REC, s->off) != REC) return;
     int restr[96], nr = restr_start(rf, restr);
     for (int si = 0; si < k; si++)  // (the earlier actors' vanilla types off the list, as in roll)
         for (int i = 0; i < nr; i++)
@@ -403,8 +428,8 @@ void enemy_random_filter(const char *host, uint64_t off, uint8_t *dst, uint64_t 
     }
     if (rf) {
         if (off == 0 || !rf->rolled) {
-            int fd = open(host, O_RDONLY);
-            if (fd >= 0) { roll(rf, fd, "load"); close(fd); rf->rolled = 1; }
+            SeedFile sf = seed_open(rf->path, host);
+            if (seed_ok(&sf)) { roll(rf, &sf, "load"); seed_close(&sf); rf->rolled = 1; }
         }
         for (int si = 0; si < rf->n; si++) {
             Slot *s = &g_slots[rf->first + si];
@@ -461,11 +486,12 @@ void rt_enemy_spawn(uint64_t info) {
     for (int fi = 0; fi < g_nfiles && !rf; fi++)
         if (i >= g_files[fi].first && i < g_files[fi].first + g_files[fi].n) rf = &g_files[fi];
     if (rf && s->cls != CLS_HOLE) {
-        int fd = s->fresh && rf->rolled ? -1 : open(rf->host, O_RDONLY);
-        if (fd >= 0) {
-            if (!rf->rolled) roll(rf, fd, "spawn"), rf->rolled = 1;  // (no file roll yet: the whole room)
-            else roll_one(rf, i - rf->first, fd);
-            close(fd);
+        SeedFile sf = {-1, NULL, 0};
+        if (!(s->fresh && rf->rolled)) sf = seed_open(rf->path, rf->host);
+        if (seed_ok(&sf)) {
+            if (!rf->rolled) roll(rf, &sf, "spawn"), rf->rolled = 1;  // (no file roll yet: the whole room)
+            else roll_one(rf, i - rf->first, &sf);
+            seed_close(&sf);
         }
         s->fresh = 0;
         ST16(info + 8, LD16((uint64_t)(uintptr_t)(s->rec + 0xC)));
@@ -487,16 +513,7 @@ void enemy_stairs_tick(void) {
     extern void flags_put(int idx, bool on);
     if (g_stairs_seed < 0) {
         g_stairs_seed = 0;
-        const char *dir = rando_seed_dir();
-        char p[600];
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-        if (f) {
-            static char buf[1 << 16];
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-            g_stairs_seed = strstr(buf, "\"randomize-enemies\": true") != NULL;
-        }
+        g_stairs_seed = rando_seed_dir() && rando_setting("randomize-enemies");
     }
     if (!g_stairs_seed) return;
     uint32_t crc = LD32(GA(LIVE_SAVE) + 0x5EC4);  // (the save's body CRC: runtime/hle/flags_ext.c)

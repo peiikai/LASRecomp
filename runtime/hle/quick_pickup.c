@@ -18,6 +18,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 typedef struct { char entry[48]; int flag, item, count, index; char se[40]; } Quick;
 static Quick *g_q;
@@ -38,19 +39,18 @@ static void load(const char *dir) {
     free(g_q);
     g_q = NULL, g_nq = 0;
     char p[600];
-    snprintf(p, sizeof p, "%s/quick_pickups.tsv", dir);
-    FILE *f = fopen(p, "r");
-    if (!f) return;
+    snprintf(p, sizeof p, "%s: quick_pickups", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "quick_pickups")) return;
     int cap = 0;
     char line[256];
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         Quick q;
         if (sscanf(line, "%47[^\t]\t%d\t%d\t%d\t%d\t%39s", q.entry, &q.flag, &q.item, &q.count, &q.index, q.se) != 6) continue;
         if (q.se[0] == '-') q.se[0] = 0;
         if (g_nq == cap) g_q = realloc(g_q, sizeof *g_q * (size_t)(cap = cap ? cap * 2 : 512));
         g_q[g_nq++] = q;
     }
-    fclose(f);
     LOG("[quick] %d quick pickups in %s\n", g_nq, p);
 }
 

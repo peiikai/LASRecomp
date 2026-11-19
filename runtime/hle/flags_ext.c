@@ -19,6 +19,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 
 
@@ -60,10 +61,7 @@ static bool enabled(void) {
         const char *e = ENV("LARECOMP_FLAGS_EXT");
         g_on = e ? atoi(e) != 0 : 0;
         if (!e && rando_seed_dir()) {  // (LARECOMP_FLAGS_EXT=0 forces it off)
-            char p[512];
-            struct stat sb;
-            snprintf(p, sizeof p, "%s/flags_ext", rando_seed_dir());
-            g_on = stat(p, &sb) == 0;
+            g_on = rando_seed_has_table(rando_seed(), "flags_ext");  // (the seed uses flags 2048+)
         }
         if (g_on) LOG("[flags] extended event flags: %d (bits 2048+ in savedataN.bin.flagsx)\n", NFLAGS);
     }
