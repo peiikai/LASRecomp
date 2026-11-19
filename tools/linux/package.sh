@@ -56,6 +56,7 @@ cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gameli
    "$APPDIR/usr/bin/gamelib-src/"
 cp tools/linux/AppRun "$APPDIR/" && chmod +x "$APPDIR/AppRun"
 cp tools/linux/lasrecomp.desktop "$APPDIR/"
+cp tools/recomplauncher.json "$APPDIR/"  # (launchers read it at the AppImage's root: docs/debug-hooks.md "Command line")
 cp docs/icon/icon_1024.png "$APPDIR/lasrecomp.png" && ln -sf lasrecomp.png "$APPDIR/.DirIcon"
 
 # libraries: what lasrecomp needs (DT_NEEDED, recursively) that deps/ provides; anything else must be a system one

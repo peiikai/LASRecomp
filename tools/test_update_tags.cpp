@@ -122,6 +122,18 @@ int main(void) {
         CHECK(newest_nightly(body, "windows") == 0, "nightly windows: none (windows-arm64 is another platform)");
         CHECK(newest_experimental(body, "macOS") == 202612010000LL, "experimental macOS ignores nightlies");
     }
+    {  // Windows x64's zip renamed (2026-11): builds from before look for "-windows.", newer ones for "-windows-x64.";
+       // the handover rounds carry both names, the later ones only the new one
+        std::string handover = "\"name\":\"LAS.Recomp-nightly-202611200400-abc1234-windows-x64.zip\"\n"
+                               "\"name\":\"LAS.Recomp-nightly-202611200400-abc1234-windows.zip\"\n"
+                               "\"name\":\"LAS.Recomp-nightly-202611210400-def5678-windows-arm64.zip\"\n";
+        std::string later = "\"name\":\"LAS.Recomp-nightly-202612200400-abc1234-windows-x64.zip\"\n";
+        CHECK(newest_nightly(handover, "windows") == 202611200400LL, "old builds see the handover round");
+        CHECK(newest_nightly(handover, "windows-x64") == 202611200400LL, "new builds see it too");
+        CHECK(newest_nightly(handover, "windows-arm64") == 202611210400LL, "Windows on ARM: its own file");
+        CHECK(newest_nightly(later, "windows-x64") == 202612200400LL, "new builds: the new name alone");
+        CHECK(newest_nightly(later, "windows") == 0, "old builds don't take windows-x64 for theirs");
+    }
     {  // the self-updater's manifests on the nightly page are never taken for a nightly build
         std::string body = "\"name\":\"update-macOS.txt\"\n\"name\":\"update-windows.txt\"\n"
                            "\"browser_download_url\":\"https://github.com/x/releases/download/nightly/update-windows.txt\"\n";

@@ -1,5 +1,5 @@
 # LAS Recomp's release builds: the macOS arm64 .dmg (make dmg), the Windows x64 .zip (make dist), the Linux
-# x86_64 / aarch64 AppImages (make appimage), the signed Android .apk (from Beta 6) and the iOS kit .laskit (make ios-kit: the iOS app without game code
+# x86_64 / aarch64 AppImages (make appimage) and the same files as .tar.gz (make tarball), the signed Android .apk (from Beta 6) and the iOS kit .laskit (make ios-kit: the iOS app without game code
 # plus the tools any of those desktops completes it with), each from the same commit, put on a DRAFT
 # GitHub release with their sha256s. It never publishes: a person reads the draft, writes the notes and publishes
 # it. None of the files holds game code or game files (the start screen builds the game code from the player's own
@@ -235,6 +235,8 @@ jobs:
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
+      # (the zip says x64, as launchers pick a file by system and processor; the self-updater takes the name from its
+      #  manifest, update-windows.txt, which keeps its name)
       - name: Release zip
         run: make -j"$(nproc)" dist
       - name: No game files or generated C
@@ -247,7 +249,7 @@ jobs:
       # the self-updater's signed manifest (tools/update_manifest.sh; none without the key: Download only)
       - name: Update manifest
         env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.check.outputs.version }}' }
-        run: tools/update_manifest.sh "$VERSION" windows build/dist/*-windows.zip "build/dist/LAS Recomp"
+        run: tools/update_manifest.sh "$VERSION" windows build/dist/*-windows-x64.zip "build/dist/LAS Recomp"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -444,17 +446,16 @@ jobs:
         with:
           path: build/linux/${{ matrix.arch }}/wheels
           key: ${{ steps.wheels.outputs.cache-primary-key }}
-      # package.sh checked the executable; here the whole AppDir that was packed (readelf: any arch's ELF)
+      # package.sh checked the executable; here the whole AppDir that was packed (readelf: any arch's ELF), then the
+      # tarball made from it (the same files in one folder, for places without FUSE: tools/linux/tarball.sh)
       - name: No game code
+        run: tools/linux/check_no_game_code.sh build/linux/${{ matrix.arch }}/AppDir
+      - name: Tarball
         run: |
-          A=build/linux/${{ matrix.arch }}/AppDir
-          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
-                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
-          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
-          find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
-            if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
-          done
+          make tarball ARCH=${{ matrix.arch }}
           ls -la build/dist
+      - name: Data folder rules
+        run: tools/linux/check_portable.sh ${{ matrix.arch }}
       - name: Update manifest
         env: { UPDATE_SIGNING_KEY: '${{ secrets.UPDATE_SIGNING_KEY }}', VERSION: '${{ needs.check.outputs.version }}' }
         run: tools/update_manifest.sh "$VERSION" linux-${{ matrix.arch }} build/dist/*-linux-${{ matrix.arch }}.AppImage
@@ -463,6 +464,7 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: |
             build/dist/*.AppImage
+            build/dist/*.tar.gz
             build/dist/update-*.txt
           if-no-files-found: error
           compression-level: 0
@@ -477,6 +479,10 @@ jobs:
     outputs:
       name: ${{ steps.n.outputs.name }}
     steps:
+      - uses: actions/checkout@v4  # (tools/linux/check_no_game_code.sh)
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+          sparse-checkout: tools
       - name: Newest nightly AppImage
         id: n
         env:
@@ -497,20 +503,28 @@ jobs:
           # it is that nightly build (nightly_version.sh: version nightly-<stamp>-<commit>, LARECOMP_NIGHTLY_STAMP <stamp>)
           grep -aq "nightly-$STAMP-$COMMIT" dl/squashfs-root/usr/bin/lasrecomp || { echo "::error::$NAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
           # (as the linux job's check)
-          A=dl/squashfs-root
-          bad=$(find "$A" -type d \( -name extracted -o -name 'generated*' -o -name exefs -o -name romfs \);
-                find "$A" -name '*.c' ! -path '*/zig/lib/*' ! -path '*/gamelib-src/gamelib_entry.c'; find "$A" -name 'lasgame*')
-          [ -z "$bad" ] || { echo "::error::must not ship: $bad"; exit 1; }
-          find "$A" -type f \( -perm /111 -o -name '*.so*' \) | while read -r f; do
-            if readelf -Ws --wide "$f" 2>/dev/null | grep ' f_70' >/dev/null; then echo "::error::game code in $f"; exit 1; fi
-          done
+          tools/linux/check_no_game_code.sh dl/squashfs-root
           cp "dl/$NAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.AppImage"
+          # the same round's tarball, when that nightly has one (nightlies from before the tarball don't: then the
+          # release has no linux-aarch64 tarball, and says nothing of it)
+          TNAME=${NAME%.AppImage}.tar.gz
+          if gh release view nightly --json assets -q '.assets[].name' | grep -qx "$TNAME"; then
+            gh release download nightly -p "$TNAME" -D dl
+            DIGEST=$(gh api "repos/$GH_REPO/releases/tags/nightly" -q ".assets[] | select(.name == \"$TNAME\") | .digest // empty")
+            [ -z "$DIGEST" ] || [ "$DIGEST" = "sha256:$(sha256sum "dl/$TNAME" | cut -d' ' -f1)" ] || { echo "::error::$TNAME: not the sha256 GitHub has"; exit 1; }
+            mkdir dl/tar && tar -xzf "dl/$TNAME" -C dl/tar
+            grep -aq "nightly-$STAMP-$COMMIT" "dl/tar/LAS Recomp/usr/bin/lasrecomp" || { echo "::error::$TNAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
+            tools/linux/check_no_game_code.sh "dl/tar/LAS Recomp"
+            cp "dl/$TNAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.tar.gz"
+          else echo "::warning::no $TNAME on the nightly release: no linux-aarch64 tarball in this release"; fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           ls -la build/dist
       - uses: actions/upload-artifact@v4
         with:
           name: linux-aarch64
-          path: build/dist/*.AppImage
+          path: |
+            build/dist/*.AppImage
+            build/dist/*.tar.gz
           if-no-files-found: error
           compression-level: 0
 
@@ -623,12 +637,14 @@ jobs:
           cd dist
           mkdir ../manifests && mv update-*.txt appcast-*.xml ../manifests/ 2>/dev/null || true  # (the updaters', beside the files)
           ls -la . ../manifests
-          N=6; [ "$ARM64" = true ] && N=7
-          [ "$(ls | wc -l)" = $N ] || { echo "::error::expected $N files"; exit 1; }
+          # (+ the linux-x86_64 tarball; the linux-aarch64 one only when its nightly had it)
+          N=7; [ "$ARM64" = true ] && N=8
+          [ "$(ls | grep -v -- '-linux-aarch64\.tar\.gz$' | wc -l)" = $N ] || { echo "::error::expected $N files"; exit 1; }
           # (a test build: only the platforms its fix targets ship; the others were built as a compile check)
           for f in *; do
-            case $f in *-macOS.dmg) p=macos ;; *-windows.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
+            case $f in *-macOS.dmg) p=macos ;; *-windows-x64.zip) p=windows ;; *-linux-x86_64.AppImage) p=linux ;;
                         *-linux-aarch64.AppImage) p=linux-aarch64 ;; *-iOS.laskit) p=ios ;; *-android.apk) p=android ;;
+                        *-linux-x86_64.tar.gz) p=linux ;; *-linux-aarch64.tar.gz) p=linux-aarch64 ;;
                         *-windows-arm64.zip) p=windows-arm64 ;;
                         *) echo "::error::unknown file $f"; exit 1 ;; esac
             [[ " $PLATFORMS " == *" $p "* ]] || { echo "built, not shipped: $f"; rm "$f"; }
@@ -636,7 +652,8 @@ jobs:
           for m in ../manifests/*; do  # (a manifest or feed goes up only with its platform's file)
             [ -f "$m" ] || continue
             plat=$(basename "$m"); plat=${plat#update-}; plat=${plat#appcast-}; plat=${plat%.*}
-            ls ./*-"$plat".zip ./*-"$plat".AppImage ./*-"$plat".dmg >/dev/null 2>&1 || rm "$m"
+            f=$plat; [ "$plat" = windows ] && f=windows-x64  # (update-windows.txt: the x64 zip)
+            ls ./*-"$f".zip ./*-"$plat".AppImage ./*-"$plat".dmg >/dev/null 2>&1 || rm "$m"
           done
           MANIFESTS=(); for m in ../manifests/*; do [ -f "$m" ] && MANIFESTS+=("$m"); done
           if [ "$EVENT" = release ]; then  # (published on GitHub: attach the files, the notes get the sha256 table)

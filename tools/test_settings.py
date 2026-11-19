@@ -113,4 +113,16 @@ with tempfile.TemporaryDirectory() as directory:
         saved = ini.read_text()
         assert (f'rando_options = {value}\n' in saved) if value else 'rando_options' not in saved, saved
         count += 1
+    # --set / LARECOMP_SET: this run only. The file keeps its lines for those keys (a key it didn't have stays out),
+    # unless the setting was changed in the menu during the run; other settings save as usual
+    for change, volume in [([], '0.50'), (['change'], '0.25')]:
+        ini = directory / 'test.ini'
+        ini.write_text('fullscreen = 0\nvolume = 0.50\nreverb = 1\n')
+        env = dict(os.environ, LARECOMP_SETTINGS=str(ini), LARECOMP_SET='volume=1.5;fullscreen=1;language=de')
+        subprocess.run([str(exe), 'run-settings'] + change, env=env, check=True, capture_output=True)
+        saved = ini.read_text()
+        for line in ['fullscreen = 0', f'volume = {volume}', 'reverb = 0']:
+            assert line + '\n' in saved, (line, saved)
+        assert 'language' not in saved and not (directory / 'test.ini.render').exists(), saved
+        count += 1
     print(f'{count} parser, locale, upscaler / resolution default and roundtrip cases passed (LF/CRLF, empty/nonempty seeds)')
