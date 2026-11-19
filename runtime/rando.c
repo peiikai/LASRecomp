@@ -176,11 +176,10 @@ bool rando_seed_there(const char *seed) {
     if (!seed || !seed[0] || seed[0] == '.' || strchr(seed, '/') || strchr(seed, '\\')) return false;
     char p[600];
     struct stat sb;
-    snprintf(p, sizeof p, "rando/%s/seed.json", seed);  // (its record; an older seed: settings.json)
-    if (stat(p, &sb) || !S_ISREG(sb.st_mode)) {
-        snprintf(p, sizeof p, "rando/%s/settings.json", seed);
-        if (stat(p, &sb) || !S_ISREG(sb.st_mode)) return false;
-    }
+    snprintf(p, sizeof p, "rando/%s/seed.json", seed);  // a seed's record: its game files are built at load
+    if (!stat(p, &sb) && S_ISREG(sb.st_mode)) return true;
+    snprintf(p, sizeof p, "rando/%s/settings.json", seed);  // an older seed: settings.json and its game files
+    if (stat(p, &sb) || !S_ISREG(sb.st_mode)) return false;
     snprintf(p, sizeof p, "rando/%s/romfs", seed);
     return !stat(p, &sb) && S_ISDIR(sb.st_mode);
 }

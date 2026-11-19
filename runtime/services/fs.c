@@ -409,11 +409,18 @@ static char **build_list(void *ctx, const char *dir, size_t *count) {  // (a fol
     (void)ctx;
     size_t dl = strlen(dir), n = 0, cap = 0;
     char **v = NULL;
-    for (int i = 0; i < rom_nfiles; i++) {
+    for (int i = 0; i < rom_nfiles; i++) {  // (files and folders in it, each once: os.listdir)
         const char *p = rom_files[i].path;
-        if (strncmp(p, dir, dl) || p[dl] != '/' || strchr(p + dl + 1, '/')) continue;
+        if (strncmp(p, dir, dl) || p[dl] != '/') continue;
+        const char *name = p + dl + 1, *slash = strchr(name, '/');
+        size_t nl = slash ? (size_t)(slash - name) : strlen(name);
+        bool have = false;
+        for (size_t k = n; k-- > 0 && !have;) have = strlen(v[k]) == nl && !strncmp(v[k], name, nl);
+        if (have) continue;
         if (n == cap) v = realloc(v, sizeof *v * (cap = cap ? cap * 2 : 64));
-        v[n++] = strdup(p + dl + 1);
+        char *c = malloc(nl + 1);
+        memcpy(c, name, nl), c[nl] = 0;
+        v[n++] = c;
     }
     *count = n;
     return v ? v : calloc(1, sizeof *v);  // (an empty folder: none; NULL would say no such folder)
@@ -429,8 +436,13 @@ static void seed_build(const uint8_t *dmeta, uint64_t dsz) {
     g_by_path = malloc(sizeof *g_by_path * (rom_nfiles ? rom_nfiles : 1));
     for (int i = 0; i < rom_nfiles; i++) g_by_path[i] = &rom_files[i];
     qsort(g_by_path, rom_nfiles, sizeof *g_by_path, by_path_cmp);
-    rando_build_seed(json, len, build_read, build_list, NULL);
+    bool built = rando_build_seed(json, len, build_read, build_list, NULL);
     free(json);
+    char p[1100];
+    struct stat sb;
+    snprintf(p, sizeof p, "%s/romfs", rando_seed_dir());
+    if (!built && (stat(p, &sb) || !S_ISDIR(sb.st_mode)))  // (no folder copy to fall back on: the seed plays vanilla)
+        LOG("[fs] ERROR: the seed's game files couldn't be built and its folder has none: it plays without its changes\n");
     free(g_by_path);
     g_by_path = NULL;
 }
