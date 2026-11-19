@@ -45,6 +45,11 @@ public:
     Value vanilla_locations;   // (after run: the set, as a list in CPython's order)
     Value dungeon_entrances;
     std::function<void(const std::string &)> log;  // the Python's print() lines (default: none)
+    // called at every reachability search of the fill (las_headless's canReachLocation hook, its progress line):
+    // the caller throttles, may call placed() and stop() from it
+    std::function<void()> tick;
+    // the item locations placed so far and their number (the progress line's "<placed>/<total> placed")
+    void placed(size_t &done, size_t &total) const;
 
     // random.getstate(): (3, (624 words + the index), None) as [3, [625 ints]]
     std::vector<int64_t> random_state() const;

@@ -7,9 +7,8 @@
 // seed, the settings and the rooms as the steps before it left them. Decide mode makes them (roll_room, the Python's
 // shuffleEnemyActors line for line) and records what they did as tools/rando/record_las_world.py does; both modes then
 // edit the rooms from that record. Random mode's enemies_random.tsv needs, per room, the actors the roll made a slot
-// for: every one it rolled but those it made mini-bosses - which the record can't always tell (a Shadow Link or
-// Blaino may be either, and only the kit mini-bosses carry "m"), so apply mode rolls again from the seed for them and
-// checks the roll gives the recorded enemies.
+// for: every one it visited but those it made mini-bosses, which the record marks "m" (a Shadow Link or Blaino may be
+// either). Apply mode finds them from the room and the record: it never draws.
 //
 // Python quirks kept:
 //   - the restriction list is a list: an enemy group joins it again each time one of it is rolled, and an actor's own
@@ -381,6 +380,32 @@ LebRoom &arena_of(SeedBuild &b, const Kit &kit, std::map<uint16_t, LebRoom> &are
     return ar->second;
 }
 
+// the actors shuffleEnemyActors leaves alone in a room (ENEMY_DATA's Excluded_Actors, kill_linked) and the
+// restrictions it starts from
+std::set<size_t> excluded_of(const Pools &P, const LebRoom &room, const std::string &name) {
+    std::set<size_t> excluded;
+    for (const auto &x : EXCLUDED_ACTORS)
+        if (name == x.first)
+            for (int i : x.second) excluded.insert((size_t)i);
+    for (size_t i : kill_linked(room, P.total)) excluded.insert(i);
+    return excluded;
+}
+std::vector<int> start_restr(const LebRoom &room, bool field, const std::string &name) {
+    std::vector<int> restr = {-1, 0x3, 0x15, 0x16};  // (randomizeEnemies' restrictions)
+    if (has(ROOMS_2D, name)) restr.insert(restr.end(), NO_2D.begin(), NO_2D.end());
+    if (!field) {
+        bool arena = false;
+        for (const LebActor &a : room.actors) arena |= has(ARENA_TYPES, a.type);
+        if (arena) restr.insert(restr.end(), ONE_PER_ROOM.begin(), ONE_PER_ROOM.end());
+    }
+    return restr;
+}
+// a visited actor's slot class: its enemy type ('air_field': an air enemy on the Field)
+std::string slot_class(const LebActor &act, bool field) {
+    const std::string t = actor_of(act.type).type;
+    return t == "air" && field ? "air_field" : t;
+}
+
 // enemies.shuffleEnemyActors on a room (edited in place), the draws from rng; the record of it as
 // tools/rando/record_las_world.py makes it
 RoomRoll roll_room(SeedBuild &b, const Pools &P, LebRoom &room, const std::string &folder, const std::string &name,
@@ -391,18 +416,8 @@ RoomRoll roll_room(SeedBuild &b, const Pools &P, LebRoom &room, const std::strin
     const bool one_per_room = P.freq < 3;
     const std::vector<LebActor> before = room.actors;
 
-    std::set<size_t> excluded;
-    for (const auto &x : EXCLUDED_ACTORS)
-        if (name == x.first)
-            for (int i : x.second) excluded.insert((size_t)i);
-    std::vector<int> restr = {-1, 0x3, 0x15, 0x16};  // (randomizeEnemies' restrictions)
-    if (has(ROOMS_2D, name)) restr.insert(restr.end(), NO_2D.begin(), NO_2D.end());
-    if (!field) {
-        bool arena = false;
-        for (const LebActor &a : room.actors) arena |= has(ARENA_TYPES, a.type);
-        if (arena) restr.insert(restr.end(), ONE_PER_ROOM.begin(), ONE_PER_ROOM.end());
-    }
-    for (size_t i : kill_linked(room, P.total)) excluded.insert(i);
+    const std::set<size_t> excluded = excluded_of(P, room, name);
+    std::vector<int> restr = start_restr(room, field, name);
     const bool random_room = P.random && P.types;
     rr.restr_start = restr;
 
@@ -413,7 +428,7 @@ RoomRoll roll_room(SeedBuild &b, const Pools &P, LebRoom &room, const std::strin
     std::vector<std::pair<double, double>> placed;  // (this room's mini-boss spots, x z)
     bool have_grid_room = false;
     LebRoom grid_room;  // (the original room, for its grid: read once)
-    std::vector<size_t> kitted;  // (the record's "m")
+    std::vector<size_t> minis;  // (the record's "m")
 
     for (size_t e = 0; e < room.actors.size(); e++) {  // (the list grows with the kits: visited too)
         if (!P.total.count(room.actors[e].type) || excluded.count(e)) continue;
@@ -504,10 +519,8 @@ RoomRoll roll_room(SeedBuild &b, const Pools &P, LebRoom &room, const std::strin
                 act.links.e = 1;
                 act.rot[1] = 0;
                 act.scale[0] = act.scale[1] = act.scale[2] = 1.0;
-                if (const Kit *kit = kit_of((uint16_t)mini)) {
-                    add_miniboss_kit(room, e, *kit, arena_of(b, *kit, arenas), name);
-                    kitted.push_back(e);
-                }
+                if (const Kit *kit = kit_of((uint16_t)mini)) add_miniboss_kit(room, e, *kit, arena_of(b, *kit, arenas), name);
+                minis.push_back(e);
                 placed.push_back({room.actors[e].pos[0], room.actors[e].pos[2]});  // (Cue Ball: his loop's corner)
                 rr.edited = true;
                 continue;  // (no slot, no size roll)
@@ -527,8 +540,7 @@ RoomRoll roll_room(SeedBuild &b, const Pools &P, LebRoom &room, const std::strin
                 act.scale[0] = act.scale[1] = act.scale[2] = 1.0;
                 rr.edited = true;
             }
-            if (random_room)
-                rr.slots.push_back({act.key, air && field ? "air_field" : enemy_type, vanilla, act.name.size()});
+            if (random_room) rr.slots.push_back({act.key, slot_class(vanilla, field), vanilla, act.name.size()});
         }
         if (P.sizes) {
             const double s = rng.uniform(0.5, 1.5);
@@ -545,17 +557,17 @@ RoomRoll roll_room(SeedBuild &b, const Pools &P, LebRoom &room, const std::strin
         const LebActor &a = room.actors[e], &was = before[e];
         std::string rec;
         if (a.switches[0] != was.switches[0]) rec += ", \"sw\": 1";
-        const bool kit = std::find(kitted.begin(), kitted.end(), e) != kitted.end();
+        const bool mini = std::find(minis.begin(), minis.end(), e) != minis.end();
         bool params_same = true;
         for (size_t i = 0; i < 8; i++) params_same &= same_param(a.params[i], was.params[i]);
         double base[3] = {was.scale[0], was.scale[1], was.scale[2]};
-        if (a.type != was.type || !params_same || a.links.e != was.links.e || a.rot[1] != was.rot[1] || kit) {
+        if (a.type != was.type || !params_same || a.links.e != was.links.e || a.rot[1] != was.rot[1] || mini) {
             rec += ", \"t\": " + std::to_string(a.type) + ", \"p\": [";
             for (size_t i = 0; i < 8; i++) rec += (i ? ", " : "") + param_json(a.params[i]);
             rec += "], \"re\": " + std::to_string(a.links.e);
             base[0] = base[1] = base[2] = 1.0;
         }
-        if (kit) rec += ", \"m\": 1";
+        if (mini) rec += ", \"m\": 1";
         if (a.scale[0] != base[0] || a.scale[1] != base[1] || a.scale[2] != base[2]) {
             if (a.scale[0] != a.scale[1] || a.scale[1] != a.scale[2])
                 throw std::runtime_error("las: uneven enemy scale in " + name);
@@ -612,18 +624,40 @@ std::string carry_room(const std::string &name, const RoomRoll &rr) {
     return o;
 }
 
-std::string canonical(yyjson_val *v) {  // (a JSON value as json.dumps(sort_keys=True) writes it)
-    size_t n;
-    char *t = yyjson_val_write(v, 0, &n);
-    if (!t) throw std::runtime_error("las: can't write a JSON value");
-    std::string s = py_json(t, n, -1, true);
-    free(t);
-    return s;
+// apply mode, Random mode: the slots a room's roll made - every actor it visits but the mini-bosses, which the
+// record marks "m" - from the room as the steps before left it, without a draw
+RoomRoll room_slots(const Pools &P, const LebRoom &room, const std::string &folder, const std::string &name,
+                    const std::set<size_t> &minis) {
+    RoomRoll rr;
+    const bool field = folder == "Field";
+    const std::set<size_t> excluded = excluded_of(P, room, name);
+    rr.restr_start = start_restr(room, field, name);
+    for (size_t e = 0; e < room.actors.size(); e++) {
+        const LebActor &act = room.actors[e];
+        if (!P.total.count(act.type) || excluded.count(e) || minis.count(e)) continue;
+        rr.slots.push_back({act.key, slot_class(act, field), act, act.name.size()});
+    }
+    return rr;
 }
 
-// randomizeEnemies' walk: every room of the included level folders, rolled in order (rooms edited in place, not
-// written); the record's room list (JSON) and Random mode's slots (CARRY)
-void roll_all(SeedBuild &b, const Pools &P, PyRandom &rng, std::string &record, std::string &carry, yyjson_val *want) {
+// randomizeEnemies' walk: every room of the included level folders in order; each room's roll (decide mode: rng,
+// the rooms edited in place, not written; the record's room list as JSON) or, in apply mode (no rng), the slots the
+// record's roll made. Random mode's slots in carry (CARRY)
+void roll_all(SeedBuild &b, const Pools &P, PyRandom *rng, std::string &record, std::string &carry) {
+    std::map<std::string, std::set<size_t>> minis;  // (apply mode: room -> the actors the roll made mini-bosses)
+    if (!rng) {
+        yyjson_val *rooms = b.decisions().raw("enemies"), *entry, *a;
+        if (!yyjson_is_arr(rooms)) throw std::runtime_error("las: no enemies recorded (tools/rando/record_las_world.py)");
+        yyjson_arr_iter it = yyjson_arr_iter_with(rooms);
+        while ((entry = yyjson_arr_iter_next(&it))) {
+            const char *name = yyjson_get_str(yyjson_arr_get(entry, 0));
+            if (!name) throw std::runtime_error("las: bad enemies entry");
+            std::set<size_t> &m = minis[name];
+            yyjson_arr_iter ai = yyjson_arr_iter_with(yyjson_arr_get(entry, 1));
+            while ((a = yyjson_arr_iter_next(&ai)))
+                if (yyjson_obj_get(a, "m")) m.insert((size_t)yyjson_get_uint(yyjson_obj_get(a, "e")));
+        }
+    }
     std::map<uint16_t, LebRoom> arenas;
     size_t n = 0;
     record = "[";
@@ -633,22 +667,18 @@ void roll_all(SeedBuild &b, const Pools &P, PyRandom &rng, std::string &record, 
             if (file.size() < 4 || file.compare(file.size() - 4, 4, ".leb")) continue;
             const std::string name = file.substr(0, file.size() - 4);
             LebRoom room = b.read_room(file);
-            const RoomRoll rr = roll_room(b, P, room, folder, name, rng, arenas);
-            if (rr.edited) {
-                const std::string entry = "[" + json_text(name) + ", " + rr.acts + "]";
-                if (want) {  // (apply mode: the roll must give the recorded enemies)
-                    yyjson_val *rec = yyjson_arr_get(want, n);
-                    if (!rec || canonical(rec) != py_json(entry.data(), entry.size(), -1, true))
-                        throw std::runtime_error("las: the enemies rolled again aren't the recorded ones at " + name);
-                }
-                record += (n++ ? ", " : "") + entry;
+            if (!rng) {
+                auto m = minis.find(name);
+                const RoomRoll rr = room_slots(P, room, folder, name, m == minis.end() ? std::set<size_t>() : m->second);
+                if (!rr.slots.empty()) carry += carry_room(name, rr);
+                continue;
             }
+            const RoomRoll rr = roll_room(b, P, room, folder, name, *rng, arenas);
+            if (rr.edited) record += (n++ ? ", " : "") + ("[" + json_text(name) + ", " + rr.acts + "]");
             if (!rr.slots.empty()) carry += carry_room(name, rr);
         }
     }
     record += "]";
-    if (want && n != yyjson_arr_size(want))
-        throw std::runtime_error("las: the enemies rolled again aren't the recorded rooms");
 }
 
 // ======== the rooms edited from the record
@@ -711,15 +741,10 @@ void randomize_enemies(SeedBuild &b) {
     std::string record, carry;
     if (Decider *dc = b.decider()) {
         dc->reseed_shared();  // (random.seed(self.seed): the same enemies whatever the rest of the seed drew)
-        roll_all(b, P, dc->shared(), record, carry, nullptr);
+        roll_all(b, P, &dc->shared(), record, carry);
         if (record != "[]") dc->set("enemies", record);  // (the record has the field only when a room was edited)
-    } else if (P.random && P.types) {  // (apply mode: which actors became mini-bosses, for the slots - roll again)
-        yyjson_val *seed = setting_val(b.decisions(), "seed");
-        if (!yyjson_is_str(seed)) throw std::runtime_error("las: no seed in the settings");
-        PyRandom rng(yyjson_get_str(seed));
-        yyjson_val *want = b.decisions().raw("enemies");
-        if (!yyjson_is_arr(want)) throw std::runtime_error("las: no enemies recorded (tools/rando/record_las_world.py)");
-        roll_all(b, P, rng, record, carry, want);
+    } else if (P.random && P.types) {  // (apply mode: Random mode's slots, from the record)
+        roll_all(b, P, nullptr, record, carry);
     }
     if (P.random) b.carry()[CARRY] = carry;  // (mods.enemy_random: {} even when nothing has slots)
     if (b.decider() && record == "[]") return;

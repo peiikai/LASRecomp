@@ -95,6 +95,8 @@ struct Ctx {
     Value steps;                // hint_steps.json "steps"
     std::string seed;
     Re hs_junk{odata::HS_JUNK}, sv_junk{odata::SV_JUNK};
+    std::map<std::string, std::vector<int64_t>> zones_cache;  // (hint_sheet.door_area: the Field's tile zones)
+    bool zones_loaded = false;
 
     explicit Ctx(const OutputsInput &i, Outputs &r) : in(i), res(r) {}
     void write(const std::string &name, const std::string &data) { res.files.emplace_back(name, data); }

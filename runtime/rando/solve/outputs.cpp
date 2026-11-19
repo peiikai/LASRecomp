@@ -25,10 +25,6 @@
 #include "../fmt/fixed_hash.h"
 #include "outputs_lib.h"
 
-#ifndef PYRANDOM_SHA512
-extern "C" void rando_decide_sha512(uint8_t hash[64], const uint8_t *message, size_t message_size);
-#define PYRANDOM_SHA512 rando_decide_sha512  // (random.seed(str): runtime/rando/apply/decide.cpp's SHA-512)
-#endif
 #include "../pyrandom.h"
 
 namespace rando {
@@ -383,7 +379,9 @@ static bool read_file(const std::string &path, std::string &data) {
     return true;
 }
 
-bool Ctx::romfs_file(const std::string &rel, std::string &data) const { return read_file(in.romfs + "/" + rel, data); }
+bool Ctx::romfs_file(const std::string &rel, std::string &data) const {
+    return in.read_game ? in.read_game(rel, data) : read_file(in.romfs + "/" + rel, data);
+}
 
 bool Ctx::level_file(const std::string &rel, std::string &data) const {
     return seed_file("romfs/" + rel, data) || romfs_file(rel, data);
@@ -896,9 +894,8 @@ static std::map<std::string, std::vector<int64_t>> tile_zones(Ctx &c) {
 
 // hint_sheet.door_area
 static std::string door_area(Ctx &c, const Value &door) {
-    static std::map<std::string, std::vector<int64_t>> zones_cache;
-    static std::string cached_romfs;
-    if (cached_romfs != c.in.romfs) zones_cache = tile_zones(c), cached_romfs = c.in.romfs;
+    if (!c.zones_loaded) c.zones_cache = tile_zones(c), c.zones_loaded = true;
+    const std::map<std::string, std::vector<int64_t>> &zones_cache = c.zones_cache;
     const std::string room = door.at("field_room").s();
     double x = door.at("pos_xz").list()[0].f(), z = door.at("pos_xz").list()[1].f();
     int col = room.back() - 65, row = atoi(room.substr(room.size() - 3, 2).c_str());
@@ -1336,14 +1333,30 @@ static Value settings_json(const OutputsInput &in) {
 }  // namespace out
 
 // ---------------------------------------------------------------- the whole run
-Outputs build_outputs(const OutputsInput &in) {
-    using namespace out;
+struct OutputsBuilder::Impl {
+    OutputsInput in;
     Outputs res;
-    Ctx c(in, res);
+    out::Ctx c;
+    std::string spoiler;
+    bool has_spoiler = false, first_done = false;
+    explicit Impl(OutputsInput i) : in(std::move(i)), c(in, res) {}
+};
+
+OutputsBuilder::OutputsBuilder(OutputsInput in) : d_(new Impl(std::move(in))) {}
+OutputsBuilder::~OutputsBuilder() {}
+Outputs &OutputsBuilder::result() { return d_->res; }
+
+Outputs &OutputsBuilder::before_build() {
+    using namespace out;
+    const OutputsInput &in = d_->in;
+    Outputs &res = d_->res;
+    Ctx &c = d_->c;
+    d_->first_done = true;
     c.seed = py_str(in.settings.at("seed"));
     // LAS's spoiler: written by the fill (shuffler.run) when create-spoiler is on
-    std::string spoiler;
-    bool has_spoiler = in.placements.at("settings").get("create-spoiler").truthy();
+    std::string &spoiler = d_->spoiler;
+    bool &has_spoiler = d_->has_spoiler;
+    has_spoiler = in.placements.at("settings").get("create-spoiler").truthy();
     if (has_spoiler) spoiler = las_spoiler(in.placements, in.logic_defs);
     c.write("logic.json", logic_json(in.logic_defs));
     // the playthrough check: LAS's logic never defines D6-4D / D6-2A (check-only aliases from the next room)
@@ -1408,14 +1421,30 @@ Outputs build_outputs(const OutputsInput &in) {
     if (!missing.empty()) {
         if (has_spoiler) c.write("spoiler_" + c.seed + ".txt", spoiler);
         res.exit_code = 3;
-        return res;
     }
-    Value sj = settings_json(in);
+    return res;
+}
+
+void OutputsBuilder::after_build(const Value &final_settings,
+                                 std::function<bool(const std::string &rel, std::string &data)> read_seed) {
+    using namespace out;
+    if (!d_->first_done) before_build();
+    if (d_->res.exit_code) return;
+    d_->in.final_settings = final_settings;
+    d_->in.read_seed = std::move(read_seed);
+    Ctx &c = d_->c;
+    Value sj = settings_json(d_->in);
     c.write("settings.json", py_json(sj, 1));
     build_tracker(c, sj);
-    if (has_spoiler) c.write("spoiler.txt", spoiler);
+    if (d_->has_spoiler) c.write("spoiler.txt", d_->spoiler);
     build_spoiler_view(c, sj);
-    return res;
+}
+
+Outputs build_outputs(const OutputsInput &in) {
+    OutputsBuilder b(in);
+    b.before_build();
+    b.after_build(in.final_settings, in.read_seed);
+    return std::move(b.result());
 }
 
 }  // namespace solve

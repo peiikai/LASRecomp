@@ -7,8 +7,8 @@
 // Nishimura's reference init_genrand / init_by_array / genrand_int32); no code copied. Proven against CPython 3.12 by
 // tools/test_pyrandom.cpp with the vectors tools/rando/pyrandom_golden.py writes.
 //
-// SHA-512: Monocypher (third_party/monocypher, CC0 / BSD-2): the including file compiles monocypher-ed25519.c, or
-// defines PYRANDOM_SHA512 to its own.
+// SHA-512: rando_sha512 (sha512.h, runtime/rando/sha512.c), the one every PyRandom uses; a file built on its own
+// (tools/test_pyrandom.cpp) may define PYRANDOM_SHA512 to another.
 #pragma once
 
 #include <stddef.h>
@@ -21,8 +21,8 @@
 #include <vector>
 
 #ifndef PYRANDOM_SHA512
-extern "C" void crypto_sha512(uint8_t hash[64], const uint8_t *message, size_t message_size);
-#define PYRANDOM_SHA512 crypto_sha512
+#include "sha512.h"
+#define PYRANDOM_SHA512 rando_sha512
 #endif
 
 class PyRandom {

@@ -26,11 +26,6 @@
 #include <string>
 #include <vector>
 
-// (random.seed(str) hashes with SHA-512: decide.cpp's, for every file that draws in decide mode)
-#ifndef PYRANDOM_SHA512
-extern "C" void rando_decide_sha512(uint8_t hash[64], const uint8_t *message, size_t message_size);
-#define PYRANDOM_SHA512 rando_decide_sha512
-#endif
 #include "../pyrandom.h"
 #include "seed_build.h"
 

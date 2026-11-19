@@ -121,7 +121,7 @@ std::string SeedBuild::need(const std::string &path) const {
 
 void SeedBuild::write_bytes(const std::string &path, const std::string &bytes) {
     files_[path] = bytes;
-    log_.push_back({path, bytes});
+    if (keep_log_) log_.push_back({path, bytes});
 }
 
 std::vector<std::string> SeedBuild::list_game(const std::string &dir) const {

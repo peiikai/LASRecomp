@@ -20,6 +20,11 @@
 //                                                  the native item fill (runtime/rando/solve/) from a recorded run's
 //                                                  state before LAS's fill, compared with what the Python made
 //                                                  (placements, indexes, random state, settings)
+//   lasrando generate <romfs> <request.json> <out folder> [--legacy]
+//                                                  a whole seed made natively from the request (solve/generate.h),
+//                                                  as tools/rando/las_headless.py makes it; --legacy: also the files
+//                                                  the Python writes (romfs/, the tables, settings.json, ...).
+//                                                  tools/rando/test_generate.py compares the two
 //   lasrando decide-check <romfs> <record folder> <seed folder> [<out>]
 //                                                  the seed built in decide mode (runtime/rando/apply/decide.h) from
 //                                                  the fill's result, against the Python's: decisions.json (every
@@ -50,12 +55,14 @@
 #include "../runtime/rando/solve/outputs.h"
 #include "../runtime/rando/solve/prepare.h"
 #include "../runtime/rando/solve/entrances.h"
+#include "../runtime/rando/solve/generate.h"
 #include "../third_party/yyjson/yyjson.h"
 
 static int usage(void) {
     fprintf(stderr, "usage: lasrando convert <seed folder> [<out.json>]\n"
                     "       lasrando get <seed folder> <key>...\n"
                     "       lasrando dump <romfs> <decisions.json> <out folder>\n"
+                    "       lasrando generate <romfs> <request.json> <out folder> [--legacy]\n"
                     "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n"
                     "       lasrando solve-check <prefill.json> <postfill.json>\n"
                     "       lasrando decide-check <romfs> <record folder> <seed folder> [<out folder>]\n");
@@ -208,6 +215,8 @@ static int dump(const std::string &romfs, const std::string &decisions, const st
 
 int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "dump")) return dump(argv[2], argv[3], argv[4]);
+    if (argc >= 5 && !strcmp(argv[1], "generate"))
+        return rando::solve::generate_main(argv[2], argv[3], argv[4], argc > 5 && !strcmp(argv[5], "--legacy"));
     if (argc >= 4 && !strcmp(argv[1], "entrances-check")) return rando::solve::entrances_check(argv[2], argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "check-steps")) return check_steps(argv[2], argv[3], argv[4]);
     if (argc >= 4 && !strcmp(argv[1], "repack")) return repack(argv[2], argv[3]);

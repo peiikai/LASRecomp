@@ -149,7 +149,21 @@ const PotKind kPotKinds[] = {
     {"LARRock", 2048, 3800, 0x7C, 0.4, true, 0},   // rocks.py
 };
 
-void pots_call(SeedBuild &b, const PotKind &k, yyjson_val *locs) {
+// "  <location padded to 34> <text>": a line of the readable lists (pots_<seed>.txt, digs_<seed>.txt, ...)
+std::string list_line(const std::string &name, const std::string &text) {
+    std::string pad = name.size() < 34 ? std::string(34 - name.size(), ' ') : "";
+    return "  " + name + pad + " " + text;
+}
+
+// the readable list las_headless writes beside the seed: <title>\n then the lines
+void write_list(SeedBuild &b, const char *file, const char *title, const std::vector<std::string> &lines) {
+    std::string out = std::string(title) + "\n";
+    for (size_t i = 0; i < lines.size(); i++) out += (i ? "\n" : "") + lines[i];
+    b.table_write(std::string(file) + "_" + b.decisions().setting_str("seed") + ".txt", out + "\n");
+}
+
+std::vector<std::string> pots_call(SeedBuild &b, const PotKind &k, yyjson_val *locs) {
+    std::vector<std::string> lines;  // (its return value: what each location holds)
     GSheet sheet = b.read_sheet("GlobalFlags.gsheet");
     EventFlow fl = b.read_flow("SinkingSword.bfevfl");
     Flow f(b, fl.flowchart);
@@ -234,11 +248,13 @@ void pots_call(SeedBuild &b, const PotKind &k, yyjson_val *locs) {
             double rot;
             if (lookup(MODEL_ROTATIONS, it.model_name, rot)) item.rot[1] = rot;
             room.actors.push_back(item);
+            lines.push_back(list_line(loc.name, placed(b.decisions(), loc.name)));
         }
         write_room_at(b, path, room);
     }
     b.write_sheet("GlobalFlags.gsheet", sheet);
     b.write_flow("SinkingSword.bfevfl", fl);
+    return lines;
 }
 
 // decide mode: las_headless calls pots.apply for the pots, the bushes and the rocks that have locations, each with
@@ -272,7 +288,7 @@ void pots(SeedBuild &b) {
         for (const PotKind &x : kPotKinds)
             if (prefix == x.prefix) k = &x;
         if (!k) throw std::runtime_error("pots: unknown kind " + prefix);
-        pots_call(b, *k, yyjson_obj_get(call, "locs"));
+        const std::vector<std::string> lines = pots_call(b, *k, yyjson_obj_get(call, "locs"));
         // the module's tables after its call: its write_tsv over the seed's rooms, and bushes.apply's / rocks.apply's
         // flags_ext note (bushes.apply opens it with 'w': what was there before is gone, as the Python)
         if (k->cut) {
@@ -281,6 +297,9 @@ void pots(SeedBuild &b) {
         }
         const std::string table = prefix == "LARPot" ? "pots.tsv" : prefix == "LARBush" ? "bushes.tsv" : "rocks.tsv";
         b.table_write(table, pots_tsv(b, k->prefix, k->cut ? k->hide : 0.0));
+        if (prefix == "LARPot") write_list(b, "pots", "Pots:", lines);
+        else if (prefix == "LARBush") write_list(b, "bushes", "Bushes:", lines);
+        else write_list(b, "rocks", "Rocks:", lines);
     }
 }
 
@@ -359,6 +378,7 @@ void digs(SeedBuild &b) {
     struct Buried { int tile; double y; int index; };
     std::map<std::string, std::vector<Buried>> buried;
     std::map<std::string, std::set<int>> taken;
+    std::vector<std::string> lines;  // (digs_<seed>.txt)
     size_t i, n;
     yyjson_val *l;
     yyjson_arr_foreach(locs, i, n, l) {  // (by tile id)
@@ -372,6 +392,7 @@ void digs(SeedBuild &b) {
             int index = b.item_info(name, true).index;
             buried[room].push_back({tile, y, index});
             shells += name + "\t" + std::to_string(index) + "\t" + std::to_string(4096 + 256 * 80 + dig_tile_id(room, tile)) + "\n";
+            lines.push_back(list_line(name, "seashell (buried)"));
             continue;
         }
         SeedBuild::ItemInfo it = b.item_info(name, true);
@@ -395,10 +416,12 @@ void digs(SeedBuild &b) {
         lookup(MODEL_SIZES, it.model_name, size), lookup(MODEL_ROTATIONS, it.model_name, turn);
         cols[name] = {label != NAMES.end() ? label->second : pretty_item(item), it.model_path, it.model_name,
                       entries[key], it.key == "Seashell" ? "1" : "0", py_g(size), py_g(turn)};
+        lines.push_back(list_line(name, item));
     }
     b.write_flow("SinkingSword.bfevfl", fl);
     b.carry()[DIG_SHELLS] = shells;
     dig_tables(b, locs, cols);
+    write_list(b, "digs", "Digs:", lines);
     if (buried.empty() && taken.empty()) return;
     std::string tmpl_bytes;
     if (!b.read_game("region_common/level/Field/Field_11F.leb", tmpl_bytes)) throw std::runtime_error("digs: no Field_11F");

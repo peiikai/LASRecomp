@@ -24,6 +24,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,7 +42,10 @@ struct OutputsInput {
     // the settings as main() leaves them when it writes settings.json (decisions.json "settings": keys added after
     // the fill, values changed since); keys the fill knew keep its order, new ones follow in this dict's order
     Value final_settings;
-    std::string romfs;        // the game's files
+    std::string romfs;        // the game's files (a folder; read_game, when set, reads them instead)
+    std::function<bool(const std::string &rel, std::string &data)> read_game;
+    // the names in a folder of the game's files (its romfs path); false: no such folder (with read_game)
+    std::function<bool(const std::string &dir, std::vector<std::string> &names)> list_game;
     std::string folder_name;  // the seed folder's name (spoiler_view's title)
     // a file the file-writing steps made, by its path in the seed folder; false when the seed has none
     std::function<bool(const std::string &rel, std::string &data)> read_seed;
@@ -55,6 +59,23 @@ struct Outputs {
 
 // Every output above, in las_headless's order. PyError for what makes the Python fail (a KeyError in the logic...).
 Outputs build_outputs(const OutputsInput &in);
+
+// The same in the two parts the seed build goes between (solve/generate.h): before_build() makes logic.json up to the
+// hint picks and the verdict (exit_code 3: unbeatable, and nothing more is made); after_build() the rest, from the
+// settings as main() leaves them and the files the build made (OutputsInput::final_settings / read_seed).
+class OutputsBuilder {
+public:
+    explicit OutputsBuilder(OutputsInput in);
+    ~OutputsBuilder();
+    Outputs &before_build();
+    void after_build(const Value &final_settings,
+                     std::function<bool(const std::string &rel, std::string &data)> read_seed);
+    Outputs &result();  // (the files so far, in writing order)
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> d_;
+};
 
 // lasrando outputs-check <romfs> <record folder> <seed folder>: the fill rerun from <record>/prefill.json (checked
 // against postfill.json), every output rebuilt and compared byte for byte with the seed folder's. 0 when all match.

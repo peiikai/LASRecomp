@@ -130,6 +130,8 @@ public:
 
     struct Write { std::string path, bytes; };
     const std::vector<Write> &writes() const { return log_; }
+    // false: writes() stays empty (a whole seed's build keeps only each file's last bytes: files())
+    void keep_writes(bool on) { keep_log_ = on; }
     const std::map<std::string, std::string> &files() const { return files_; }
 
 private:
@@ -143,6 +145,7 @@ private:
     std::map<std::string, std::string> carry_;
     std::map<std::string, std::string> files_;  // path -> bytes written
     std::vector<Write> log_;
+    bool keep_log_ = true;
     uint32_t idgen_ = 0;
     std::map<std::string, size_t> trap_draws_;  // (check -> getItemInfo calls with a trap model so far)
 };

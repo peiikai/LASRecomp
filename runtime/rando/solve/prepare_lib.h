@@ -8,15 +8,6 @@
 #include <string>
 #include <vector>
 
-// (random.seed(str) hashes with SHA-512: prepare.cpp's, as shuffler.cpp has its own)
-#ifndef PYRANDOM_SHA512
-namespace rando {
-namespace solve {
-void prepare_sha512(uint8_t out[64], const uint8_t *msg, size_t len);
-}  // namespace solve
-}  // namespace rando
-#define PYRANDOM_SHA512 rando::solve::prepare_sha512
-#endif
 #include "../pyrandom.h"
 #include "prepare.h"
 #include "value.h"

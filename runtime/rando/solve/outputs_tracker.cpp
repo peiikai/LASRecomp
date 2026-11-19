@@ -46,12 +46,22 @@ std::vector<std::string> list_dir(const std::string &path) {
 }
 
 // sorted(glob(<romfs>/region_common/level/<dir>/<prefix>*.leb)) as level-relative paths
-std::vector<std::pair<std::string, std::string>> room_files(const std::string &romfs, const std::string &only_level,
+std::vector<std::pair<std::string, std::string>> room_files(const Ctx &c, const std::string &only_level,
                                                            const std::string &prefix) {
+    // (a folder of the game's: OutputsInput::list_game, else the romfs folder on disk)
+    auto list = [&](const std::string &rel) {
+        std::vector<std::string> names;
+        if (!c.in.list_game) return list_dir(c.in.romfs + "/" + rel);
+        if (!c.in.list_game(rel, names)) return std::vector<std::string>();
+        std::vector<std::string> out;
+        for (const std::string &n : names)
+            if (!starts(n, "._") && n != ".DS_Store") out.push_back(n);
+        return out;
+    };
     std::vector<std::string> full;
-    std::string base = romfs + "/region_common/level";
-    for (const std::string &lv : only_level.empty() ? list_dir(base) : std::vector<std::string>{only_level})
-        for (const std::string &f : list_dir(base + "/" + lv))
+    std::string base = "region_common/level";
+    for (const std::string &lv : only_level.empty() ? list(base) : std::vector<std::string>{only_level})
+        for (const std::string &f : list(base + "/" + lv))
             if (ends(f, ".leb") && starts(f, prefix) && f[0] != '.') full.push_back(lv + "/" + f);
     std::sort(full.begin(), full.end());
     std::vector<std::pair<std::string, std::string>> out;  // (level, room)
@@ -646,7 +656,7 @@ void build_tracker(Ctx &c, const Value &settings) {
                          settings.get("dungeon-room-shuffle", Value("off")) != Value(false);
         const StrList &missable = collapsed ? POT_MISSABLE_ROOMS_COLLAPSED : POT_MISSABLE_ROOMS;
         std::map<std::string, std::pair<std::string, std::string>> names;  // (lv, x, z) -> (name, room)
-        for (const auto &f : room_files(c.in.romfs, "", "")) {
+        for (const auto &f : room_files(c, "", "")) {
             const std::string &level = f.first, &room = f.second;
             if (starts(level, POT_SKIP_LEVEL_PREFIX) || in(POT_SKIP_LEVELS, level) || in(missable, room)) continue;
             std::string data;
@@ -704,7 +714,7 @@ void build_tracker(Ctx &c, const Value &settings) {
         bool rocks = pass == 1;
         if (!c.seed_file(rocks ? "rocks.tsv" : "bushes.tsv", tsv)) continue;
         std::map<std::string, std::string> names;
-        for (const auto &f : room_files(c.in.romfs, "Field", "Field_")) {
+        for (const auto &f : room_files(c, "Field", "Field_")) {
             const std::string &room = f.second;
             std::string data;
             if (!c.romfs_file("region_common/level/Field/" + room + ".leb", data)) continue;

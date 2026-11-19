@@ -663,8 +663,17 @@ void hint_sheet_apply(SeedBuild &b) {
         write_msbt(b, rel, m);
     }
 
+    // hints.txt (readable: what each message says), written after hints.tsv: no table depends on it
+    std::string txt;
+    for (size_t i = 0; i <= steps.size(); i++) {
+        txt += names[i] + ": ";
+        for (const auto &seg : i < steps.size() ? texts[i] : done_text) txt += seg.first;
+        txt += "\n";
+    }
+
     // hints.tsv: S <entry> <location> <item> <copy n> <gated groups it needs, or ->; D <entry>
     const std::string *sj = b.decider() ? b.decider()->input("hint_steps.json") : nullptr;
+    if (!sj) b.table_write("hints.txt", txt);
     if (!sj) return;
     yyjson_doc *doc = yyjson_read(sj->data(), sj->size(), 0);
     if (!doc) throw std::runtime_error("hint sheet: bad hint_steps.json");
@@ -682,6 +691,7 @@ void hint_sheet_apply(SeedBuild &b) {
     }
     yyjson_doc_free(doc);
     b.table_write("hints.tsv", tsv + "D\t" + DONE + "\n");
+    b.table_write("hints.txt", txt);
 }
 
 // ======== seed_hints.py
@@ -966,6 +976,29 @@ void phone_flow(SeedBuild &b, size_t n) {
     b.write_flow("Telephone.bfevfl", flow);
 }
 
+// seed_hints.where_name: a hint's place, for seed_hints.txt
+const std::pair<const char *, const char *> FIELD_NAMES[] = {  // (seed_hints.FIELD_NAMES)
+    {"examine_tarutaru", "Owl statue, Tal Tal Mountains (west)"}, {"examine_sannmyaku", "Owl statue, Tal Tal Mountains (east)"},
+    {"examine_kouti", "Owl statue, Tal Tal Heights"}, {"examine_ride", "Owl statue, Rapids Ride"},
+    {"examine_kao", "Owl statue, Face Shrine"}, {"examine_ukuku", "Owl statue, Ukuku Prairie"},
+    {"examine_anaboko", "Owl statue, Pothole Field"}, {"examine_yana", "Owl statue, Yarna Desert"},
+    {"examine_area05", "Owl statue, Martha's Bay"}};
+
+std::string where_name(const Hint &h) {
+    size_t colon = h.where.find(':');
+    if (colon == std::string::npos) throw std::runtime_error("seed hints: where " + h.where);
+    const std::string kind = h.where.substr(0, colon), key = h.where.substr(colon + 1);
+    if (kind == "field") {
+        for (const auto &f : FIELD_NAMES)
+            if (key == f.first) return f.second;
+        throw std::runtime_error("seed hints: no field name for " + key);  // (KeyError)
+    }
+    if (kind == "phone") return "Phone call " + std::to_string(std::stoi(key) + 1);
+    size_t us = h.room.rfind('_');
+    if (us == std::string::npos) throw std::runtime_error("seed hints: room " + h.room);
+    return "Owl statue, " + remove_the(dungeon_en(need(LEVEL_DUNGEON, h.room.substr(0, us)))) + " " + h.room.substr(us + 1);
+}
+
 // phone_opening: the game's call opening up to Ulrira's voice (CJK: a new line after a wait becomes a new page)
 std::string phone_opening(const std::string &raw) {
     std::vector<Tok> toks = tokens(raw);
@@ -1058,6 +1091,14 @@ void seed_hints_apply(SeedBuild &b) {
         write_msbt(b, rel, hm);
         write_msbt(b, tel_rel, tm);
     }
+    // seed_hints.txt (readable: the spoiler's Hints section): where each hint is, and what it says in English
+    std::string txt;
+    for (const Hint &h : hints) {
+        txt += where_name(h) + ": ";
+        for (const Seg &sg : english(h, via)) txt += sg.s;
+        txt += "\n";
+    }
+    b.table_write("seed_hints.txt", txt);
 }
 
 }  // namespace ours
