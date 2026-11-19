@@ -91,8 +91,9 @@ and the item / logic pool (`prepare`), the entrance randomizer (`entrances`), LA
 post-fill outputs (`outputs`: playthrough check, hints, route, spoiler, tracker), then the seed build in decide mode
 (`runtime/rando/apply/decide.h`: the file-writing steps make the generator's random draws themselves and record them as
 the seed's decisions). Dungeon room shuffle (`rooms*.cpp`): dungeon_gen's planning and room_logic, with the
-layout retries; what the Python reads from the game's rooms comes from `tools/rando/export_room_data.py --romfs`
-(`room_game_data.cpp`), checked by `lasrando prepare-check <romfs> <request> <record> [placements.json]` against
+layout retries; what the Python reads from the game's rooms (tile grids, actors, stairs, textures, map pages) is read
+from the player's own files when the planning starts (`rooms_game.cpp`; `lasrando room-facts <romfs>` prints it),
+our own tables come from `tools/rando/export_room_data.py`; checked by `lasrando prepare-check <romfs> <request> <record> [placements.json]` against
 a recorded run (the room plan, and the settings, items and logic the fill starts from).
 
 - `build/lasrando generate <romfs> <request.json> <out> [--legacy]`: a seed folder (seed.json, the code patches, the

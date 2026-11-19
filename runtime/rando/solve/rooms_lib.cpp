@@ -5,13 +5,13 @@
 #include <string.h>
 
 #include <algorithm>
+#include <atomic>
 #include <mutex>
 
 namespace rando {
 namespace solve {
 
-std::string room_data_json();  // (room_data.cpp, room_game_data.cpp: tools/rando/export_room_data.py)
-std::string room_game_json();
+std::string room_data_json();  // (room_data.cpp: tools/rando/export_room_data.py)
 
 namespace rooms {
 
@@ -183,71 +183,45 @@ static void load(Data &D) {
     for (const Room &r : D.rooms)
         if (std::find(r.actors.begin(), r.actors.end(), "ObjDungeonPot") != r.actors.end()) D.check_rooms.insert(r.name);
 
-    std::string gs = room_game_json();
-    Value g = Value::parse_json(gs.data(), gs.size());
-    for (int hook = 0; hook < 2; hook++) {
-        const char *k = hook ? "hook" : "plain";
-        for (const auto &e : g.at("areas").at(k).dict()) {
-            Room *r = const_cast<Room *>(D.room(e.key));
-            if (!r) continue;
-            Areas &a = r->areas[hook];
-            for (const Value &t : e.value.at("tiles").list()) a.tiles.push_back((int)t.i());
-            a.n = (int)e.value.at("n").i();
-            for (const Value &m : e.value.at("moves").list()) {
-                Move mv;
-                mv.a = (int)m.list()[0].i(), mv.b = (int)m.list()[1].i();
-                for (const Value &alt : m.list()[2].list()) mv.alts.push_back(str_atoms(alt));
-                a.moves.push_back(mv);
-            }
-        }
-        D.ports[hook] = g.at("ports").at(k);
-        D.hole_spots[hook] = g.at("holes").at(k);
+    D.room_fixes = doc.at("room_fixes");
+    for (const Value &p : doc.at("passages").list()) {
+        const List &l = p.list();
+        std::vector<Atoms> alts;
+        for (const Value &a : l[2].list()) alts.push_back(str_atoms(a));
+        D.passages[{l[0].s(), l[1].s()}] = alts;
     }
-    for (const auto &e : g.at("rooms").dict()) {
-        Room *r = const_cast<Room *>(D.room(e.key));
-        if (!r) continue;
-        const Value &v = e.value;
-        for (const Value &l : v.at("locks").list()) r->locks.push_back({side_index(l.list()[0].s()[0]), l.list()[1]});
-        for (const Value &b : v.at("blocks").list()) r->blocks.push_back(b);
-        if (!v.at("throw").is_none()) r->throw_ok = true, r->throw_req = str_atoms(v.at("throw"));
-        for (int s = 0; s < 4; s++) r->shutter[s] = str_atoms(v.at("shutter").at(std::string(1, SIDES[s])));
-        for (const Value &t : v.at("tex").list()) r->tex.push_back((int)t.i());
-        for (const Value &l : v.at("land").list()) {
-            const List &x = l.list();
-            const List &d = x[3].list();
-            Land ld;
-            ld.depth = d[0].f(), ld.height = d[1].f(), ld.lateral = d[2].f();
-            r->land[{side_index(x[0].s()[0]), (int)x[1].i(), (int)x[2].i()}] = ld;
-        }
+    for (const auto &e : doc.at("kills").dict()) {
+        std::vector<std::string> ks;
+        for (const Value &k : e.value.list()) ks.push_back(k.s());
+        D.kills[std::stoi(e.key)] = ks;
     }
-    for (const auto &e : g.at("levels").dict()) {
-        const Value &v = e.value;
-        for (const Value &x : v.at("offgrid").list()) D.offgrid[e.key].push_back(x.s());
-        std::set<int> all;
-        for (const auto &t : v.at("offgrid_tex").dict())
-            for (const Value &i : t.value.list()) all.insert((int)i.i());
-        D.offgrid_tex_all[e.key] = std::vector<int>(all.begin(), all.end());
-        for (const Value &i : v.at("base_tex").list()) D.base_tex[e.key].push_back((int)i.i());
-        for (const Value &c : v.at("cells").list()) D.level_cells[e.key].insert(c.s());
-        for (const Value &p : v.at("stairs").list()) D.stairs[e.key].push_back({p.list()[0].s(), p.list()[1].s()});
-        for (const Value &p : v.at("holes").list()) D.holes[e.key].push_back({p.list()[0].s(), p.list()[1].s()});
-    }
-    for (const Value &x : g.at("inward").list()) {
+    for (const Value &x : doc.at("inward_reviewed").list()) {
         const List &l = x.list();
-        D.inward[{l[0].s(), side_index(l[1].s()[0]), (int)l[2].i()}] = l[3].s();
+        D.inward_reviewed[{l[0].s(), side_index(l[1].s()[0]), (int)l[2].i()}] = l[3].s();
     }
-    for (const auto &e : g.at("map_anims").dict()) D.map_anims[e.key] = e.value.i();
-    for (const auto &e : g.at("map_shifts").dict())
-        D.map_shifts[std::stoll(e.key)] = {e.value.list()[0].f(), e.value.list()[1].f()};
-    D.tex_names = (size_t)g.at("tex_names").i();
+    D.ports[0] = Value::new_dict(), D.ports[1] = Value::new_dict();
+    D.hole_spots[0] = Value::new_dict(), D.hole_spots[1] = Value::new_dict();
 }
 
-const Data &data() {
+static const Data &base_data() {
     static Data D;
     static std::once_flag once;
     std::call_once(once, [] { load(D); });
     return D;
 }
+
+static thread_local const Data *g_current = nullptr;
+
+const Data &data() { return g_current ? *g_current : base_data(); }
+
+GameScope::GameScope(const GameFiles &game, bool hook) : own_(base_data()), prev_(g_current) {
+    static std::atomic<uint64_t> gen{0};
+    own_.generation = ++gen;
+    read_game_facts(own_, game, hook);
+    g_current = &own_;
+}
+
+GameScope::~GameScope() { g_current = prev_; }
 
 const Atoms *Ctx::exit_of(const std::string &room) const {
     if (!exit_req) return nullptr;

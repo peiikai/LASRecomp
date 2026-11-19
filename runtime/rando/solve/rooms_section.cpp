@@ -18,12 +18,13 @@ Value deepcopy_settings(const Value &settings) {
     return s;
 }
 
-int plan_rooms(Prepared &st, int first, RoomPlan &plan, const std::function<void(const std::string &)> &say,
+int plan_rooms(Prepared &st, const GameFiles &game, int first, RoomPlan &plan, const std::function<void(const std::string &)> &say,
                const std::function<bool()> &cancelled) {
     Value room_mode = st.settings.get("dungeon-room-shuffle", "off");
     rooms::Ctx ctx;
     ctx.hook = st.settings.get("hookshot-anything").truthy();
     ctx.exit_req = std::find(st.soul_kinds.begin(), st.soul_kinds.end(), "mini") != st.soul_kinds.end();
+    rooms::GameScope scope(game, ctx.hook);  // (what the game's rooms say: read once, for this generation)
     Value extra = Value::new_dict();
     for (const auto &e : st.pot_locs.dict())
         if (e.value.get("room").truthy()) extra.set(e.key, e.value.at("room"));

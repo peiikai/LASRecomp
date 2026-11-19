@@ -198,7 +198,7 @@ GenerateResult generate_once(const Value &request, const GameFiles &game, const 
         // dungeons can't be filled: the next one (sub-seeds '<seed>~<attempt>')
         if (st.settings.get("dungeon-room-shuffle", "off") != Value("off")) {
             stage(0.03, "Planning dungeon rooms");
-            room_attempt = plan_rooms(st, room_first, room_plan, say, cancelled);
+            room_attempt = plan_rooms(st, game, room_first, room_plan, say, cancelled);
             has_rooms = true;
         }
         st.said.clear();

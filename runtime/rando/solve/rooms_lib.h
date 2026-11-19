@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 
+#include "prepare.h"
 #include "pyset.h"
 #include "value.h"
 
@@ -74,7 +75,7 @@ struct Room {
     std::vector<std::string> unit, actors;
     std::vector<int64_t> types;
     bool any_open = false;          // any(openings(cat, room).values())
-    // what the game's rooms say (room_game_data.cpp)
+    // what the game's rooms say (read_game_facts, from the player's files)
     Areas areas[2];                                  // [hookshot-anything]
     std::vector<std::pair<int, Value>> locks;        // lock_flag's (side, flag or None), in actor order
     std::vector<Value> blocks;                       // lock_blocks
@@ -103,13 +104,41 @@ struct Data {
     std::map<int64_t, std::pair<double, double>> map_shifts;
     size_t tex_names = 0;
     std::set<std::string> check_rooms;           // dungeon_gen._check_rooms
+    // our own tables (room_data.cpp): room_overrides.ROOMS' tile / move fixes, PASSAGES, the shutters' kill rules,
+    // dungeon_gen.INWARD_REVIEWED
+    Value room_fixes;
+    std::map<std::pair<std::string, std::string>, std::vector<Atoms>> passages;  // (sorted pair) -> alternatives
+    std::map<int, std::vector<std::string>> kills;
+    std::map<std::tuple<std::string, int, int>, std::string> inward_reviewed;
+    uint64_t generation = 0;  // (which generation's game facts: the planner's caches follow it)
     const Room *room(const std::string &name) const {
         auto it = index.find(name);
         return it == index.end() ? nullptr : &rooms[(size_t)it->second];
     }
     const Room &at(const std::string &name) const;  // (KeyError)
 };
+
+// The room data the planner works with: the generation's own while a GameScope is alive on this thread (the facts
+// read from the player's files), else our own tables only (no game facts: PyError if a reader's result is asked for)
 const Data &data();
+
+// What the game's rooms say, read from the player's files (rooms_game.cpp): areas (for hookshot-anything or not),
+// locks, keyhole blocks, pot doors, shutters, landing spots, drop-down-only doorways, stairs, holes, textures, level
+// cells and the pause-menu map. Every file read once.
+void read_game_facts(Data &D, const GameFiles &game, bool hook);
+
+// For one generation (plan_rooms): our tables plus the game facts, current on this thread until it ends
+class GameScope {
+public:
+    GameScope(const GameFiles &game, bool hook);
+    ~GameScope();
+    GameScope(const GameScope &) = delete;
+    GameScope &operator=(const GameScope &) = delete;
+
+private:
+    Data own_;
+    const Data *prev_;
+};
 
 // what the seed's other settings make of the room logic: hookshot-anything, mini-boss souls (room_logic.EXIT_REQ)
 struct Ctx {

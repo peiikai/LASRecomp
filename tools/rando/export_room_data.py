@@ -1,22 +1,15 @@
 #!/usr/bin/env python3
-"""Writes the data the native dungeon room shuffle (runtime/rando/solve/rooms.cpp: dungeon_gen.plan_all_chaos and
-room_logic.apply, docs/randomizer.md stage 5) starts from, as JSON documents the C++ parses (solve::Value):
+"""Writes runtime/rando/solve/room_data.cpp: the data the native dungeon room shuffle (runtime/rando/solve/rooms*.cpp:
+dungeon_gen.plan_all_chaos and room_logic.apply, docs/randomizer.md stage 5) starts from, as one JSON document the C++
+parses (solve::Value): tools/rando/room_catalog.json and location_rooms.json (in their file order), room_overrides.py's
+fixes (doors, tiles, moves, passages; requirement strings already split into alternatives), room_logic's kill rules
+for shutters (with souls.py's bosses and mini-bosses), dungeon_gen.INWARD_REVIEWED and souls.exit_req.
 
-  runtime/rando/solve/room_data.cpp       tools/rando/room_catalog.json and location_rooms.json (in their file order),
-                                          room_overrides.py's door requirements, souls.exit_req (the mini-boss rooms)
-  runtime/rando/solve/room_game_data.cpp  (--romfs) what dungeon_gen / room_logic read from the game's rooms, per room
-                                          and per level, as they work it out (PYTHONHASHSEED=0, as the generator runs):
-                                          each room's walkable areas and the moves between them (room_areas, with and
-                                          without hookshot-anything), its locks, keyhole blocks, shutters, what a pot door
-                                          takes, where a door jump lands (landing_depth), drop-down-only doorways
-                                          (inward_only), the stairs and holes between rooms, the map textures each room
-                                          needs and where each dungeon floor sits on the pause-menu map. Numbers and names
-                                          only: no game data (no tiles, models or text)
+What the generator reads from the game's own rooms (tiles, actors, textures, map pages) it reads from the player's
+files at generation (runtime/rando/solve/rooms_game.cpp), as dungeon_gen.py / room_logic.py do: none of it is here.
 
-    <LAS venv>/bin/python tools/rando/export_room_data.py [--romfs <dir>]          # rewrite the file(s)
-    <LAS venv>/bin/python tools/rando/export_room_data.py [--romfs <dir>] --check  # exit 1 when out of date
-
-The game-derived file needs the game's files, so --check only checks it when --romfs is given.
+    <LAS venv>/bin/python tools/rando/export_room_data.py          # rewrite the file
+    <LAS venv>/bin/python tools/rando/export_room_data.py --check  # exit 1 when it's out of date
 """
 import json
 import os
@@ -27,7 +20,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 LAS = os.path.join(ROOT, 'third_party', 'LAS-Randomizer')
 OUT = os.path.join(ROOT, 'runtime', 'rando', 'solve', 'room_data.cpp')
-OUT_GAME = os.path.join(ROOT, 'runtime', 'rando', 'solve', 'room_game_data.cpp')
 sys.path.insert(0, HERE)
 sys.path.insert(0, LAS)
 sys.modules.setdefault('PySide6', types.ModuleType('PySide6'))
@@ -39,11 +31,19 @@ def load(name):
         return json.load(f)
 
 
+def alts(req):
+    import room_overrides
+    return [sorted(a) for a in room_overrides.alts(req)]
+
+
 def static_json():
+    import dungeon_gen
+    import room_logic
     import room_overrides
     import souls
     cat = load('room_catalog.json')
     doors = {}
+    fixes = {}
     for room, fix in room_overrides.ROOMS.items():
         for (side, slot), _ in fix.get('door', {}).items():
             row = [side, slot]
@@ -51,87 +51,27 @@ def static_json():
                 v = room_overrides.door(room, side, slot, way)
                 row.append(None if v is None else sorted(v))
             doors.setdefault(room, []).append(row)
+        f = {}
+        for k in ('solid', 'floor'):
+            if k in fix:
+                f[k] = [list(t) for t in fix[k]]
+        for k in ('cut', 'cut2'):
+            if k in fix:
+                f[k] = [[list(t), list(u)] for t, u in fix[k]]
+        for k in ('add', 'add2'):
+            if k in fix:
+                f[k] = [[list(t), list(u), alts(req)] for t, u, req in fix[k]]
+        if 'check' in fix:
+            t, req = fix['check']
+            f['check'] = [list(t), alts(req)]
+        if f:
+            fixes[room] = f
+    passages = [[*sorted(k), alts(v)] for k, v in room_overrides.PASSAGES.items()]
     out = {'catalog': cat, 'location_rooms': load('location_rooms.json'), 'door_overrides': doors,
+           'room_fixes': fixes, 'passages': passages,
+           'kills': {str(t): list(k) for t, k in sorted(room_logic._kills().items())},
+           'inward_reviewed': [[k[0], k[1], k[2], v] for k, v in dungeon_gen.INWARD_REVIEWED.items()],
            'exit_req': {k: sorted(v) for k, v in souls.exit_req(cat).items()}}
-    return json.dumps(out, ensure_ascii=True, separators=(',', ':'))
-
-
-def game_json(romfs):
-    assert os.environ.get('PYTHONHASHSEED') == '0', 'run with PYTHONHASHSEED=0 (as the generator)'
-    import dungeon_gen
-    import room_logic
-    import rooms
-    cat = load('room_catalog.json')
-    levels = list(dungeon_gen.ENTRANCES)
-    out = {'rooms': {}, 'levels': {}}
-
-    def areas_plain(room, hook):
-        area, n, moves = room_logic.room_areas(romfs, room)
-        tiles = [area.get((r, c), -1) for r in range(8) for c in range(10)]
-        return {'tiles': tiles, 'n': n, 'moves': [[a, b, [sorted(x) for x in alts]] for a, b, alts in moves]}
-
-    def spots(room, pts):
-        return sorted(set().union(*(room_logic.spot_areas(romfs, room, *p) for p in pts))) if pts else None
-
-    per_hook = {}
-    for hook in (False, True):
-        room_logic.HOOK_ANYTHING = hook
-        room_logic._areas_cache.clear()
-        room_logic._tiles_cache.clear()
-        room_logic._hook_tiles.clear()
-        got = {'areas': {room: areas_plain(room, hook) for room in cat}, 'ports': {}, 'holes': {}}
-        for lv in levels:
-            got['ports'][lv] = [[a, sorted(room_logic.spot_areas(romfs, a, *p)), b,
-                                 sorted(room_logic.spot_areas(romfs, b, *q)), [sorted(x) for x in alts]]
-                                for a, p, b, q, alts in room_logic.stairs_ports(romfs, lv, cat)]
-            got['holes'][lv] = [[a, sorted(room_logic.spot_areas(romfs, a, *p)), b,
-                                 spots(b, starts) if starts else list(range(room_logic.room_areas(romfs, b)[1]))]
-                                for a, p, b, starts in room_logic.hole_links(romfs, lv, cat, spots=True)]
-        per_hook['hook' if hook else 'plain'] = got
-    room_logic.HOOK_ANYTHING = False
-    room_logic._areas_cache.clear()
-    room_logic._tiles_cache.clear()
-    room_logic._hook_tiles.clear()
-    out['areas'] = {k: v['areas'] for k, v in per_hook.items()}
-    out['ports'] = {k: v['ports'] for k, v in per_hook.items()}
-    out['holes'] = {k: v['holes'] for k, v in per_hook.items()}
-
-    # textures: one name table, each room a list of indexes
-    names = {}
-
-    def tex_ids(s):
-        return sorted(names.setdefault(t, len(names)) for t in sorted(s))
-    land = {}
-    for room, v in cat.items():
-        room_logic.lock_flag(romfs, room, 'N')
-        r = {'locks': [[sd, f] for sd, f in room_logic._lock_cache[room]],
-             'blocks': room_logic.lock_blocks(romfs, room),
-             'throw': None if room_logic.throw_req(romfs, room) is None else sorted(room_logic.throw_req(romfs, room)),
-             'shutter': {s: sorted(room_logic.shutter_req(romfs, room, s)) for s in 'NSWE'},
-             'tex': tex_ids(dungeon_gen.room_textures(romfs, room))}
-        lands = []
-        for s, xs in dungeon_gen.openings(cat, room).items():
-            for x in xs:
-                if isinstance(x[0], str):
-                    continue
-                for m in (0, 1):
-                    lands.append([s, x[0], m, list(dungeon_gen.landing_depth(romfs, room, s, x[0], m))])
-        r['land'] = lands
-        out['rooms'][room] = r
-    for lv in levels:
-        off = dungeon_gen.offgrid_rooms(romfs, cat, lv)
-        out['levels'][lv] = {
-            'offgrid': off,
-            'offgrid_tex': {k: tex_ids(dungeon_gen.room_textures(romfs, k)) for k in off},
-            'base_tex': tex_ids(dungeon_gen._base_tex(romfs, lv, dungeon_gen.ENTRANCES[lv])),
-            'cells': sorted(dungeon_gen.level_cells(romfs, lv)),
-            'stairs': [list(x) for x in room_logic.stairs_links(romfs, lv, cat)],
-            'holes': [list(x) for x in room_logic.hole_links(romfs, lv, cat)],
-        }
-    out['inward'] = [[k[0], k[1], k[2], v] for k, v in sorted(dungeon_gen.inward_only(romfs).items())]
-    out['map_anims'] = {k: v for k, v in dungeon_gen.map_anims(romfs).items() if k.startswith('Lv')}
-    out['map_shifts'] = {str(k): list(v) for k, v in sorted(dungeon_gen.map_shifts(romfs).items())}
-    out['tex_names'] = len(names)
     return json.dumps(out, ensure_ascii=True, separators=(',', ':'))
 
 
@@ -155,28 +95,20 @@ def cpp(text, func, what):
 
 
 def main():
-    args = sys.argv[1:]
-    romfs = args[args.index('--romfs') + 1] if '--romfs' in args else None
-    outs = [(OUT, cpp(static_json(), 'room_data_json', "tools/rando/room_catalog.json, location_rooms.json, "
-                                                         "room_overrides.py's doors and souls.exit_req, as JSON"))]
-    if romfs:
-        outs.append((OUT_GAME, cpp(game_json(os.path.abspath(romfs)), 'room_game_json',
-                                   "what dungeon_gen.py / room_logic.py work out from the game's rooms (areas, "
-                                   "doors, stairs, landing spots, textures, map pages), as JSON")))
-    bad = 0
-    for path, text in outs:
-        if '--check' in args:
-            old = open(path).read() if os.path.exists(path) else ''
-            if old != text:
-                print(f'{os.path.relpath(path, ROOT)} is out of date: run tools/rando/export_room_data.py')
-                bad = 1
-            else:
-                print(f'{os.path.relpath(path, ROOT)}: up to date')
-            continue
-        with open(path, 'w') as f:
-            f.write(text)
-        print('wrote', os.path.relpath(path, ROOT), len(text), 'bytes of JSON')
-    return bad
+    text = cpp(static_json(), 'room_data_json', "tools/rando/room_catalog.json, location_rooms.json, "
+                                                  "room_overrides.py's fixes, room_logic's kill rules, "
+                                                  "dungeon_gen.INWARD_REVIEWED and souls.exit_req, as JSON")
+    if '--check' in sys.argv[1:]:
+        old = open(OUT).read() if os.path.exists(OUT) else ''
+        if old != text:
+            print(f'{os.path.relpath(OUT, ROOT)} is out of date: run tools/rando/export_room_data.py')
+            return 1
+        print(f'{os.path.relpath(OUT, ROOT)}: up to date')
+        return 0
+    with open(OUT, 'w') as f:
+        f.write(text)
+    print('wrote', os.path.relpath(OUT, ROOT), len(text), 'bytes of JSON')
+    return 0
 
 
 if __name__ == '__main__':

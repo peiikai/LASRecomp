@@ -100,7 +100,7 @@ int prepare_check(const std::string &romfs, const std::string &request, const st
         RoomPlan plan;
         auto t1 = std::chrono::steady_clock::now();
         try {
-            int at = plan_rooms(st, first, plan, [](const std::string &s) { printf("  (%s)\n", s.c_str()); });
+            int at = plan_rooms(st, game, first, plan, [](const std::string &s) { printf("  (%s)\n", s.c_str()); });
             printf("room layout: attempt %d\n", at);
             st.said.clear();
             std::vector<std::string> shuffled;

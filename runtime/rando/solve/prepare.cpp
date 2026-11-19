@@ -428,10 +428,13 @@ void finish_prefill(Prepared &st, const std::vector<std::string> &shuffled) {
 GameFiles game_files_dir(const std::string &romfs) {
     GameFiles g;
     g.read = [romfs](const std::string &path, std::string &out) {
-        std::ifstream f(romfs + "/" + path, std::ios::binary);
+        std::ifstream f(romfs + "/" + path, std::ios::binary | std::ios::ate);
         if (!f) return false;
-        out.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-        return true;
+        std::streamoff n = f.tellg();  // (one read of the whole file: model and texture files run to megabytes)
+        if (n < 0) return false;
+        out.resize((size_t)n);
+        f.seekg(0);
+        return n == 0 || (bool)f.read(&out[0], n);
     };
     g.list = [romfs](const std::string &dir, std::vector<std::string> &names) {
         DIR *d = opendir((romfs + "/" + dir).c_str());

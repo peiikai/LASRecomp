@@ -153,7 +153,7 @@ std::set<int> exit_sides(const Room &room) {
 }
 
 const std::set<std::string> &anchors_of(const std::string &level) {
-    static std::map<std::string, std::set<std::string>> cache;
+    static thread_local std::map<std::string, std::set<std::string>> cache;  // (our catalog only)
     auto it = cache.find(level);
     if (it != cache.end()) return it->second;
     std::set<std::string> out;
@@ -252,7 +252,9 @@ struct Partners {
     std::map<std::string, PyStrSet> sets;
 };
 const Partners &partners_of(const std::string &level) {
-    static std::map<std::string, Partners> cache;
+    static thread_local std::map<std::string, Partners> cache;  // (this generation's: the stairs come from its game files)
+    static thread_local uint64_t gen = 0;
+    if (gen != data().generation) cache.clear(), gen = data().generation;
     auto it = cache.find(level);
     if (it != cache.end()) return it->second;
     Partners P;
@@ -969,7 +971,9 @@ bool chaos_pairs(const std::string &level, const Value &layout, const std::strin
 
 // ---------------------------------------------------------------- leftovers
 const Tex &level_tex_extra(const std::string &lv) {  // _base_tex + the offgrid rooms' textures
-    static std::map<std::string, Tex> cache;
+    static thread_local std::map<std::string, Tex> cache;  // (this generation's)
+    static thread_local uint64_t gen = 0;
+    if (gen != data().generation) cache.clear(), gen = data().generation;
     auto it = cache.find(lv);
     if (it != cache.end()) return it->second;
     Tex t;

@@ -81,6 +81,7 @@
 #include "../runtime/rando/solve/prepare.h"
 #include "../runtime/rando/solve/entrances.h"
 #include "../runtime/rando/solve/generate.h"
+#include "../runtime/rando/solve/rooms.h"
 #include "../third_party/yyjson/yyjson.h"
 
 static int usage(void) {
@@ -392,6 +393,7 @@ int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "decide-check")) return rando::decide_check(argv[2], argv[3], argv[4], argc > 5 ? argv[5] : "");
     if (argc >= 4 && !strcmp(argv[1], "solve-check")) return rando::solve::solve_check(argv[2], argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "outputs-check")) return rando::solve::outputs_check(argv[2], argv[3], argv[4]);
+    if (argc >= 3 && !strcmp(argv[1], "room-facts")) return rando::solve::room_facts(argv[2]);
     if (argc >= 5 && !strcmp(argv[1], "prepare-check")) return rando::solve::prepare_check(argv[2], argv[3], argv[4], argc > 5 ? argv[5] : "");
     if (argc < 3) return usage();
     const RandoSeed *s = rando_seed_load(argv[2]);

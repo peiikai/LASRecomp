@@ -4,7 +4,7 @@
 //
 // Same layouts, jump rows and logic as the Python, draw for draw (lasrando rooms-check compares them with a recorded
 // run). What the Python reads from the game's rooms (each room's areas, doors, stairs, landing spots, textures, map
-// pages) comes from tools/rando/export_room_data.py (room_game_data.cpp), worked out by the Python itself.
+// pages) is read from the player's own files when the planning starts (rooms_game.cpp: GameScope).
 //
 //   RoomPlan p = plan_all_chaos(sub_seed, madness, settings, ctx);  // PyError RuntimeError 'no Chaos layout'
 //   room_logic_apply(p, logic_defs, item_defs, settings, extra, ctx); // the logic rewritten in place
@@ -38,8 +38,11 @@ std::string room_logic_apply(const RoomPlan &plan, Value &logic_defs, Value &ite
 // las_headless.py main()'s room section, from the 'post_entrances' state: plan_all_chaos for sub-seeds '<seed>' then
 // '<seed>~<attempt>' from `first` on (LARECOMP_ROOM_ATTEMPT), room_logic.apply on fresh deep copies of st's settings,
 // items and logic, until a layout's dungeons can be filled. st's settings / items / logic become that layout's; returns
-// its attempt. PyError RuntimeError 'no dungeon room layout for this seed' after the 40th.
-int plan_rooms(Prepared &st, int first, RoomPlan &plan, const std::function<void(const std::string &)> &say,
+// its attempt. The room facts are read from `game` (rooms_lib.h: GameScope). PyError RuntimeError 'no dungeon room layout for this seed' after the 40th.
+// lasrando room-facts <romfs>: what the room readers read from the game's files, as JSON (rooms_facts.cpp)
+int room_facts(const std::string &romfs);
+
+int plan_rooms(Prepared &st, const GameFiles &game, int first, RoomPlan &plan, const std::function<void(const std::string &)> &say,
                const std::function<bool()> &cancelled = nullptr);
 // copy.deepcopy(settings): the Python set (excluded-locations) made again from its items, in its order
 Value deepcopy_settings(const Value &settings);
