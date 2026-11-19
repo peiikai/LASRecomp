@@ -187,7 +187,7 @@ fi
 if [ -n "${IOS_SIM:-}" ]; then
     # The simulator runs ad-hoc signed code, every binary signed, and refuses the executable with our entitlement
     # in its signature ("Security policy issue"): plain ad-hoc signatures, inside out.
-    for f in "$APP"/Frameworks/*.framework; do codesign --force --sign - --timestamp=none "$f"; done
+    for f in "$APP"/Frameworks/*.framework; do [ -e "$f" ] && codesign --force --sign - --timestamp=none "$f"; done
     codesign --force --sign - --timestamp=none "$APP"
     echo "$APP (simulator): $(du -sh "$APP" | cut -f1), $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks, ad-hoc signed"
     exit 0
@@ -231,6 +231,7 @@ e['get-task-allow'] = True
 with open(sys.argv[2], 'wb') as f: plistlib.dump(e, f)
 EOF
     for f in "$APP"/Frameworks/*.framework; do  # (inside out: every framework, then the app)
+        [ -e "$f" ] || continue
         codesign --force --sign "$SIGN" --timestamp=none "$f"
     done
     codesign --force --sign "$SIGN" --entitlements "$ENT" --timestamp=none "$APP"
