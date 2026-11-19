@@ -5,6 +5,7 @@
 #include <string>
 
 #include "steps.h"
+#include "textures.h"
 #include "../../../third_party/yyjson/yyjson.h"
 
 namespace rando {
@@ -57,7 +58,7 @@ static size_t order_of(const char *name) {
 const std::vector<BuildStep> &build_steps() {
     static const std::vector<BuildStep> all = [] {
         std::vector<BuildStep> v;
-        for (auto group : {las::steps_las_decide, steps_las_general, steps_las_items, steps_las_world, steps_ours_items, steps_ours_world})
+        for (auto group : {las::steps_las_decide, steps_las_general, steps_las_items, steps_las_world, steps_ours_items, steps_ours_world, steps_textures})
             for (const BuildStep &s : group()) v.push_back(s);
         std::stable_sort(v.begin(), v.end(), [](const BuildStep &a, const BuildStep &b) { return order_of(a.name) < order_of(b.name); });
         return v;

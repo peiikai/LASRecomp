@@ -475,7 +475,8 @@ $(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/
 	$(CC) -std=gnu11 -O2 -c runtime/rando/seed.c -o build/lasrando.o/seed.o
 	$(CC) -std=gnu11 -O2 -c runtime/rando/json.c -o build/lasrando.o/json.o
 	$(CC) -std=gnu11 -O2 -c runtime/rando/sha512.c -o build/lasrando.o/sha512.o
-	$(CXX) -std=c++17 -O2 $(LASRANDO_CXX) build/lasrando.o/seed.o build/lasrando.o/json.o build/lasrando.o/sha512.o -o $@
+	$(CC) -std=gnu11 -O2 -c runtime/nvn/tegra.c -o build/lasrando.o/tegra.o
+	$(CXX) -std=c++17 -O2 $(LASRANDO_CXX) build/lasrando.o/seed.o build/lasrando.o/json.o build/lasrando.o/sha512.o build/lasrando.o/tegra.o -o $@
 
 # The game code generator, the same way (tools/lasgen.spec): build/helper/lasgen/, shipped as lasgen/ next to the exe or
 # in Contents/Resources. The start screen's setup runs it on the player's own game files (runtime/gamebuild.c).

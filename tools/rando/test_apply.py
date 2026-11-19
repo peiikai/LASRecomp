@@ -14,9 +14,12 @@ import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 TOOL = os.path.join(ROOT, 'build', 'lasrando.exe' if os.name == 'nt' else 'lasrando')
-# written by steps that are not ported yet (stage 4: textures, the title logo, dungeon room shuffle)
-NOT_PORTED = ('romfs/region_common/ui/StartUp.arc', 'romfs/region_common/actor/ObjTreasureBoxKey.bfres',
-              'romfs/region_common/actor/ObjTreasureBoxPlain.bfres')
+# written by steps that are not ported yet (stage 4: dungeon room shuffle)
+NOT_PORTED = ()
+# textures the native build compresses itself (rgbcx; the Python used quicktex, LGPL): the file byte-identical apart
+# from the textures' pixel data, the pixels close (`lasrando texture-check`, runtime/rando/fmt/texture_check.h)
+PIXEL_CHECKED = ('romfs/region_common/ui/StartUp.arc', 'romfs/region_common/actor/ObjTreasureBoxKey.bfres',
+                 'romfs/region_common/actor/ObjTreasureBoxPlain.bfres')
 # the tables the steps write (runtime/rando/apply/decide_check.cpp SEED_TABLES); hints.tsv needs hint_steps.json's step
 # numbers, which the decisions don't hold: made in decide mode only (lasrando decide-check)
 TABLES = ('pots.tsv', 'bushes.tsv', 'rocks.tsv', 'digs.tsv', 'shell_spots.tsv', 'apple_trees.tsv', 'shopsanity.tsv',
@@ -51,7 +54,7 @@ def main():
                 bad += 1
                 continue
             want, got = files(seed), files(out)
-            same = differ = missing = extra = later = 0
+            same = differ = missing = extra = later = pixels = 0
             notes = []
             for rel, p in sorted(want.items()):
                 if rel in NOT_PORTED:
@@ -62,6 +65,14 @@ def main():
                     notes.append(f'missing {rel}')
                 elif open(p, 'rb').read() == open(got[rel], 'rb').read():
                     same += 1
+                elif rel in PIXEL_CHECKED:
+                    c = subprocess.run([TOOL, 'texture-check', p, got[rel], rel[len('romfs/'):]], capture_output=True,
+                                       text=True)
+                    if c.returncode:
+                        differ += 1
+                        notes.append(f'differs {rel}: ' + c.stdout.strip().replace('\n', ' / '))
+                    else:
+                        pixels += 1
                 else:
                     differ += 1
                     notes.append(f'differs {rel}')
@@ -79,8 +90,9 @@ def main():
                 differ += 1
                 notes.append(f'table {t}: ' + ('missing' if not os.path.exists(g) else 'extra' if not os.path.exists(w)
                                                 else 'differs'))
-            print(f'{os.path.basename(seed.rstrip("/"))}: {same} files the same, {differ} different, {missing} missing,'
-                  f' {extra} extra ({later} from steps not ported yet); {tsame} tables the same')
+            print(f'{os.path.basename(seed.rstrip("/"))}: {same} files the same, {pixels} with the same pixels, {differ}'
+                  f' different, {missing} missing, {extra} extra ({later} from steps not ported yet); {tsame} tables the'
+                  ' same')
             for n in notes[:8]:
                 print('   ', n)
             bad += differ + missing + extra

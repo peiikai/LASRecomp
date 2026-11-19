@@ -20,8 +20,8 @@ playing exactly as before:
 |---|---|---|
 | 1 | seed record + one runtime API; Python's `random` in C++ | in progress |
 | 2 | file-format library (rooms, event flows, data sheets, messages, archives, textures) | done: rooms, level configs, data sheets, messages, archives, event flows, texture banks |
-| 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | in progress: every step but room shuffle and textures built natively, file for file as the generator; the runtime's side next |
-| 4 | asset builds (dungeon room shuffle, textures) in the runtime | |
+| 3 | runtime applies seeds in memory; `lasrando dump` writes what it changed | done but dungeon room shuffle: every step built natively, file for file as the generator |
+| 4 | asset builds (dungeon room shuffle, textures) in the runtime | textures done (chest looks, title logo); dungeon room shuffle next |
 | 5 | native solver | in progress: the whole generator but dungeon room shuffle, file for file as today |
 | 6 | generation in the app everywhere; Python leaves the builds | |
 
@@ -77,6 +77,12 @@ choices come from the seed's decisions). Each step is a port of one generator fu
 - `build/lasrando dump <romfs> <decisions.json> <out>` and `tools/rando/test_apply.py <romfs> <seed folder>...`: a
   whole seed built natively against the folder the generator wrote, file for file.
 - Generated tables (`tools/rando/export_*.py --check`) keep the C++ copies of Python data in step.
+
+Textures (`textures.cpp`: chest looks' recoloured chests, the title logo): the image steps (Pillow's colour
+conversion, blur, paste and bilinear resize in `fmt/texture.cpp`) give the Python's pixels exactly; the compression is
+rgbcx (`third_party/rgbcx`, MIT) where the generator used quicktex (LGPL, so not ported). Those files are byte-identical
+apart from the textures' pixel data, and the pixels are compared within a small error:
+`build/lasrando texture-check <python file> <native file> <romfs path>` (test_apply.py and test_generate.py use it).
 
 ## Native generator
 

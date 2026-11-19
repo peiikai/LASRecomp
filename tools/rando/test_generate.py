@@ -24,12 +24,11 @@ TOOL = os.path.join(ROOT, 'build', 'lasrando.exe' if os.name == 'nt' else 'lasra
 HEADLESS = os.path.join(ROOT, 'tools', 'rando', 'las_headless.py')
 
 # Files left out of the comparison, each with why:
-EXCLUDED = {
-    # written by steps not ported yet (docs/randomizer.md stage 4; tools/rando/test_apply.py NOT_PORTED)
-    'romfs/region_common/ui/StartUp.arc': 'title logo: not ported yet',
-    'romfs/region_common/actor/ObjTreasureBoxKey.bfres': 'chest looks model: not ported yet',
-    'romfs/region_common/actor/ObjTreasureBoxPlain.bfres': 'chest looks model: not ported yet',
-}
+EXCLUDED = {}
+# Files whose textures the native build compresses itself (rgbcx; the Python used quicktex, LGPL): byte-identical
+# apart from the textures' pixel data, the pixels compared by `lasrando texture-check` (tools/rando/test_apply.py)
+PIXEL_CHECKED = ('romfs/region_common/ui/StartUp.arc', 'romfs/region_common/actor/ObjTreasureBoxKey.bfres',
+                 'romfs/region_common/actor/ObjTreasureBoxPlain.bfres')
 NATIVE_ONLY = {'seed.json'}  # (checked on its own against the Python folder's record)
 
 
@@ -134,6 +133,9 @@ def run_one(romfs, req, py, keep):
                 a, b = read(got[rel]), read(path)
                 if a == b:
                     same += 1
+                elif rel in PIXEL_CHECKED and not subprocess.run(
+                        [TOOL, 'texture-check', path, got[rel], rel[len('romfs/'):]], capture_output=True).returncode:
+                    same += 1
                 else:
                     differ += 1
                     res['notes'].append(f'differs {rel} {first_diff(a, b)}')
@@ -166,6 +168,7 @@ def main():
     print('excluded from the comparison:')
     for k, v in EXCLUDED.items():
         print(f'  {k}: {v}')
+    print(f'  pixels only: {", ".join(PIXEL_CHECKED)} (`lasrando texture-check`)')
     print(f'  native only: {", ".join(sorted(NATIVE_ONLY))} (checked against `lasrando convert` of the Python folder)')
     if a.keep:
         os.makedirs(a.keep, exist_ok=True)

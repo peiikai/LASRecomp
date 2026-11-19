@@ -29,6 +29,10 @@
 //                                                  the seed built in decide mode (runtime/rando/apply/decide.h) from
 //                                                  the fill's result, against the Python's: decisions.json (every
 //                                                  field), the tables and the files (decide_check.h)
+//   lasrando texture-check <python file> <native file> <romfs path>
+//                                                  a file whose textures the build compresses itself (the chest looks'
+//                                                  models, ui/StartUp.arc): byte-identical apart from the pixel data,
+//                                                  the pixels within a small error (fmt/texture_check.h)
 //
 // Build: make lasrando (build/lasrando).
 #include <stdio.h>
@@ -47,6 +51,7 @@
 #include "../runtime/rando/fmt/leb.h"
 #include "../runtime/rando/fmt/msbt.h"
 #include "../runtime/rando/fmt/sarc.h"
+#include "../runtime/rando/fmt/texture_check.h"
 #include "../runtime/rando/fmt/lvb.h"
 #include "../runtime/rando/mkdirs.h"
 #include "../runtime/rando/apply/decide_check.h"
@@ -66,7 +71,8 @@ static int usage(void) {
                     "       lasrando generate <romfs> <request.json> <out folder> [--legacy]\n"
                     "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n"
                     "       lasrando solve-check <prefill.json> <postfill.json>\n"
-                    "       lasrando decide-check <romfs> <record folder> <seed folder> [<out folder>]\n");
+                    "       lasrando decide-check <romfs> <record folder> <seed folder> [<out folder>]\n"
+                    "       lasrando texture-check <python file> <native file> <romfs path>\n");
     return 2;
 }
 
@@ -221,6 +227,7 @@ int main(int argc, char **argv) {
     if (argc >= 4 && !strcmp(argv[1], "entrances-check")) return rando::solve::entrances_check(argv[2], argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "check-steps")) return check_steps(argv[2], argv[3], argv[4]);
     if (argc >= 4 && !strcmp(argv[1], "repack")) return repack(argv[2], argv[3]);
+    if (argc >= 5 && !strcmp(argv[1], "texture-check")) return rando::texture_check(argv[2], argv[3], argv[4]);
     if (argc >= 5 && !strcmp(argv[1], "decide-check")) return rando::decide_check(argv[2], argv[3], argv[4], argc > 5 ? argv[5] : "");
     if (argc >= 4 && !strcmp(argv[1], "solve-check")) return rando::solve::solve_check(argv[2], argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "outputs-check")) return rando::solve::outputs_check(argv[2], argv[3], argv[4]);
