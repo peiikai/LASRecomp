@@ -1,7 +1,8 @@
 // The native seed generator (generate.h): tools/rando/las_headless.py main(), its parts joined in its order.
 //
-// Between the parts, what main() itself does is done here as it does it: the room shuffle's place (not native: the
-// caller's fallback), the fill's errors ('error <text>' for a Triforce hunt the pool can't hold), the indexes it sets
+// Between the parts, what main() itself does is done here as it does it: the dungeon room shuffle's planning loop and
+// its retries (rooms.h; a layout the fill or the playthrough rejects: the next one, as the Python's fresh run of itself
+// with LARECOMP_ROOM_ATTEMPT), the fill's errors ('error <text>' for a Triforce hunt the pool can't hold), the indexes it sets
 // after the fill (pots.mark_refills, the bottles, pets.mark_indexes), the decisions record.py writes, the entrance
 // spoiler (entrance_logic.spoiler) and the settings ModsProcess changes (assemble.preSetup's stealing) or a step adds
 // (miniboss_guard's marker flag).
@@ -23,6 +24,7 @@
 #include "../apply/steps.h"
 #include "entrances.h"
 #include "outputs.h"
+#include "rooms.h"
 #include "shuffler.h"
 
 namespace rando {
@@ -68,7 +70,7 @@ Value plain_settings(const Value &settings) {
 }
 
 // record.decisions' own fields (the groups' fields are the build's: decide mode)
-std::string decisions_doc(const Value &placements, const Value &settings, const Value &item_defs) {
+std::string decisions_doc(const Value &placements, const Value &settings, const Value &item_defs, const RoomPlan *rooms) {
     Value d = Value::new_dict();
     d.set("version", 1);
     Value pl = Value::new_dict();
@@ -87,6 +89,17 @@ std::string decisions_doc(const Value &placements, const Value &settings, const 
         defs.set(e.key, f);
     }
     d.set("item-defs", defs);
+    if (rooms) {  // (the dungeon room shuffle's plan: the build lays the rooms out from it)
+        // (as lists, in the planner's order: decisions.json is written with sorted keys - record.ROOM_PLAN)
+        Value rp = Value::new_dict(), lays = Value::new_list();
+        for (const auto &lv : rooms->layouts.dict()) {
+            Value cells = Value::new_list();
+            for (const auto &c : lv.value.dict()) cells.list().push_back(Value(List{Value(c.key), c.value}));
+            lays.list().push_back(Value(List{Value(lv.key), cells}));
+        }
+        rp.set("layouts", lays), rp.set("jumps", rooms->jumps);
+        d.set("room-plan", rp);
+    }
     return py_json(d);
 }
 
@@ -131,9 +144,14 @@ Value table_lines(const std::string &text) {
 
 }  // namespace
 
-GenerateResult generate(const Value &request, const GameFiles &game, const GenerateOutput &out,
-                        const std::function<void(double, const std::string &)> &progress,
-                        const std::atomic<bool> *cancel, const GenerateOptions &opt) {
+namespace {
+
+// one run of las_headless.py; room_first: LARECOMP_ROOM_ATTEMPT. retry: set to the next layout to try when this one is
+// rejected (the Python then runs itself again with it, and that run's result is the seed's)
+GenerateResult generate_once(const Value &request, const GameFiles &game, const GenerateOutput &out,
+                             const std::function<void(double, const std::string &)> &progress,
+                             const std::atomic<bool> *cancel, const GenerateOptions &opt, int room_first, int &retry) {
+    retry = -1;
     GenerateResult r;
     auto t0 = std::chrono::steady_clock::now();
     auto stage = [&](double f, const std::string &label) {
@@ -155,11 +173,19 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
     stage(0.01, "Preparing");
     Prepared st;
     Value ent, post_entrances;
+    RoomPlan room_plan;
+    bool has_rooms = false;
+    int room_attempt = 0;
+    // a layout the items can't be placed in / the seed came out unbeatable: las_headless.retry_layout
+    auto retry_layout = [&](const std::string &why) {
+        if (!has_rooms || room_attempt + 1 >= 40) return false;
+        say("room layout " + std::to_string(room_attempt + 1) + ": " + why + " - planning another");
+        retry = room_attempt + 1;
+        return true;
+    };
     try {
         st = prepare(request, game);
         for (const std::string &s : st.said) say(s);
-        if (st.settings.get("dungeon-room-shuffle", "off") != Value("off"))
-            return fail(GenStatus::RoomShuffle, "dungeon room shuffle isn't native yet");
         if (cancelled()) return fail(GenStatus::Cancelled, "cancelled");
         Value state = Value::new_dict();
         state.set("settings", st.settings), state.set("item_defs", st.item_defs), state.set("logic_defs", st.logic_defs);
@@ -168,10 +194,21 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
         Value pe = Value::new_dict();
         pe.set("ent", ent), pe.set("logic_defs", st.logic_defs);
         post_entrances = Value(pe.json());
+        // ---- dungeon room shuffle: the layouts first, the item logic follows them (room_logic.apply); a layout whose
+        // dungeons can't be filled: the next one (sub-seeds '<seed>~<attempt>')
+        if (st.settings.get("dungeon-room-shuffle", "off") != Value("off")) {
+            stage(0.03, "Planning dungeon rooms");
+            room_attempt = plan_rooms(st, room_first, room_plan, say, cancelled);
+            has_rooms = true;
+        }
         st.said.clear();
-        finish_prefill(st);
+        std::vector<std::string> shuffled;
+        if (has_rooms)
+            for (const auto &e : room_plan.layouts.dict()) shuffled.push_back(e.key);
+        finish_prefill(st, shuffled);
         for (const std::string &s : st.said) say(s);
     } catch (const std::exception &e) {
+        if (cancelled()) return fail(GenStatus::Cancelled, "cancelled");  // (plan_rooms stops when asked)
         return fail(GenStatus::Failed, e.what());
     }
     if (cancelled()) return fail(GenStatus::Cancelled, "cancelled");
@@ -198,7 +235,14 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
         placements = sh.run();
     } catch (const std::exception &e) {
         if (cancelled()) return fail(GenStatus::Cancelled, "cancelled");
-        return fail(GenStatus::Failed, e.what());
+        std::string why = e.what();
+        if (has_rooms && why.find("fill stuck:") != std::string::npos && room_attempt + 1 < 40) {
+            say("room layout " + std::to_string(room_attempt) + ": item fill stuck - planning another");
+            retry = room_attempt + 1;
+        } else if (why.find("Triforce hunt") == std::string::npos) {
+            retry_layout("the items can't be placed");
+        }
+        return fail(GenStatus::Failed, why);
     }
     sh.tick = nullptr;
     say("placements ready");
@@ -214,11 +258,15 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
     oin.read_game = game.read;
     oin.list_game = game.list;
     oin.folder_name = opt.folder_name;
+    if (has_rooms) oin.room_layouts = room_plan.layouts;
     OutputsBuilder ob(oin);
     try {
         Outputs &o = ob.before_build();
         for (const std::string &s : o.log) say(s);
-        if (o.exit_code == 3) return fail(GenStatus::Unbeatable, "unbeatable seed");
+        if (o.exit_code == 3) {
+            retry_layout("unbeatable");
+            return fail(GenStatus::Unbeatable, "unbeatable seed");
+        }
     } catch (const std::exception &e) {
         return fail(GenStatus::Failed, e.what());
     }
@@ -252,7 +300,8 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
 
     // ---- the seed build, deciding as it goes
     Decisions d;
-    if (!d.load(decisions_doc(placements, final_settings, item_defs))) return fail(GenStatus::BuildFailed, "decisions");
+    if (!d.load(decisions_doc(placements, final_settings, item_defs, has_rooms ? &room_plan : nullptr)))
+        return fail(GenStatus::BuildFailed, "decisions");
     std::vector<uint32_t> rs;
     for (int64_t w : sh.random_state()) rs.push_back((uint32_t)w);
     Decider dc(d, rs);
@@ -368,6 +417,26 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
     r.status = GenStatus::Done;
     r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
     return r;
+}
+
+}  // namespace
+
+GenerateResult generate(const Value &request, const GameFiles &game, const GenerateOutput &out,
+                        const std::function<void(double, const std::string &)> &progress,
+                        const std::atomic<bool> *cancel, const GenerateOptions &opt) {
+    auto t0 = std::chrono::steady_clock::now();
+    std::vector<std::string> log;
+    for (int first = 0;;) {
+        int retry = -1;
+        GenerateResult r = generate_once(request, game, out, progress, cancel, opt, first, retry);
+        log.insert(log.end(), r.log.begin(), r.log.end());
+        if (retry < 0) {
+            r.log = log;
+            r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+            return r;
+        }
+        first = retry;  // (the next layout, in a run of its own: the seed is that run's)
+    }
 }
 
 GenerateOutput generate_to_dir(const std::string &dir) {

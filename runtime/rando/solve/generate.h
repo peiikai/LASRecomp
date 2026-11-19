@@ -3,8 +3,8 @@
 //
 //   prepare()            the request on the defaults, LAS's logic and pool and every -sanity module (prepare.h)
 //   shuffle_entrances()  the entrance shuffle (entrances.h)
-//   (dungeon room shuffle: not native yet - generate() stops with GenStatus::RoomShuffle, the caller falls back to
-//   the Python generator)
+//   plan_rooms()         dungeon room shuffle: the layouts and their item logic (rooms.h); a layout the fill or the
+//                        playthrough rejects: the run starts again on the next one, as the Python runs itself again
 //   finish_prefill()     the mini-boss souls' gates (prepare.h)
 //   ItemShuffler         LAS's item fill (shuffler.h)
 //   OutputsBuilder       logic.json, the playthrough check (unbeatable: GenStatus::Unbeatable), the Hint Sheet's
@@ -23,8 +23,6 @@
 // legacy (GenerateOptions::legacy) adds what the Python generator writes, for older builds and comparisons: romfs/
 // (the changed game files), each table as its file (pots.tsv, flags_ext, check_flags.tsv, ...), settings.json,
 // decisions.json, logic.json, spheres.json, hint_steps.json, route.json, seed_hints.json, tracker.json, tracker.tsv.
-// Not made natively yet (stage 4): romfs/region_common/ui/StartUp.arc and the recoloured chest models
-// (romfs/region_common/actor/ObjTreasureBox{Key,Plain}.bfres; chest-looks) - a legacy folder lacks them.
 //
 // For the app:
 //   - Thread: run it on a worker thread. It keeps no global state (several may run at once); the callbacks are called
@@ -55,7 +53,7 @@ enum class GenStatus {
     Failed = 1,       // the fill (or a setting) failed: las_headless.py's exit 1
     BuildFailed = 2,  // a file-writing step failed: its exit 2 ('MODS ERROR')
     Unbeatable = 3,   // the playthrough check found the seed unbeatable: its exit 3
-    RoomShuffle = 4,  // dungeon room shuffle isn't native yet: use the Python generator
+    RoomShuffle = 4,  // (no longer returned: dungeon room shuffle is native; kept for callers that check it)
     Cancelled = 5,
     WriteFailed = 6,  // GenerateOutput::write said no
 };
@@ -90,7 +88,7 @@ GenerateOutput generate_to_dir(const std::string &dir);
 
 // lasrando generate <romfs> <request.json> <out folder> [--legacy]: prints the stage lines as las_headless.py does
 // (`stage <fraction> <label>`), then 'done' or the error ('error <text>' for a player's reason); exit status as
-// las_headless.py's (4: room shuffle, use the Python generator)
+// las_headless.py's
 int generate_main(const std::string &romfs, const std::string &request, const std::string &out, bool legacy);
 
 }  // namespace solve

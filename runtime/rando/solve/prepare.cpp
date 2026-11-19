@@ -388,9 +388,7 @@ Prepared prepare(const Value &request, const GameFiles &game) {
     return st;
 }
 
-void finish_prefill(Prepared &st) {
-    if (st.settings.get("dungeon-room-shuffle", "off") != Value("off"))
-        throw PyError("NotImplementedError", "dungeon room shuffle: not part of the preparation");
+void finish_prefill(Prepared &st, const std::vector<std::string> &shuffled) {
     if (std::find(st.soul_kinds.begin(), st.soul_kinds.end(), "mini") == st.soul_kinds.end()) return;
     // souls.vanilla_gate on every dungeon but Eagle's Tower (no room graph for the uncollapsed tower): the soul atoms
     // each cell needs come from room_logic's room graph (tools/rando/export_solve_data.py --romfs)
@@ -403,6 +401,7 @@ void finish_prefill(Prepared &st) {
     size_t added = 0;
     for (const Value &lvv : G.at("levels").list()) {
         const std::string lv = lvv.s();
+        if (std::find(shuffled.begin(), shuffled.end(), lv) != shuffled.end()) continue;  // (not a vanilla layout)
         const Value need = need_all.get(lv, Value::new_dict());
         Value here = targets.copy();
         if (G.at("arena").has(lv)) {  // boss drops (no room listed): the boss sits behind its door

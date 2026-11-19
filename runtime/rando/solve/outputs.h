@@ -49,6 +49,9 @@ struct OutputsInput {
     std::string folder_name;  // the seed folder's name (spoiler_view's title)
     // a file the file-writing steps made, by its path in the seed folder; false when the seed has none
     std::function<bool(const std::string &rel, std::string &data)> read_seed;
+    // dungeon room shuffle: the room plan's layouts ({level: {cell: room}}, rooms.h), for seed_hints.pick; None:
+    // read from the seed's dungeon_rooms.tsv (outputs-check), if any
+    Value room_layouts;
 };
 
 struct Outputs {

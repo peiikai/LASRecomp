@@ -6,8 +6,9 @@ seed.json against the Python folder's record (`lasrando convert`: settings, tabl
 usage: python3 tools/rando/test_generate.py [-j N] [--keep DIR] [--python PY] <romfs> <request.json>...
   The Python generator runs with the LAS venv's Python (--python, else $LAS_PYTHON, else
   third_party/LAS-Randomizer/venv) and PYTHONHASHSEED=0; the native one with --legacy, so it writes the Python's files
-  too. A dungeon room shuffle request isn't native yet: the native generator must stop with its clear error (exit 4),
-  and the Python isn't run. Needs `make lasrando`. Exit status 1 on any difference.
+  too. Needs `make lasrando`. Exit status 1 on any difference.
+  --rooms-unbuilt: a build without the dungeon room shuffle's file step (runtime/rando/apply/ room writes): on room
+  requests the files that step writes (ROOM_FILES) are counted apart and don't fail the comparison.
 """
 import argparse
 import concurrent.futures
@@ -29,7 +30,11 @@ EXCLUDED = {}
 # apart from the textures' pixel data, the pixels compared by `lasrando texture-check` (tools/rando/test_apply.py)
 PIXEL_CHECKED = ('romfs/region_common/ui/StartUp.arc', 'romfs/region_common/actor/ObjTreasureBoxKey.bfres',
                  'romfs/region_common/actor/ObjTreasureBoxPlain.bfres')
-NATIVE_ONLY = {'seed.json'}  # (checked on its own against the Python folder's record)
+NATIVE_ONLY = {'seed.json'}
+# what the dungeon room shuffle's file step writes (dungeon_gen.write_all, pots / bushes tables it moves): --rooms-unbuilt
+ROOM_FILES = ('romfs/region_common/level/', 'romfs/region_common/map/', 'romfs/region_common/ui/', 'door_jumps.tsv',
+              'dungeon_map.tsv', 'dungeon_rooms.tsv', 'pots.tsv', 'bushes.tsv', 'flags_ext', 'decisions.json',
+              'tracker.tsv', 'tracker.json', 'spoiler_view.txt', 'spoiler.html')  # (checked on its own against the Python folder's record)
 
 
 def venv_python(arg):
@@ -87,7 +92,7 @@ def check_record(native_dir, py_dir, seed_id, notes):
     return ok
 
 
-def run_one(romfs, req, py, keep):
+def run_one(romfs, req, py, keep, rooms_unbuilt=False):
     name = os.path.splitext(os.path.basename(req))[0]
     with open(req) as f:
         request = json.load(f)
@@ -102,12 +107,11 @@ def run_one(romfs, req, py, keep):
     r = subprocess.run([TOOL, 'generate', romfs, req, nat, '--legacy'], capture_output=True, text=True)
     res['native_s'] = time.time() - t
     room = request.get('dungeon-room-shuffle', 'off') not in ('off', None, False)
-    if room:
-        ok = r.returncode == 4 and 'room shuffle' in r.stderr
-        res['result'] = 'room shuffle: native stops (exit 4), as expected' if ok else \
-            f'room shuffle: native exit {r.returncode}, expected 4: {r.stderr.strip()[-300:]}'
-        res['ok'] = ok
-    else:
+    apart = room and rooms_unbuilt
+
+    def room_file(rel):
+        return apart and rel.startswith(ROOM_FILES)
+    if True:
         env = dict(os.environ, PYTHONHASHSEED='0')
         t = time.time()
         p = subprocess.run([py, HEADLESS, romfs, pyd, req], capture_output=True, text=True, env=env)
@@ -122,9 +126,12 @@ def run_one(romfs, req, py, keep):
                              f'python {p.stderr.strip()[-300:]}')
         else:
             want, got = files(pyd), files(nat)
-            same = differ = missing = extra = 0
+            same = differ = missing = extra = room_left = 0
             for rel, path in sorted(want.items()):
                 if rel in EXCLUDED:
+                    continue
+                if room_file(rel) and (rel not in got or read(got[rel]) != read(path)):
+                    room_left += 1  # (the room file step isn't in this build)
                     continue
                 if rel not in got:
                     missing += 1
@@ -140,14 +147,15 @@ def run_one(romfs, req, py, keep):
                     differ += 1
                     res['notes'].append(f'differs {rel} {first_diff(a, b)}')
             for rel in sorted(got):
-                if rel not in want and rel not in NATIVE_ONLY and rel not in EXCLUDED:
+                if rel not in want and rel not in NATIVE_ONLY and rel not in EXCLUDED and not room_file(rel):
                     extra += 1
                     res['notes'].append(f'extra {rel}')
             rec = check_record(nat, pyd, str(request.get('seed', '')), res['notes'])
             res['ok'] = not (differ or missing or extra) and rec
             res['result'] = (f'{same} files the same, {differ} different, {missing} missing, {extra} extra; '
                              f'seed.json {"same as the record" if rec else "DIFFERENT"}; '
-                             f'excluded here: {sum(1 for x in want if x in EXCLUDED)}')
+                             f'excluded here: {sum(1 for x in want if x in EXCLUDED)}' +
+                             (f'; {room_left} room-step files apart (--rooms-unbuilt)' if apart else ''))
     if not keep:
         shutil.rmtree(base, ignore_errors=True)
 
@@ -161,6 +169,8 @@ def main():
     ap.add_argument('-j', type=int, default=1, help='requests at once (times are less exact above 1)')
     ap.add_argument('--keep', help='keep both seed folders there (native/<name>, python/<name>)')
     ap.add_argument('--python', help="the LAS venv's Python")
+    ap.add_argument('--rooms-unbuilt', action='store_true',
+                    help="room requests: the room file step's files counted apart (a build without it)")
     a = ap.parse_args()
     if not os.path.exists(TOOL):
         sys.exit('make lasrando first')
@@ -175,7 +185,7 @@ def main():
     bad = 0
     rows = []
     with concurrent.futures.ThreadPoolExecutor(max(1, a.j)) as ex:
-        for res in ex.map(lambda r: run_one(a.romfs, r, py, a.keep), a.requests):
+        for res in ex.map(lambda r: run_one(a.romfs, r, py, a.keep, a.rooms_unbuilt), a.requests):
             rows.append(res)
             print(f"{'ok  ' if res['ok'] else 'FAIL'} {res['name']} ({res['seed']}): {res['result']}", flush=True)
             for n in res['notes'][:12]:

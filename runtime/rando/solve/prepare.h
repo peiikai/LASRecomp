@@ -54,14 +54,17 @@ Prepared prepare(const Value &request, const GameFiles &game);
 
 // from the 'post_entrances' checkpoint (st.settings / item_defs / logic_defs as the entrance section left them) to
 // the 'prefill' one, for a seed without dungeon room shuffle (PyError otherwise: that part isn't here)
-void finish_prefill(Prepared &st);
+// shuffled: the dungeons the room shuffle laid out (rooms.h: the souls' gates are only for vanilla layouts)
+void finish_prefill(Prepared &st, const std::vector<std::string> &shuffled = {});
 
 // GameFiles reading a romfs folder on disk
 GameFiles game_files_dir(const std::string &romfs);
 
 // lasrando prepare-check <romfs> <request.json> <record folder>: prepare() against pre_entrances.json and, for a seed
 // without room shuffle, finish_prefill() from post_entrances.json against prefill.json. 0 when both are exact.
-int prepare_check(const std::string &romfs, const std::string &request, const std::string &record);
+// room_plan_file: a room-shuffle run's placements.json (LARECOMP_CHECK_ONLY) or decisions.json, for its room plan
+int prepare_check(const std::string &romfs, const std::string &request, const std::string &record,
+                  const std::string &room_plan_file = "");
 
 }  // namespace solve
 }  // namespace rando
