@@ -846,7 +846,7 @@ def main():
         sys.exit(f'room links broken in {len(problems)} place(s) - the game would crash loading them; first: {problems[0]}')
     import quick_pickups  # (every flow edit done) ground items given without an event: Link doesn't stop for them
     print('quick pickups:', quick_pickups.apply(out_dir, romfs), flush=True)
-    record.decisions(out_dir, mods.placements, mods.settings, mods.item_defs)
+    record.decisions(out_dir, mods.placements, mods.settings, mods.item_defs, mods)
     with open(os.path.join(out_dir, 'settings.json'), 'w') as f:
         s = dict(settings)
         s['excluded-locations'] = sorted(s['excluded-locations'])

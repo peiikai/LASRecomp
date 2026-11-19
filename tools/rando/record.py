@@ -49,15 +49,16 @@ def _idgen():
 
 class _Tee:
     def __init__(self, f, rel):
-        self._f, self._rel, self._parts = f, rel, []
+        self._f, self._rel = f, rel
 
     def write(self, b):
-        self._parts.append(b.encode() if isinstance(b, str) else bytes(b))  # (bytes, memoryview, oead.Bytes)
         return self._f.write(b)
 
     def close(self):
         r = self._f.close()
-        data = b''.join(self._parts)
+        # (the bytes as written to disk, not the write() calls joined: writers seek back to fill in offsets - evfl)
+        with _real_open(self._f.name, 'rb') as f:
+            data = f.read()
         n = len(_log)
         with _real_open(os.path.join(_dir, f'{n}.bin'), 'wb') as o:
             o.write(data)
@@ -86,8 +87,18 @@ def _open(file, mode='r', *a, **k):
     return f
 
 
+GROUPS = ('las_items', 'las_world', 'ours_items', 'ours_world')  # (each ported group's own decisions: record_<g>.py)
+
+
+def _groups():
+    import importlib
+    return [importlib.import_module('record_' + g) for g in GROUPS]
+
+
 def install(out_dir):
     global _dir, _out
+    for g in _groups():  # (the decisions' hooks: always)
+        g.install()
     d = os.environ.get('LARECOMP_RECORD')
     if not d:
         return False
@@ -130,7 +141,7 @@ def hook_mods(mods_cls):
     mods_cls.getItemInfo = getItemInfo
 
 
-def decisions(out_dir, placements, settings, item_defs=None):
+def decisions(out_dir, placements, settings, item_defs=None, mods=None):
     d = {'version': 1,
          'placements': {k: v for k, v in placements.items() if isinstance(v, str)},
          'indexes': _plain(placements.get('indexes', {})),
@@ -141,5 +152,7 @@ def decisions(out_dir, placements, settings, item_defs=None):
          # (the items' game names and models as this seed has them: LAS's table with the generator's changes)
          'item-defs': {k: {f: v[f] for f in ('item-key', 'model-path', 'model-name') if f in v}
                        for k, v in (item_defs or {}).items()}}
+    for g in _groups():
+        g.add(d, mods)
     with _real_open(os.path.join(out_dir, 'decisions.json'), 'w') as f:
         json.dump(d, f, indent=1, sort_keys=True)

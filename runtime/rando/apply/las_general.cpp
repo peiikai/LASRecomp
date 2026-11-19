@@ -78,11 +78,6 @@ static void general_leb(SeedBuild &b) {
     }
 }
 
-const std::vector<BuildStep> &build_steps() {
-    static const std::vector<BuildStep> steps = {
-        {"mod_generator.makeGeneralLEBChanges", general_leb},
-    };
-    return steps;
-}
+std::vector<BuildStep> steps_las_general() { return {{"mod_generator.makeGeneralLEBChanges", general_leb}}; }
 
 }  // namespace rando

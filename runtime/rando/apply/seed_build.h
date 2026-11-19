@@ -43,6 +43,9 @@ public:
     std::string setting_str(const std::string &key) const;
     // a trap's look at a check: the n-th draw there (getItemInfo draws once per call)
     bool trap_model(const std::string &check, size_t n, std::string &path, std::string &name) const;
+    // a top-level field of the decisions as it is in the JSON (nullptr: none), for the fields a group's steps record
+    // themselves (tools/rando/record_<group>.py)
+    yyjson_val *raw(const std::string &field) const;
 
 private:
     yyjson_doc *doc_ = nullptr;

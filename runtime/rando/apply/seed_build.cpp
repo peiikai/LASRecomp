@@ -63,6 +63,8 @@ bool Decisions::trap_model(const std::string &check, size_t n, std::string &path
     return true;
 }
 
+yyjson_val *Decisions::raw(const std::string &field) const { return yyjson_obj_get(root_, field.c_str()); }
+
 // ---- files
 std::string SeedBuild::path_of(const std::string &f) {
     auto ends = [&](const char *e) { size_t n = strlen(e); return f.size() >= n && !f.compare(f.size() - n, n, e); };
