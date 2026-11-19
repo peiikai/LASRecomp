@@ -4,6 +4,8 @@
 #include <chrono>
 
 #include "prepare.h"
+#include "rooms.h"
+#include <stdlib.h>
 
 namespace rando {
 namespace solve {
@@ -58,7 +60,8 @@ static int compare(const char *what, const Prepared &st, const Value &rec) {
     return bad;
 }
 
-int prepare_check(const std::string &romfs, const std::string &request, const std::string &record) {
+int prepare_check(const std::string &romfs, const std::string &request, const std::string &record,
+                  const std::string &room_plan_file) {
     Value req, pre;
     try {
         req = Value::load_json(request);
@@ -82,7 +85,69 @@ int prepare_check(const std::string &romfs, const std::string &request, const st
     printf("prepare: %.3f s\n", secs);
 
     if (st.settings.get("dungeon-room-shuffle") != Value("off")) {
-        printf("prefill: not checked (dungeon room shuffle)\n");
+        // the room section (rooms.h) from post_entrances.json, against prefill.json and the run's room plan (the
+        // placements.json LARECOMP_CHECK_ONLY writes, or the seed folder's decisions.json, when given)
+        Value post, prefill;
+        try {
+            post = Value::load_json(record + "/post_entrances.json");
+            prefill = Value::load_json(record + "/prefill.json");
+        } catch (const PyError &e) {
+            fprintf(stderr, "%s\n", e.what());
+            return 2;
+        }
+        st.settings = post.at("settings"), st.item_defs = post.at("item_defs"), st.logic_defs = post.at("logic_defs");
+        int first = getenv("LARECOMP_ROOM_ATTEMPT") ? atoi(getenv("LARECOMP_ROOM_ATTEMPT")) : 0;
+        RoomPlan plan;
+        auto t1 = std::chrono::steady_clock::now();
+        try {
+            int at = plan_rooms(st, first, plan, [](const std::string &s) { printf("  (%s)\n", s.c_str()); });
+            printf("room layout: attempt %d\n", at);
+            st.said.clear();
+            std::vector<std::string> shuffled;
+            for (const auto &e : plan.layouts.dict()) shuffled.push_back(e.key);
+            finish_prefill(st, shuffled);
+        } catch (const std::exception &e) {
+            printf("room section failed: %s\n", e.what());
+            return 1;
+        }
+        printf("room section: %.3f s\n", std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count());
+        for (const std::string &s : st.said) printf("  (%s)\n", s.c_str());
+        bad += compare("prefill", st, prefill);
+        if (!room_plan_file.empty()) {
+            Value rec;
+            try {
+                rec = Value::load_json(room_plan_file);
+            } catch (const PyError &e) {
+                fprintf(stderr, "%s\n", e.what());
+                return 2;
+            }
+            Value rp = rec.get("room-plan");
+            std::string where;
+            if (!rp.is_dict()) bad++, printf("DIFF room-plan: none recorded in %s\n", room_plan_file.c_str());
+            else {
+                Value mine = Value::new_dict();
+                mine.set("layouts", plan.layouts), mine.set("jumps", plan.jumps);
+                // (the record's JSON: sort_keys in decisions.json - compare the layouts by content, the jumps in order)
+                bool ok = same(mine.at("jumps"), rp.at("jumps"), "room-plan['jumps']", &where);
+                if (ok) {
+                    Value theirs = rp.at("layouts");
+                    if (theirs.is_list()) {  // (decisions.json: [[level, [[cell, room]...]]...], in order)
+                        Value d = Value::new_dict();
+                        for (const Value &lv : theirs.list()) {
+                            Value cells = Value::new_dict();
+                            for (const Value &c : lv.list()[1].list()) cells.set(c.list()[0].s(), c.list()[1]);
+                            d.set(lv.list()[0].s(), cells);
+                        }
+                        theirs = d;
+                        ok = same(mine.at("layouts"), theirs, "room-plan['layouts']", &where);
+                    }
+                    ok = ok && mine.at("layouts") == theirs;
+                    if (!ok) where = "room-plan['layouts']: differ";
+                }
+                if (!ok) bad++, printf("DIFF %s\n", where.c_str());
+                else printf("room-plan: same (%zu dungeons, %zu jump rows)\n", plan.layouts.dict().size(), plan.jumps.len());
+            }
+        }
     } else {
         Value post, prefill;
         try {

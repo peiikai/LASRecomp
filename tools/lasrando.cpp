@@ -231,7 +231,7 @@ int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "decide-check")) return rando::decide_check(argv[2], argv[3], argv[4], argc > 5 ? argv[5] : "");
     if (argc >= 4 && !strcmp(argv[1], "solve-check")) return rando::solve::solve_check(argv[2], argv[3]);
     if (argc >= 5 && !strcmp(argv[1], "outputs-check")) return rando::solve::outputs_check(argv[2], argv[3], argv[4]);
-    if (argc >= 5 && !strcmp(argv[1], "prepare-check")) return rando::solve::prepare_check(argv[2], argv[3], argv[4]);
+    if (argc >= 5 && !strcmp(argv[1], "prepare-check")) return rando::solve::prepare_check(argv[2], argv[3], argv[4], argc > 5 ? argv[5] : "");
     if (argc < 3) return usage();
     const RandoSeed *s = rando_seed_load(argv[2]);
     if (!s) { fprintf(stderr, "%s: no seed there\n", argv[2]); return 1; }

@@ -1382,9 +1382,10 @@ Outputs &OutputsBuilder::before_build() {
     }
     if (in.settings.get("hints").truthy()) {
         // (layouts: the room plan's; a room-shuffle seed's come from its dungeon_rooms.tsv)
-        Value layouts;
+        Value layouts = in.room_layouts;
         std::string tsv;
-        if (in.settings.get("dungeon-room-shuffle", Value("off")) != Value("off") && c.seed_file("dungeon_rooms.tsv", tsv)) {
+        if (!layouts.truthy() && in.settings.get("dungeon-room-shuffle", Value("off")) != Value("off") &&
+            c.seed_file("dungeon_rooms.tsv", tsv)) {
             layouts = Value::new_dict();
             for (const std::string &ln : split(tsv, '\n')) {
                 std::vector<std::string> f = split(ln, '\t');

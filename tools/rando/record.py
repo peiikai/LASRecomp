@@ -155,6 +155,10 @@ def _plain(v):
 
 
 TRAP_PICKS = {}  # check -> [model path, model name]: each trap's look, in the order they were drawn
+# dungeon room shuffle's plan (las_headless.py: the layouts and door jumps the seed's rooms are built from), or None.
+# Recorded in order (decisions.json is written with sorted keys): [[level, [[cell, room], ...]], ...] - the build
+# walks the levels and each layout's cells in the order the planner made them (runtime/rando/apply/rooms.cpp)
+ROOM_PLAN = None
 
 
 def hook_mods(mods_cls):
@@ -180,6 +184,10 @@ def decisions(out_dir, placements, settings, item_defs=None, mods=None):
          # (the items' game names and models as this seed has them: LAS's table with the generator's changes)
          'item-defs': {k: {f: v[f] for f in ('item-key', 'model-path', 'model-name') if f in v}
                        for k, v in (item_defs or {}).items()}}
+    if ROOM_PLAN:
+        layouts, jumps = ROOM_PLAN
+        d['room-plan'] = {'layouts': [[lv, [[c, r] for c, r in L.items()]] for lv, L in layouts.items()],
+                          'jumps': None if jumps is None else [list(j) for j in jumps]}
     for g in _groups():
         g.add(d, mods)
     with _real_open(os.path.join(out_dir, 'decisions.json'), 'w') as f:
