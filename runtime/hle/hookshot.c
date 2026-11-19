@@ -3,7 +3,7 @@
 // The hookshot actor (ctor main+0xd7e780; states Attach / Shot / Return / Adhere / WaitToReturn) casts a ray each
 // frame of its Shot state (update main+0xd7ecc0). On a hit it reads the hit surface's attribute word (w23); bit
 // 0x4000 = hookshot target: the hook goes to Adhere ("HookshotPierce" effect) and Link's own state pulls him to it.
-// Without the bit it goes to Return ("HookshotHit" clink). tools/patches.py redirects that load here.
+// Without the bit it goes to Return ("HookshotHit" clink). runtime/gen/patches.cpp redirects that load here.
 //
 // On when the active seed was made with "hookshot-anything" (its logic counts on it), or with the Gameplay toggle.
 #include <math.h>

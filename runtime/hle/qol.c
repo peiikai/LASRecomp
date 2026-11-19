@@ -13,7 +13,7 @@
 #include "../settings.h"
 
 
-// 360-degree movement: main+0xded9f0 (tools/patches.py SNAP_DIR_SITE) turns the stick vector (s1 = x, s2 = y) into
+// 360-degree movement: main+0xded9f0 (runtime/gen/patches.cpp SNAP_DIR_SITE) turns the stick vector (s1 = x, s2 = y) into
 // one of 8 directions, returned in w0 as an angle (full turn = 2^32, 0 = down, 2^30 = right). With the setting on
 // it returns the stick's own angle (returns 1: the original function is skipped).
 int rt_snap_dir(Cpu *c) {
@@ -40,7 +40,7 @@ int rt_snap_dir(Cpu *c) {
     return 1;
 }
 
-// Walk speed (Gameplay tab, setting walk_speed): tools/patches.py WALK_SPEED_SITES hand over the multiplier Link's walk
+// Walk speed (Gameplay tab, setting walk_speed): runtime/gen/patches.cpp WALK_SPEED_SITES hand over the multiplier Link's walk
 // / shield-walk state applies to its ramped speed (1, or 1.15 with a Piece of Power; s0) with the player actor.
 float rt_walk_speed(uint64_t player, float m, int site) {
     static float env = -1;  // LARECOMP_WALK_SPEED=<mult>: test override; LARECOMP_LOG_WALK: log some calls
@@ -73,7 +73,7 @@ float rt_walk_speed(uint64_t player, float m, int site) {
 // kill counters in PlayerStatus (+0xa5 >= 14: "DefenceUp" = Guardian Acorn; +0xa4 past a threshold: "PowerUp" =
 // Piece of Power; the counter is then wrapped) and drops that item symbol directly - the ItemDrop rows GuardianAcorn /
 // PowerPiece (emptied by LAS-Randomizer item_drops.py) aren't involved, which is why the option alone didn't work.
-// tools/patches.py BUFF_REPLACE_SITE reads the flag as false here: the counters are never consumed (they stay at 255) and
+// runtime/gen/patches.cpp BUFF_REPLACE_SITE reads the flag as false here: the counters are never consumed (they stay at 255) and
 // the row's own lot table is rolled as usual. Anything else that would make one (ItemPowerPiece 0xb2 / ItemGuardianAcorn 0xb3) is
 // held back at the actor factory (souls.c).
 static int g_no_buff = -1;  // the running seed has it (per seed: read again after an in-place reboot)
@@ -109,7 +109,7 @@ int rt_no_buff_seed_forced(void) {
 RT_ON_RESET(no_buff_reset) { g_no_buff = -1; }  // (seed switch)
 
 // Treat Tunics as Upgrades (seed option "tunic-upgrades"): the game's add-item code sets the new tunic's bit in the
-// tunics byte (save +0x555C: 0x40 red, 0x80 blue) and clears the other one (tools/patches.py TUNIC_CLEAR_SITES); with
+// tunics byte (save +0x555C: 0x40 red, 0x80 blue) and clears the other one (runtime/gen/patches.cpp TUNIC_CLEAR_SITES); with
 // the option the other one stays. The game applies each tunic's effect from its own bit (attack: main+0xd1f580, red
 // or a Piece of Power; damage halved after main+0xd4c738 etc: blue or a Guardian Acorn), so with both Link has both.
 static int g_tunic_up = -1;  // (per seed)
@@ -124,7 +124,7 @@ RT_ON_RESET(tunic_up_reset) { g_tunic_up = -1; }
 
 // Underwater checks (tools/rando/underwater.py, settings.json "underwater-items"): the sunken heart-piece actors hold
 // randomized items and hide by their own flag, so their "do you own this heart piece already?" check is skipped
-// (tools/patches.py UNDERWATER_OWNED_SITE, x20 = the item actor) and their pickup adds no heart piece
+// (runtime/gen/patches.cpp UNDERWATER_OWNED_SITE, x20 = the item actor) and their pickup adds no heart piece
 // (UNDERWATER_PICKUP_SITE, x19 = its event actor, which keeps the name at +0x398: "ItemHeartPiece-<id>"). The item
 // actor is told by its class (vtable): its name is often not filled in yet when it asks whether to appear, and with
 // the check not skipped a sunken spot whose heart-piece index the player owns was deleted on load (found 2026-10-24:
@@ -169,7 +169,7 @@ bool rt_no_buff_actor(uint32_t type) {
 // uniform buffer (+0x50) with a pointer to that text (buffer +0x60). The buffer is bound to postprocess.bfsha's block
 // of that name each frame; under any other name the shader gets no parameters and draws no blur (LAS-Randomizer
 // 'blur-removal', patch by theboy181, renames the string in the module - which only took effect at the next start,
-// the copy being made once). tools/patches.py TILT_INIT_SITE hands us the object; its copy's first letter is
+// the copy being made once). runtime/gen/patches.cpp TILT_INIT_SITE hands us the object; its copy's first letter is
 // switched P <-> X as the setting changes, live.
 static uint64_t g_tilt_obj;
 static int g_tilt_applied = -1;  // blur removal as last applied (-1: not yet)

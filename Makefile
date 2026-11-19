@@ -194,7 +194,7 @@ GAMELIB_SHARED := -shared  # (+ the import library: runtime/gamebuild.c)
 endif
 
 # DYN_BASE=1: the guest window starts where the process has room instead of at 0x70_0000_0000 (runtime/rt.h), as on
-# Android; on the desktop it is for testing that path. The game code is generated with gen.py --dyn-base, and the
+# Android; on the desktop it is for testing that path. The game code is generated with --dyn-base, and the
 # define is part of GENFLAGS so such a library has its own id.
 ifneq ($(DYN_BASE),)
 GENSIMD  += --dyn-base
@@ -453,12 +453,14 @@ $(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/
 
 # The game code generator on the command line (runtime/gen/cli.cpp; the app runs the same code in-process): `make gen`,
 # tools/test_gen_cpp.py
+# Built for the machine it runs on, with the plain compiler: an iOS or cross (ARCH=) build's CXX targets the device.
+HOSTCXX ?= clang++
 LASGEN := build/lasgen$(if $(filter windows,$(PLATFORM)),.exe)
 lasgen: $(LASGEN)
 $(LASGEN): $(wildcard runtime/gen/*.cpp runtime/gen/*.hpp runtime/gen/*.h runtime/gen/*.inc) runtime/game_addresses/versions.h \
            $(wildcard runtime/game_addresses/patches_v*.h)
 	@mkdir -p $(dir $@)
-	$(CXX) -std=c++17 -O2 $(filter %.cpp,$^) -o $@
+	$(HOSTCXX) -std=c++17 -O2 $(filter %.cpp,$^) -o $@
 
 # Linux: build/dist/LAS Recomp-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04 containers (podman) with SDL3, LGPL
 # FFmpeg and shaderc inside; the Vulkan loader and GPU drivers are the system's.

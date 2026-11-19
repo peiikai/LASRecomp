@@ -72,7 +72,7 @@ int rt_shop_add_item(Cpu *c) {
     return 1;
 }
 
-// tools/patches.py PRIZE_ADD_SITE, before AddPrize(x0 row, x1 count, x2 index)
+// runtime/gen/patches.cpp PRIZE_ADD_SITE, before AddPrize(x0 row, x1 count, x2 index)
 void rt_add_prize(Cpu *c) {
     const Entry *e = find(1, (int)(uint8_t)c->x[0]);
     if (!e) return;

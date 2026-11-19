@@ -30,7 +30,7 @@ static inline void __attribute__((format(printf, 1, 2))) rt_log(const char *fmt,
 // guest lives in a 12.5 GB window at 0x70_0000_0000 claimed at startup (see main.c).
 // LARECOMP_DYN_BASE (the Android and iOS builds; `make DYN_BASE=1` on the desktop for testing): the window starts
 // wherever the process has room, picked at startup (main.c), with the same layout inside it. The game code is then
-// generated with gen.py --dyn-base, and the address tables (game_addresses.c, dispatch.c) are moved from GUEST_CANON
+// generated with --dyn-base (runtime/gen/), and the address tables (game_addresses.c, dispatch.c) are moved from GUEST_CANON
 // to GUEST_LO.
 // iOS packs the layout: an iOS process has 58 GB of address space but only a few free gaps of a few GB each - the
 // kernel's reserves sit in the middle, and where differs by device and iOS version - so there the regions fit

@@ -23,11 +23,13 @@ endings.
 From an MSYS2 UCRT64 shell, or Git Bash with MSYS2 first on PATH:
 
     export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"
-    make gen        # once: recompile the game from extracted/exefs (your own game files; see the start screen)
-    make -j         # -> build/lasrecomp.exe and the game code library build/lasgame.dll
+    make -j         # -> build/lasrecomp.exe (no game code yet)
+    make gen        # once, with your game files in extracted/ (exefs\, romfs\): recompile the game's code
+    make -j         # -> the game code library build/lasgame.dll
 
-Without `generated/` only the app is built: the start screen builds the game code itself when you set up the game
-files (as for players), given the compiler (`tools/fetch_zig.sh`; the generator is part of the app).
+Without `extracted/` in the checkout, run `tools/fetch_zig.sh` once and set up the game files on the start screen: it
+builds the game code itself, as for players. The generator is part of the app (`runtime/gen/`; `make lasgen` builds it
+as a command-line tool).
 `make runtime-objs` compiles the runtime only (quick check).
 
 Run from a shell that has `C:\msys64\ucrt64\bin` (ARM64: `C:\msys64\clangarm64\bin`) on PATH (SDL3, FFmpeg,

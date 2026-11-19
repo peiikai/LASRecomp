@@ -14,7 +14,7 @@ files, as on the desktop.
 
 ## Building
 
-Needs the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and Python 3.
+Needs the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and Python 3 (`build_deps.sh` uses it; the game code generator is C++ in the app).
 
 ```
 bash android/deps/build_deps.sh        # SDL3, shaderc, volk, Vulkan headers, FFmpeg for arm64 (once)

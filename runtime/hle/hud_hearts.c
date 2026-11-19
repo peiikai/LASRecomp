@@ -2,7 +2,7 @@
 // is set up (main+0xea84f0, its vtable slot 6, on every screen load) and then followed one quarter heart at a time; a
 // new heart frame only appears as the health fills past the old max (a Heart Container's refill: one frame per fill).
 // The Cheats tab and the Save Editor change the hearts at once, so they ask here for the HUD's own set-up to run again,
-// as a screen change would: HUD_HEARTS_SITE (tools/patches.py, the prologue of the HUD's normal state update,
+// as a screen change would: HUD_HEARTS_SITE (runtime/gen/patches.cpp, the prologue of the HUD's normal state update,
 // main+0xeaa800, x0 = the HUD) runs it on the game thread the next time that state updates.
 #include "../game_addresses.h"
 

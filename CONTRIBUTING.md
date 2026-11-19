@@ -59,8 +59,9 @@ if it has moved since you branched.
 
 See the README's "Building from source" for macOS, [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows,
 [docs/linux.md](docs/linux.md) for Linux and [docs/android.md](docs/android.md) for Android.
-In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start screen, `make gen` once to recompile the game code from
-them, then `make -j10`.
+In short: put your own game files (v1.0.0, v1.0.1 or v1.1.0) in `extracted/` (`exefs/` and `romfs/`), `make -j10`, `make gen`
+once to recompile the game code from them, then `make -j10` again. The generator (`runtime/gen/`) is C++ and builds
+with the app; no Python is needed for it.
 
 ## More documentation
 
@@ -78,7 +79,8 @@ them, then `make -j10`.
   `lasgen --new-chunk-bounds`; new cuts make every file compile once).
 - `tools/gen.py` and its modules - the Python generator the C++ one was ported from, kept as the reference until the
   port has shipped. A change to the generator, a patch or the chunk cuts goes into both, and
-  `tools/test_gen_cpp.py build/lasgen <game folder>` must report the C identical.
+  `tools/test_gen_cpp.py build/lasgen <game folder>` must report the C identical (gen.py needs a Python with
+  unicorn, capstone and lz4, e.g. `python3 -m venv tools/venv && tools/venv/bin/pip install unicorn capstone lz4`).
 - `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
   by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
   patch generator (read by `tools/game_addresses.py`, part of the game-library identity) and `runtime_<version>.h`

@@ -16,7 +16,7 @@
 // a vector of {std::string, refs}; the game never fills it - we install our own storage). An item actor that dies
 // with Link next to it was picked up; any other death (the Field unloading) leaves it to be spawned again.
 // Holes: the game fills in its oldest holes beyond 80 (f_7000d22d10); with digsanity the limit is HOLE_CAP
-// (tools/patches.py HOLE_CAP_SITES). ObjHolesDug actors (type 0x1cd) belong to the Field's loaded scene and are gone
+// (runtime/gen/patches.cpp HOLE_CAP_SITES). ObjHolesDug actors (type 0x1cd) belong to the Field's loaded scene and are gone
 // once Link leaves the Field. Every few frames the screens around Link are checked: a dug tile without a live hole
 // gets one spawned the way the shovel does (f_7000d228d0), a dug check whose item is still there gets its item back.
 // Tall grass and bushes would grow back over a dug tile on reload: the factory skips them there (rt_digs_skip_plant,

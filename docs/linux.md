@@ -65,7 +65,7 @@ Ubuntu / Debian packages (other distributions: the same libraries under their na
 3.4 from source first - `tools/linux/build_deps.sh` builds the pinned version the AppImage uses (into
 `build/linux/<arch>/deps`).
 
-    sudo apt install clang lld make pkg-config python3-venv libsdl3-dev libavformat-dev libavcodec-dev \
+    sudo apt install clang lld make pkg-config python3 libsdl3-dev libavformat-dev libavcodec-dev \
         libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev libvulkan-memory-allocator-dev glslc vulkan-tools
 
 For Chinese or Korean menus, also install a font for them (`fonts-noto-cjk`). LAS Recomp bundles fonts for Russian
@@ -76,9 +76,13 @@ yourself: `make SHADERC=-lshaderc_shared` (or `-lshaderc`).
 
 Then from the repo root:
 
-    make -j         # the start screen only (no game code yet): set up the game files there, or put extracted/ here
-    make gen        # once: recompile the game from your own game files
+    make -j         # the app (no game code yet)
+    make gen        # once, with your game files in extracted/ (exefs/, romfs/): recompile the game's code
     make -j         # -> build/lasrecomp and the game code library build/lasgame.so
+
+Without `extracted/` here, run `tools/fetch_zig.sh` once and set up your game files on the start screen: it builds the
+game code itself, as the AppImage does. The generator is part of the app (`runtime/gen/`; `make lasgen` builds it as a
+command-line tool). Python 3 is only needed for the tests.
 
 Run `./build/lasrecomp` from the repo root: with `extracted/` in the starting folder it uses that folder for
 everything (dev mode) instead of `~/.local/share/lasrecomp`.
@@ -102,8 +106,7 @@ SDL3, an LGPL-only FFmpeg (only the movie codecs, as on Windows / macOS), and sh
 (`tools/linux/build_deps.sh`), then the game against them (`tools/linux/package.sh`). This machine's arch is built
 natively in one container of that arch (the release does both archs that way, on an arm64 runner for aarch64).
 aarch64 on an x86-64 machine is cross-compiled in the amd64 container against the arm64 image's root filesystem
-(`build/linux/aarch64/sysroot`). The generated game code comes from the host (`generated/`, `generated-aarch64/`; `make appimage` runs `make gen` for it
-when missing).
+(`build/linux/aarch64/sysroot`). The AppImage holds no game code: the start screen builds it on the player's machine.
 
 Release check of the x86-64 AppImage (`make smoketest`, tools/linux/smoketest.sh, ~7 minutes on this kind of machine):
 three launches of the AppImage itself - the start screen; a session from a test save warping to four overworld spots

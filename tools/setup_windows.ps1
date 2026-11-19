@@ -21,7 +21,7 @@ $pkgs = @('make', 'zip', 'unzip') + (@('clang', 'lld', 'sdl3', 'ffmpeg', 'vulkan
 if (-not $arm) { $pkgs += "$mp-nasm" }  # (make deps-windows: FFmpeg's VP9 assembly; ARM64 assembles with clang)
 & $bash -lc "pacman -S --needed --noconfirm $($pkgs -join ' ')"
 
-# Python for the tools: the python.org build (prebuilt unicorn / capstone wheels; MSYS2's Python can't build them)
+# Python for the tests and tools: the python.org build (prebuilt unicorn / capstone wheels; MSYS2's Python can't build them)
 if ($arm) {
     # x64 next to any ARM64 3.12 (winget won't install both under one id), from python.org's signed installer
     $py = "$env:LOCALAPPDATA\Programs\Python\Python312-x64\python.exe"

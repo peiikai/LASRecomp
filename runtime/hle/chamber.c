@@ -165,7 +165,7 @@ static void request_set(uint64_t req, const char *level, const char *loc) {
     ST64(req + 0x130, lc);
 }
 
-// Patched into the level-jump request processor's prologue (main+0x81ba80, tools/patches.py): every level change
+// Patched into the level-jump request processor's prologue (main+0x81ba80, runtime/gen/patches.cpp): every level change
 // passes here with x0 = request (level name +0xa8 / length +0xe8, locator +0xf0 / length +0x130). A jump into
 // Tail Cave - from whichever door leads there, so shuffled entrances work - becomes the generated dungeon; the
 // jump out of a generated run goes to Tail Cave's own exit (from the layout file) instead of Dampe's shack.
@@ -201,7 +201,7 @@ void rt_level_request(Cpu *c) {
     }
 }
 
-// Patched over the staircase exit prompt's dialog call (tools/patches.py ADV_EXIT_DIALOG_SITE). In a generated run:
+// Patched over the staircase exit prompt's dialog call (runtime/gen/patches.cpp ADV_EXIT_DIALOG_SITE). In a generated run:
 // no dialog, the choice is "leave" (what the dialog's callback would store); the level hook then sends Link to the
 // exit. Returns 1 when handled, 0 to show the prompt as usual (Dampe's own chamber dungeons).
 int rt_adv_exit_choice(void) {

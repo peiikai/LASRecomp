@@ -203,7 +203,7 @@ bool rando_romfs_override(const char *path, char *out, size_t cap) {
     return stat(out, &sb) == 0 && S_ISREG(sb.st_mode);
 }
 
-// Items page: hide the item explanation text in randomizer seeds (tools/patches.py ITEM_EXPLANATION_SITE); it
+// Items page: hide the item explanation text in randomizer seeds (runtime/gen/patches.cpp ITEM_EXPLANATION_SITE); it
 // overlaps the inventory overlay's dungeon-key / trade rows and the player knows the items.
 int rt_hide_item_explanation(void) {
     static int env = -1;  // LARECOMP_SHOW_ITEM_TEXT=1 keeps it

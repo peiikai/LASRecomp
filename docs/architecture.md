@@ -17,10 +17,10 @@ fit together. File names are on the current development branch.
    the original instruction word first, so a wrong address or version fails the build instead of patching the wrong
    thing. A hook site calls `rt_hook()` (`runtime/hle/hooks.c`), so what a hook does can change without rebuilding
    the game code.
-4. **Building on the player's machine.** In a release, the start screen runs the frozen generator and a bundled
-   compiler (zig) to build the game code library from the player's files (`runtime/gamebuild.c`). The pieces are
+4. **Building on the player's machine.** In a release, the start screen runs the generator (inside the app) and a
+   bundled compiler (zig) to build the game code library from the player's files (`runtime/gamebuild.c`). The pieces are
    cached, so an update only rebuilds what changed. The C is split into files at fixed game addresses
-   (`tools/chunk_bounds.py`), so a change to one function only rebuilds its own file. In a source checkout, `make gen` and `make` do the same.
+   (`runtime/gen/chunk_bounds.inc`), so a change to one function only rebuilds its own file. In a source checkout, `make gen` and `make` do the same.
 5. **Loading.** `runtime/loader.c` loads the game code library (`runtime/gamelib.c`) and binds its imports, host
    (HLE) replacements first. `runtime/romfs_build.c` lays out the game's RomFS from the player's `romfs/` folder
    without copying the data.

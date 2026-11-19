@@ -166,21 +166,28 @@ GetMoreRam. More on the iOS app is there too.
 
 ## Building from source
 
-Every platform needs your own game files (v1.0.0, v1.0.1 or v1.1.0): build first, then use the start screen's game-file setup.
-`make gen` then recompiles the game code from your own game files into `generated/`, and `make` builds it into its own
-library next to the app (`build/lasgame.*`); without it the start screen builds that library itself, as it does for
-players. Release builds hold none of the game's code: the start screen builds it on each player's machine from their
-own game files, with the generator built into the app and the bundled compiler (`tools/fetch_zig.sh`).
+You need your own extracted game files (v1.0.0, v1.0.1 or v1.1.0). The game's code is never in the repository or a
+release: it is recompiled from your files. There are two ways to get it.
+
+- **Recompile it yourself** (usual for development): put your game files in `extracted/` in the checkout
+  (`extracted/exefs/` and `extracted/romfs/`). Then `make` builds the app, `make gen` recompiles the game's code into
+  `generated/` (the generator, `build/lasgen`, is built first), and `make` again builds that into a library next to
+  the app (`build/lasgame.*`). With `extracted/` in the folder it starts from, the app keeps all its data there.
+- **Let the start screen do it**, as for players: run `tools/fetch_zig.sh` once (the compiler, into `build/zig/`),
+  start the app and choose your game files. It copies them into its data folder and builds the game code itself.
+
+Release builds do the second: the generator is part of the app and `zig/` ships next to it. The game code generator
+needs no Python any more; Python 3 is still used by some dependency and packaging scripts and by the tests.
 
 ### macOS
 
 Requirements: Apple Silicon, Xcode command line tools (clang), [Homebrew](https://brew.sh) `sdl3` and `ffmpeg`.
 
-1. Build: `make -j10` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j10` again.
+1. Build: `make -j10` -> `build/lasrecomp`. With your files in `extracted/`: `make gen`, then `make -j10` again.
 2. Run: `./build/lasrecomp extracted` (start screen) or `./build/lasrecomp extracted --play` (straight into the game).
-3. Package: `make deps` (once: SDL3 and FFmpeg from pinned sources, built for macOS 15) and `tools/fetch_zig.sh`
-   (what the start screen builds the game code with), then `make app` ->
-   `build/LAS Recomp.app` (macOS 15+, Apple Silicon) and `make dmg` -> `build/dist/LAS Recomp-<version>-macOS.dmg`.
+3. Package: `make deps` (once: SDL3 and FFmpeg from pinned sources, built for macOS 15) and `tools/fetch_zig.sh`,
+   then `make app` -> `build/LAS Recomp.app` (macOS 15+, Apple Silicon) and `make dmg` ->
+   `build/dist/LAS Recomp-<version>-macOS.dmg`.
 
 ### Windows
 
@@ -189,44 +196,55 @@ Requirements: Windows 10+ x86-64, a CPU with AVX2 and a GPU with Vulkan 1.3. Mor
 that page.
 
 1. One-time setup, in PowerShell from the repo root: `powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1`.
-   It installs MSYS2 (UCRT64: clang, make, SDL3, FFmpeg, Vulkan, shaderc), Python 3.12 for the tools and switches
-   the clone to LF line endings.
+   It installs MSYS2 (UCRT64: clang, make, SDL3, FFmpeg, Vulkan, shaderc), Python 3.12 for the tests and switches the
+   clone to LF line endings.
 2. Build, from an MSYS2 UCRT64 shell (or Git Bash with `export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"`):
-   `make -j` -> `build/lasrecomp.exe`. Set up your game files (above), then `make gen` and `make -j` again.
+   `make -j` -> `build/lasrecomp.exe`. With your files in `extracted/`: `make gen`, then `make -j` again.
 3. Run: `./build/lasrecomp.exe extracted`, from a shell with `C:\msys64\ucrt64\bin` on PATH (for the DLLs).
-4. Package: `make deps-windows` (once: LGPL FFmpeg), `tools/fetch_zig.sh`, then `make dist` ->
+4. Package: `make deps-windows` (once: LGPL FFmpeg) and `tools/fetch_zig.sh`, then `make dist` ->
    `build/dist/LAS Recomp-<version>-windows-x64.zip`.
 
 ### Linux
 
-Requirements: x86-64 with AVX2 (or aarch64, experimental), a GPU with Vulkan 1.3, clang, SDL 3, FFmpeg, shaderc and
-Vulkan Memory Allocator from your distribution. Packages, cross builds and details in
+Requirements: x86-64 with AVX2 (or aarch64, experimental), a GPU with Vulkan 1.3, clang, SDL 3.4 or newer, FFmpeg,
+shaderc and Vulkan Memory Allocator from your distribution. Packages, cross builds and details in
 [docs/linux.md](docs/linux.md).
 
-1. Build: `make -j` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j` again.
+1. Build: `make -j` -> `build/lasrecomp`. With your files in `extracted/`: `make gen`, then `make -j` again.
 2. Run: `./build/lasrecomp extracted`.
 3. Package: `make appimage` (this machine's arch; `ARCH=aarch64` cross-compiles) or `make appimages` (both) ->
    `build/dist/LAS Recomp-<version>-linux-<arch>.AppImage`, built in Ubuntu 22.04 containers (podman). `make smoketest`
    checks the x86-64 AppImage before a release.
 
-Where files live (game files, saves, seeds, settings and logs):
+### Android
+
+Requirements: the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and
+Python 3 (the dependency script uses it). Details in [docs/android.md](docs/android.md).
+
+1. Dependencies (once): `bash android/deps/build_deps.sh` and `bash android/deps/build_gen_deps.sh` (zig).
+2. Build: `cd android && ./gradlew assembleDebug` -> `android/app/build/outputs/apk/debug/app-debug.apk`.
+3. Install it on the phone and set up your game files from the start screen. The game code is built on the phone.
+
+### iOS app
+
+Players make the iOS app on a computer (see [iPhone and iPad](#iphone-and-ipad)). To build it from source on a Mac
+instead, with the game code inside, for your own devices: `make deps-ios` (once), your files in `extracted/`,
+`make gen PLATFORM=ios` (into `generated-dyn/`), then `make ipa TEAM_ID=<your team> PROFILE=<.mobileprovision>` ->
+`build/dist/LAS Recomp-<version>-iOS.ipa`. `make ios-kit` makes the release's iOS kit instead (no game code). More in
+[docs/ios.md](docs/ios.md).
+
+### Where files live
+
+Game files, saves, seeds, settings and logs:
 - macOS: `~/Library/Application Support/com.peiikai.lasrecomp/`
 - Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
 - Linux: `~/.local/share/lasrecomp/` (the tarball: its own folder; see [docs/linux.md](docs/linux.md))
 - Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
 - iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
+- A source checkout with `extracted/` in the folder the app starts from: that folder.
 - You can move it to another folder or drive in Settings > System > Data folder.
 - `--data-dir <dir>` (or `LARECOMP_DATA_ROOT=<dir>`) overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
-
-### Android
-
-Requirements: the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and
-Python 3. Details in [docs/android.md](docs/android.md).
-
-1. Dependencies (once): `bash android/deps/build_deps.sh` and `bash android/deps/build_gen_deps.sh`.
-2. Build: `cd android && ./gradlew assembleDebug` -> `android/app/build/outputs/apk/debug/app-debug.apk`.
-3. Install it on the phone and set up your game files from the start screen. The game code is built on the phone.
 
 ### Resuming game-code builds
 
