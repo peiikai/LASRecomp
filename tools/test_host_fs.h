@@ -54,6 +54,9 @@ bool rando_seed_has_table(const RandoSeed *s, const char *t) { (void)s, (void)t;
 bool rando_build_seed(const char *j, size_t l, RandoGameRead r, RandoGameList li, void *c) { (void)j, (void)l, (void)r, (void)li, (void)c; return false; }
 void rando_build_clear(void) {}
 const uint8_t *rando_built_file(const char *p, size_t *size) { (void)p, (void)size; return NULL; }
+bool rando_built_deferred(const char *p, uint64_t *size) { (void)p, (void)size; return false; }
+bool rando_built_has(const char *p) { (void)p; return false; }
+size_t rando_built_read(const char *p, uint64_t off, uint8_t *dst, size_t len) { (void)p, (void)off, (void)dst, (void)len; return 0; }
 size_t rando_built_count(void) { return 0; }
 const char *rando_built_path(size_t i) { (void)i; return NULL; }
 void romfs_file_read_hook(const char *p) { abort(); }

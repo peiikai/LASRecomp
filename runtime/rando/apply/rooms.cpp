@@ -235,7 +235,9 @@ struct Ctx {
 const std::map<int, std::pair<double, double>> &map_shifts(Ctx &c) {
     if (c.shifts_read) return c.shifts;
     c.shifts_read = true;
-    Sarc arc = Sarc::parse(c.overlay("region_common/ui/Game.arc"));
+    const std::string pre_anim = "anim/Dg_DgnMap_Dgn_";  // (only these of its ~75 MB)
+    Sarc arc = Sarc::parse(c.overlay("region_common/ui/Game.arc"),
+                           [&](const std::string &n) { return !n.compare(0, pre_anim.size(), pre_anim); });
     for (const auto &f : arc.files) {
         const std::string &n = f.first, pre = "anim/Dg_DgnMap_Dgn_";
         if (n.compare(0, pre.size(), pre) || n.size() <= pre.size() + 6 || n.compare(n.size() - 6, 6, ".bflan")) continue;
@@ -1062,11 +1064,13 @@ void level_textures(Ctx &c, const std::string &level, const Layout &layout) {
         if (rooms::level_of(kv.second) != level) others.insert(rooms::level_of(kv.second));
     std::vector<std::string> levels = {level};
     levels.insert(levels.end(), others.begin(), others.end());
-    std::vector<std::string> src;
-    for (const std::string &lv : levels) src.push_back(c.overlay(mapdir + lv + ".bntx"));
-    std::vector<const std::string *> ptrs;
-    for (const std::string &s : src) ptrs.push_back(&s);
-    c.b.write_bytes(mapdir + level + ".bntx", bntx_subset(ptrs, only));
+    // (the overlay's map folder is the game's: the sources are game files, so the runtime can build the bank when
+    // the game reads it - SeedBuild::write_deferred)
+    DeferredFile f;
+    for (const std::string &lv : levels) f.sources.push_back(mapdir + lv + ".bntx");
+    f.only.assign(only.begin(), only.end());
+    std::sort(f.only.begin(), f.only.end());
+    c.b.write_deferred(mapdir + level + ".bntx", f);
 }
 
 void write_level(Ctx &c, const std::string &level, const Layout &layout, const std::string &entrance, FlagMap &shared,

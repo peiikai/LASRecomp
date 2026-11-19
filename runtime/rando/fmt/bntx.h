@@ -22,6 +22,7 @@
 #pragma once
 #include <stdint.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_set>
@@ -62,7 +63,9 @@ struct Bntx {
     int64_t dict_pos = 0;              // (where parse found it)
     std::vector<BntxTexture> textures;
 
-    static Bntx parse(const std::string &data);  // throws on bad data
+    // throws on bad data; data_of: only these textures' pixel data is kept (the others get none: for a caller that
+    // drops them, so a big bank isn't copied whole)
+    static Bntx parse(const std::string &data, const std::unordered_set<std::string> *data_of = nullptr);
     std::string save() const;                    // throws on values the layout can't hold
 
     const std::string &name() const { return strings.at(name_idx); }
@@ -80,6 +83,10 @@ std::vector<std::pair<int64_t, std::pair<uint16_t, uint16_t>>> resdic_build(cons
 std::string bntx_merge(const std::string &base, const std::vector<const std::string *> &others,
                        const std::unordered_set<std::string> *only = nullptr);
 std::string bntx_subset(const std::vector<const std::string *> &sources, const std::unordered_set<std::string> &only);
+// the same, reading the sources one at a time (read(i, out): source i's bytes; false: not there): only the result
+// and one source in memory at once (a dungeon's map bank from rooms of every dungeon, room shuffle)
+std::string bntx_subset_from(size_t count, const std::function<bool(size_t, std::string &)> &read,
+                             const std::unordered_set<std::string> &only);
 std::string bntx_copy_renamed(const std::string &base, const std::vector<std::pair<std::string, std::string>> &pairs);
 std::string bntx_patch_in_place(const std::string &base,
                                 const std::vector<std::pair<std::string, std::string>> &set_from,  // (texture, source)

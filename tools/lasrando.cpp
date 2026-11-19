@@ -33,6 +33,12 @@
 //                                                  a file whose textures the build compresses itself (the chest looks'
 //                                                  models, ui/StartUp.arc): byte-identical apart from the pixel data,
 //                                                  the pixels within a small error (fmt/texture_check.h)
+//   lasrando serve-check <romfs> <decisions.json> <dump folder>
+//                                                  the seed built as the runtime builds it (apply/build.h: files built
+//                                                  when read), every built file read back in random pieces (and from
+//                                                  two threads) and compared with `lasrando dump`'s; load time, first
+//                                                  read of each such file and peak memory (LARECOMP_RANDO_DEFER=0:
+//                                                  the build that keeps every file)
 //
 // Build: make lasrando (build/lasrando).
 #include <stdio.h>
@@ -41,10 +47,22 @@
 #include <dirent.h>
 #include <sys/stat.h>
 
+#include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <random>
 #include <string>
+#include <thread>
+#ifndef _WIN32
+#include <sys/resource.h>
+#include <unistd.h>
+#endif
+#ifdef __APPLE__
+#include <mach/mach.h>
+#include <malloc/malloc.h>
+#endif
 
 #include "../runtime/rando/fmt/bfevfl.h"
 #include "../runtime/rando/fmt/gsheet.h"
@@ -54,6 +72,7 @@
 #include "../runtime/rando/fmt/texture_check.h"
 #include "../runtime/rando/fmt/lvb.h"
 #include "../runtime/rando/mkdirs.h"
+#include "../runtime/rando/apply/build.h"
 #include "../runtime/rando/apply/decide_check.h"
 #include "../runtime/rando/apply/seed_build.h"
 #include "../runtime/rando/seed.h"
@@ -72,7 +91,8 @@ static int usage(void) {
                     "       lasrando repack <leb|leb-grid|lvb|gsheet|msbt|bfevfl|sarc> <out folder> < paths\n"
                     "       lasrando solve-check <prefill.json> <postfill.json>\n"
                     "       lasrando decide-check <romfs> <record folder> <seed folder> [<out folder>]\n"
-                    "       lasrando texture-check <python file> <native file> <romfs path>\n");
+                    "       lasrando texture-check <python file> <native file> <romfs path>\n"
+                    "       lasrando serve-check <romfs> <decisions.json> <dump folder>\n");
     return 2;
 }
 
@@ -113,6 +133,11 @@ static bool slurp(const std::string &path, std::string &out) {
     FILE *f = fopen(path.c_str(), "rb");
     if (!f) return false;
     out.clear();
+    if (!fseek(f, 0, SEEK_END)) {  // (its size first: one allocation)
+        long n = ftell(f);
+        if (n > 0) out.reserve((size_t)n);
+        fseek(f, 0, SEEK_SET);
+    }
     char buf[1 << 16];
     for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) out.append(buf, n);
     fclose(f);
@@ -223,8 +248,141 @@ static int dump(const std::string &romfs, const std::string &decisions, const st
     return 0;
 }
 
+// lasrando serve-check: the seed built as the runtime builds it (runtime/rando/apply/build.h: files built when read
+// kept as recipes), then every built file read back through rando_built_read - whole, in random pieces at random
+// places, and from two threads at once - and compared with a `lasrando dump` of the same seed
+static std::string g_serve_romfs;
+static uint8_t *serve_read(void *, const char *path, size_t *size) {  // (as fs.c's: one malloc'd copy)
+    FILE *f = fopen((g_serve_romfs + "/" + path).c_str(), "rb");
+    if (!f) return nullptr;
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    uint8_t *m = (uint8_t *)malloc(n > 0 ? (size_t)n : 1);
+    size_t got = n > 0 ? fread(m, 1, (size_t)n, f) : 0;
+    fclose(f);
+    *size = got;
+    return m;
+}
+static char **serve_list(void *, const char *dir, size_t *count) {
+    std::vector<std::string> names;
+    if (!list_dir(g_serve_romfs + "/" + dir, names)) return nullptr;
+    char **v = (char **)calloc(names.size() + 1, sizeof *v);
+    for (size_t i = 0; i < names.size(); i++) v[i] = strdup(names[i].c_str());
+    *count = names.size();
+    return v;
+}
+static double peak_mb() {
+#ifndef _WIN32
+    struct rusage ru;
+    getrusage(RUSAGE_SELF, &ru);
+#ifdef __APPLE__
+    return ru.ru_maxrss / 1048576.0;
+#else
+    return ru.ru_maxrss / 1024.0;
+#endif
+#else
+    return 0;
+#endif
+}
+static double now_mb() {  // the data the process holds now (macOS: allocated bytes; Linux: resident)
+#ifdef __APPLE__
+    // (not the footprint: freed big blocks the allocator keeps for reuse stay in it)
+    malloc_statistics_t st;
+    malloc_zone_statistics(nullptr, &st);
+    return st.size_in_use / 1048576.0;
+#elif defined(__linux__)
+    long pages = 0, res = 0;
+    FILE *f = fopen("/proc/self/statm", "r");
+    if (f && fscanf(f, "%ld %ld", &pages, &res) == 2) { fclose(f); return res * (sysconf(_SC_PAGESIZE) / 1048576.0); }
+    if (f) fclose(f);
+    return 0;
+#else
+    return 0;
+#endif
+}
+static int serve_check(const std::string &romfs, const std::string &decisions, const std::string &dumped) {
+    g_serve_romfs = romfs;
+    std::string dj;
+    if (!slurp(decisions, dj)) { fprintf(stderr, "can't read %s\n", decisions.c_str()); return 2; }
+    auto t0 = std::chrono::steady_clock::now();
+    if (!rando_build_seed(dj.data(), dj.size(), serve_read, serve_list, nullptr)) { fprintf(stderr, "build failed\n"); return 1; }
+    double load = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    printf("load: %.2f s, peak %.0f MB, holding %.0f MB\n", load, peak_mb(), now_mb());
+    std::mt19937 rng(12345);
+    int bad = 0;
+    size_t nfiles = rando_built_count(), ndeferred = 0;
+    std::vector<std::string> deferred;
+    for (size_t i = 0; i < nfiles; i++) {
+        std::string p = rando_built_path(i), want;
+        if (!slurp(dumped + "/romfs/" + p, want)) { printf("%s: not in the dump\n", p.c_str()); bad++; continue; }
+        uint64_t size = 0;
+        bool later = rando_built_deferred(p.c_str(), &size);
+        if (!later) {
+            size_t n = 0;
+            const uint8_t *m = rando_built_file(p.c_str(), &n);
+            if (!m || std::string((const char *)m, n) != want) printf("%s: differs\n", p.c_str()), bad++;
+            continue;
+        }
+        ndeferred++, deferred.push_back(p);
+        if (size != want.size()) { printf("%s: size %llu, the dump's %zu\n", p.c_str(), (unsigned long long)size, want.size()); bad++; }
+        auto t1 = std::chrono::steady_clock::now();
+        std::string got(want.size(), '\0');
+        size_t at = 0;
+        while (at < got.size()) {  // whole, in random pieces
+            size_t len = 1 + rng() % (1 << 20);
+            size_t r = rando_built_read(p.c_str(), at, (uint8_t *)&got[at], len);
+            if (!r) break;
+            at += r;
+        }
+        double first = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
+        if (got != want) printf("%s: read back differs\n", p.c_str()), bad++;
+        for (int k = 0; k < 2000; k++) {  // random places, past the end too
+            uint64_t off = rng() % (want.size() + 64);
+            size_t len = 1 + rng() % 70000;
+            std::string buf(len, '\x55');
+            size_t r = rando_built_read(p.c_str(), off, (uint8_t *)&buf[0], len);
+            size_t expect = off >= want.size() ? 0 : std::min<size_t>(len, want.size() - off);
+            if (r != expect || buf.compare(0, r, want, (size_t)std::min<uint64_t>(off, want.size()), r)) {
+                printf("%s: read at %llu (%zu) differs\n", p.c_str(), (unsigned long long)off, len), bad++;
+                break;
+            }
+        }
+        double mb = want.size() / 1048576.0;
+        std::string().swap(want), std::string().swap(got);  // (the check's own copies: not the build's)
+        printf("%s: %.1f MB, first read %.2f s, holding %.0f MB\n", p.c_str(), mb, first, now_mb());
+    }
+    if (deferred.size() >= 2) {  // two threads on two banks at once (the cache switching between them)
+        std::vector<std::string> w(2);
+        for (int k = 0; k < 2; k++) slurp(dumped + "/romfs/" + deferred[k], w[k]);
+        int tbad[2] = {0, 0};
+        std::vector<std::thread> th;
+        for (int k = 0; k < 2; k++)
+            th.emplace_back([&, k] {
+                std::mt19937 r2(k + 1);
+                for (int j = 0; j < 40; j++) {
+                    uint64_t off = r2() % w[k].size();
+                    size_t len = 1 + r2() % 200000;
+                    std::string buf(len, '\0');
+                    size_t got = rando_built_read(deferred[k].c_str(), off, (uint8_t *)&buf[0], len);
+                    size_t expect = std::min<size_t>(len, w[k].size() - off);
+                    if (got != expect || buf.compare(0, got, w[k], off, got)) tbad[k]++;
+                }
+            });
+        for (auto &t : th) t.join();
+        printf("two threads: %d bad reads\n", tbad[0] + tbad[1]);
+        bad += tbad[0] + tbad[1];
+    }
+    printf("%zu built files (%zu built when read): %s; peak %.0f MB, holding %.0f MB\n", nfiles, ndeferred,
+           bad ? "DIFFERENT" : "all the same", peak_mb(), now_mb());
+    rando_build_clear();
+    printf("after clear: holding %.0f MB\n", now_mb());
+    return bad ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 5 && !strcmp(argv[1], "dump")) return dump(argv[2], argv[3], argv[4]);
+    if (argc >= 5 && !strcmp(argv[1], "serve-check")) return serve_check(argv[2], argv[3], argv[4]);
     if (argc >= 5 && !strcmp(argv[1], "generate"))
         return rando::solve::generate_main(argv[2], argv[3], argv[4], argc > 5 && !strcmp(argv[5], "--legacy"));
     if (argc >= 4 && !strcmp(argv[1], "entrances-check")) return rando::solve::entrances_check(argv[2], argv[3]);
