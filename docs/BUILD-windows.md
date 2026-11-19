@@ -16,8 +16,8 @@ Then run in PowerShell from the repo root:
     powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1
 
 This installs MSYS2 (UCRT64: clang, lld, make, SDL3, FFmpeg, Vulkan loader + headers, shaderc, Vulkan Memory
-Allocator, validation layers), Python 3.12 for the tools (`tools\venv`: unicorn, capstone, lz4) and the randomizer
-(`third_party\LAS-Randomizer\venv`) and switches the clone to LF line endings.
+Allocator, validation layers), Python 3.12 for the tools (`tools\venv`: unicorn, capstone, lz4) and switches the
+clone to LF line endings.
 
 ## Build
 From an MSYS2 UCRT64 shell, or Git Bash with MSYS2 first on PATH:
