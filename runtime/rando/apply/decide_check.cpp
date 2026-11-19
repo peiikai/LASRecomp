@@ -11,6 +11,7 @@
 #include <iterator>
 #include <set>
 
+#include "../mkdirs.h"
 #include "decide.h"
 #include "steps.h"
 #include "../../../third_party/yyjson/yyjson.h"
@@ -60,7 +61,7 @@ static void walk(const std::string &top, const std::string &rel, std::set<std::s
 
 static void mkdirs(const std::string &path) {
     for (size_t i = 1; i < path.size(); i++)
-        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0755);
+        if (path[i] == '/') make_dir(path.substr(0, i));
 }
 
 // where two texts first differ, with some of each around it

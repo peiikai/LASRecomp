@@ -48,6 +48,7 @@
 #include "../runtime/rando/fmt/msbt.h"
 #include "../runtime/rando/fmt/sarc.h"
 #include "../runtime/rando/fmt/lvb.h"
+#include "../runtime/rando/mkdirs.h"
 #include "../runtime/rando/apply/decide_check.h"
 #include "../runtime/rando/apply/seed_build.h"
 #include "../runtime/rando/seed.h"
@@ -71,7 +72,7 @@ static int usage(void) {
 
 static void mkdirs(const std::string &path) {  // (the folders of a file's path)
     for (size_t i = 1; i < path.size(); i++)
-        if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0755);
+        if (path[i] == '/') rando::make_dir(path.substr(0, i));
 }
 
 // read every listed file, run it through the format code, write the result (or "ERROR <what>" in place of it)
