@@ -6,6 +6,7 @@
 # Same-side doorways (dungeon_gen.chaos_pairs: every doorway on one wall of a single-screen room leads to the same
 # place) are checked first, without the game: a wall whose doorways lead to different rooms is a GROUP FAIL.
 # DJ_GROUPS=1: walk only those walls' doorways.
+# DJ_ROMFS=<folder>: the seed's room files from there (a seed built in memory: `lasrando dump`'s <out>/romfs).
 # Results: build/doorjump_<seed>.txt (+ a screenshot per doorway in build/doorjump_<seed>/).
 SEED=$1; FIRST=${2:-1}; COUNT=${3:-999}
 JOB=${DJ_JOB:-$SEED}  # DJ_JOB=<name>: several jobs of one seed in parallel (own saves, shots, results)
@@ -65,7 +66,7 @@ def floor(lv, cell, side, slot):  # the floor in the doorway in the seed's room 
     import struct
     from RandomizerCore.Tools import leb
     room = '%s_%s' % (lv, cell)
-    p = rooms._leb_path(os.path.join(seed_dir, 'romfs'), room)
+    p = rooms._leb_path(os.environ.get('DJ_ROMFS') or os.path.join(seed_dir, 'romfs'), room)
     g = rooms._grid(leb.Room(open(p if os.path.exists(p) else rooms._leb_path('extracted/romfs', room), 'rb').read()))
     g = g[b'data'].data
     a = int(slot) // 2
