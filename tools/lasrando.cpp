@@ -4,7 +4,7 @@
 //                                                  settings.json + seed_id.txt), to <out.json> or stdout
 //   lasrando get <seed folder> <key>...            settings as the runtime reads them: one line per key,
 //                                                  "<key> bool=<0|1> int=<n|-> str=<s|->"
-//   lasrando dump <romfs> <decisions.json> <out folder>
+//   lasrando dump <romfs> <seed folder | decisions.json> <out folder>
 //                                                  the seed's game-file changes, built in memory as the game will
 //                                                  (every ported step in the generator's order), written to
 //                                                  <out>/romfs and <out>/exefs: what the runtime serves, and
@@ -21,7 +21,7 @@
 //   lasrando strings                              every text the spoiler view and the check tracker can show,
 //                                                  one per line: <spoiler|tracker> <composed 0|1> <text>
 //                                                  (tools/menu_strings.py, for the translation tables)
-//   lasrando serve-check <romfs> <decisions.json> <dump folder>
+//   lasrando serve-check <romfs> <seed folder | decisions.json> <dump folder>
 //                                                  the seed built as the runtime builds it (apply/build.h: files built
 //                                                  when read), every built file read back in random pieces (and from
 //                                                  two threads) and compared with `lasrando dump`'s; load time, first
@@ -77,9 +77,9 @@
 static int usage(void) {
     fprintf(stderr, "usage: lasrando convert <seed folder> [<out.json>]\n"
                     "       lasrando get <seed folder> <key>...\n"
-                    "       lasrando dump <romfs> <decisions.json> <out folder>\n"
+                    "       lasrando dump <romfs> <seed folder|decisions.json> <out folder>\n"
                     "       lasrando generate <romfs> <request.json> <out folder> [--legacy]\n"
-                    "       lasrando serve-check <romfs> <decisions.json> <dump folder>\n"
+                    "       lasrando serve-check <romfs> <seed folder|decisions.json> <dump folder>\n"
                     "       lasrando room-facts <romfs>\n"
                     "       lasrando room-cases doors <romfs> <seed folder> <jobs file> [1]\n"
                     "       lasrando room-cases stairs <romfs> <seed folder>\n"
@@ -116,10 +116,27 @@ static bool list_dir(const std::string &path, std::vector<std::string> &names) {
     return true;
 }
 
+// a seed's decisions: a seed folder's (seed.json "decisions") or a decisions JSON file
+static bool read_decisions(const std::string &path, std::string &dj) {
+    struct stat st;
+    if (stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+        const RandoSeed *s = rando_seed_load(path.c_str());
+        size_t len = 0;
+        char *j = s ? rando_seed_decisions_json(s, &len) : nullptr;
+        if (s) rando_seed_free(s);
+        if (!j) { fprintf(stderr, "%s: no seed with decisions there (made before seed.json?)\n", path.c_str()); return false; }
+        dj.assign(j, len);
+        free(j);
+        return true;
+    }
+    if (!slurp(path, dj)) { fprintf(stderr, "can't read %s\n", path.c_str()); return false; }
+    return true;
+}
+
 // lasrando dump: the full build, written out
 static int dump(const std::string &romfs, const std::string &decisions, const std::string &out) {
     std::string dj;
-    if (!slurp(decisions, dj)) { fprintf(stderr, "can't read %s\n", decisions.c_str()); return 2; }
+    if (!read_decisions(decisions, dj)) return 2;
     rando::Decisions d;
     if (!d.load(dj)) { fprintf(stderr, "bad decisions\n"); return 2; }
     rando::SeedBuild b([&](const std::string &p, std::string &o) { return slurp(romfs + "/" + p, o); }, d);
@@ -204,7 +221,7 @@ static double now_mb() {  // the data the process holds now (macOS: allocated by
 static int serve_check(const std::string &romfs, const std::string &decisions, const std::string &dumped) {
     g_serve_romfs = romfs;
     std::string dj;
-    if (!slurp(decisions, dj)) { fprintf(stderr, "can't read %s\n", decisions.c_str()); return 2; }
+    if (!read_decisions(decisions, dj)) return 2;
     auto t0 = std::chrono::steady_clock::now();
     if (!rando_build_seed(dj.data(), dj.size(), serve_read, serve_list, nullptr)) { fprintf(stderr, "build failed\n"); return 1; }
     double load = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();

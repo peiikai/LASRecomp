@@ -17,7 +17,8 @@ Nothing owned by Nintendo may ever be committed or attached to an issue or pull 
 - no copies of the game in any form
 - no extracted game files (`extracted/`), no generated code (`generated/`), no fonts (`.bfttf` / Switch `.ttf`)
 - no game assets of any kind: textures, models, music, text, level files - also not "just one file for testing"
-- no randomizer seed folders (`rando/`) - they contain modified game files; share the **seed ID** instead
+- no randomizer seed folders (`rando/`) - they hold data built from the game's files (older ones: modified game
+  files); share the **seed ID** instead
 
 Pull requests that include Nintendo files can't be merged. Screenshots and short clips of the game in bug reports are fine.
 
@@ -106,7 +107,8 @@ them, then `make -j10`.
   documented where they're defined - grep for `getenv("LARECOMP_`. Test runs use a scratch copy of the settings
   file; give them a scratch save folder too (`LARECOMP_SAVE_DIR`) so your own saves stay untouched.
 - Randomizer changes: generate several seeds with different settings and check they complete (every location
-  reachable). For dungeon room shuffle, `tools/doorjump_test.sh <seed>` walks every mismatched doorway.
+  reachable). For dungeon room shuffle, `tools/doorjump_test.sh <seed>` walks every mismatched doorway and
+  `tools/stairs_test.sh <seed>` every stairs and ladder.
 - State that belongs to a seed must be reset when the player switches seeds in place: use an `RT_ON_RESET` hook
   (see `runtime/hle.h`).
 - For an automated Vulkan validation run, set `LARECOMP_VK_VALIDATION_STOP=1`. This requires the Khronos validation
@@ -135,7 +137,7 @@ The randomizer's native random numbers: `tools/test_pyrandom.cpp` (build line at
 game data. Seed IDs must keep giving the same seeds, so a mismatch is a bug in the C++ side.
 `tools/test_seed_record.c` (build line at its top) checks that seed records (`runtime/rando/seed.h`) answer every
 setting the runtime reads as the older `settings.json` readers did, without game data. How seeds are made and applied,
-and where that is going: [docs/randomizer.md](docs/randomizer.md).
+`lasrando` and adding an option: [docs/randomizer.md](docs/randomizer.md).
 
 `python tools/test_text_speed.py` checks the Text speed hooks (Normal, Fast, Instant) without game data.
 

@@ -78,7 +78,7 @@
   - Never close or restart a copy of the game the user is playing. Run one test window at a time (`shot.sh` takes
     a lock).
   - Randomizer changes: generate several seeds with different settings and check each one completes. For dungeon
-    room shuffle, run `tools/doorjump_test.sh <seed>`.
+    room shuffle, run `tools/doorjump_test.sh <seed>` and `tools/stairs_test.sh <seed>`.
   - The unit tests are listed in CONTRIBUTING "Tests".
 
 - **Randomizer rules.**

@@ -151,6 +151,12 @@ Comma-separated entries, each starting with a frame:
 | `LARECOMP_RANDO_SEED` | seed folder name | Play this randomizer seed (`rando/<name>/`) instead of the one in the settings. Saves go to the seed's own folder unless `LARECOMP_SAVE_DIR` is set. |
 | `LARECOMP_RANDO_ID` | seed ID | Open the randomizer tab with that seed ID's options. |
 | `LARECOMP_RANDO_GEN_TEST` | `1` or `name[:seed ID]` | Generate a seed as soon as the randomizer tab is shown. |
+| `LARECOMP_RANDO_GEN_SHOTS` | file name prefix | With `LARECOMP_RANDO_GEN_TEST`: save `<prefix>_gen.png` while the seed is being made and `<prefix>_done.png` when it's ready, then press Play Now. |
+| `LARECOMP_RANDO_CAT` | category name | Open the randomizer tab on that category (`Seeds`, `Presets`, `General`, `Goal`, `Items`, ...). |
+| `LARECOMP_RANDO_CAT_CYCLE` | frames | Show each randomizer category in turn, that many frames each (for screenshot series). |
+| `LARECOMP_RANDO_SEED_OPEN` | seed folder name | Open the randomizer tab's Seeds category with that seed selected. |
+| `LARECOMP_RANDO_BUILD` | `0` | Don't build the seed's game files in memory: take them from the seed folder, as for seeds made before `seed.json` (A/B checks). |
+| `LARECOMP_RANDO_DEFER` | `0` | Build every file the seed changes when it loads and keep them all, instead of building dungeon room shuffle's texture banks when the game reads them (A/B checks of memory and load time). |
 
 ### Loading a save from the command line
 
