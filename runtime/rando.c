@@ -7,7 +7,7 @@
 // chosen in the menu (larecomp.ini `rando_seed`); switching reboots the game in place (runtime/main.c), which calls
 // rando_boot.
 //
-// Code patches: gen.py compiled every variant of every patched instruction in (tools/rando/patch_variants.json);
+// Code patches: the generator (runtime/gen/) compiled every variant of every patched instruction in (tools/rando/patch_variants.json);
 // rando_word() tells the generated code which one the seed uses (0 = the original instruction).
 //
 // Every supported game version reads 1.0.0.pchtxt: 1.0.1 / 1.1.0 changed one function, and every randomizer patch
