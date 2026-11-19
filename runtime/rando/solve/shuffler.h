@@ -30,6 +30,14 @@
 namespace rando {
 namespace solve {
 
+// Some settings (many excluded locations) leave too few places for the items: the fill's undo / reshuffle then went
+// round forever. After this many undos it gives up (far more than any seed that fills needs; the same numbers as
+// shuffler.py's DUNGEON_GIVE_UP / FILL_GIVE_UP), and the player sees GIVE_UP_TEXT.
+const int DUNGEON_GIVE_UP = 1000, FILL_GIVE_UP = 1500;
+extern const char *const GIVE_UP_TEXT;
+// is this fill error one of those? ("can't place the items of D3: 61 tries", "fill stuck: ...", ...)
+bool fill_gave_up(const std::string &error);
+
 class ItemShuffler {
 public:
     ItemShuffler(const std::string &seed, Value settings, Value item_defs, Value logic_defs);
@@ -37,8 +45,8 @@ public:
 
     Value run();  // ItemShuffler.run: the placements
     // ItemShuffler.stop (the GUI's cancel; thread_active = False): run() gives up soon after, with PyError
-    // "RuntimeError: stopped". Safe from another thread. (Like the Python, a fill that can't finish undoes and retries
-    // for ever unless it is a dungeon room shuffle layout: FILL_STUCK.)
+    // "RuntimeError: stopped". Safe from another thread. (Like the Python, a fill that can't finish undoes and retries,
+    // up to FILL_GIVE_UP times - FILL_STUCK in a dungeon room shuffle layout.)
     void stop();
 
     Value settings, item_defs, logic_defs;

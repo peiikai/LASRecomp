@@ -1343,6 +1343,7 @@
 {"Shuffling items (%s/%s placed)", "Embaralhando itens (%s/%s colocados)"},
 {"Building game files (%s tasks)", "Criando arquivos do jogo (%s tarefas)"},
 {"Triforce hunt: %s", "Caça à Triforce: %s"},
+{"These settings leave too few places for the items. Try other settings.", "Estas configurações deixam poucos lugares para os itens. Tente outras configurações."},
 // spoiler_view.py
 {"Route", "Rota"},
 {"Only what you need to beat the seed. Each stop can be reached with the items from the stops before it.", "Só o necessário para concluir a seed. Cada parada pode ser alcançada com os itens das paradas anteriores."},

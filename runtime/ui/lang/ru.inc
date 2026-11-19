@@ -1343,6 +1343,7 @@
 {"Shuffling items (%s/%s placed)", "Раскладываем предметы (размещено %s/%s)"},
 {"Building game files (%s tasks)", "Собираем файлы игры (задач: %s)"},
 {"Triforce hunt: %s", "Охота за Трифорсом: %s"},
+{"These settings leave too few places for the items. Try other settings.", "При этих настройках для предметов слишком мало мест. Попробуйте другие настройки."},
 // spoiler_view.py
 {"Route", "Маршрут"},
 {"Only what you need to beat the seed. Each stop can be reached with the items from the stops before it.", "Только то, что нужно для прохождения сида. Каждую точку можно достичь с предметами из предыдущих."},

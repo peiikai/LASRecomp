@@ -486,6 +486,9 @@ def main():
             soul_cat, romfs, logic_defs, vanilla, {n: p['room'] for n, p in pot_locs.items() if p.get('room')}),
             'conditions', flush=True)
 
+    # the fill's errors that mean the settings leave too few places for the items (shuffler.py, DUNGEON_GIVE_UP)
+    GIVE_UP = r"RuntimeError: (can't place the items of D|can't place .* in D.*: none of|fill stuck: |no item for Tarin)"
+
     def retry_layout(why):
         """Dungeon room shuffle: the items can't be placed in this layout (or the seed came out unbeatable) - the
         next layout of the same seed ID, in a fresh run (deterministic: a seed ID never fails while one is left)."""
@@ -569,6 +572,8 @@ def main():
             m = re.search(r'RuntimeError: (Triforce hunt: .*)', str(e))
             if m:
                 print('error ' + m.group(1), flush=True)
+            elif re.search(GIVE_UP, str(e)):  # (too few places for the items: the fill gave up)
+                print('error ' + ItemShuffler.GIVE_UP_TEXT, flush=True)
         if not any('Triforce hunt' in str(e) for e in errors):
             retry_layout('the items can\'t be placed')
         print('SHUFFLE ERROR', errors, file=sys.stderr)

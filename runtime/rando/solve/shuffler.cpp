@@ -35,6 +35,15 @@
 namespace rando {
 namespace solve {
 
+const char *const GIVE_UP_TEXT = "These settings leave too few places for the items. Try other settings.";
+
+bool fill_gave_up(const std::string &e) {  // (tools/rando/las_headless.py GIVE_UP)
+    size_t d = e.find("can't place ");
+    return e.find("can't place the items of D") != std::string::npos || e.find("fill stuck: ") != std::string::npos ||
+           e.find("no item for Tarin") != std::string::npos ||
+           (d != std::string::npos && e.find(" in D", d) != std::string::npos && e.find(": none of ", d) != std::string::npos);
+}
+
 namespace {
 
 const int PL_ABSENT = -2, PL_NONE = -1;  // placements: no such key / None
@@ -811,7 +820,7 @@ struct ItemShuffler::Impl {
                             }
                             undos++;
                             S.stats.undo_dungeon++;
-                            if (undos > 60 && cfg.get("dungeon-of").truthy())
+                            if (undos > (cfg.get("dungeon-of").truthy() ? 60 : DUNGEON_GIVE_UP))
                                 throw PyError("RuntimeError", "can't place the items of D" + std::to_string(i) + ": " +
                                                                   std::to_string(undos) + " tries");
                             int undo = tracker.front();
@@ -961,7 +970,7 @@ struct ItemShuffler::Impl {
                     auto sh = std::find(items.begin(), items.end(), id("seashell"));
                     if (sh == items.end()) throw PyError("ValueError", "'seashell' is not in list");
                     if (sh == items.begin() || ++tries > items.size())
-                        throw PyError("RuntimeError", "no item for Tarin opens a check (the Python loops forever here)");
+                        throw PyError("RuntimeError", "no item for Tarin opens a check");
                     items.insert(sh, items[0]);
                     items.pop_front();
                 }
@@ -1063,7 +1072,7 @@ struct ItemShuffler::Impl {
                         // nowhere: undo the oldest placement (LAS Recomp: a room-shuffle layout gives up after
                         // FILL_STUCK of these and las_headless plans the next)
                         stuck++;
-                        if (stuck > 150 && room_shuffle)
+                        if (stuck > (room_shuffle ? 150 : FILL_GIVE_UP))
                             throw PyError("RuntimeError", "fill stuck: " + nm(item) + " found no place " + std::to_string(stuck) + " times");
                         S.stats.undo_fill++;
                         undo_oldest();

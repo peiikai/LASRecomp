@@ -1343,6 +1343,7 @@
 {"Shuffling items (%s/%s placed)", "아이템 섞는 중 (%s/%s 배치)"},
 {"Building game files (%s tasks)", "게임 파일 만드는 중 (작업 %s개)"},
 {"Triforce hunt: %s", "트라이포스 찾기: %s"},
+{"These settings leave too few places for the items. Try other settings.", "이 설정으로는 아이템을 놓을 곳이 너무 적습니다. 다른 설정을 사용해 보세요."},
 // spoiler_view.py
 {"Route", "경로"},
 {"Only what you need to beat the seed. Each stop can be reached with the items from the stops before it.", "시드를 클리어하는 데 필요한 것만 보여 줍니다. 각 단계는 앞선 단계에서 얻은 아이템으로 갈 수 있습니다."},

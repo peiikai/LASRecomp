@@ -18,6 +18,7 @@
 #include <map>
 #include <set>
 
+#include "../mkdirs.h"
 #include "../apply/decide.h"
 #include "../apply/steps.h"
 #include "entrances.h"
@@ -144,6 +145,8 @@ GenerateResult generate(const Value &request, const GameFiles &game, const Gener
         size_t th = why.find("RuntimeError: Triforce hunt: ");  // (a reason the player can act on: 'error <text>')
         if (st == GenStatus::Failed && th != std::string::npos)
             r.player_error = why.substr(th + 14, why.find('\n', th) - th - 14);
+        else if (st == GenStatus::Failed && fill_gave_up(why))  // (too few places for the items)
+            r.player_error = GIVE_UP_TEXT;
         r.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         return r;
     };
@@ -372,7 +375,7 @@ GenerateOutput generate_to_dir(const std::string &dir) {
     o.write = [dir](const std::string &path, const std::string &bytes) {
         std::string p = dir + "/" + path;
         for (size_t i = 1; i < p.size(); i++)
-            if (p[i] == '/') mkdir(p.substr(0, i).c_str(), 0755);
+            if (p[i] == '/') make_dir(p.substr(0, i));
         std::ofstream f(p, std::ios::binary);
         f << bytes;
         return (bool)f;
@@ -393,7 +396,7 @@ int generate_main(const std::string &romfs, const std::string &request, const st
     std::string o = out;
     while (o.size() > 1 && o.back() == '/') o.pop_back();
     opt.folder_name = o.substr(o.rfind('/') == std::string::npos ? 0 : o.rfind('/') + 1);
-    mkdir(o.c_str(), 0755);
+    make_dir(o);
     GenerateResult r = generate(req, game_files_dir(romfs), generate_to_dir(o),
                                 [](double f, const std::string &label) { printf("stage %.3f %s\n", f, label.c_str()), fflush(stdout); },
                                 nullptr, opt);

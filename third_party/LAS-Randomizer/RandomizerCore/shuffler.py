@@ -407,6 +407,12 @@ class ItemShuffler(QtCore.QThread):
     
 
     FILL_STUCK = 150  # LAS Recomp: undos before a room-shuffle fill gives up (see makeRandomizedPlacement)
+    # LAS Recomp: some settings (many excluded locations) leave too few places for the items: the undo / reshuffle
+    # below then went round forever. After this many undos the fill gives up with GIVE_UP_TEXT instead (far more
+    # than any seed that fills needs: notes/rando_architecture.md, the fill-hang fix)
+    DUNGEON_GIVE_UP = 1000
+    FILL_GIVE_UP = 1500
+    GIVE_UP_TEXT = 'These settings leave too few places for the items. Try other settings.'
 
     def _reachable(self, placements, starting_access, logic):
         """LAS Recomp: everything canReachLocation could reach from these items (its search, run to the end)."""
@@ -853,7 +859,7 @@ class ItemShuffler(QtCore.QThread):
                                     f"\n  {l}: {self.logic_defs[l].get('condition-basic')}" for l in sorted(location_pool)
                                     if verbose))
                             undos += 1
-                            if undos > 60 and self.settings.get('dungeon-of'):
+                            if undos > (60 if self.settings.get('dungeon-of') else self.DUNGEON_GIVE_UP):
                                 raise RuntimeError(f"can't place the items of D{i}: {undos} tries")
                             undo_location = placement_tracker.pop(0)
                             location_pool.append(undo_location)
@@ -955,6 +961,7 @@ class ItemShuffler(QtCore.QThread):
         # Only do this if Tarin has no item placed, i.e. not forced to be vanilla
         if placements['tarin'] == None and self.thread_active:
             success = False
+            tarin_tries = 0
             while not success and self.thread_active:
                 placements['tarin'] = items[0]
                 success = (self.canReachLocation('can-shop', placements, settings_access, self.logic)
@@ -970,6 +977,11 @@ class ItemShuffler(QtCore.QThread):
                     success = False
                 
                 if not success:
+                    # (LAS Recomp: once every item before the seashells was tried, nothing will do - it went round
+                    # forever)
+                    tarin_tries += 1
+                    if items.index('seashell') == 0 or tarin_tries > len(items):
+                        raise RuntimeError('no item for Tarin opens a check')
                     items.insert(items.index('seashell'), items[0])
                     items.pop(0)
                         
@@ -1064,7 +1076,8 @@ class ItemShuffler(QtCore.QThread):
                         # forever (seed N2HB8-...: the 5th golden leaf, 4 locations before Kanalet). After this many
                         # the caller plans the next layout (tools/rando/las_headless.py, FILL_STUCK)
                         stuck += 1
-                        if stuck > self.FILL_STUCK and self.settings.get('dungeon-room-shuffle', 'off') != 'off':
+                        if stuck > (self.FILL_STUCK if self.settings.get('dungeon-room-shuffle', 'off') != 'off'
+                                    else self.FILL_GIVE_UP):
                             raise RuntimeError(f'fill stuck: {item} found no place {stuck} times')
                         undo_location = placement_tracker.pop(0)
                         locations.append(undo_location)
