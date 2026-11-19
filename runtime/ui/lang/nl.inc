@@ -1343,7 +1343,6 @@
 {"Shuffling items (%s/%s placed)", "Voorwerpen schudden (%s/%s geplaatst)"},
 {"Building game files (%s tasks)", "Spelbestanden bouwen (%s taken)"},
 {"Triforce hunt: %s", "Triforce-jacht: %s"},
-{"These settings leave too few places for the items. Try other settings.", "Deze instellingen laten te weinig plekken over voor de voorwerpen. Probeer andere instellingen."},
 // spoiler_view.py
 {"Route", "Route"},
 {"Only what you need to beat the seed. Each stop can be reached with the items from the stops before it.", "Alleen wat je nodig hebt om de seed uit te spelen. Elke stop is te bereiken met de voorwerpen van de stops ervoor."},

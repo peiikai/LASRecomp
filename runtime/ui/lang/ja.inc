@@ -1343,7 +1343,6 @@
 {"Shuffling items (%s/%s placed)", "アイテムをシャッフル中（%s/%s 配置済み）"},
 {"Building game files (%s tasks)", "ゲームファイルを作成中（タスク %s 個）"},
 {"Triforce hunt: %s", "トライフォース集め: %s"},
-{"These settings leave too few places for the items. Try other settings.", "この設定ではアイテムを置ける場所が足りません。別の設定を試してください。"},
 // spoiler_view.py
 {"Route", "ルート"},
 {"Only what you need to beat the seed. Each stop can be reached with the items from the stops before it.", "シードをクリアするのに必要なものだけです。各ステップは、それより前のステップで手に入るアイテムで行けます。"},

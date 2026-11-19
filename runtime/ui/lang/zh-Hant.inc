@@ -1343,7 +1343,6 @@
 {"Shuffling items (%s/%s placed)", "正在打亂道具（已放置%s/%s）"},
 {"Building game files (%s tasks)", "正在建置遊戲檔案（%s個工作）"},
 {"Triforce hunt: %s", "三角力量收集：%s"},
-{"These settings leave too few places for the items. Try other settings.", "這些設定留給道具的位置太少。請嘗試其他設定。"},
 // spoiler_view.py
 {"Route", "路線"},
 {"Only what you need to beat the seed. Each stop can be reached with the items from the stops before it.", "只列出破關種子所需的內容。每一站都能用前面各站取得的道具到達。"},
