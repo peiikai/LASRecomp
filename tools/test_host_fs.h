@@ -47,6 +47,15 @@ int rt_romfs_missing;
 const char *rando_seed_dir(void) { return NULL; }
 bool romfs_layout(const char *p, RomfsLayout *l, char *why, size_t n) { abort(); }
 bool rando_romfs_override(const char *p, char *out, size_t n) { abort(); }
+// (no seed here: the seed build and its record are never reached)
+const RandoSeed *rando_seed(void) { return NULL; }
+char *rando_seed_decisions_json(const RandoSeed *s, size_t *len) { (void)s, (void)len; return NULL; }
+bool rando_seed_has_table(const RandoSeed *s, const char *t) { (void)s, (void)t; return false; }
+bool rando_build_seed(const char *j, size_t l, RandoGameRead r, RandoGameList li, void *c) { (void)j, (void)l, (void)r, (void)li, (void)c; return false; }
+void rando_build_clear(void) {}
+const uint8_t *rando_built_file(const char *p, size_t *size) { (void)p, (void)size; return NULL; }
+size_t rando_built_count(void) { return 0; }
+const char *rando_built_path(size_t i) { (void)i; return NULL; }
 void romfs_file_read_hook(const char *p) { abort(); }
 void enemy_random_filter(const char *p, uint64_t off, uint8_t *d, uint64_t n) {}
 void rt_fatal_msg(const char *fmt, ...) { abort(); }
