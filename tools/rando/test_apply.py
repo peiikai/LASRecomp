@@ -14,7 +14,7 @@ import tempfile
 
 ROOT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 TOOL = os.path.join(ROOT, 'build', 'lasrando.exe' if os.name == 'nt' else 'lasrando')
-# written by steps that are not ported yet (stage 4: dungeon room shuffle)
+# written by steps that are not ported yet (none)
 NOT_PORTED = ()
 # textures the native build compresses itself (rgbcx; the Python used quicktex, LGPL): the file byte-identical apart
 # from the textures' pixel data, the pixels close (`lasrando texture-check`, runtime/rando/fmt/texture_check.h)
@@ -24,7 +24,7 @@ PIXEL_CHECKED = ('romfs/region_common/ui/StartUp.arc', 'romfs/region_common/acto
 # numbers, which the decisions don't hold: made in decide mode only (lasrando decide-check)
 TABLES = ('pots.tsv', 'bushes.tsv', 'rocks.tsv', 'digs.tsv', 'shell_spots.tsv', 'apple_trees.tsv', 'shopsanity.tsv',
           'souls.tsv', 'triforce.tsv', 'quick_pickups.tsv', 'flags.tsv', 'flags_ext', 'roam.tsv',
-          'enemies_random.tsv', 'check_flags.tsv')
+          'enemies_random.tsv', 'check_flags.tsv', 'door_jumps.tsv', 'dungeon_map.tsv', 'dungeon_rooms.tsv')
 
 
 def files(top):
@@ -43,8 +43,9 @@ def main():
         sys.exit(__doc__)
     romfs, bad = sys.argv[1], 0
     for seed in sys.argv[2:]:
-        if os.path.exists(os.path.join(seed, 'door_jumps.tsv')):
-            print(f'{seed}: room shuffle (stage 4), skipped')
+        if os.path.exists(os.path.join(seed, 'door_jumps.tsv')) and \
+                '"room-plan"' not in open(os.path.join(seed, 'decisions.json')).read():
+            print(f'{seed}: room shuffle from before its plan was recorded (tools/rando/record.py), skipped')
             continue
         with tempfile.TemporaryDirectory() as out:
             r = subprocess.run([TOOL, 'dump', romfs, os.path.join(seed, 'decisions.json'), out],

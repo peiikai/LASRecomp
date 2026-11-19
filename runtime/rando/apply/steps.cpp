@@ -5,6 +5,7 @@
 #include <string>
 
 #include "steps.h"
+#include "rooms.h"
 #include "textures.h"
 #include "../../../third_party/yyjson/yyjson.h"
 
@@ -37,7 +38,7 @@ static const char *const kOrder[] = {
     "mod_generator.fixRapidsRespawn", "mod_generator.makeExefsPatches",
     // las_headless.py main(), after mod_generator
     "shopsanity.apply", "trendsanity.apply", "pets.apply", "souls.apply", "triforce.apply", "pots.apply",
-    "las_headless.write_room", "entrance_logic.raft_shop_to_dock", "dungeon_gen.write_all", "escape_bottle.apply",
+    "las_headless.write_room", "entrance_logic.raft_shop_to_dock", "dungeon_gen._fix_room", "escape_bottle.apply",
     "hint_sheet.apply", "seed_hints._owl_flows", "souls.write_spots", "triforce.write_spots", "digs.apply",
     "underwater.apply", "seashell_spots.apply", "apple_trees.apply", "keysanity_text.apply", "roam.write",
     "miniboss_guard.apply", "enemy_random.write", "refill_gets.apply", "bomb_bag_text.apply",
@@ -58,7 +59,7 @@ static size_t order_of(const char *name) {
 const std::vector<BuildStep> &build_steps() {
     static const std::vector<BuildStep> all = [] {
         std::vector<BuildStep> v;
-        for (auto group : {las::steps_las_decide, steps_las_general, steps_las_items, steps_las_world, steps_ours_items, steps_ours_world, steps_textures})
+        for (auto group : {las::steps_las_decide, steps_las_general, steps_las_items, steps_las_world, steps_ours_items, steps_ours_world, steps_rooms, steps_textures})
             for (const BuildStep &s : group()) v.push_back(s);
         std::stable_sort(v.begin(), v.end(), [](const BuildStep &a, const BuildStep &b) { return order_of(a.name) < order_of(b.name); });
         return v;
@@ -101,6 +102,10 @@ bool build_step_runs(const char *name, const Decisions &d) {
         return truthy(d, "pots") || truthy(d, "bushes") || truthy(d, "digs") || truthy(d, "rocks");
     if (n == "chest_looks.write_models" || n == "chest_looks.sweep") return truthy(d, "chest-looks");
     if (n == "fast_egg.apply") return truthy(d, "fast-egg");
+    if (n == "dungeon_gen._fix_room") {  // (dungeon_gen.write_all: las_headless room_plan, a room shuffle seed)
+        const char *s = yyjson_get_str(yyjson_obj_get(d.raw("settings"), "dungeon-room-shuffle"));
+        return s && strcmp(s, "off");
+    }
     if (n == "environments.apply") return truthy(d, "randomize-environments");
     return true;
 }

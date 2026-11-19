@@ -32,10 +32,11 @@ extern "C" bool rando_build_seed(const char *json, size_t len, RandoGameRead rea
     if (!json || !len) return false;
     rando::Decisions d;
     if (!d.load(std::string(json, len))) { fprintf(stderr, "[rando] build: the seed's decisions don't read\n"); return false; }
-    // dungeon room shuffle builds new rooms and texture banks: not in the native build yet (docs/randomizer.md, stage 4)
+    // a dungeon room shuffle seed from before its plan was recorded (seed.json "decisions" "room-plan"): its rooms
+    // can't be rebuilt - its files come from its folder, as before
     const char *rooms = yyjson_get_str(yyjson_obj_get(d.raw("settings"), "dungeon-room-shuffle"));
-    if (rooms && strcmp(rooms, "off")) {
-        fprintf(stderr, "[rando] build: dungeon room shuffle - the seed's files come from its folder\n");
+    if (rooms && strcmp(rooms, "off") && !d.raw("room-plan")) {
+        fprintf(stderr, "[rando] build: dungeon room shuffle without a recorded plan - the seed's files come from its folder\n");
         return false;
     }
     rando::SeedBuild b(

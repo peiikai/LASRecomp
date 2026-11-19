@@ -110,9 +110,12 @@ static int repack(const std::string &kind, const std::string &out) {
 }
 
 static bool slurp(const std::string &path, std::string &out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-    out.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    FILE *f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    out.clear();
+    char buf[1 << 16];
+    for (size_t n; (n = fread(buf, 1, sizeof buf, f)) > 0;) out.append(buf, n);
+    fclose(f);
     return true;
 }
 

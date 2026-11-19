@@ -472,6 +472,7 @@ def main():
             raise RuntimeError('no dungeon room layout for this seed')
         room_plan = (layouts, jumps)
         room_attempt = attempt
+        record.ROOM_PLAN = room_plan  # (the seed's decisions: the build makes the rooms from it)
         if os.environ.get('LARECOMP_PLAN_ONLY'):  # (test: layouts + room logic only; =<names>: print those conditions)
             for k in os.environ['LARECOMP_PLAN_ONLY'].split(','):
                 if k in logic_defs:
