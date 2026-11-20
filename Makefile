@@ -311,6 +311,8 @@ $(GAMELIB): $(GEN_OBJ) | $(EXE)
 	mv -f $@.tmp $@
 	echo $(GAMELIB_FULL_ID) > $@.id
 
+$(B)/rt/achievements.o: runtime/achievement_rules.inc
+
 $(B)/rt/ui/%.o: runtime/ui/%.mm $(RT_HDRS)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) $(UIFLAGS) -c $< -o $@
