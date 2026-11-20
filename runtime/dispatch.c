@@ -116,7 +116,7 @@ void dispatch_init(void) {  // (after gamelib_load)
     const GameLibTables *g = gamelib_tables();
     uint64_t nm = *g->main_count, ns = *g->sdk_count;
 #ifdef LARECOMP_DYN_BASE
-    // The library lists the game's own addresses (gen.py --dyn-base): moved to where the window is (rt.h).
+    // The library lists the game's own addresses (the generator's --dyn-base): moved to where the window is (rt.h).
     static uint64_t *moved[2];
     const uint64_t *src[2] = {g->main_addrs, g->sdk_addrs}, cnt[2] = {nm, ns};
     for (int t = 0; t < 2; t++) {

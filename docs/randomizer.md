@@ -106,7 +106,7 @@ and the code patches, and `runtime/services/fs.c` builds the seed's game files f
   reads them (a recipe is kept; one bank is cached), not at load.
 - Textures (`textures.cpp`: chest looks' recoloured chests, the title logo): colour conversion, blur, paste and
   bilinear resize in `fmt/texture.cpp`, compressed with rgbcx (`third_party/rgbcx`, MIT).
-- Code patches: `tools/gen.py` compiles every variant of every patched instruction into the game code
+- Code patches: the generator (`runtime/gen/`) compiles every variant of every patched instruction into the game code
   (`tools/rando/patch_variants.json`); the seed's `.pchtxt` picks the variant (`rando_word`).
 - State that belongs to a seed resets on an in-place switch through `RT_ON_RESET` (`runtime/hle.h`).
 

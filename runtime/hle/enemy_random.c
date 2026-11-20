@@ -441,7 +441,7 @@ void enemy_random_filter(const char *host, uint64_t off, uint8_t *dst, uint64_t 
 }
 
 
-// Every spawn of a listed actor (tools/patches.py BOSS_SPAWN_SITE, the actor factory; its spawn info: key +0, type
+// Every spawn of a listed actor (runtime/gen/patches.cpp BOSS_SPAWN_SITE, the actor factory; its spawn info: key +0, type
 // +8, the record's eight parameters +0x10, as in the room file). The game keeps loaded room files: a level entered
 // again, an overworld area streamed back in or a single enemy made again (they come back after a while) make actors
 // from the record it already has. So each actor made again gets a new pick of its own (roll_one: its room's

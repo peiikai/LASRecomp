@@ -8,7 +8,7 @@
 // the delegate at +0x10). The class's own slot +0x38 (main+0x10cce80) checks *its* delegate (+0x18) with `cbz`
 // before using it, so a missing delegate means "nothing to do". With the game's threads in the port's order the
 // tick can dispatch +0x28 on an object whose delegate is still NULL, and the dereference crashed (signal 11, always
-// at main+0x10cce50+0x8, always the same object). tools/patches.py calls this from both forwarders so they read a
+// at main+0x10cce50+0x8, always the same object). runtime/gen/patches.cpp calls this from both forwarders so they read a
 // missing delegate the same way +0x38 does.
 //
 // The hang that followed (issue #19, thread dump): skipping isn't always "nothing to do". The object is a frame job J
@@ -26,7 +26,7 @@
 // wakes the main thread, unlocks X) and only then calls J's finish (slot +0x38, main+0x10ccfa0 -> slot +0x00: base
 // vtable, delegate cleared). On the Switch that is a few instructions; a host thread preempted between the two lets
 // the main thread wake, end its frame and kick off the next one, and the late finish then wipes the new J (count 1:
-// only W's reference left). So the kick-off (tools/patches.py FRAME_JOB_KICKOFF_SITES) now waits for the last run's
+// only W's reference left). So the kick-off (runtime/gen/patches.cpp FRAME_JOB_KICKOFF_SITES) now waits for the last run's
 // finish - done set and J still live means it is due - before it rebuilds J, the order the game relies on.
 // LARECOMP_DEBUG_FRAMEJOB_LATE_FINISH=<ms> delays every frame job's finish to force that race;
 // LARECOMP_FRAMEJOB_NO_WAIT=1 turns the wait off (to see the hang come back).

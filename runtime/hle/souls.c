@@ -5,7 +5,7 @@
 //   mini <type> <flag> <name>                     a mini-boss kind (every encounter of it)
 //   room <level> <soul flag> <defeat flag> <cells>  a room whose shutters stay open without its enemy
 //   door <key> <c,r> <N|S|W|E> <flag>             one of that room's shutters (the last room line's)
-// The actor factory asks rt_actor_create_fn for a type's create function (tools/patches.py BOSS_SPAWN_SITE); for a
+// The actor factory asks rt_actor_create_fn for a type's create function (runtime/gen/patches.cpp BOSS_SPAWN_SITE); for a
 // held-back boss / mini-boss / reward we hand back none - the factory's own path for a type without a class. Rooms
 // create their actors as they stream in, so a soul found inside the dungeon counts once the room is loaded again.
 //

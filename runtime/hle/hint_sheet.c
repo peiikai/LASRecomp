@@ -5,7 +5,7 @@
 // the game's message box names where the player's next progression item lies.
 //
 // The use is caught like the Escape Bottle's, in the game's "may Link use this item now?" predicate for the slot
-// (tools/patches.py BOTTLE1_USE_SITE: only while Link is free to act), and never swings or catches anything.
+// (runtime/gen/patches.cpp BOTTLE1_USE_SITE: only while Link is free to act), and never swings or catches anything.
 // The hints: rando/<seed>/hints.tsv lists the seed's progression steps in hint order (S <Common.bfevfl entry>
 // <location> <item> <copy n> <Seashells / Golden Leaves it needs>) and the closing entry (D <entry>). The first step not yet collected is shown: a step is
 // collected once its check's event flag is set (rando/<seed>/tracker.tsv), or once the save shows the item owned (at

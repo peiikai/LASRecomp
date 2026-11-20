@@ -7,7 +7,7 @@
 //
 // Why the third bottle: it is a real inventory item, so it gets an item-page slot, X / Y assignment and the game's own
 // "may Link use an item now?" rules for free: the use is caught in the game's predicate for that slot
-// (tools/patches.py BOTTLE3_USE_SITE), which only runs while Link is free to act - no cutscene, dialog, menu, level
+// (runtime/gen/patches.cpp BOTTLE3_USE_SITE), which only runs while Link is free to act - no cutscene, dialog, menu, level
 // or room transition. A bottle that never swings never catches anything, so it stays empty. Not usable in boss arenas
 // (rect per arena below: the fight would be left half done) or Dampe's chambers (chamber.c keeps run state): there it
 // does nothing (no swing either: a fairy caught in it would turn it into a fairy bottle).

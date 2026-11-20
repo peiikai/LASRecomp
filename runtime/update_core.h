@@ -394,9 +394,34 @@ static inline int upd_boot(const UpdPaths &p, const std::string &this_version) {
     upd_remove_tree(p.work());
     return UPD_BOOT_NOTHING;
 }
-// The new version reached the start screen: the old files go.
+// What older versions shipped that no version has now. An update replaces the files the new version has and keeps every
+// other one, so these stayed behind: lasgen/, the Python game code generator (with Python and Unicorn), until the
+// generator moved into the app (runtime/gen/). Only the helper's own parts go; its folder too once nothing else is left
+// in it, so files of the player's own there stay. Known by its _internal/ (PyInstaller's layout), so a folder of the
+// player's own named lasgen is left alone.
+static const struct { const char *dir, *mark; const char *parts[4]; } UPD_RETIRED[] = {
+    {"lasgen", "_internal", {"_internal", "lasgen", "lasgen.exe", NULL}},
+};
+static inline bool upd_rmdir(const std::string &d) {  // (an empty folder only)
+#ifdef _WIN32
+    return RemoveDirectoryA(d.c_str()) != 0;
+#else
+    return rmdir(d.c_str()) == 0;
+#endif
+}
+static inline void upd_remove_retired(const UpdPaths &p) {
+    for (const auto &r : UPD_RETIRED) {
+        std::string dir = upd_join(p.app, r.dir);
+        if (!upd_exists(upd_join(dir, r.mark))) continue;
+        for (const char *const *part = r.parts; *part; part++) upd_remove_tree(upd_join(dir, *part));
+        upd_rmdir(dir);  // (fails, and keeps it, when something else is in it)
+    }
+}
+
+// The new version reached the start screen: the old files go, and what older versions left that no version has now.
 static inline void upd_commit(const UpdPaths &p) {
     UpdJournal j;
     if (upd_read_journal(p, &j) && j.state != "started") return;
     upd_remove_tree(p.work());
+    upd_remove_retired(p);
 }

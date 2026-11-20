@@ -4,7 +4,7 @@
 // vfunc +0x100) hands a callback to the room's AreaEventBox, Link inside the box fires it, the actor's next state
 // requests the HinoxStart event (BGM, camera, shutters) and that event's end moves it into its fight state. The Field
 // has no zones or boxes, so here the runtime moves it into the fight state itself (no start event: no boss music or
-// shutter steps) once Link comes near. Actors are seen through a per-frame type check (tools/patches.py
+// shutter steps) once Link comes near. Actors are seen through a per-frame type check (runtime/gen/patches.cpp
 // MB_SEEN_SITE) and picked out by class vtable.
 #include "../game_addresses.h"
 #include <math.h>
@@ -362,7 +362,7 @@ static void miniboss_marker_set(void) {
     fl[g_marker >> 3] |= (uint8_t)(1 << (g_marker & 7));
 }
 
-// Gohma on the Field (tools/patches.py GOHMA_*): its moves head for Link (angle units: 2^31 = pi, 0 = +z) - or, with
+// Gohma on the Field (runtime/gen/patches.cpp GOHMA_*): its moves head for Link (angle units: 2^31 = pi, 0 = +z) - or, with
 // a wall that way, the nearest open direction - and have no track end. Its arena's walls are the track ends; here the
 // screen's walls (rando/<seed>/roam.tsv, tools/rando/roam.py) end a move the way its own timer does (gohma_walls).
 // g_link: Link's spot (miniboss_tick).
@@ -506,7 +506,7 @@ static bool is_copy(uint64_t o, const Kind *k) {  // (a copy keeps the level nam
     return !k->own || strncmp((const char *)(uintptr_t)(o + 0x18), k->own, strlen(k->own));
 }
 
-// Blaino's knock-out (tools/patches.py CRASHOUT_SITE): a copy's Link just falls back down - no fade, no restart warp
+// Blaino's knock-out (runtime/gen/patches.cpp CRASHOUT_SITE): a copy's Link just falls back down - no fade, no restart warp
 // (its start only exists in his ring): on the Field, and in dungeons, caves and houses unless the original Blaino (in
 // his own ring: Turtle Rock 03H) is about. (The countdown's own reference to the puncher, +0xc8, is already cleared
 // here.) Copies are never placed in a room with a mini-boss of its own (enemies.py ARENA_TYPES).
@@ -530,7 +530,7 @@ int rt_crashout_skip(uint64_t o) {
 // PopStart) and marks it at +0x1703 (requested) / +0x1704 (running); once +0x1704 is cleared again (the event's end)
 // he pops up. An event stops Link and takes the camera, so in seeds the request itself is skipped - on the Field (a
 // mini-boss) and in dungeons, caves and houses (a plain enemy: enemies.yml, Include mini-bosses), everywhere but his
-// own Dampe's chamber levels (Panel*) - (tools/patches.py SHADOW_LINK_APPEAR_SITE): the marks are set as it would, his
+// own Dampe's chamber levels (Panel*) - (runtime/gen/patches.cpp SHADOW_LINK_APPEAR_SITE): the marks are set as it would, his
 // Sign glow plays here (his tailor at [+0x16c0]+0x58, channel "Other", as his own code plays its effects) and, after
 // the event's own timing, +0x1704 is cleared - he pops up with Link still in control and the camera on Link.
 #define MAX_SL 32  // (several on a screen with frequency All)

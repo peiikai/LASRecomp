@@ -620,7 +620,7 @@ static void strike_tick(Cpu *c) {
 }
 
 // ---- a blizzard's gusts pushing Link (for a randomizer option to come: off by default - the Cosmetics tab's weather is
-// looks only). tools/patches.py WIND_PUSH_SITE: in his move, the frame's displacement summed, before the collision
+// looks only). runtime/gen/patches.cpp WIND_PUSH_SITE: in his move, the frame's displacement summed, before the collision
 // move - a share of the wind's velocity added there (walls and ledges stop it like his walking; the stick works
 // against it). Only on the overworld in states 0/1/2/10/26 (link_free), not in a pit's pull or a knockback; weaker
 // on slow ground (tall grass, shallow water) so a headwind never walks him backwards there

@@ -36,8 +36,10 @@ function(las_id out len)
 endfunction()
 file(GLOB PATCH_TABLES RELATIVE ${R} ${R}/runtime/game_addresses/patches_v*.h)
 list(SORT PATCH_TABLES)
-las_id(GAMELIB_ID 16 tools/game_addresses.py runtime/game_addresses/versions.h ${PATCH_TABLES} tools/gen.py tools/lifter.py
-       tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/chunk_bounds.py tools/simd_c.py tools/rando/patch_variants.json
+# (the generator's sources in the Makefile's order: GAMELIB_SRCS)
+file(GLOB GEN_FILES RELATIVE ${R} ${R}/runtime/gen/*.cpp ${R}/runtime/gen/*.hpp ${R}/runtime/gen/*.h ${R}/runtime/gen/*.inc)
+list(SORT GEN_FILES)
+las_id(GAMELIB_ID 16 runtime/game_addresses/versions.h ${PATCH_TABLES} ${GEN_FILES} tools/rando/patch_variants.json
        tools/gamelib_entry.c runtime/hle/hle_symbols.txt runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
        "${GAMELIB_CFLAGS}\n")
 las_id(GAMELIB_BASE_ID 16 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/fetch_zig.sh
@@ -57,8 +59,11 @@ endfunction()
 set(INC ${CMAKE_BINARY_DIR}/inc)
 las_c_string(${R}/third_party/smaa/SMAA.hlsl ${INC}/smaa_hlsl.inc)
 las_c_string(${R}/runtime/nvn/shader_variants.txt ${INC}/shader_variants.inc "\"\"\n")
+# the game code generator's data (runtime/gamebuild.c)
+las_c_string(${R}/runtime/hle/hle_symbols.txt ${INC}/hle_symbols.inc "\"\"\n")
+las_c_string(${R}/tools/rando/patch_variants.json ${INC}/patch_variants.inc "\"\"\n")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${R}/third_party/smaa/SMAA.hlsl
-             ${R}/runtime/nvn/shader_variants.txt)
+             ${R}/runtime/nvn/shader_variants.txt ${R}/runtime/hle/hle_symbols.txt ${R}/tools/rando/patch_variants.json)
 
 add_library(SDL3 SHARED IMPORTED)
 set_target_properties(SDL3 PROPERTIES IMPORTED_LOCATION ${DEPS}/lib/libSDL3.so)
@@ -70,7 +75,8 @@ foreach(lib avcodec avformat avutil swscale)  # (FFmpeg, LGPL: the movies and th
 endforeach()
 
 file(GLOB RT_SRC ${R}/runtime/*.c ${R}/runtime/*.cpp ${R}/runtime/hle/*.c ${R}/runtime/services/*.c ${R}/runtime/rando/*.c ${R}/runtime/rando/fmt/*.cpp ${R}/runtime/rando/apply/*.cpp ${R}/runtime/rando/solve/*.cpp ${R}/runtime/nvn/*.c
-     ${R}/runtime/nvn/maxwell/*.c)
+     ${R}/runtime/nvn/maxwell/*.c ${R}/runtime/gen/*.cpp)
+list(REMOVE_ITEM RT_SRC ${R}/runtime/gen/cli.cpp)  # (the generator in the app; cli.cpp is the desktop's lasgen tool)
 file(GLOB VK_SRC ${R}/runtime/nvn/vulkan/*.c ${R}/runtime/nvn/vulkan/*.cpp)
 # libadrenotools (BSD-2; android/deps/build_deps.sh unpacks it): a custom Vulkan driver (Turnip) in a linker namespace of
 # its own. Its hook libraries (hook_impl, main_hook, ...) are shared libraries of this build: they ship in the APK.

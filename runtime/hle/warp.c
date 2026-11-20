@@ -6,7 +6,7 @@
 // performs the transition when it sees the pending request.
 //
 // R registers itself with its parent while a level loads (`str xR, [x8, #0x1c0]` at main+0x80c464 /
-// main+0x80d718); tools/patches.py hooks those stores to tell us where R is. A warp then writes the same
+// main+0x80d718); runtime/gen/patches.cpp hooks those stores to tell us where R is. A warp then writes the same
 // fields main+0x81b950 writes, from the presenter's per-frame callback.
 #include "../game_addresses.h"
 #include <math.h>

@@ -77,10 +77,13 @@ GENFLAGS := $(GENFLAGS_BASE)
 # (strip: with no generated code the space between the two would be all that's left, and $(if) takes a lone space as
 # true. No comment after the value: make keeps the spaces before it)
 GEN_SRC  := $(strip $(wildcard $(GEN)/main/*.c) $(wildcard $(GEN)/sdk/*.c))
+# The game code generator (runtime/gen/): in the app (the start screen's setup runs it) and the lasgen tool (cli.cpp)
+LASGEN_SRC := $(filter-out runtime/gen/cli.cpp,$(wildcard runtime/gen/*.cpp))
 GEN_OBJ  := $(patsubst %.c,$(B)/obj/%.o,$(patsubst $(GEN)/%,%,$(GEN_SRC))) $(B)/obj/tools/gamelib_entry.o
 RT_SRC   := $(wildcard runtime/*.c runtime/*.cpp) $(wildcard runtime/hle/*.c) $(wildcard runtime/services/*.c) \
-            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp runtime/rando/apply/*.cpp runtime/rando/solve/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c
-RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/rando/*.h runtime/rando/fmt/*.h runtime/rando/apply/*.h runtime/rando/solve/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
+            $(wildcard runtime/rando/*.c runtime/rando/fmt/*.cpp runtime/rando/apply/*.cpp runtime/rando/solve/*.cpp) $(wildcard runtime/nvn/*.c) $(wildcard runtime/nvn/maxwell/*.c) runtime/platform/$(PLATFORM).c \
+            $(LASGEN_SRC)
+RT_HDRS  := $(wildcard runtime/*.h runtime/game_addresses/*.h runtime/gen/*.h runtime/gen/*.hpp runtime/gen/*.inc runtime/rando/*.h runtime/rando/fmt/*.h runtime/rando/apply/*.h runtime/rando/solve/*.h) $(wildcard runtime/platform/*.h) $(wildcard runtime/nvn/*.h) \
             $(wildcard runtime/nvn/maxwell/*.h) $(wildcard runtime/nvn/vulkan/*.h) $(wildcard runtime/ui/*.h) $(wildcard runtime/ui/mobile/*.h) \
             $(wildcard runtime/ui/lang/*.inc)
 UI_SRC   := $(wildcard runtime/ui/*.mm) $(wildcard runtime/ui/mobile/*.mm)  # (mobile/: the touch layer, empty off PLAT_TOUCH)
@@ -191,7 +194,7 @@ GAMELIB_SHARED := -shared  # (+ the import library: runtime/gamebuild.c)
 endif
 
 # DYN_BASE=1: the guest window starts where the process has room instead of at 0x70_0000_0000 (runtime/rt.h), as on
-# Android; on the desktop it is for testing that path. The game code is generated with gen.py --dyn-base, and the
+# Android; on the desktop it is for testing that path. The game code is generated with --dyn-base, and the
 # define is part of GENFLAGS so such a library has its own id.
 ifneq ($(DYN_BASE),)
 GENSIMD  += --dyn-base
@@ -202,8 +205,9 @@ endif
 
 # GAMELIB_ID: what the game code library is built from (the generator, the headers it is compiled against, the
 # flags). A library with another id is rebuilt by the start screen, never loaded.
-GAMELIB_SRCS := tools/game_addresses.py runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) tools/gen.py tools/lifter.py tools/analyze.py tools/nso.py tools/passes.py tools/patches.py tools/chunk_bounds.py \
-                tools/simd_c.py tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
+GAMELIB_SRCS := runtime/game_addresses/versions.h $(wildcard runtime/game_addresses/patches_v*.h) \
+                $(sort $(wildcard runtime/gen/*.cpp runtime/gen/*.hpp runtime/gen/*.h runtime/gen/*.inc)) \
+                tools/rando/patch_variants.json tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
                 runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h
 GAMELIB_ID := $(shell (cat $(GAMELIB_SRCS); echo '$(GENFLAGS)') | (shasum -a 256 2>/dev/null || sha256sum) | cut -c1-16)
 # The library's own id adds the game's main build ID (what `make gen` generated from: $(GEN)/main/main_build_id.txt),
@@ -260,6 +264,17 @@ $(B)/inc/smaa_hlsl.inc: third_party/smaa/SMAA.hlsl
 	LC_ALL=C tr -d '\r' < $< | LC_ALL=C tr '\200-\377' '?' | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/' > $@
 $(B)/rt/nvn/smaa_data.o: $(B)/inc/smaa_hlsl.inc
 $(B)/rt/nvn/smaa_data.o: RTFLAGS += -I$(B)/inc -Ithird_party/smaa/Textures
+
+# The generator's data (runtime/gamebuild.c): the functions the sdk module's HLE replaces, the randomizer's code
+# variants, as C strings
+$(B)/inc/hle_symbols.inc: runtime/hle/hle_symbols.txt
+	@mkdir -p $(dir $@)
+	(LC_ALL=C tr -d '\r' < $< | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'; echo '""') > $@
+$(B)/inc/patch_variants.inc: tools/rando/patch_variants.json
+	@mkdir -p $(dir $@)
+	(LC_ALL=C tr -d '\r' < $< | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/^/"/' -e 's/$$/\\n"/'; echo '""') > $@
+$(B)/rt/gamebuild.o: $(B)/inc/hle_symbols.inc $(B)/inc/patch_variants.inc
+$(B)/rt/gamebuild.o: RTFLAGS += -I$(B)/inc
 
 # The shader preparation's variant list (runtime/nvn/shader_prep.h: no shader code, hashes and pipeline state only)
 # as a C string for runtime/nvn/shader_prep.c
@@ -322,12 +337,9 @@ $(B)/third_party/miniz.o: $(MINIZ)/.fetched
 $(B)/rt/zipfile.o: $(MINIZ)/.fetched
 $(B)/rt/zipfile.o: RTFLAGS += -I$(MINIZ)
 
-# Python: tools/venv (macOS, Linux: bin/python, Windows: Scripts/python.exe)
-PY := $(firstword $(wildcard tools/venv/bin/python) $(wildcard tools/venv/Scripts/python.exe))
-
-gen:
-	cd tools && ../$(PY) gen.py sdk ../extracted/exefs/sdk 0x7004000000 ../$(GEN)/sdk --hle ../runtime/hle/hle_symbols.txt $(GENSIMD)
-	cd tools && ../$(PY) gen.py main ../extracted/exefs/main 0x7000000000 ../$(GEN)/main $(GENSIMD)
+gen: $(LASGEN)
+	$(LASGEN) sdk extracted/exefs/sdk 0x7004000000 $(GEN)/sdk --hle runtime/hle/hle_symbols.txt $(GENSIMD)
+	$(LASGEN) main extracted/exefs/main 0x7000000000 $(GEN)/main $(GENSIMD)
 
 gen-objs: $(GEN_OBJ)
 
@@ -341,8 +353,7 @@ $(B)/rt/platform/windows_rc.o: runtime/platform/windows.rc docs/icon/icon.ico ru
 VERSION  := $(shell sed -n 's/^\#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
 
 # macOS: build/LAS Recomp.app, runs on macOS $(APP_MIN)+: the game rebuilt for that in build/mac15 against build/deps
-# (`make deps`: SDL3, LGPL FFmpeg, Python, from pinned sources), the game code generator helper when built
-# (`make gen-helper` after `make deps`), packaged by tools/bundle_macos.sh. No game files or fonts.
+# (`make deps`: SDL3 and LGPL FFmpeg from pinned sources), packaged by tools/bundle_macos.sh. No game files or fonts.
 APP_MIN  := 15.0
 APP_B    := build/mac15
 deps:
@@ -381,8 +392,8 @@ dmg: app
 
 # Windows: build/dist/LAS Recomp-<version>-windows-x64.zip (before 2026-11: -windows.zip; the update manifest is still
 # update-windows.txt), top folder "LAS Recomp/": the exe, what the start screen builds the game code with on the
-# player's machine (make gen-helper,
-# tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the exe's import library)
+# player's machine (tools/fetch_zig.sh slimmed by tools/zig_slim.sh: its runtime built ahead of time, gamelib-src/, the
+# exe's import library)
 # and the DLLs they load (runs without MSYS2). No game code. The exe is a release build in $(WIN_B):
 # linked against the LGPL FFmpeg from `make deps-windows` (MSYS2's is a GPLv3 build) and without a console window
 # (RELEASE=1: the log goes next to the exe - lasrecomp.log is the latest run, plus up to five recent
@@ -390,9 +401,7 @@ dmg: app
 # with build/deps-win/bin first (the FFmpeg DLL names are the same as MSYS2's GPL ones). vulkan-1.dll is left
 # out: every Vulkan driver installs the loader in System32. Saves, seeds and game files go next to the exe at run time.
 # Needs: Windows 10+ x64, a Vulkan 1.3 driver, an AVX2 CPU (GENARCH x86-64-v3; checked at startup).
-# ARM64 (experimental, from an MSYS2 CLANGARM64 shell): the same steps give LAS Recomp-<version>-windows-arm64.zip; its
-# helper is built with an x64 Python 3.12 (GEN_PY=...: capstone / unicorn have no ARM64 Windows wheels) and runs
-# under emulation, everything else is ARM64.
+# ARM64 (experimental, from an MSYS2 CLANGARM64 shell): the same steps give LAS Recomp-<version>-windows-arm64.zip.
 DIST     := build/dist/LAS Recomp
 WIN_B    := build/win-release
 # the zip's platform name, as the update check names it (runtime/ui/launcher.mm LARECOMP_PLATFORM)
@@ -401,17 +410,14 @@ deps-windows:
 	tools/build_deps_windows.sh
 dist:
 	@[ -f build/deps-win/lib/libavcodec.dll.a ] || { echo "make deps-windows first (LGPL FFmpeg)"; exit 1; }
-	@[ -d build/helper/lasgen ] || { echo "make gen-helper first (the game code generator)"; exit 1; }
 	@[ -x build/zig/zig.exe ] || { echo "tools/fetch_zig.sh first (the compiler)"; exit 1; }
 	$(MAKE) B=$(WIN_B) DEPS=$(CURDIR)/build/deps-win RELEASE=1 $(WIN_B)/lasrecomp.exe
 	! nm $(WIN_B)/lasrecomp.exe | grep ' f_70' >/dev/null  # (no game code inside)
 	rm -rf build/dist && mkdir -p "$(DIST)/gamelib-src"
 	cp $(WIN_B)/lasrecomp.exe $(WIN_B)/lasrecomp.dll.a "$(DIST)/"
 	tools/zig_slim.sh $(strip $(filter-out -Iruntime,$(GENFLAGS)))  # (zig with its runtime built ahead of time)
-	cp -R build/helper/lasgen "$(DIST)/"
 	cp -R build/zig-slim "$(DIST)/zig"
-	cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
-	    "$(DIST)/gamelib-src/"
+	cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c "$(DIST)/gamelib-src/"
 	cp docs/icon/icon_1024.png "$(DIST)/icon.png"
 	cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$(DIST)/"  # (start screen font, OFL)
 	cp third_party/fonts/Baloo2/OFL.txt "$(DIST)/Baloo2-OFL.txt"
@@ -431,19 +437,6 @@ dist:
 	    else /c/Windows/System32/tar.exe -a -cf "LAS Recomp-$(VERSION)-$(WINZIP).zip" "LAS Recomp"; fi
 	@echo "build/dist/LAS Recomp-$(VERSION)-$(WINZIP).zip"
 
-# The Python the game code generator helper is frozen with (gen-helper, below), in its own venv (build/gen-venv).
-# macOS arm64: the relocatable Python 3.12 from `make deps` (macOS 11+: the helper runs where the app does); without it
-#   Homebrew's python@3.12 (then only on the macOS it was built for).
-# Windows: a python.org CPython 3.12 from the MSYS2 shell, e.g.
-#   make gen-helper GEN_PY="/c/Users/<you>/AppData/Local/Programs/Python/Python312/python.exe"
-ifeq ($(PLATFORM),macos)
-GEN_PY  ?= $(firstword $(wildcard build/deps/python/bin/python3.12) python3.12)
-GEN_VPY := build/gen-venv/bin/python
-else
-GEN_PY  ?= py -3.12
-GEN_VPY := build/gen-venv/Scripts/python.exe
-endif
-
 # The randomizer's command-line tool (tools/lasrando.c): the game's own seed code (runtime/rando/) on the command line,
 # for converting older seed folders to seed.json, checks and tests. Plain C, no game files.
 LASRANDO_C   := runtime/rando/seed.c runtime/rando/json.c runtime/rando/sha512.c
@@ -458,22 +451,19 @@ $(LASRANDO): $(LASRANDO_C) $(LASRANDO_CXX) $(wildcard runtime/rando/*.h runtime/
 	$(CC) -std=gnu11 -O2 -c runtime/nvn/tegra.c -o build/lasrando.o/tegra.o
 	$(CXX) -std=c++17 -O2 -pthread $(LASRANDO_CXX) build/lasrando.o/seed.o build/lasrando.o/json.o build/lasrando.o/sha512.o build/lasrando.o/tegra.o -o $@
 
-# The game code generator, the same way (tools/lasgen.spec): build/helper/lasgen/, shipped as lasgen/ next to the exe or
-# in Contents/Resources. The start screen's setup runs it on the player's own game files (runtime/gamebuild.c).
-gen-helper: build/gen-venv/.ok
-	$(if $(filter windows,$(PLATFORM)),USERPROFILE="$$(cygpath -w ~ 2>/dev/null || echo $$HOME)") \
-	$(GEN_VPY) -m PyInstaller --noconfirm --clean --log-level WARN --distpath build/helper --workpath build/pyinstaller \
-	    tools/lasgen.spec
-	$(if $(filter windows,$(PLATFORM)),$(GEN_VPY) tools/pe_no_cfg.py build/helper/lasgen/lasgen.exe)
-	@du -sh build/helper/lasgen
-
-build/gen-venv/.ok:
-	$(GEN_PY) -m venv build/gen-venv
-	$(GEN_VPY) -m pip install -q pyinstaller==6.22.3 capstone==5.0.9 unicorn==2.1.4 lz4==4.4.5
-	touch $@
+# The game code generator on the command line (runtime/gen/cli.cpp; the app runs the same code in-process): `make gen`,
+# tools/test_gen_cpp.py
+# Built for the machine it runs on, with the plain compiler: an iOS or cross (ARCH=) build's CXX targets the device.
+HOSTCXX ?= clang++
+LASGEN := build/lasgen$(if $(filter windows,$(PLATFORM)),.exe)
+lasgen: $(LASGEN)
+$(LASGEN): $(wildcard runtime/gen/*.cpp runtime/gen/*.hpp runtime/gen/*.h runtime/gen/*.inc) runtime/game_addresses/versions.h \
+           $(wildcard runtime/game_addresses/patches_v*.h)
+	@mkdir -p $(dir $@)
+	$(HOSTCXX) -std=c++17 -O2 $(filter %.cpp,$^) -o $@
 
 # Linux: build/dist/LAS Recomp-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04 containers (podman) with SDL3, LGPL
-# FFmpeg, shaderc and the seed generator helper inside; the Vulkan loader and GPU drivers are the system's.
+# FFmpeg and shaderc inside; the Vulkan loader and GPU drivers are the system's.
 # `make appimage` (ARCH: this machine's, or aarch64 cross-compiled), `make appimages` both. See docs/linux.md.
 appimage:
 	tools/linux/appimage.sh $(ARCH)
@@ -487,7 +477,7 @@ tarball:
 smoketest:
 	tools/linux/smoketest.sh
 
-.PHONY: dmg all gen gen-helper lasrando gen-objs runtime-objs deps deps-windows app dist appimage appimages tarball smoketest
+.PHONY: dmg all gen lasrando lasgen gen-objs runtime-objs deps deps-windows app dist appimage appimages tarball smoketest
 
 build/test_shaders: tools/test_shaders.m runtime/nvn/maxwell/translate.c runtime/nvn/maxwell/shader.h
 	clang -O1 -fobjc-arc -framework Metal -framework Foundation -o $@ tools/test_shaders.m runtime/nvn/maxwell/translate.c
