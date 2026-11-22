@@ -1,0 +1,8 @@
+Microsoft Visual C++ runtime
+  Version:  as shipped with the python.org CPython and the PyPI wheels
+  License:  Microsoft Visual C++ Redistributable license terms
+  Source:   -
+  Packages: Windows
+  Notes:    VCRUNTIME140.dll, VCRUNTIME140_1.dll, MSVCP140.dll, VCOMP140.DLL inside rando-gen/_internal and lasgen/_internal, redistributed as the Visual C++ Redistributable allows.
+
+(No license text to include: see the notes above.)

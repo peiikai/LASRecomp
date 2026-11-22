@@ -46,7 +46,8 @@ cp third_party/fonts/BIZUDPGothic/BIZUDPGothic-Regular.ttf "$APPDIR/usr/bin/"  #
 cp third_party/fonts/BIZUDPGothic/OFL.txt "$APPDIR/usr/bin/BIZUDPGothic-OFL.txt"
 cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$APPDIR/usr/bin/"  # (last-resort fonts, free license)
 cp third_party/fonts/DejaVu/LICENSE "$APPDIR/usr/bin/DejaVu-LICENSE.txt"
-cp README.md LICENSE "$APPDIR/usr/bin/"  # (licenses and source links of the bundled components: README "License")
+cp README.md LICENSE THIRD-PARTY-NOTICES.txt "$APPDIR/usr/bin/"  # (the bundled components' licence texts: tools/notices.py)
+cp THIRD-PARTY-NOTICES.txt "$APPDIR/"  # (and at the AppImage's root, as in every release package)
 [ -d "$L/helper/rando-gen" ] || { echo "no seed generator helper: tools/linux/rando_helper.sh $ARCH first"; exit 1; }
 cp -R "$L/helper/rando-gen" "$APPDIR/usr/bin/"
 [ -d "$L/helper/lasgen" ] || { echo "no game code generator helper: tools/linux/rando_helper.sh $ARCH first"; exit 1; }

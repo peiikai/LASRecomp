@@ -56,6 +56,7 @@ android {
             jniLibs.srcDirs(gen.get().asFile.resolve("jniLibs"))
             assets.srcDirs(gen.get().asFile.resolve("assets"))
             res.srcDirs("src/main/res", gen.get().asFile.resolve("res"))
+            resources.srcDirs(gen.get().asFile.resolve("root"))  // (files at the .apk's root: THIRD-PARTY-NOTICES.txt)
         }
     }
 
@@ -99,10 +100,14 @@ val prepareLasRecomp by tasks.registering {
         // the generator's native libraries, zig - lib*.so, the only files Android runs from an app
         listOf("python/libpymain.so", "python/libpython3.14.so", "lib/libcapstone.so", "lib/libunicorn.so",
                "lib/liblz4.so", "zig/libzig.so").map { deps.resolve("gen/$it") }
-    inputs.files(res.values, libs)
+    // the licence texts of everything above and in gen.zip (tools/notices.py), at the root of the .apk as in every
+    // release package (#868)
+    val notices = repo.resolve("THIRD-PARTY-NOTICES.txt")
+    inputs.files(res.values, libs, notices)
     outputs.dir(gen)
     doLast {
         val out = gen.get().asFile
+        notices.copyTo(out.resolve("root/THIRD-PARTY-NOTICES.txt"), overwrite = true)
         for (lib in libs) lib.copyTo(out.resolve("jniLibs/arm64-v8a/${lib.name}"), overwrite = true)
         for ((name, f) in res) f.copyTo(out.resolve("assets/res/$name"), overwrite = true)
     }
