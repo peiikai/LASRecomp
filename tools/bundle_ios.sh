@@ -100,6 +100,7 @@ cp third_party/smaa/LICENSE.txt "$APP/LICENSES/SMAA-LICENSE.txt"
 cp third_party/LAS-Randomizer/LICENSE.txt "$APP/LICENSES/LAS-Randomizer-LICENSE.txt"
 [ -d "$DEPS/licenses" ] || { echo "no $DEPS/licenses (make deps-ios again: it collects the licence texts)"; exit 1; }
 cp "$DEPS"/licenses/* "$APP/LICENSES/"
+cp THIRD-PARTY-NOTICES.txt "$APP/"  # (the licence texts of everything bundled, as every release package has: tools/notices.py)
 
 # App icon: the asset catalog compiled from the 1024 png (Assets.car + CFBundleIcons); skipped without actool.
 if command -v xcrun >/dev/null && xcrun --find actool >/dev/null 2>&1; then

@@ -375,7 +375,9 @@ nothing for Nintendo's game, which you must supply yourself.
 
 ### Source code of bundled third-party components
 
-Release builds include these components; their source code for the exact versions shipped is available here.
+Release builds include these components; their source code for the exact versions shipped is available here. Each
+Windows, macOS, Linux, Android and iOS package carries their full license texts in `THIRD-PARTY-NOTICES.txt` at its
+root (made from [`licenses/`](licenses)):
 
 | Component | Version | License | Source |
 |---|---|---|---|
@@ -392,6 +394,11 @@ Release builds include these components; their source code for the exact version
 | BIZ UDPGothic font (Regular, Linux) | 1.05 (Google Fonts) | SIL OFL 1.1 | https://github.com/googlefonts/morisawa-biz-ud-gothic, https://github.com/google/fonts/tree/main/ofl/bizudpgothic |
 | DejaVu Sans font (Book, Bold) | 2.37 | Bitstream Vera license (DejaVu changes public domain) | https://github.com/dejavu-fonts/dejavu-fonts/releases/tag/version_2_37 |
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
+| Vulkan Memory Allocator (Windows, Linux, Android; built in) | 3.3.0 | MIT | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/releases/tag/v3.3.0 |
+| AMD FidelityFX Super Resolution 1 (Windows, Linux, Android; ported, built in) | 1.0.2 | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR/releases/tag/v1.0.2 |
+| volk, libadrenotools, liblinkernsbypass (Android) | vulkan-sdk-1.4.350.1, 8fae8ce, aa39758 | MIT, BSD 2-clause, BSD 2-clause | https://github.com/zeux/volk, https://github.com/bylaws/libadrenotools, https://github.com/bylaws/liblinkernsbypass |
+| Sparkle (macOS updater) | 2.10.1 | MIT | https://github.com/sparkle-project/Sparkle/releases/tag/2.10.1 |
+| AppImage type 2 runtime (Linux; with libfuse 3.15.0, squashfuse 0.5.2) | 20251108 | MIT; libfuse: LGPL 2.1 | https://github.com/AppImage/type2-runtime/releases/tag/20251108 |
 
 The exact build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_macos.sh`,
 `tools/build_deps_windows.sh`, `tools/linux/build_deps.sh` and `tools/build_deps_ios.sh`. The Windows build takes SDL 3, shaderc, libiconv and the
