@@ -11,6 +11,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/LAS Recomp.app"
 ln -s /Applications "$STAGE/Applications"
+cp THIRD-PARTY-NOTICES.txt "$STAGE/"  # (the licence texts of everything in the app, next to it: tools/notices.py)
 mkdir -p build/dist
 rm -f "$OUT"
 hdiutil create -volname "LAS Recomp $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 \

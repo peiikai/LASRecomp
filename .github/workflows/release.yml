@@ -154,6 +154,8 @@ jobs:
         run: tools/fetch_zig.sh
       - name: App and disk image
         run: make -j"$(sysctl -n hw.ncpu)" dmg
+      - name: Third-party notices in the disk image and the app (#868)
+        run: python3 tools/notices.py package build/dist/*.dmg
       # bundle_macos.sh checked the executable; here everything inside the app: no game code in any Mach-O, no
       # game files, no generated C (gamelib-src/: the headers and the entry stub it's compiled with; zig/lib: zig's own
       # runtime sources)
@@ -229,6 +231,10 @@ jobs:
       # (make dist: the exe holds no game code, no GPL codec libraries)
       - name: Release zip
         run: make -j"$(nproc)" dist
+      - name: Third-party notices in the zip (#868)
+        run: |
+          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
+          "$PY" tools/notices.py package build/dist/*.zip
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -297,6 +303,10 @@ jobs:
       # (make dist: the exe holds no game code, no GPL codec libraries)
       - name: Release zip
         run: make -j"$(nproc)" dist
+      - name: Third-party notices in the zip (#868)
+        run: |
+          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
+          "$PY" tools/notices.py package build/dist/*.zip
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -418,6 +428,8 @@ jobs:
           key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('third_party/LAS-Randomizer/requirements.txt', 'tools/linux/rando_helper.sh', 'tools/linux/Containerfile') }}
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
+      - name: Third-party notices in the AppImage (#868)
+        run: python3 tools/notices.py package build/dist/*.AppImage
       # saved once complete (shaderc: build_deps.sh's last part; .ok: the helpers' wheels all installed), even when a
       # later part of the build fails
       - uses: actions/cache/save@v4
@@ -549,6 +561,7 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify --print-certs "$APK"
           tools/check_apk.sh "$APK"
+          python3 tools/notices.py package "$APK"  # (third-party notices at its root, #868)
           mkdir -p build/dist && cp "$APK" "build/dist/LAS Recomp-$VERSION-android.apk" && ls -la build/dist
       - uses: actions/upload-artifact@v4
         with:

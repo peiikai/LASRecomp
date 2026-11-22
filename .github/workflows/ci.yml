@@ -151,6 +151,8 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Third-party notices match licenses/ (#868)
+        run: python3 tools/notices.py check
       - name: iOS extension frameworks layout
         run: python3 tools/test_ios_frameworks.py
       - name: Randomizer Field region table

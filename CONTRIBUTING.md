@@ -92,6 +92,10 @@ them, then `make -j10`. The randomizer needs its Python environment in
 - `tools/rando/` - randomizer tooling around LAS-Randomizer: the headless driver (`las_headless.py`), dungeon room
   shuffle (`dungeon_gen.py`, `room_logic.py`), entrances, pots / bushes / digs, shop, souls, pets.
 - `third_party/LAS-Randomizer` - the vendored randomizer (MIT, with local changes marked "LAS Recomp" in comments).
+- `licenses/` - the license text of each third-party component the release packages carry, made by
+  `tools/notices.py`, which also writes `THIRD-PARTY-NOTICES.txt` (shipped at the root of every package). When you add
+  a bundled library or change a pinned version, update its entry in `tools/notices.py`, then run
+  `python3 tools/notices.py fetch <id>` and `python3 tools/notices.py build`.
 
 ## Testing your change
 
@@ -122,6 +126,9 @@ The comparison checks every generated C file byte-for-byte.
 
 New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
 untranslated text shows in English.
+
+`python3 tools/notices.py check` checks that `licenses/` and `THIRD-PARTY-NOTICES.txt` match the component list;
+`python3 tools/notices.py package <file>` checks a built .zip, .dmg, .AppImage or .apk carries the notices.
 
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 
