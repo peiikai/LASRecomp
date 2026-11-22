@@ -1,3 +1,11 @@
+LLVM (in Zig: LLVM, Clang, LLD, compiler-rt, libunwind; LLD as rust-lld in the iOS kit; libc++ in the Android app and, with libunwind, the Windows ARM64 .zip)
+  Version:  22 (Zig 0.17.0); 21.1.2 (rust-lld from Rust 1.91.0, iOS kit lld/, LICENSE.TXT next to each); as built by the Android NDK and MSYS2 CLANGARM64
+  License:  Apache 2.0 with LLVM Exceptions
+  Source:   https://github.com/llvm/llvm-project, https://static.rust-lang.org/dist/rustc-1.91.0-src.tar.xz
+  Packages: Windows, macOS, Linux, Android, iOS
+
+----- LICENSE.TXT -----
+
 ==============================================================================
 The LLVM Project is under the Apache License v2.0 with LLVM Exceptions:
 ==============================================================================
@@ -276,4 +284,3 @@ CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
 SOFTWARE.
-

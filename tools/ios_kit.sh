@@ -56,7 +56,7 @@ APSL), libSystem.B.tbd (the link stub). LAS Recomp reads and writes the zip file
 miniz-LICENSE.txt). THIRD-PARTY-NOTICES.txt lists every third-party component with its version, source and licence.
 EOT
 cp build/miniz/LICENSE "$STAGE/miniz-LICENSE.txt"
-cp THIRD-PARTY-NOTICES.txt "$STAGE/"
+cp THIRD-PARTY-NOTICES.txt "$STAGE/"  # (tools/notices.py)
 echo "$VERSION" > "$STAGE/version.txt"
 mkdir -p build/dist
 OUT="build/dist/LAS Recomp-$VERSION-iOS.laskit"
@@ -65,5 +65,4 @@ rm -f "$OUT"
 [ -z "$(find "$STAGE/Payload" -type l)" ] || { echo "symlinks in the app: $(find "$STAGE/Payload" -type l)"; exit 1; }
 (cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt version.txt miniz-LICENSE.txt THIRD-PARTY-NOTICES.txt)
 rm -rf "$STAGE"
-tools/check_notices.sh "$OUT"
 echo "$OUT ($(du -h "$OUT" | cut -f1))"

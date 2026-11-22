@@ -98,10 +98,10 @@ with the app; no Python is needed for it.
 - `runtime/rando/` - the randomizer: seed generation (`solve/`), the game files a seed changes (`apply/`), the file
   formats (`fmt/`). See [docs/randomizer.md](docs/randomizer.md).
 - `third_party/LAS-Randomizer` - the licence of LAS-Randomizer (MIT), whose randomizer `runtime/rando/` is ported from.
-- `licenses/` - the licence text of every third-party component the packages bundle, and `components.txt`, the list
-  of them with versions and sources. `tools/third_party_notices.sh` makes `THIRD-PARTY-NOTICES.txt` from them, which
-  every package carries at its top (`tools/check_notices.sh` checks a package; CI checks the file is up to date).
-  Adding or updating a bundled library, font or ported code: update both, then run the script.
+- `licenses/` - the license text of each third-party component the release packages carry, made by
+  `tools/notices.py`, which also writes `THIRD-PARTY-NOTICES.txt` (shipped at the root of every package). When you add
+  a bundled library or change a pinned version, update its entry in `tools/notices.py`, then run
+  `python3 tools/notices.py fetch <id>` and `python3 tools/notices.py build`.
 
 ## Testing your change
 
@@ -133,6 +133,10 @@ The comparison checks every generated C file byte-for-byte.
 
 New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
 untranslated text shows in English.
+
+`python3 tools/notices.py check` checks that `licenses/` and `THIRD-PARTY-NOTICES.txt` match the component list;
+`python3 tools/notices.py package <file>` checks a built .zip, .tar.gz, .dmg, .AppImage, .apk or .laskit carries the
+notices.
 
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 

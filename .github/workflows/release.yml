@@ -146,6 +146,8 @@ jobs:
         run: tools/fetch_zig.sh
       - name: App and disk image
         run: make -j"$(sysctl -n hw.ncpu)" dmg
+      - name: Third-party notices in the disk image and the app (#868)
+        run: python3 tools/notices.py package build/dist/*.dmg
       # bundle_macos.sh checked the executable; here everything inside the app: no game code in any Mach-O, no
       # game files, no generated C (gamelib-src/: the headers and the entry stub it's compiled with; zig/lib: zig's own
       # runtime sources)
@@ -222,6 +224,10 @@ jobs:
       #  manifest, update-windows.txt, which keeps its name)
       - name: Release zip
         run: make -j"$(nproc)" dist
+      # (the runner's own Python: MSYS2 here has none)
+      - name: Third-party notices in the zip (#868)
+        shell: pwsh
+        run: python tools/notices.py package (Get-ChildItem build/dist/*.zip).FullName
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -286,6 +292,10 @@ jobs:
       # (make dist: the exe holds no game code, no GPL codec libraries)
       - name: Release zip
         run: make -j"$(nproc)" dist
+      # (the runner's own Python: MSYS2 here has none)
+      - name: Third-party notices in the zip (#868)
+        shell: pwsh
+        run: python tools/notices.py package (Get-ChildItem build/dist/*.zip).FullName
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -340,6 +350,8 @@ jobs:
           for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows aarch64-windows; do LLD_TARGET=$t tools/fetch_lld.sh; done
       - name: Kit
         run: make -j"$(sysctl -n hw.ncpu)" ios-kit
+      - name: Third-party notices in the kit and its app (#868)
+        run: python3 tools/notices.py package build/dist/*.laskit
       # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (f_70...: the game's own
       # addresses, under --dyn-base too), no game files; and the kit as the runtime reads it: the app under Payload/,
       # no symlink entries in it (an iOS install drops them; zipinfo's 'l'), every host's linker in it
@@ -395,6 +407,8 @@ jobs:
           key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
+      - name: Third-party notices in the AppImage (#868)
+        run: python3 tools/notices.py package build/dist/*.AppImage
       # saved once complete (shaderc: build_deps.sh's last part), even when a
       # later part of the build fails
       - uses: actions/cache/save@v4
@@ -409,6 +423,7 @@ jobs:
       - name: Tarball
         run: |
           make tarball ARCH=${{ matrix.arch }}
+          python3 tools/notices.py package build/dist/*.tar.gz  # (third-party notices, #868)
           ls -la build/dist
       - name: Data folder rules
         run: tools/linux/check_portable.sh ${{ matrix.arch }}
@@ -460,7 +475,7 @@ jobs:
           grep -aq "nightly-$STAMP-$COMMIT" dl/squashfs-root/usr/bin/lasrecomp || { echo "::error::$NAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
           # (as the linux job's check)
           tools/linux/check_no_game_code.sh dl/squashfs-root
-          tools/check_notices.sh dl/squashfs-root
+          python3 tools/notices.py package dl/squashfs-root  # (third-party notices, #868)
           cp "dl/$NAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.AppImage"
           # the same round's tarball, when that nightly has one (nightlies from before the tarball don't: then the
           # release has no linux-aarch64 tarball, and says nothing of it)
@@ -472,7 +487,7 @@ jobs:
             mkdir dl/tar && tar -xzf "dl/$TNAME" -C dl/tar
             grep -aq "nightly-$STAMP-$COMMIT" "dl/tar/LAS Recomp/usr/bin/lasrecomp" || { echo "::error::$TNAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
             tools/linux/check_no_game_code.sh "dl/tar/LAS Recomp"
-            tools/check_notices.sh "dl/tar/LAS Recomp"
+            python3 tools/notices.py package "dl/tar/LAS Recomp"
             cp "dl/$TNAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.tar.gz"
           else echo "::warning::no $TNAME on the nightly release: no linux-aarch64 tarball in this release"; fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
@@ -540,6 +555,7 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify --print-certs "$APK"
           tools/check_apk.sh "$APK"
+          python3 tools/notices.py package "$APK"  # (third-party notices at its root, #868)
           mkdir -p build/dist && cp "$APK" "build/dist/LAS Recomp-$VERSION-android.apk" && ls -la build/dist
       - uses: actions/upload-artifact@v4
         with:

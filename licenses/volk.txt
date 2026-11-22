@@ -1,3 +1,11 @@
+volk
+  Version:  vulkan-sdk-1.4.350.1
+  License:  MIT
+  Source:   https://github.com/zeux/volk/releases/tag/vulkan-sdk-1.4.350.1
+  Packages: Android
+
+----- LICENSE.md -----
+
 Copyright (c) 2018-2026 Arseny Kapoulkine
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

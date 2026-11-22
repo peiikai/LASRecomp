@@ -1,3 +1,12 @@
+FFmpeg
+  Version:  9.0.2
+  License:  LGPL 2.1 or later (LGPL configuration: no GPL parts)
+  Source:   https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz (sha256 8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e)
+  Packages: Windows, macOS, Linux, Android, iOS
+  Notes:    Plays the game's movies. Shared libraries: avcodec, avformat, avutil, swscale (Windows: *.dll next to lasrecomp.exe; macOS: LAS Recomp.app/Contents/Frameworks; Linux: usr/lib in the AppImage; Android: lib/arm64-v8a in the .apk). iOS: linked into the app; `make deps-ios` and `make ipa` in LAS Recomp's repository relink it from the source above. Built unmodified from the source above with only the decoders the game uses; the exact configure lines are in tools/build_deps_windows.sh, tools/build_deps_macos.sh, tools/linux/build_deps.sh, android/deps/build_deps.sh and tools/build_deps_ios.sh in LAS Recomp's repository (https://github.com/peiikai/LASRecomp), and each library reports its own with avcodec_configuration(). You may replace these libraries with your own build of FFmpeg 9.0.x built the same way.
+
+----- LICENSE.md -----
+
 # License
 
 Most files in FFmpeg are under the GNU Lesser General Public License version 2.1
@@ -126,9 +135,7 @@ The Fraunhofer FDK AAC and OpenSSL libraries are under licenses which are
 incompatible with the GPLv2 and v3. To the best of our knowledge, they are
 compatible with the LGPL.
 
-----------------------------------------------------------------------
-COPYING.LGPLv2.1
-----------------------------------------------------------------------
+----- COPYING.LGPLv2.1 -----
 
                   GNU LESSER GENERAL PUBLIC LICENSE
                        Version 2.1, February 1999

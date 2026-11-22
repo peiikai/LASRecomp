@@ -1,3 +1,11 @@
+libadrenotools
+  Version:  8fae8ce254dfc1344527e05301e43f37dea2df80
+  License:  BSD 2-clause
+  Source:   https://github.com/bylaws/libadrenotools
+  Packages: Android
+
+----- LICENSE -----
+
 BSD 2-Clause License
 
 Copyright (c) 2021, Billy Laws

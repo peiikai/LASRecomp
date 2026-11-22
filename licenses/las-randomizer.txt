@@ -1,3 +1,12 @@
+LAS-Randomizer
+  Version:  as in third_party/LAS-Randomizer
+  License:  MIT
+  Source:   https://github.com/Owen-Splat/LAS-Randomizer
+  Packages: Windows, macOS, Linux, Android, iOS
+  Notes:    The randomizer, ported to C++ (runtime/rando/) and built into the executable.
+
+----- LICENSE.txt -----
+
 MIT License
 
 Copyright (c) 2024 Owen_Splat

@@ -1,3 +1,11 @@
+liblinkernsbypass
+  Version:  aa3975893d83ef1bc84c321ec60c65fbf1287887
+  License:  BSD 2-clause
+  Source:   https://github.com/bylaws/liblinkernsbypass
+  Packages: Android
+
+----- LICENSE -----
+
 BSD 2-Clause License
 
 Copyright (c) 2021, Billy Laws

@@ -1,3 +1,12 @@
+Monocypher
+  Version:  4.0.2
+  License:  CC0 1.0 or BSD 2-clause, at your choice
+  Source:   https://monocypher.org
+  Packages: Windows, macOS, Linux, Android, iOS
+  Notes:    Checks update signatures; built into the executable (third_party/monocypher).
+
+----- LICENCE.md -----
+
 Monocypher as a whole is dual-licensed.  Choose whichever licence you
 want from the two licences listed below.
 

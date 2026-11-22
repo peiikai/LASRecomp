@@ -1,3 +1,12 @@
+Ryujinx (ported audio renderer and shader structuring code)
+  Version:  -
+  License:  MIT
+  Source:   https://github.com/Ryujinx/Ryujinx
+  Packages: Windows, macOS, Linux, Android, iOS
+  Notes:    Ported code, built into the executable (third_party/ryujinx).
+
+----- LICENSE.txt -----
+
 MIT License
 
 Copyright (c) Ryujinx Team and Contributors

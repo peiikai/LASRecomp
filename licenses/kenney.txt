@@ -1,3 +1,12 @@
+Kenney Input Prompts (D-pad art)
+  Version:  -
+  License:  CC0 1.0
+  Source:   https://www.kenney.nl
+  Packages: Windows, macOS, Linux, Android, iOS
+  Notes:    Built into the executable (third_party/kenney).
+
+----- LICENSE.txt -----
+
 Input Prompts (1.5A) by Kenney (www.kenney.nl): Nintendo Switch / Double switch_dpad.png and
 switch_dpad_none.png, used for the D-pad items HUD (runtime/ui/dpad_art.h holds their alpha).
 

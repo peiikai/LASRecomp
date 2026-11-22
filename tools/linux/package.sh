@@ -45,8 +45,8 @@ cp third_party/fonts/BIZUDPGothic/BIZUDPGothic-Regular.ttf "$APPDIR/usr/bin/"  #
 cp third_party/fonts/BIZUDPGothic/OFL.txt "$APPDIR/usr/bin/BIZUDPGothic-OFL.txt"
 cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$APPDIR/usr/bin/"  # (last-resort fonts, free license)
 cp third_party/fonts/DejaVu/LICENSE "$APPDIR/usr/bin/DejaVu-LICENSE.txt"
-cp README.md LICENSE "$APPDIR/usr/bin/"
-cp THIRD-PARTY-NOTICES.txt "$APPDIR/"  # (the bundled components' licences, at the top: tools/third_party_notices.sh)
+cp README.md LICENSE THIRD-PARTY-NOTICES.txt "$APPDIR/usr/bin/"  # (the bundled components' licence texts: tools/notices.py)
+cp THIRD-PARTY-NOTICES.txt "$APPDIR/"  # (and at the AppImage's root, as in every release package)
 cp -R build/zig "$APPDIR/usr/bin/"
 mkdir "$APPDIR/usr/bin/gamelib-src"
 cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c "$APPDIR/usr/bin/gamelib-src/"
@@ -77,7 +77,6 @@ if ls "$APPDIR/usr/lib" | grep -iE 'x264|x265|xvid|postproc|vulkan'; then  # (no
     echo "package: library that must not ship"; exit 1
 fi
 echo "bundled: $(ls "$APPDIR/usr/lib" | tr '\n' ' ')"
-tools/check_notices.sh "$APPDIR"
 
 # ---- AppImage (appimagetool runs extracted: no FUSE in the container)
 fetch() {  # url sha256 file

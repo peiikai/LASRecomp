@@ -1,3 +1,12 @@
+rgbcx
+  Version:  1.12
+  License:  MIT or public domain
+  Source:   https://github.com/richgel999/bc7enc
+  Packages: Windows, macOS, Linux, Android, iOS
+  Notes:    Encodes the randomizer's textures; built into the executable (third_party/rgbcx).
+
+----- LICENSE -----
+
 The following source code files are available under 2 licenses -- choose whichever you prefer:
 rgbcx.h
 bc7decomp.cpp/h
@@ -63,4 +72,3 @@ freely, subject to the following restrictions:
 
 	 3. This notice may not be removed or altered from any source
 	 distribution.
-	 

@@ -1,3 +1,11 @@
+Baloo 2 font (SemiBold)
+  Version:  1.640
+  License:  SIL Open Font License 1.1
+  Source:   https://github.com/EkType/Baloo2
+  Packages: Windows, macOS, Linux, Android, iOS
+
+----- OFL.txt -----
+
 Copyright 2019 The Baloo 2 Project Authors (https://github.com/EkType/Baloo2)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
@@ -18,7 +26,7 @@ with others.
 
 The OFL allows the licensed fonts to be used, studied, modified and
 redistributed freely as long as they are not sold by themselves. The
-fonts, including any derivative works, can be bundled, embedded, 
+fonts, including any derivative works, can be bundled, embedded,
 redistributed and/or sold with any software provided that any reserved
 names are not used by derivative works. The fonts and derivatives,
 however, cannot be released under any other type of license. The
