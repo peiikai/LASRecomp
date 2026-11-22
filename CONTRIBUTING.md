@@ -98,6 +98,10 @@ with the app; no Python is needed for it.
 - `runtime/rando/` - the randomizer: seed generation (`solve/`), the game files a seed changes (`apply/`), the file
   formats (`fmt/`). See [docs/randomizer.md](docs/randomizer.md).
 - `third_party/LAS-Randomizer` - the licence of LAS-Randomizer (MIT), whose randomizer `runtime/rando/` is ported from.
+- `licenses/` - the licence text of every third-party component the packages bundle, and `components.txt`, the list
+  of them with versions and sources. `tools/third_party_notices.sh` makes `THIRD-PARTY-NOTICES.txt` from them, which
+  every package carries at its top (`tools/check_notices.sh` checks a package; CI checks the file is up to date).
+  Adding or updating a bundled library, font or ported code: update both, then run the script.
 
 ## Testing your change
 

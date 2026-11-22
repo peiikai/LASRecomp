@@ -375,6 +375,10 @@ nothing for Nintendo's game, which you must supply yourself.
 
 ### Source code of bundled third-party components
 
+Every package carries `THIRD-PARTY-NOTICES.txt` at its top (macOS: in the app's `Contents/Resources` and next to
+the app in the disk image; Android: the APK's `assets/`): each bundled component with its version, licence and
+source, and the full licence texts. In this repository it is made from `licenses/`.
+
 Release builds include these components; their source code for the exact versions shipped is available here.
 
 | Component | Version | License | Source |

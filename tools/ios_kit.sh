@@ -53,15 +53,17 @@ Contents: Payload/LAS Recomp.app (the app without game code; what it embeds - SD
 licence texts are in its LICENSES/ folder and next to the fonts), lld/ (the linker for each desktop OS, from Rust's
 rust-lld: Apache-2.0 with LLVM exception, lld/<os>/LICENSE.TXT), include/ (zig's Darwin C headers: MIT / Apple's
 APSL), libSystem.B.tbd (the link stub). LAS Recomp reads and writes the zip files with miniz (MIT,
-miniz-LICENSE.txt).
+miniz-LICENSE.txt). THIRD-PARTY-NOTICES.txt lists every third-party component with its version, source and licence.
 EOT
 cp build/miniz/LICENSE "$STAGE/miniz-LICENSE.txt"
+cp THIRD-PARTY-NOTICES.txt "$STAGE/"
 echo "$VERSION" > "$STAGE/version.txt"
 mkdir -p build/dist
 OUT="build/dist/LAS Recomp-$VERSION-iOS.laskit"
 rm -f "$OUT"
 # (no symlinks in the app: an iOS install drops them; -y would keep any as entries) -X: no extra fields beyond the modes
 [ -z "$(find "$STAGE/Payload" -type l)" ] || { echo "symlinks in the app: $(find "$STAGE/Payload" -type l)"; exit 1; }
-(cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt version.txt miniz-LICENSE.txt)
+(cd "$STAGE" && zip -qry -X "../../$OUT" Payload lld include libSystem.B.tbd README.txt version.txt miniz-LICENSE.txt THIRD-PARTY-NOTICES.txt)
 rm -rf "$STAGE"
+tools/check_notices.sh "$OUT"
 echo "$OUT ($(du -h "$OUT" | cut -f1))"

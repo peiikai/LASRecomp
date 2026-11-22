@@ -21,6 +21,7 @@ While this file is here, LAS Recomp keeps its saves, settings and game files in 
 Delete it to keep them in ~/.local/share/lasrecomp instead.
 EOF
 tools/linux/check_no_game_code.sh "$STAGE/LAS Recomp"
+tools/check_notices.sh "$STAGE/LAS Recomp"
 mkdir -p build/dist && rm -f "$OUT"
 # (owner and times fixed: the same AppDir gives the same archive)
 tar -C "$STAGE" --owner=0 --group=0 --numeric-owner --sort=name --mtime='@0' -czf "$OUT" "LAS Recomp"

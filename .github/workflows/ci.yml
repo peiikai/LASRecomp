@@ -56,6 +56,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # (THIRD-PARTY-NOTICES.txt made from licenses/; every packaging step copies it and runs tools/check_notices.sh)
+      - name: Third-party notices up to date
+        run: tools/third_party_notices.sh --check
       - name: Packages (docs/linux.md)
         run: |
           sudo apt-get update

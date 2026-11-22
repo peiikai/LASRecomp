@@ -460,6 +460,7 @@ jobs:
           grep -aq "nightly-$STAMP-$COMMIT" dl/squashfs-root/usr/bin/lasrecomp || { echo "::error::$NAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
           # (as the linux job's check)
           tools/linux/check_no_game_code.sh dl/squashfs-root
+          tools/check_notices.sh dl/squashfs-root
           cp "dl/$NAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.AppImage"
           # the same round's tarball, when that nightly has one (nightlies from before the tarball don't: then the
           # release has no linux-aarch64 tarball, and says nothing of it)
@@ -471,6 +472,7 @@ jobs:
             mkdir dl/tar && tar -xzf "dl/$TNAME" -C dl/tar
             grep -aq "nightly-$STAMP-$COMMIT" "dl/tar/LAS Recomp/usr/bin/lasrecomp" || { echo "::error::$TNAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
             tools/linux/check_no_game_code.sh "dl/tar/LAS Recomp"
+            tools/check_notices.sh "dl/tar/LAS Recomp"
             cp "dl/$TNAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.tar.gz"
           else echo "::warning::no $TNAME on the nightly release: no linux-aarch64 tarball in this release"; fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"

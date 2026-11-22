@@ -11,8 +11,10 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/LAS Recomp.app"
 ln -s /Applications "$STAGE/Applications"
+cp THIRD-PARTY-NOTICES.txt "$STAGE/"  # (also in the app's Contents/Resources)
 mkdir -p build/dist
 rm -f "$OUT"
 hdiutil create -volname "LAS Recomp $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 \
     -ov "$OUT" >/dev/null
+tools/check_notices.sh "$OUT"
 echo "$OUT ($(du -h "$OUT" | cut -f1))"

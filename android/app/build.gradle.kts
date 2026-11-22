@@ -100,12 +100,15 @@ val prepareLasRecomp by tasks.registering {
         // the game code builder's compiler (android/deps/build_gen_deps.sh): zig as lib*.so, the only files Android
         // runs from an app (the generator itself is in libmain.so: runtime/gen/)
         listOf("zig/libzig.so").map { deps.resolve("gen/$it") }
-    inputs.files(res.values, libs)
+    // (every bundled component's licence, as each package has it at its top: tools/third_party_notices.sh)
+    val notices = repo.resolve("THIRD-PARTY-NOTICES.txt")
+    inputs.files(res.values, libs, notices)
     outputs.dir(gen)
     doLast {
         val out = gen.get().asFile
         for (lib in libs) lib.copyTo(out.resolve("jniLibs/arm64-v8a/${lib.name}"), overwrite = true)
         for ((name, f) in res) f.copyTo(out.resolve("assets/res/$name"), overwrite = true)
+        notices.copyTo(out.resolve("assets/THIRD-PARTY-NOTICES.txt"), overwrite = true)
     }
 }
 // The game code builder's files, unpacked by the activity into <internal files>/gen (runtime/gamebuild.c): zig's lib/,
