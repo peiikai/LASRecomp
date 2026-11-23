@@ -714,12 +714,22 @@ bool landing_search(Reader &R, const std::string &room, int side, int slot, int 
         return !even || free(i, along - 1, true, h);
     };
     int first = std::max(min_tile, 1);
+    // where Link can walk on from a landing: the next tile inward or one beside it. Inward only, a brazier or block just
+    // behind the first floor tile sent him past it, three or four tiles in (Face Shrine 06D N / E; Turtle Rock 04B E,
+    // in Bottle Grotto's 07D - user's play-test 2026-11-23)
+    int edge_n = side == N || side == S ? 10 : 8;
+    auto walk = [&](int i, int a) {
+        double h2;
+        return free(i + 1, a, false, h2) || (a > 0 && free(i, a - 1, false, h2)) || (a + 1 < edge_n && free(i, a + 1, false, h2));
+    };
     for (bool walk_on : {true, false})
         for (int i = first; i < 5; i++) {
             double h, h2;
             bool ok = free(i, along, false, h);
-            if (ok && (!walk_on || free(i + 1, along, false, h2))) {
-                double lat = centre(i) && (!walk_on || centre(i + 1)) ? 0.0 : 0.75;
+            if (ok && (!walk_on || walk(i, along))) {
+                // (centred as before: the next tile's other half only counts when he walks on inward)
+                bool inward = walk_on && free(i + 1, along, false, h2);
+                double lat = centre(i) && (!inward || centre(i + 1)) ? 0.0 : 0.75;
                 got = {round2(i * 1.5 + 0.75), round2(std::max(h, 0.0)), lat};
                 return true;
             }
@@ -729,7 +739,7 @@ bool landing_search(Reader &R, const std::string &room, int side, int slot, int 
             for (int i = first; i < 5; i++) {
                 double h, h2;
                 bool ok = free(i, along - 1, false, h);
-                if (ok && (!walk_on || free(i + 1, along - 1, false, h2))) {
+                if (ok && (!walk_on || walk(i, along - 1))) {
                     got = {round2(i * 1.5 + 0.75), round2(std::max(h, 0.0)), -0.75};
                     return true;
                 }
