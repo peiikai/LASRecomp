@@ -637,7 +637,59 @@ double round2(double x) {  // round(x, 2): Python rounds the decimal value corre
     return atof(b);
 }
 
-Land landing_depth(Reader &R, const std::string &room, int side, int slot, int min_tile) {
+// the areas a doorway leads into (room_logic.doorway_areas) and what they reach with no item (a drop off a notch:
+// Turtle Rock 07E); empty: the room is one area
+std::set<int> landing_areas(const Areas &A, int side, int slot) {
+    std::set<int> out;
+    if (A.n <= 1) return out;
+    std::vector<int> along = slot % 2 == 0 ? std::vector<int>{slot / 2 - 1, slot / 2} : std::vector<int>{slot / 2};
+    const int IN_R[4] = {1, -1, 0, 0}, IN_C[4] = {0, 0, 1, -1};
+    int n = side == N || side == S ? 10 : 8;
+    for (int i : along) {
+        if (i < 0 || i >= n) continue;
+        int r = side == N ? 0 : side == S ? 7 : i, c = side == W ? 0 : side == E ? 9 : i;
+        for (int k = 0; k < 3; k++) {
+            int rr = r + IN_R[side] * k, cc = c + IN_C[side] * k;
+            if (rr < 0 || rr > 7 || cc < 0 || cc > 9) continue;
+            int a = A.tiles[(size_t)(rr * 10 + cc)];
+            if (a >= 0) {
+                out.insert(a);
+                break;
+            }
+        }
+    }
+    if (out.empty())
+        for (int i = 0; i < A.n; i++) out.insert(i);
+    for (bool grew = true; grew;) {
+        grew = false;
+        for (const Move &m : A.moves)
+            if (out.count(m.a) && !out.count(m.b))
+                for (const Atoms &alt : m.alts)
+                    if (alt.empty()) {
+                        out.insert(m.b), grew = true;
+                        break;
+                    }
+    }
+    return out;
+}
+
+// A: the room's areas. A door jump lands only where its doorway leads in the room logic (landing_areas): Face
+// Shrine 04D's north doorway opens onto a 1.5 ledge walled off from the floor below; the next tile inward is that
+// wall, so Link was carried past it onto the 0.0 floor (user's play-test 2026-11-23; Turtle Rock 06D S: across the
+// lava). No landing there at all: anywhere, as before. Wide openings (their search runs along tile 0): as before
+bool landing_search(Reader &R, const std::string &room, int side, int slot, int min_tile, const Areas *A,
+                    const std::set<int> *allowed, Land &got);
+
+Land landing_depth(Reader &R, const std::string &room, int side, int slot, int min_tile, const Areas &A) {
+    std::set<int> allowed = landing_areas(A, side, slot);
+    Land got;
+    if (!allowed.empty() && landing_search(R, room, side, slot, min_tile, &A, &allowed, got)) return got;
+    landing_search(R, room, side, slot, min_tile, nullptr, nullptr, got);
+    return got;
+}
+
+bool landing_search(Reader &R, const std::string &room, int side, int slot, int min_tile, const Areas *A,
+                    const std::set<int> *allowed, Land &got) {
     const LebInfo &L = R.room(room);
     const std::string &raw = L.raw;
     int along = slot / 2;
@@ -651,6 +703,7 @@ Land landing_depth(Reader &R, const std::string &room, int side, int slot, int m
         size_t o = 0x10 * (size_t)(row * 10 + col);
         uint8_t t0 = (uint8_t)raw[o], t2 = (uint8_t)raw[o + 2];
         h = f32(raw, o + 12);
+        if (allowed && !pit_only && !allowed->count(A->tiles[(size_t)(row * 10 + col)])) return false;
         bool solid = (t0 & 2) && !(t2 & 8);
         bool hazard = ((t2 & 4) && h < -0.3) || h < -1.0 || (t0 & 1);
         return !hazard && (pit_only || !solid);
@@ -667,7 +720,8 @@ Land landing_depth(Reader &R, const std::string &room, int side, int slot, int m
             bool ok = free(i, along, false, h);
             if (ok && (!walk_on || free(i + 1, along, false, h2))) {
                 double lat = centre(i) && (!walk_on || centre(i + 1)) ? 0.0 : 0.75;
-                return {round2(i * 1.5 + 0.75), round2(std::max(h, 0.0)), lat};
+                got = {round2(i * 1.5 + 0.75), round2(std::max(h, 0.0)), lat};
+                return true;
             }
         }
     if (even)
@@ -675,9 +729,13 @@ Land landing_depth(Reader &R, const std::string &room, int side, int slot, int m
             for (int i = first; i < 5; i++) {
                 double h, h2;
                 bool ok = free(i, along - 1, false, h);
-                if (ok && (!walk_on || free(i + 1, along - 1, false, h2))) return {round2(i * 1.5 + 0.75), round2(std::max(h, 0.0)), -0.75};
+                if (ok && (!walk_on || free(i + 1, along - 1, false, h2))) {
+                    got = {round2(i * 1.5 + 0.75), round2(std::max(h, 0.0)), -0.75};
+                    return true;
+                }
             }
-    return {2.2, 0.0, 0.0};
+    got = {2.2, 0.0, 0.0};
+    return false;
 }
 
 void inward_only(Reader &R, Data &D) {
@@ -863,7 +921,17 @@ void read_game_facts(Data &D, const GameFiles &game, bool hook) {
             for (int s = 0; s < 4; s++)
                 for (const Open &x : r.op[s])
                     if (!x.slot.wide())
-                        for (int m : {0, 1}) r.land[{s, x.slot.v, m}] = landing_depth(R, r.name, s, x.slot.v, m);
+                        for (int m : {0, 1}) r.land[{s, x.slot.v, m}] = landing_depth(R, r.name, s, x.slot.v, m, r.areas[h]);
+        // water doors over shallow water (own_doors leaves them out): the edge tile under the door isn't deep water
+        r.shallow_water.clear();
+        std::vector<Tile> g;
+        std::set<int> solid;
+        if (room_tiles(R, D, r.name, g, solid))
+            for (const Door &d : r.doors) {
+                if (d.kind != "blocked:water") continue;
+                int t = d.side == N ? d.idx : d.side == S ? 70 + d.idx : d.side == W ? d.idx * 10 : d.idx * 10 + 9;
+                if (t >= 0 && t < 80 && g[(size_t)t].kind != WATER) r.shallow_water.insert({d.side, d.idx});
+            }
     }
     // textures: the level archives' names, each room's references among them
     std::map<std::string, int> ids;
