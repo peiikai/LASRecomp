@@ -566,7 +566,7 @@ void build_spoiler_view(Ctx &c, const Value &settings) {
         for (const std::string &l : lines) {
             std::vector<std::string> f = split(l, '\t');
             if (f.size() < 3 || !get(SV_LEVEL_D, f[0])) continue;
-            if (f.size() != 3) throw PyError("ValueError", "too many values to unpack (expected 3)");
+            // (a 4th column, 'copy', marks a room's second copy: listed like any other room - #855's fix)
             const std::string &lv = f[0], &cell = f[1], &room = f[2];
             size_t us = room.rfind('_');
             std::string src_lv = us == std::string::npos ? "" : room.substr(0, us), src_cell = us == std::string::npos ? room : room.substr(us + 1);

@@ -292,8 +292,13 @@ std::set<int> doorway_areas(const std::string &room, int side, const Slot &slot,
 std::vector<std::string> own_doors(const Room &room, int side, const Slot &slot) {
     std::vector<std::string> out;
     if (slot.wide()) return out;
-    for (const Door &d : room.doors)
-        if (d.side == side && std::abs(d.half - slot.v) <= 1 && !d.mirror) out.push_back(d.kind);
+    for (const Door &d : room.doors) {
+        if (d.side != side || std::abs(d.half - slot.v) > 1 || d.mirror) continue;
+        // a water door over shallow water (read_game_facts: shallow_water): Link walks through it - Angler's Tunnel's
+        // entrance 08D -> 07D (user's play-test 2026-11-23), Catfish's Maw 03F / 04F
+        if (d.kind == "blocked:water" && room.shallow_water.count({d.side, d.idx})) continue;
+        out.push_back(d.kind);
+    }
     return out;
 }
 
@@ -337,12 +342,13 @@ bool door_terms(const std::vector<std::string> &types, int n, bool entering, con
 // room_overrides.door: false = None (never)
 bool door_fix(const std::string &room, int side, const Slot &slot, const char *way, Atoms &out) {
     out.clear();
-    if (slot.wide()) return true;
     const Value &ov = data().door_overrides;
     if (!ov.has(room)) return true;
     for (const Value &row : ov.at(room).list()) {
         const List &r = row.list();
-        if (side_index(r[0].s()[0]) != side || r[1].i() != slot.v) continue;
+        // (a wide opening's row names it: ['N', 'w0-9', ...] - Angler's Tunnel's railed walkway)
+        if (side_index(r[0].s()[0]) != side || r[1].is_str() != slot.wide()) continue;
+        if (slot.wide() ? r[1].s() != slot.w : r[1].i() != slot.v) continue;
         const Value &v = r[!strcmp(way, "in") ? 2 : 3];
         if (v.is_none()) return false;
         for (const Value &a : v.list()) out.push_back(a.s());
