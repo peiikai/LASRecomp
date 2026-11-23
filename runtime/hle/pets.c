@@ -162,6 +162,10 @@ void pets_game_tick(Cpu *c) {
             }
         }
     }
+    // A rooster revived the vanilla way (seeds without the pet item) is found too: the Hint Sheet and the tracker
+    // count him by this flag, and the companion slot can call him back after a swap (issue #822)
+    if (pets_current() == C_ROOSTER && game_in_play() && !flag_get(kComp[C_ROOSTER].found))
+        flag_put(kComp[C_ROOSTER].found, true), LOG("[pets] the Flying Rooster follows Link: marked found\n");
     if (!g_swap || !game_in_play() || inventory_items_cursor() >= 0) return;
     g_swap = 0;
     uint64_t scene = LD64(GA(GAME_MGR)), player = scene ? LD64(scene + 0x4b8) : 0, ps = LD64(GA(PLAYER_STATUS_PTR));
