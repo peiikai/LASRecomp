@@ -17,7 +17,7 @@ android {
         applicationId = "com.lasrecomp.android"
         minSdk = 30
         targetSdk = 36
-        // (experimental builds: .github/workflows/experimental.yml sets the build's version and a code that grows)
+        // (release.yml and nightly.yml set the build's version and a code that grows)
         versionCode = System.getenv("LARECOMP_VERSION_CODE")?.toInt() ?: 1
         versionName = System.getenv("LARECOMP_VERSION_NAME") ?: "0.1-dev"
         ndk {
@@ -25,7 +25,7 @@ android {
         }
     }
 
-    // The published APKs' key (.github/workflows/experimental.yml, from the repository's secrets): Android installs an
+    // The published APKs' key (.github/workflows/release.yml and nightly.yml, from the repository's secrets): Android installs an
     // update only over an app signed with the same key. Without it, the release build is unsigned.
     signingConfigs {
         System.getenv("LARECOMP_KEYSTORE")?.let { ks ->
@@ -56,6 +56,7 @@ android {
             jniLibs.srcDirs(gen.get().asFile.resolve("jniLibs"))
             assets.srcDirs(gen.get().asFile.resolve("assets"))
             res.srcDirs("src/main/res", gen.get().asFile.resolve("res"))
+            resources.srcDirs(gen.get().asFile.resolve("root"))  // (files at the .apk's root: THIRD-PARTY-NOTICES.txt)
         }
     }
 
@@ -99,10 +100,14 @@ val prepareLasRecomp by tasks.registering {
         // the generator's native libraries, zig - lib*.so, the only files Android runs from an app
         listOf("python/libpymain.so", "python/libpython3.14.so", "lib/libcapstone.so", "lib/libunicorn.so",
                "lib/liblz4.so", "zig/libzig.so").map { deps.resolve("gen/$it") }
-    inputs.files(res.values, libs)
+    // the licence texts of everything above and in gen.zip (tools/notices.py), at the root of the .apk as in every
+    // release package (#868)
+    val notices = repo.resolve("THIRD-PARTY-NOTICES.txt")
+    inputs.files(res.values, libs, notices)
     outputs.dir(gen)
     doLast {
         val out = gen.get().asFile
+        notices.copyTo(out.resolve("root/THIRD-PARTY-NOTICES.txt"), overwrite = true)
         for (lib in libs) lib.copyTo(out.resolve("jniLibs/arm64-v8a/${lib.name}"), overwrite = true)
         for ((name, f) in res) f.copyTo(out.resolve("assets/res/$name"), overwrite = true)
     }
@@ -121,7 +126,8 @@ val genZip by tasks.registering(Zip::class) {
     from(g.resolve("zig/lib")) { into("zig/lib") }
     from(g.resolve("zig/LICENSE-zig.txt")) { into("zig") }
     from(repo.resolve("tools")) {
-        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "chunk_bounds.py", "simd_c.py", "game_addresses.py")
+        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "chunk_bounds.py", "simd_c.py", "game_addresses.py",
+                "win_longjmp.py")  // (gen.py imports it everywhere; it only acts on Windows, #779)
         into("tools")
     }
     // the seed generator (runtime/ui/rando_tab.mm; gen.py reads tools/rando/patch_variants.json too): tools/rando and

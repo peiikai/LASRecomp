@@ -30,8 +30,10 @@ bool maxwell_glsl_stack_vars = true;
 bool maxwell_glsl_structured;  // static stacks + structured control flow by default (exec.c: Mali, Adreno)
 bool maxwell_glsl_fast_minmax;  // the GPU's min / max / clamp for fmin / fmax / saturate (exec.c: Android)
 bool maxwell_glsl_push;  // c1 inlined + push constants by default (exec.c: Mali, Adreno)
+bool maxwell_glsl_push_cb = true;  // the push constants part of it (exec.c: not on Qualcomm's own driver)
 bool maxwell_glsl_tint_branch;  // the recolour code behind a specialization constant (exec.c: Adreno, Mali)
 bool maxwell_glsl_quad_deriv;  // fragment quad xor shuffles through derivatives (exec.c: no subgroups in fragment shaders)
+bool maxwell_glsl_late_depth;  // fragment shaders that discard write gl_FragDepth (exec.c: Turnip on Adreno 7xx and later)
 const uint8_t *maxwell_const_data;
 uint32_t maxwell_const_size;
 bool maxwell_gmem_mirror;  // (shader.h)
@@ -2106,12 +2108,13 @@ static bool glsl_early_tests(const Ctx *c) {
 uint32_t maxwell_push_base, maxwell_push_cap = 64;
 static void push_promote(Ctx *c, Str *body) {
     static int on = -1;
-    if (on < 0) { const char *e = getenv("LARECOMP_VK_PUSH_CB"); on = e ? atoi(e) != 0 : maxwell_glsl_push; }
+    if (on < 0) { const char *e = getenv("LARECOMP_VK_PUSH_CB"); on = e ? atoi(e) != 0 : maxwell_glsl_push && maxwell_glsl_push_cb; }
     if (!on || (c->stage != STAGE_FRAGMENT && c->stage != STAGE_VERTEX) || !body->buf ||
         (maxwell_gmem_lazy && c->info->uses_gmem)) return;
-    // LARECOMP_VK_PUSH_VS=0: none in vertex shaders (an A/B of the vertex words: the fragment budget stays 48 words)
+    // LARECOMP_VK_PUSH_VS=0: none in vertex shaders, the fragment shader's then start at offset 0 (the fragment budget
+    // stays 48 words). For narrowing down a driver's push constant bug (#779).
     static int vs_on = -1;
-    if (vs_on < 0) { const char *e = getenv("LARECOMP_VK_PUSH_VS"); vs_on = !e || atoi(e); }
+    if (vs_on < 0) { const char *e = getenv("LARECOMP_VK_PUSH_VS"); vs_on = e ? atoi(e) != 0 : 1; }
     if (c->stage == STAGE_VERTEX && !vs_on) return;
     int vs_cap = (int)maxwell_push_cap < 32 ? (int)maxwell_push_cap / 2 : 16;  // (the vertex shader's share of the budget)
     int cap = c->stage == STAGE_VERTEX ? vs_cap : (int)maxwell_push_cap - (vs_on ? (int)maxwell_push_base / 4 : vs_cap);
@@ -2447,6 +2450,8 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
         if (c->omap_depth) {
             if (c->reg_used[r + 1]) sp(&s, "  gl_FragDepth = as_f(r%d);\n", r + 1);
             else sp(&s, "  gl_FragDepth = gl_FragCoord.z;\n");
+        } else if (maxwell_glsl_late_depth && info->uses_discard) {
+            sp(&s, "  gl_FragDepth = gl_FragCoord.z;\n");  // (maxwell_glsl_late_depth: the depth test after the discard)
         }
     }
     sp(&s, "}\n");

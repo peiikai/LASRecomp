@@ -1,16 +1,20 @@
 // Controller buttons into our ImGui menus (the in-game overlay runtime/ui/menu.mm, the start screen launcher.mm).
 // The menus read ImGuiKey_GamepadFaceDown as "confirm" and ImGuiKey_GamepadFaceRight as "back" (as ImGui's own
-// navigation does). Which physical button each one is: the Controls tab's "Button layout" (g_settings.face_by_label),
-// which the game's A/B follow too. Switch (default): the right button confirms and the bottom one goes back on every
-// pad, as in the game. Xbox / PlayStation (#172, input_menu_family in runtime/hle/input.c): Xbox / PlayStation / generic pads
-// confirm with the bottom button and go back with the right one, Nintendo pads the other way round. The prompts' names
-// follow the same choice. The player's game bindings never apply here.
+// navigation does), FaceUp and Start; L1 / R1 (tabs) and the D-pad stay put. The player's LAS Menu buttons (Controls >
+// Configure inputs; runtime/input_bind.h BIND_UI_*) pick the physical button for each when set. Otherwise the Controls
+// tab's "Confirm button" (g_settings.face_by_label) does, the game's A and B too. Right (default): the right button
+// confirms and the bottom one goes back, as on a Switch. Bottom: the other way round, as on Xbox / PlayStation. Same on
+// every pad. The Button icons setting only picks the words the hints use (input_menu_family in runtime/hle/input.c),
+// never which button does what. The player's game bindings never apply here.
 #pragma once
 #include <SDL3/SDL.h>
 #include "imgui.h"
 
-// The ImGui key for a press / release of `button` on controller `which` (a release gets the key its press got)
-ImGuiKey ui_pad_key(SDL_JoystickID which, Uint8 button, bool down);
+// The ImGui key for a press / release of `button` (an SDL_GamepadButton, or PADB_LTRIGGER / PADB_RTRIGGER) on
+// controller `which` (a release gets the key its press got)
+ImGuiKey ui_pad_key(SDL_JoystickID which, int button, bool down);
+// A trigger's axis motion: true when it was pressed / let go as a button that drives a menu action (*key, *down)
+bool ui_pad_trigger(SDL_JoystickID which, int axis, int value, ImGuiKey *key, bool *down);
 // The family of the controller last used in a menu (0 Nintendo, 1 Xbox, 2 PlayStation): the hints' words
 int ui_pad_family(void);
 // The confirm / back / start buttons' names in that family's words (e.g. PlayStation, game layout: "Circle" / "Cross" /
@@ -18,6 +22,15 @@ int ui_pad_family(void);
 const char *ui_pad_confirm_label(void);
 const char *ui_pad_back_label(void);
 const char *ui_pad_start_label(void);
+const char *ui_pad_action_label(int act);  // any menu action's button (act: BIND_UI_*)
 // Every key and controller input let go, in ImGui's eyes: its releases can go missing (the menu closed, a rebind took
 // them) and a key it still thinks is held repeats - the cursor keeps scrolling until that button is pressed again
 void ui_pad_release_all(ImGuiIO &io);
+// The left stick as one direction for the menus: an SDL_GAMEPAD_AXIS_LEFTX / LEFTY motion (v: -1..1) in, the direction
+// now held out (0 left, 1 right, 2 up, 3 down, -1 none). Only the direction pushed furthest counts, past half way, and it
+// stays held until under 0.3: a tilt near the edge no longer flickers into many presses, and a push down that leans to
+// one side doesn't step the row's value (user 2026-11-18).
+int ui_stick_dir(int axis, float v);
+// Before each ImGui frame of a menu: a held direction waits 0.4 s, then steps 8 times a second (ImGui's own 0.275 s and
+// 20 a second ran past the row wanted - user 2026-11-18). Typing keeps ImGui's (a held Backspace).
+void ui_nav_repeat(ImGuiIO &io, bool typing);

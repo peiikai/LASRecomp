@@ -131,6 +131,9 @@ extern bool maxwell_gmem_fs_miss;
 extern bool maxwell_glsl_stack_vars;
 extern bool maxwell_glsl_structured;  // (the backend's default for this GPU: LARECOMP_VK_STATIC_STACKS / _STRUCTURE override)
 extern bool maxwell_glsl_push;  // (the backend's default: c1 inlined + push constants; LARECOMP_VK_INLINE_C1 / _PUSH_CB override)
+// The push constants part of it: the backend's default (exec.c: not on Qualcomm's own driver); LARECOMP_VK_PUSH_CB
+// overrides.
+extern bool maxwell_glsl_push_cb;
 // (GLSL) fmin / fmax / saturate as the GPU's own min / max / clamp instead of the helpers that test for NaN: for GPUs
 // whose min / max return the operand that isn't NaN and whose clamp to [0, 1] saturates NaN to 0 (Adreno, as D3D
 // requires). The backend's default (exec.c: Android); LARECOMP_VK_FAST_MINMAX=1 / =0 overrides.
@@ -144,6 +147,10 @@ extern bool maxwell_glsl_quad_deriv;
 // RECOLOUR (false unless the pipeline is built for it, exec.c): unused, its code still cost Turnip on an Adreno 650 40%
 // of the house's lit pass. The backend's default (exec.c: Adreno, Mali); LARECOMP_VK_TINT_BRANCH overrides.
 extern bool maxwell_glsl_tint_branch;
+// Fragment shaders that can discard write gl_FragDepth = gl_FragCoord.z, so the driver runs the depth test and write
+// after the shader (exec.c: Turnip on Adreno 7xx and later, where the alpha-tested depth pre-pass otherwise wrote
+// depth for discarded pixels and the EQUAL colour pass left black holes along cut-out edges, Retroid Pocket 6).
+extern bool maxwell_glsl_late_depth;
 #define RECOLOUR_SPEC_ID 100
 // The stage's compiler constants (c1: the bytes after its code), set by the caller around maxwell_translate (under its
 // lock). GLSL with LARECOMP_VK_INLINE_C1=1: statically indexed c1 reads become literals (no buffer load).

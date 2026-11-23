@@ -117,9 +117,9 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "v0.6.0"
-#define LARECOMP_TEST_OF "v0.6.0"
-// Experimental builds (.github/workflows/experimental.yml sets these): the build's time (YYYYMMDDHHMM, UTC; 0: not an
+#define LARECOMP_VERSION "v0.6.1"
+#define LARECOMP_TEST_OF "v0.6.1"
+// Experimental builds (the retired experimental.yml set these; Experimental moved to nightly): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
 // An experimental platform that joins the normal releases: from this release on, its experimental builds offer it
@@ -1494,28 +1494,27 @@ static bool launcher_pad_event(const SDL_Event &e) {
     }
     case SDL_EVENT_GAMEPAD_AXIS_MOTION: {
         float v = e.gaxis.value / 32767.0f;
-        // the left stick also works as the d-pad (ImGui moves between items with the d-pad only; the stick scrolls):
-        // pressed past half way, released under 0.3
-        if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            static bool held[4];  // left, right, up, down
-            bool x = e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX;
-            int neg = x ? 0 : 2, pos = neg + 1;
-            const ImGuiKey keys[4] = {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadDpadUp,
-                                      ImGuiKey_GamepadDpadDown};
-            for (int i : {neg, pos}) {
-                float m = i == neg ? -v : v;
-                bool now = held[i] ? m > 0.3f : m > 0.5f;
-                if (now != held[i]) { held[i] = now; io.AddKeyEvent(keys[i], now); }
-            }
+        {   // a LAS Menu action on a trigger (pad_nav.h)
+            ImGuiKey tk;
+            bool tdown;
+            if (ui_pad_trigger(e.gaxis.which, e.gaxis.axis, e.gaxis.value, &tk, &tdown)) io.AddKeyEvent(tk, tdown);
         }
-        // (pressed or not, no analog value: ImGui scrolls the window under the cursor by it - the column moved with the
-        // selection, user 2026-11-13; the right stick scrolls: option_rows.mm stick_scroll)
-        if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickLeft, v < -0.3f, 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickRight, v > 0.3f, 0);
-        } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickUp, v < -0.3f, 0);
-            io.AddKeyAnalogEvent(ImGuiKey_GamepadLStickDown, v > 0.3f, 0);
+        // the left stick also works as the d-pad (ImGui moves between items with the d-pad only; the stick scrolls),
+        // one direction at a time (pad_nav.h ui_stick_dir). Its own keys too, pressed or not, no analog value: ImGui
+        // scrolls the window under the cursor by it - the column moved with the selection, user 2026-11-13; the right
+        // stick scrolls: option_rows.mm stick_scroll
+        if (e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTX || e.gaxis.axis == SDL_GAMEPAD_AXIS_LEFTY) {
+            static int held = -1;
+            int d = ui_stick_dir(e.gaxis.axis, v);
+            const ImGuiKey dpad[4] = {ImGuiKey_GamepadDpadLeft, ImGuiKey_GamepadDpadRight, ImGuiKey_GamepadDpadUp,
+                                      ImGuiKey_GamepadDpadDown};
+            const ImGuiKey stick[4] = {ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight, ImGuiKey_GamepadLStickUp,
+                                       ImGuiKey_GamepadLStickDown};
+            if (d != held) {
+                if (held >= 0) io.AddKeyEvent(dpad[held], false), io.AddKeyAnalogEvent(stick[held], false, 0);
+                if (d >= 0) io.AddKeyEvent(dpad[d], true), io.AddKeyAnalogEvent(stick[d], true, 0);
+                held = d;
+            }
         } else if (e.gaxis.axis == SDL_GAMEPAD_AXIS_RIGHTY) {  // (scrolls a right column of plain text: option_rows.mm)
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickUp, v < -0.1f, v < 0 ? -v : 0);
             io.AddKeyAnalogEvent(ImGuiKey_GamepadRStickDown, v > 0.1f, v > 0 ? v : 0);
@@ -2491,7 +2490,8 @@ extern "C" void launcher_run(const char *root) {
             else io.ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
             ImGui_ImplSDL3_NewFrame();
             // (test) LARECOMP_LAUNCHER_KEYS=<frame>:<key>,...: that key pressed at that frame, let go 2 frames later.
-            // Keys: left right up down enter esc (keyboard), pl pr pu pd pa pb (controller d-pad, confirm, back)
+            // Keys: left right up down enter esc (keyboard), pl pr pu pd pa pb (controller d-pad, confirm, back), or
+            // b.<button> (larecomp.ini name: b.south, b.ltrigger...): a real controller button event, through LAS Menu
             if (static const char *keys = getenv("LARECOMP_LAUNCHER_KEYS"); keys) {
                 io.BackendFlags |= ImGuiBackendFlags_HasGamepad;  // (no controller needed for its presses)
                 static long kf;
@@ -2506,6 +2506,23 @@ extern "C" void launcher_run(const char *root) {
                         {"pl", ImGuiKey_GamepadDpadLeft}, {"pr", ImGuiKey_GamepadDpadRight}, {"pu", ImGuiKey_GamepadDpadUp},
                         {"pd", ImGuiKey_GamepadDpadDown}, {"pa", ImGuiKey_GamepadFaceDown}, {"pb", ImGuiKey_GamepadFaceRight}};
                     size_t len = strcspn(name + 1, ",");
+                    if (!strncmp(name + 1, "b.", 2)) {
+                        char bn[24];
+                        snprintf(bn, sizeof bn, "%.*s", (int)(len - 2 < sizeof bn ? len - 2 : sizeof bn - 1), name + 3);
+                        int h = bind_pad_from_name(bn);
+                        SDL_Event pe;
+                        SDL_zero(pe);
+                        if (h == PADB_LTRIGGER || h == PADB_RTRIGGER) {
+                            pe.type = SDL_EVENT_GAMEPAD_AXIS_MOTION, pe.gaxis.which = 0x7E57;
+                            pe.gaxis.axis = h == PADB_LTRIGGER ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+                            pe.gaxis.value = kf == at ? 32767 : 0;
+                        } else if (h >= 0) {
+                            pe.type = kf == at ? SDL_EVENT_GAMEPAD_BUTTON_DOWN : SDL_EVENT_GAMEPAD_BUTTON_UP;
+                            pe.gbutton.which = 0x7E57, pe.gbutton.button = (Uint8)h, pe.gbutton.down = kf == at;
+                        }
+                        if (pe.type) SDL_PushEvent(&pe);
+                        continue;
+                    }
                     for (auto &m : map)
                         if (strlen(m.n) == len && !strncmp(name + 1, m.n, len)) io.AddKeyEvent(m.k, kf == at);
                 }
@@ -2517,6 +2534,7 @@ extern "C" void launcher_run(const char *root) {
             // a drag / flick (touch_ui.h): this frame's scroll, onto the page under the finger
             float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); },
                                            [&](bool down) { io.AddMouseButtonEvent(0, down); });
+            ui_nav_repeat(io, ui_text_busy());
             ImGui::NewFrame();
             g_touch.scroll_apply(touch_px);
             const Page frame_page = page;  // (menu_sfx_frame: B on the main page does nothing)

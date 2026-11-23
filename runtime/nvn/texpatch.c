@@ -185,6 +185,12 @@ static void scan_sarc(const char *rel) {
 static void load_refs(void) {
     scan_sarc("region_common/ui/Game.arc");
     scan_sarc("region_common/ui/StartUp.arc");
+    // the title's logo in Japanese, Chinese and Korean game text: their own Logo_00 / Logo_01 (the other languages
+    // draw StartUp.arc's). Without them a touch tap on that title was never L + R (#863)
+    scan_sarc("regionJP/JPja/ui/StartUpRegion.arc");
+    scan_sarc("regionCN/CNch/ui/StartUpRegion.arc");
+    scan_sarc("regionKR/KRkr/ui/StartUpRegion.arc");
+    scan_sarc("regionTW/TWch/ui/StartUpRegion.arc");
     scan_sarc("regionUS/common/ui/GameRegionCommon.arc");
     scan_sarc("regionEU/common/ui/GameRegionCommon.arc");
     size_t len;

@@ -18,7 +18,7 @@ native Windows, macOS, Linux, Android and iOS application.
 > - Linux - x86-64, Vulkan graphics backend (AppImage)
 > - Android - arm64, Vulkan graphics backend
 > - iPhone and iPad - arm64, Metal graphics backend (sideloaded: see [iPhone and iPad](#iphone-and-ipad))
-> - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
+> - Linux aarch64 (ARM) - **experimental**: on the [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
 
 ## System requirements
@@ -46,6 +46,10 @@ These are the minimums during the beta and may change as development continues.
 | GPU driver | Vulkan 1.3. Older Adreno phones ship a Vulkan 1.1 driver: pick a Turnip driver package in Settings > System. The latest we've tested is [Turnip 26.3.0 R6](https://github.com/StevenMXZ/Adreno-Tools-Drivers/releases/tag/v37) (`Turnip_v26.3.0-R6.zip`) from StevenMXZ's Adreno-Tools-Drivers |
 | RAM | 8 GB |
 | Storage | About 15 GB free |
+
+> [!NOTE]
+> Some Qualcomm (Adreno) GPU drivers have many bugs, even on newer phones. If you see graphical issues, try a Turnip
+> driver (Settings > System, see the GPU driver row above) before you open an issue report.
 
 > [!TIP]
 > We recommend turning on Dynamic resolution and choosing an FPS target. The resolution then adjusts to what your device
@@ -258,7 +262,7 @@ without touching the installed game, your game files or your saves.
   cheats and save editor (#453)
 - **[@wimw85](https://github.com/wimw85)** - much faster game code setup on the Steam Deck and other PCs (#434)
 - **[@missionfloyd](https://github.com/missionfloyd)** - a much smaller game code build, without debug info (#487)
-- **[@wolfchimneyrock](https://github.com/wolfchimneyrock)** - full speed on ARM Mali graphics (#527), the CPU and GPU working in parallel on Mali (#529), and faster render passes on Mali (#528, #534), a cheaper FSR upscale (#532), the game on the big cores of ARM and Intel hybrid CPUs on Linux (#533), no more flickering grass and shadows on Mali (#546), the game starting on Snapdragon (Adreno) devices (#561), much faster shaders on Mali and Adreno (#562, #563, #579), faster graphics memory on Mali with Mesa (#564), GPU tuning tools for Vulkan (#565), no more memory leak on Arm's Mali driver (#607), smaller shader stacks that keep 4 GB Mali boards from running out of memory (#645), and less shader scratch memory on PanVK (#646)
+- **[@wolfchimneyrock](https://github.com/wolfchimneyrock)** - full speed on ARM Mali graphics (#527), the CPU and GPU working in parallel on Mali (#529), and faster render passes on Mali (#528, #534), a cheaper FSR upscale (#532), the game on the big cores of ARM and Intel hybrid CPUs on Linux (#533), no more flickering grass and shadows on Mali (#546), the game starting on Snapdragon (Adreno) devices (#561), much faster shaders on Mali and Adreno (#562, #563, #579), faster graphics memory on Mali with Mesa (#564), GPU tuning tools for Vulkan (#565), no more memory leak on Arm's Mali driver (#607), smaller shader stacks that keep 4 GB Mali boards from running out of memory (#645), less shader scratch memory on PanVK (#646), and no more white triangles over the Field on PanVK before Mesa 26.1 (#633)
 - **[@bgevko](https://github.com/bgevko)** - an option to keep the area's music during Guardian Acorns and Pieces of Power (#642)
 
 **Mobile ports** - special thanks to the people who brought the game to phones and tablets:
@@ -361,7 +365,9 @@ nothing for Nintendo's game, which you must supply yourself.
 ### Source code of bundled third-party components
 
 Release builds include these components; their source code for the exact versions shipped is available here. The
-seed generator's packages are in the desktops' helper and inside the iOS app alike:
+seed generator's packages are in the desktops' helper and inside the iOS app alike. Each Windows, macOS, Linux and
+Android package carries their full license texts in `THIRD-PARTY-NOTICES.txt` at its root (made from
+[`licenses/`](licenses)):
 
 | Component | Version | License | Source |
 |---|---|---|---|
@@ -392,6 +398,11 @@ seed generator's packages are in the desktops' helper and inside the iOS app ali
 | BIZ UDPGothic font (Regular, Linux) | 1.05 (Google Fonts) | SIL OFL 1.1 | https://github.com/googlefonts/morisawa-biz-ud-gothic, https://github.com/google/fonts/tree/main/ofl/bizudpgothic |
 | DejaVu Sans font (Book, Bold) | 2.37 | Bitstream Vera license (DejaVu changes public domain) | https://github.com/dejavu-fonts/dejavu-fonts/releases/tag/version_2_37 |
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
+| Vulkan Memory Allocator (Windows, Linux, Android; built in) | 3.3.0 | MIT | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/releases/tag/v3.3.0 |
+| AMD FidelityFX Super Resolution 1 (Windows, Linux, Android; ported, built in) | 1.0.2 | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR/releases/tag/v1.0.2 |
+| volk, libadrenotools, liblinkernsbypass (Android) | vulkan-sdk-1.4.350.1, 8fae8ce, aa39758 | MIT, BSD 2-clause, BSD 2-clause | https://github.com/zeux/volk, https://github.com/bylaws/libadrenotools, https://github.com/bylaws/liblinkernsbypass |
+| LLVM OpenMP runtime, libomp (macOS seed generator, used by quicktex) | as built by Homebrew | Apache 2.0 with LLVM exceptions | https://github.com/llvm/llvm-project |
+| AppImage type 2 runtime (Linux; with libfuse 3.15.0, squashfuse 0.5.2) | 20251108 | MIT; libfuse: LGPL 2.1 | https://github.com/AppImage/type2-runtime/releases/tag/20251108 |
 
 The exact build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_macos.sh`,
 `tools/build_deps_windows.sh`, `tools/linux/build_deps.sh`, `tools/build_deps_ios.sh` and `tools/rando/rando_gen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the

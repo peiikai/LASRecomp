@@ -30,7 +30,8 @@ uint64_t rq_render_cpu_ns(void) { return render_cpu_ns; }
 int64_t pace_gpu_ns(void) { return (int64_t)gpu_total_ns; }
 int game_in_play(void) { return 1; }
 bool world_on_screen(void) { return true; }
-const char *game_level_name(void) { return "Field"; }
+static const char *level = "Field";
+const char *game_level_name(void) { return level; }
 uint64_t game_camera_zone(void) { return zone; }
 void slow_frame_present(uint64_t now, uint64_t gcpu) { (void)now, (void)gcpu; }
 // Dynamic resolution's state for pace.c "Resolution first" (output_scale.c): 0 off, 1 at its floor, 2 above it. The
@@ -183,7 +184,8 @@ static void overload_steps(double t, int n, Frame *f) {
     if (t < 6 && k != last_k) last_k = k, pace_hitch("a render scale change");
 }
 static int held_soon(int holds, int backs, double held_s, double lc, bool end, double secs) {
-    return holds == 1 && backs == 0 && end && lc < 12;  // (the last step at 5 s: held by 12 s, for the rest)
+    // (the last step at 5 s: held by 12 s, for the rest - but for one try at 60 its CPU headroom gets, a few seconds)
+    return holds <= 2 && backs <= 1 && end && held_s > secs - 15;
 }
 
 // A render scale change every 4.5 s at Dynamic's floor: frames on time for 1.5 s after it (settled), then GPU 20 ms to
@@ -207,7 +209,7 @@ static void gpu20_dyn_floor(double t, int n, Frame *f) { gpu20(t, n, f), dyn_sta
 // ... reaching its floor 5 s in (its steps took the factor down meanwhile): held within a second or two of that
 static void gpu20_dyn_reaches_floor(double t, int n, Frame *f) { gpu20(t, n, f), dyn_state = t < 5 ? 2 : 1; }
 static int held_at_floor(int holds, int backs, double held_s, double lc, bool end, double secs) {
-    return holds == 1 && backs == 0 && end && lc >= 5 && lc < 8;
+    return holds <= 2 && backs <= 1 && end && held_s <= secs - 5 && held_s > secs - 11;  // (held at 5-8 s, one try)
 }
 // The CPU the limit (the game thread 20 ms a frame) with Dynamic above its floor: held at any factor - no resolution
 // helps the CPU. By CPU time, not busy time:
@@ -225,12 +227,51 @@ static void render20_dyn(double t, int n, Frame *f) {
     dyn_state = 2;
 }
 
+// #811: a Radeon 760M (integrated, 2560x1440) entering a dungeon: GPU ~14.5 ms a frame at 60, but its frames stay heavy
+// (22 ms) for 2.5 s after the level load - past the second of grace - and the game is held. Held at 30 the GPU clocks
+// down and reads 23 ms a frame, over the limit for good: it stayed at 30 until a restart (which ran the same dungeon at
+// 60). It must try 60 and stay there.
+static void igpu_downclock(double t, int n, Frame *f) {
+    static bool loaded;
+    if (t >= 3 && !loaded) loaded = true, pace_hitch("a level load"), f->stall = 120;
+    bool load_tail = t >= 3 && t < 5.5;
+    f->cpu = 2 + noise(0.5), f->wait = 6, f->stall = f->stall > 0 ? f->stall : 0;
+    f->gpu = pace_is_slow() ? 23 + noise(1) : load_tail ? 22 + noise(1) : 14.5 + noise(1);
+    zone = t < 3 ? 1 : 2;
+}
+static int igpu_back(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return holds == 1 && backs == 1 && !end && lc < 20;  // (held after the load, back within ~10 s of clear CPU)
+}
+// ... and one that doesn't fit 60 at full clock either (GPU 19 ms a frame at 60, 26 at 30): the tries at 60 fail and
+// back off - few of them, further apart each time - and it ends held.
+static void igpu_downclock_heavy(double t, int n, Frame *f) {
+    f->cpu = 2 + noise(0.5), f->wait = 6, f->stall = 0;
+    f->gpu = pace_is_slow() ? 26 + noise(1) : 19 + noise(1);
+}
+static int igpu_tries_back_off(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return backs >= 1 && backs <= 3 && end && held_s > secs - 12;
+}
+// ... the heavy one in a cave for 40 s (its tries back off), then out to the field, which fits 60 at full clock (14.5
+// ms, 23 held; its load's tail holds it): the cave's backoff doesn't carry over - the field's try comes after 10 s
+static void igpu_cave_then_field(double t, int n, Frame *f) {
+    static bool out;
+    if (t >= 40 && !out) out = true, pace_hitch("a level load"), f->stall = 120;
+    level = t < 40 ? "Cave" : "Field", zone = t < 40 ? 1 : 2;
+    f->cpu = 2 + noise(0.5), f->wait = 6, f->stall = f->stall > 0 ? f->stall : 0;
+    f->gpu = t < 40 ? (pace_is_slow() ? 26 : 19) + noise(1) : (pace_is_slow() ? 23 : t < 42.5 ? 22 : 14.5) + noise(1);
+}
+static int igpu_field_back_soon(int holds, int backs, double held_s, double lc, bool end, double secs) {
+    return backs >= 2 && !end && lc > 40 && lc < 55;
+}
+
 // Fits 60 with no hitches: never held.
 static void steady(double t, int n, Frame *f) { f->cpu = 5 + noise(1), f->gpu = 11 + noise(1.5), f->stall = 0, f->wait = 8; }
 
 static int never_held(int holds, int backs, double held_s, double lc, bool end, double secs) { return holds == 0; }
+// (held within a few seconds and for the rest. Held for the GPU's time with CPU headroom: one try at 60 after 10 s,
+// whose frames show the GPU over at 60 as at 30 - no other try in that scene - pace.c "A GPU time read at 30")
 static int held_after(int holds, int backs, double held_s, double lc, bool end, double secs) {
-    return holds == 1 && backs == 0 && end && held_s > secs - 5;  // (held within a few seconds and for the rest)
+    return holds <= 2 && backs <= 1 && end && held_s > secs - 8;
 }
 static int released(int holds, int backs, double held_s, double lc, bool end, double secs) {
     return holds == 1 && backs == 1 && !end && lc < 12;
@@ -276,13 +317,19 @@ static const Case cases[] = {
     {"resolution first: the game thread busy waiting on the GPU (fence 13 ms, CPU 4.5), Dynamic above its floor: never held",
      60, gpu_fence_dyn, never_held},
     {"resolution first: the render thread 20 ms of CPU, Dynamic above its floor: held (the CPU's)", 60, render20_dyn, held_after},
+    {"#811: integrated GPU 14.5 ms at 60, held by a level load's tail, reads 23 ms at 30 (clocked down): tries 60, stays",
+     40, igpu_downclock, igpu_back},
+    {"#811: integrated GPU 19 ms at 60, 26 ms at 30: its tries at 60 fail and back off, ends held", 120,
+     igpu_downclock_heavy, igpu_tries_back_off},
+    {"#811: that GPU in a cave for 40 s (tries fail, backing off), then a field that fits 60: back at 60 soon", 90,
+     igpu_cave_then_field, igpu_field_back_soon},
 };
 
 static int run(const Case *c) {
     memset(game_mgr, 0, sizeof game_mgr);
     game_mgr[0x4e3] = 1;  // (the game allows its 30 fps mode)
     pace_test_game_mgr = (uint64_t)(uintptr_t)game_mgr;
-    rng = 9, zone = 0;
+    rng = 9, zone = 0, level = "Field";
     vsyncs();
     int holds = 0, backs = 0, n = 0;
     double start = t_ns / 1e9, held_since = -1, held_s = 0, last_change = 0;

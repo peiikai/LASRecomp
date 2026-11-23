@@ -113,6 +113,10 @@ static int g_player_misses;        // scans in this level that found nothing (fi
 static uint64_t g_player_actor;    // Link's actor those misses were with
 extern uint64_t g_stick_freeze_until;  // (below)
 static uint64_t g_hold_until;      // place_tick: Link held at a far jump's landing spot until this frame
+// The doorway Link came out of (the last jump's target): it doesn't take him back while the stick still pushes out
+// through it (a same-side pair, E -> E: still walking east he arrives facing that doorway and walked straight back
+// into it - user's LuckyMoblin988, Tail Cave 06E E -> 03A E -> 06E E within 2 s: "a loop")
+static struct { char level[40]; int row, col; char side; bool on; } g_arrival;
 
 // Reboot: the next seed's door_jumps.tsv, nothing found in the old heap.
 RT_ON_RESET(doorjump_reset) {
@@ -127,6 +131,7 @@ RT_ON_RESET(doorjump_reset) {
     g_player_actor = 0;
     g_hold_until = 0;
     g_stick_freeze_until = 0;
+    g_arrival.on = false;
 }
 
 static int is_player_collision(uint64_t p) {
@@ -443,49 +448,71 @@ void doorjump_tick(uint64_t frame) {
         }
     }
     static float px, pz;  // last frame (only moving INTO a doorway jumps)
-    float dx = x - px, dz = z - pz;
+    float dx = x - px, dz = z - pz, ox = px, oz = pz;
     px = x, pz = z;
     int col = (int)floorf(x / 15.0f), row = (int)floorf(z / 12.0f) + 1;
-    float lx = x - 15.0f * col, lz = z - 12.0f * (row - 1);
+    if (g_arrival.on) {  // the doorway he came out of takes him back only once the stick has stopped pushing out
+        char s = g_arrival.side;
+        int32_t along = s == 'W' ? -g_stick_lx : s == 'E' ? g_stick_lx : s == 'N' ? g_stick_ly : -g_stick_ly;
+        if (along < 8000 || strcmp(g_arrival.level, lv)) g_arrival.on = false;
+    }
     for (int i = 0; i < g_njumps; i++) {
         Jump *j = &g_jumps[i];
         if (strcmp(j->level, lv)) continue;
         int jr, jc;
         grid_pos(lv, j->row, j->col, &jr, &jc);
-        if (jc != col || jr != row) continue;
-        float depth, lateral, out;  // distance to the edge, position along it, movement towards it
+        // (relative to this doorway's cell: a dash or a jump in the air may have carried him over its edge already)
+        float lx = x - 15.0f * jc, lz = z - 12.0f * (jr - 1), olx = ox - 15.0f * jc, olz = oz - 12.0f * (jr - 1);
+        bool here = jc == col && jr == row;
+        float depth, lateral, out, before;  // distance to the edge, position along it, movement towards it, last frame's
         switch (j->side) {
-        case 'W': depth = lx; lateral = lz; out = -dx; break;
-        case 'E': depth = 15.0f - lx; lateral = lz; out = dx; break;
-        case 'N': depth = lz; lateral = lx; out = -dz; break;
-        default: depth = 12.0f - lz; lateral = lx; out = dz; break;
+        case 'W': depth = lx; lateral = lz; out = -dx; before = olx; break;
+        case 'E': depth = 15.0f - lx; lateral = lz; out = dx; before = 15.0f - olx; break;
+        case 'N': depth = lz; lateral = lx; out = -dz; before = olz; break;
+        default: depth = 12.0f - lz; lateral = lx; out = dz; before = 12.0f - olz; break;
+        }
+        bool inside = lateral > -1.0f && lateral < (j->side == 'N' || j->side == 'S' ? 16.0f : 13.0f);
+        // Pegasus dash / feather jump: no stop in the doorway, he runs or flies on over the edge (no rest, so no
+        // jump: the game's own scroll took him into the old neighbour cell - a wrong room, or its pit, user beta_6
+        // preview-5, Turtle Rock 05H N). Deeper than a walk ever gets (the wall stops him ~0.3-0.5 out), or just over
+        // the edge from inside: jump at once
+        bool fast = out > 0.01f && depth < 0.2f && depth > -1.5f && before > depth && before > -0.05f && inside &&
+                    (here || depth <= 0.0f) && fabsf(lateral - j->own * 0.75f) <= 1.2f;
+        if (!here && !fast) continue;
+        if (g_arrival.on && j->row == g_arrival.row && j->col == g_arrival.col && j->side == g_arrival.side) {
+            j->still = 0;  // (just came out of it, still pushing out: not back in)
+            continue;
         }
         if (ENV("LARECOMP_DOORJUMP_LOG") && depth < 1.5f)
-            LOG("[doorjump] f%llu %c depth %.3f lateral %.3f out %.4f still %d y %.2f\n", (unsigned long long)frame, j->side, depth, lateral, out, j->still, pos[1]);
-        // (pressed against the wall he bounces between two positions each frame, ~0.3 from the edge)
-        if (depth > 0.7f || fabsf(lateral - j->own * 0.75f) > 1.2f) { j->still = 0; continue; }  // per doorway: a cell's other doorways mustn't reset it
-        if (depth > 0.55f) continue;
-        if (!j->still && out <= 0.01f) continue;  // armed only by walking in (not by landing here)
-        // ...with the stick held out through the doorway (not knocked into it by an enemy: DevChaos1 Catfish 03D W)
-        if (!j->still) {
-            int32_t along = j->side == 'W' ? -g_stick_lx : j->side == 'E' ? g_stick_lx : j->side == 'N' ? g_stick_ly : -g_stick_ly;
-            if (along < 8000) continue;
+            LOG("[doorjump] f%llu %c depth %.3f lateral %.3f out %.4f still %d y %.2f%s\n", (unsigned long long)frame, j->side, depth, lateral, out, j->still, pos[1], fast ? " fast" : "");
+        if (!fast) {  // walking: the doorway stops him, jump once at rest
+            // (pressed against the wall he bounces between two positions each frame, ~0.3 from the edge)
+            if (depth > 0.7f || fabsf(lateral - j->own * 0.75f) > 1.2f) { j->still = 0; continue; }  // per doorway: a cell's other doorways mustn't reset it
+            if (depth > 0.55f) continue;
+            if (!j->still && out <= 0.01f) continue;  // armed only by walking in (not by landing here)
+            // ...with the stick held out through the doorway (not knocked into it by an enemy: DevChaos1 Catfish 03D W)
+            if (!j->still) {
+                int32_t along = j->side == 'W' ? -g_stick_lx : j->side == 'E' ? g_stick_lx : j->side == 'N' ? g_stick_ly : -g_stick_ly;
+                if (along < 8000) continue;
+            }
+            // in the doorway's last half tile: release the stick for a moment (moving him while he walks gets undone by
+            // that frame's movement, and where the neighbour has no wall he'd walk on into its void), jump at rest
+            g_stick_freeze_until = frame + 3;
+            ++j->still;
+            // jump only after ~0.4 s at rest: while Link is in the game's push-against-a-wall state (it outlasts the
+            // push) position writes are undone (Angler's 03G -> 02G: 12 frames failed, 20 passed). LARECOMP_DJ_REST: frames
+            static int rest = -1;
+            if (rest < 0) rest = getenv("LARECOMP_DJ_REST") ? atoi(getenv("LARECOMP_DJ_REST")) : 24;
+            // ...unless he's dropping: where the neighbour has no wall at this doorway there's nothing under him past the
+            // edge - jump at once, before he falls (Tail Cave 05F south in a generated layout: fell, then respawned)
+            bool falling = pos[1] < -0.3f;
+            // ...but not once he's deep in a fall: the game's fall-out (and its respawn) is under way and undoes every
+            // position write - jumping each frame only fires the jump (and its map letter) over and over
+            if (pos[1] < -3.0f) { j->still = 0; continue; }
+            if (!falling && (j->still < rest || (fabsf(out) > 0.02f && j->still < rest + 8))) continue;
         }
-        // in the doorway's last half tile: release the stick for a moment (moving him while he walks gets undone by
-        // that frame's movement, and where the neighbour has no wall he'd walk on into its void), jump at rest
-        g_stick_freeze_until = frame + 3;
-        ++j->still;
-        // jump only after ~0.4 s at rest: while Link is in the game's push-against-a-wall state (it outlasts the
-        // push) position writes are undone (Angler's 03G -> 02G: 12 frames failed, 20 passed). LARECOMP_DJ_REST: frames
-        static int rest = -1;
-        if (rest < 0) rest = getenv("LARECOMP_DJ_REST") ? atoi(getenv("LARECOMP_DJ_REST")) : 24;
-        // ...unless he's dropping: where the neighbour has no wall at this doorway there's nothing under him past the
-        // edge - jump at once, before he falls (Tail Cave 05F south in a generated layout: fell, then respawned)
         bool falling = pos[1] < -0.3f;
-        // ...but not once he's deep in a fall: the game's fall-out (and its respawn) is under way and undoes every
-        // position write - jumping each frame only fires the jump (and its map letter) over and over
-        if (pos[1] < -3.0f) { j->still = 0; continue; }
-        if (!falling && (j->still < rest || (fabsf(out) > 0.02f && j->still < rest + 8))) continue;
+        if (fast && pos[1] < -3.0f) { j->still = 0; continue; }
         j->still = 0;
         float nx = x, nz = z, across = j->depth;  // just past the edge, in front of the partner doorway
         // just inside the target room's doorway on its side (for a neighbour: just past the shared edge)
@@ -498,16 +525,35 @@ void doorjump_tick(uint64_t frame) {
         case 'S': nz = tz0 + 12.0f - across; nx = tx0 + j->partner * 0.75f + j->lateral; break;
         default: nz = tz0 + across; nx = tx0 + j->partner * 0.75f + j->lateral; break;
         }
-        LOG("[doorjump] %s %02d%c %c: (%.2f, %.2f) -> %02d%c %c (%.2f, %.2f)\n", lv, row, 'A' + col, j->side, x, z,
-            j->trow, 'A' + j->tcol, j->tside, nx, nz);
+        LOG("[doorjump] %s %02d%c %c: (%.2f, %.2f) -> %02d%c %c (%.2f, %.2f)%s\n", lv, j->row, 'A' + j->col, j->side, x,
+            z, j->trow, 'A' + j->tcol, j->tside, nx, nz, fast ? " (dash / jump)" : "");
         { extern void pace_hitch(const char *why);  // nvn/pace.c
           pace_hitch("a door jump"); }
+        if (fast) {
+            // a dash / fall moves Link from his physics body's own position (doubles, PlayerCollision [+0x150] ->
+            // [+0x10] + 0x1f8, found 2026-10-29 by scanning for his spot): every float copy written gets overwritten
+            // from it the next frame and he dashed on / fell from where he was. Written too, the jump sticks.
+            uint64_t p1 = LD64(pc + 0x150), body = p1 ? LD64(p1 + 0x10) : 0;
+            double *d = body ? (double *)(uintptr_t)(body + 0x1f8) : NULL;
+            if (d && fabs(d[0] - x) < 0.1 && fabs(d[2] - z) < 0.1) {
+                float ny = j->height > -90.0f ? j->height + 0.05f : 0.0f;
+                d[1] += ny - pos[1], d[0] = nx, d[2] = nz;
+            } else
+                LOG("[doorjump] no physics body at PlayerCollision+0x150: the dash may carry on\n");
+        }
         pos[0] = pos2[0] = nx;
         pos[2] = pos2[2] = nz;
         if (j->height > -90.0f) pos[1] = pos2[1] = j->height + 0.05f;  // onto the landing floor (raised rooms: 1.5)
-        else if (falling) pos[1] = pos2[1] = 0.0f;  // back on the floor (doorways are at floor height 0)
+        else if (falling || fast) pos[1] = pos2[1] = 0.0f;  // back on the floor (doorways are at floor height 0)
         px = nx, pz = nz;
-        if (abs(j->tcol - col) + abs(j->trow - row) != 1) { hold_x = nx, hold_y = pos[1], hold_z = nz; g_hold_until = frame + 30; }  // (y set above)
+        if (abs(j->tcol - j->col) + abs(j->trow - j->row) != 1) { hold_x = nx, hold_y = pos[1], hold_z = nz; g_hold_until = frame + 30; }  // (y set above)
+        if (fast) {  // the dash / jump ends on the landing spot: held there a moment
+            hold_x = nx, hold_y = pos[1], hold_z = nz;
+            if (g_hold_until < frame + 12) g_hold_until = frame + 12;
+            g_stick_freeze_until = frame + 12;
+        }
+        strlcpy(g_arrival.level, lv, sizeof g_arrival.level);
+        g_arrival.row = j->trow, g_arrival.col = j->tcol, g_arrival.side = j->tside, g_arrival.on = true;
         g_jumps_fired++;
         if (j->pair >= 0) { extern void flags_ext_set(int idx); flags_ext_set(CHAOS_FLAG_BASE + j->pair); }
         if (ENV("LARECOMP_DOORJUMP_TRACE")) trace_until = (long)frame + 90;
