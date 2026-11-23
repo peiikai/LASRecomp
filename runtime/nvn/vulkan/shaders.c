@@ -7,6 +7,7 @@
 
 #include "shaders.h"
 #include "../screen_filter.h"
+#include "../present_area.h"
 
 void vk_shaders_init(void) {  // (compilers are per thread: check shaderc works at all)
     shaderc_compiler_t c = shaderc_compiler_initialize();
@@ -298,11 +299,16 @@ static const char *builtin_src(const char *name, int *stage) {
         *stage = STAGE_FRAGMENT;
         return "#version 450\n"
                "layout(set = 0, binding = 0) uniform sampler2D t;\n"
-               "layout(push_constant) uniform F { layout(offset = 32) vec4 pf; };\n"  // (the screen filter)
+               "layout(push_constant) uniform F { layout(offset = 16) vec4 crop; vec4 pf; };\n"  // (the shown rect; the screen filter + downscale ratio)
                "layout(location = 0) in vec2 uv;\n"
                "layout(location = 0) out vec4 o;\n"
                "void main() {\n"
-               "  vec3 c = texture(t, uv).rgb;\n"
+               "  vec3 c;\n"
+               "  vec4 cr = vec4(crop.xy, crop.xy + crop.zw);\n"
+               PRESENT_AREA_SRC("vec2", "vec3", "int", "texelFetch(t, ivec2(x, y), 0)", "vec2(textureSize(t, 0))",
+                                "mix(pow((q + 0.055) / 1.055, vec3(2.4)), q / 12.92, lessThanEqual(q, vec3(0.04045)))",
+                                "mix(1.055 * pow(a, vec3(1.0 / 2.4)) - 0.055, a * 12.92, lessThanEqual(a, vec3(0.0031308)))",
+                                "texture(t, uv)", "uv", "cr")
                SCREEN_FILTER_SRC("vec3")
                "  o = vec4(c, 1.0);\n"
                "}\n";
