@@ -117,8 +117,8 @@ static void save_png(id<MTLTexture> tex, const char *path) {
 // test build (a pre-release for a few players to try a fix) is test-<name>: the start screen says "Test build <name>",
 // and it previews LARECOMP_TEST_OF - the update check offers that release (or a later one) as soon as it's out, so its
 // players move to it.
-#define LARECOMP_VERSION "v0.6.1"
-#define LARECOMP_TEST_OF "v0.6.1"
+#define LARECOMP_VERSION "test-883-house-crash"
+#define LARECOMP_TEST_OF "v0.6.2"
 // Experimental builds (the retired experimental.yml set these; Experimental moved to nightly): the build's time (YYYYMMDDHHMM, UTC; 0: not an
 // experimental build). They only look for a newer experimental build of their own platform, never a normal release.
 #define LARECOMP_EXPERIMENTAL_STAMP 0LL
