@@ -111,8 +111,9 @@ COMPONENTS = [
          source='https://github.com/dejavu-fonts/dejavu-fonts/releases/tag/version_2_37', packages=ALL,
          texts=[('LICENSE', 'repo:third_party/fonts/DejaVu/LICENSE')]),
     dict(id='miniz', name='miniz', version='3.0.2', license='MIT',
-         source='https://github.com/richgel999/miniz/releases/tag/3.0.2', packages=DESKTOP + (I,),
-         notes='Built into the executable: reads the iOS kit and writes the .ipa (iOS: the kit\'s miniz-LICENSE.txt).',
+         source='https://github.com/richgel999/miniz/releases/tag/3.0.2', packages=ALL,
+         notes='Built into the executable: the saves files (Export / Import saves, the sync folder); on the desktop '
+               'also reads the iOS kit and writes the .ipa (iOS: the kit\'s miniz-LICENSE.txt).',
          texts=[('LICENSE', gh('richgel999/miniz', '3.0.2', 'LICENSE'))]),
     dict(id='shaderc', name='shaderc (with glslang, SPIRV-Tools, SPIRV-Headers inside)',
          version='2026.4 (Windows, MSYS2 package), 2026.3 (Linux, Android)',

@@ -243,6 +243,9 @@ Game files, saves, seeds, settings and logs:
 - iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > LAS Recomp).
 - A source checkout with `extracted/` in the folder the app starts from: that folder.
 - You can move it to another folder or drive in Settings > System > Data folder.
+- To move saves between devices, use Export saves and Import saves in Settings > System > Saves. Or pick the
+  same cloud folder as the Sync folder on each device (iCloud Drive, Google Drive, any folder on Android). Newer
+  saves found there are offered when the app starts.
 - `--data-dir <dir>` (or `LARECOMP_DATA_ROOT=<dir>`) overrides all of these.
 - For a bug report, attach `lasrecomp.log` from that folder.
 

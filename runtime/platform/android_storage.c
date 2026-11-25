@@ -7,6 +7,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <unistd.h>
+
+#include "../saves.h"
 
 #include "../platform.h"
 
@@ -239,4 +242,95 @@ JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativePromptDone(JNI
     jbyte *b = (*env)->GetByteArrayElements(env, text, NULL);
     prompt_answer(serial, 1, (const char *)b, (size_t)n);
     (*env)->ReleaseByteArrayElements(env, text, b, JNI_ABORT);
+}
+
+// ---- saves (runtime/saves.h): the activity's pickers and the sync folder through the storage framework
+static void (*g_saves_picked)(const char *);
+static void (*g_saves_exported)(int);
+static void (*g_sync_picked)(const char *);
+
+bool android_pick_saves(void (*done)(const char *path)) {
+    g_saves_picked = done;
+    return android_call("pickSaves");
+}
+JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeSavesPicked(JNIEnv *env, jclass cls, jstring path) {
+    (void)cls;
+    void (*done)(const char *) = g_saves_picked;
+    if (!done) return;
+    const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL;
+    done(p);
+    if (p) (*env)->ReleaseStringUTFChars(env, path, p);
+}
+
+bool android_export_saves(const char *local, const char *name, void (*done)(int result)) {
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return false;
+    jmethodID m = activity_method(env, act, "exportSaves", "(Ljava/lang/String;Ljava/lang/String;)V");
+    bool ok = m != NULL;
+    if (ok) {
+        g_saves_exported = done;
+        jstring jl = (*env)->NewStringUTF(env, local), jn = (*env)->NewStringUTF(env, name);
+        (*env)->CallVoidMethod(env, act, m, jl, jn);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env), ok = false;
+        (*env)->DeleteLocalRef(env, jl), (*env)->DeleteLocalRef(env, jn);
+    }
+    (*env)->DeleteLocalRef(env, act);
+    return ok;
+}
+JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeSavesExported(JNIEnv *env, jclass cls, jint result) {
+    (void)env, (void)cls;
+    if (g_saves_exported) g_saves_exported((int)result);
+}
+
+bool android_pick_sync_folder(void (*done)(const char *uri)) {
+    g_sync_picked = done;
+    return android_call("pickSyncFolder");
+}
+JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeSyncFolderPicked(JNIEnv *env, jclass cls, jstring uri) {
+    (void)cls;
+    void (*done)(const char *) = g_sync_picked;
+    if (!done) return;
+    const char *u = uri ? (*env)->GetStringUTFChars(env, uri, NULL) : NULL;
+    done(u);
+    if (u) (*env)->ReleaseStringUTFChars(env, uri, u);
+}
+
+// (any thread: the sync merge's own, the start screen's check)
+static jint sync_call(const char *method, const char *sig, const char *where, const char *name, const char *local,
+                      bool boolean) {
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return -1;
+    jmethodID m = activity_method(env, act, method, sig);
+    jint r = -1;
+    if (m) {
+        jstring jw = (*env)->NewStringUTF(env, where), jn = (*env)->NewStringUTF(env, name),
+                jl = (*env)->NewStringUTF(env, local);
+        r = boolean ? ((*env)->CallBooleanMethod(env, act, m, jw, jn, jl) ? 1 : -1)
+                    : (*env)->CallIntMethod(env, act, m, jw, jn, jl);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env), r = -1;
+        (*env)->DeleteLocalRef(env, jw), (*env)->DeleteLocalRef(env, jn), (*env)->DeleteLocalRef(env, jl);
+    }
+    (*env)->DeleteLocalRef(env, act);
+    return r;
+}
+int plat_sync_fetch(const char *where, const char *name, const char *local) {
+    // (the merge works in the data folder; the activity wants a full path)
+    char full[1200];
+    if (local[0] != '/' && getcwd(full, sizeof full)) {
+        size_t k = strlen(full);
+        snprintf(full + k, sizeof full - k, "/%s", local);
+        local = full;
+    }
+    return (int)sync_call("syncFetch", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)I", where, name, local, false);
+}
+bool plat_sync_put(const char *where, const char *name, const char *local) {
+    char full[1200];
+    if (local[0] != '/' && getcwd(full, sizeof full)) {
+        size_t k = strlen(full);
+        snprintf(full + k, sizeof full - k, "/%s", local);
+        local = full;
+    }
+    return sync_call("syncPut", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z", where, name, local, true) == 1;
 }

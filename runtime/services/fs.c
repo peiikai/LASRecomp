@@ -23,6 +23,7 @@
 #include "../platform.h"
 #include "../game_addresses.h"
 #include "../romfs_build.h"
+#include "../saves.h"
 #include "../ui/menu.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
@@ -877,6 +878,7 @@ static void commit(HostFs *fs) {
                        strerror(error));
         } else LOG("[save] committed %s\n", path);
     }
+    if (fs->npending) saves_sync_kick();  // (the sync folder, if one is set: runtime/saves.h)
     fs->npending = 0;
 }
 // Recover pairs before dropping abandoned working copies: deleting the data copy first would make an
