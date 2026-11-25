@@ -24,6 +24,7 @@ std::vector<BuildStep> steps_ours_items() {
          seed_hints_apply},
         {"keysanity_text.apply|keysanity_text.write_messages", keysanity_text_apply},
         {"refill_gets.apply|bomb_bag_text.add_message", refill_gets_apply},
+        {"arrow_bow_text.apply", arrow_bow_text_apply},
         {"bomb_bag_text.apply|bomb_bag_text.add_message", bomb_bag_text_apply},
         {"powder_bag_text.apply|bomb_bag_text.add_message", powder_bag_text_apply},
         {"silent_pickups._flow", silent_pickups_apply},

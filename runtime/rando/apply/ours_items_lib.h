@@ -31,6 +31,7 @@ void hint_sheet_apply(SeedBuild &b);  // ours_items_hints.cpp
 void seed_hints_apply(SeedBuild &b);
 void keysanity_text_apply(SeedBuild &b);  // ours_items_texts.cpp
 void refill_gets_apply(SeedBuild &b);
+void arrow_bow_text_apply(SeedBuild &b);
 void bomb_bag_text_apply(SeedBuild &b);
 void powder_bag_text_apply(SeedBuild &b);
 void silent_pickups_apply(SeedBuild &b);
