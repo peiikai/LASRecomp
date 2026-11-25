@@ -744,6 +744,18 @@ bool landing_search(Reader &R, const std::string &room, int side, int slot, int 
                     return true;
                 }
             }
+    // a raised notch with no landing past it: Turtle Rock 03G's west doorway is one 1.5 tile, then the ledge's lip, then
+    // crumbling floor. Landed 2.2 in at height 0, Link stood inside the ledge and the game sent him back to the room he
+    // came from (user's play-test 2026-11-24, 03G as Face Shrine 01H). He lands on the notch and drops off it himself,
+    // as he does in vanilla coming from 03F. Only once no landing is found anywhere (the pass without areas): a door
+    // frame at 2.1 / 3.0 is a raised doorway tile too (Turtle Rock 06G E, Bottle Grotto 08G E)
+    if (!allowed) {
+        double h;
+        if (free(0, along, false, h) && h > 0.3) {
+            got = {0.75, round2(h), 0.0};
+            return true;
+        }
+    }
     got = {2.2, 0.0, 0.0};
     return false;
 }
