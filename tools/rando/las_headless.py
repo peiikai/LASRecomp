@@ -823,6 +823,8 @@ def main():
     if pot_locs or bush_locs or dig_locs or rock_locs:  # (after every flow edit) refills at real checks are refills, not the item
         import refill_gets
         print('refill gets:', refill_gets.apply(out_dir, romfs, settings), flush=True)
+    import arrow_bow_text  # (after every flow edit) an arrow refill with the bow: held up, no no-bow line
+    print('arrow bow text:', arrow_bow_text.apply(out_dir, romfs), flush=True)
     import bomb_bag_text  # (after every flow edit, digs too) found bombs: "You found your Bomb Bag!"
     print('bomb bag text:', bomb_bag_text.apply(out_dir, romfs, settings), flush=True)
     import powder_bag_text  # (same) found powder: "You found your Powder Bag!"
