@@ -40,14 +40,15 @@ int main(int argc, char **argv) {
     if (argc != 2) return 2;
     bool console = !strcmp(argv[1], "console");
     bool handoff = !strcmp(argv[1], "handoff");
+    bool launcher = !strncmp(argv[1], "launcher", 8);  // (RecompLauncher: stderr is its pipe)
     // Model a GUI launch without a console while keeping the test runner's own handles untouched.
-    if (!console && strcmp(argv[1], "child-inherited")) SetStdHandle(STD_ERROR_HANDLE, NULL);
+    if (!console && !launcher && strcmp(argv[1], "child-inherited")) SetStdHandle(STD_ERROR_HANDLE, NULL);
     log_to_file_without_console();
     if (!strcmp(argv[1], "reject")) return g_log_path[0] ? 3 : 0;
     if (console ? g_log_path[0] != 0 : g_log_path[0] == 0) return 4;
     if (fprintf(stdout, "stdout:%s\n", argv[1]) < 0 || fflush(stdout)) return 9;
     if (fprintf(stderr, "stderr:%s\n", argv[1]) < 0 || fflush(stderr)) return 10;
-    if (!strcmp(argv[1], "parent") || handoff) {
+    if (!strcmp(argv[1], "parent") || !strcmp(argv[1], "launcher-parent") || handoff) {
         char exe[MAX_PATH], command[MAX_PATH + 32];
         if (!GetModuleFileNameA(NULL, exe, sizeof exe)) return 5;
         snprintf(command, sizeof command, "\"%s\" %s", exe, handoff ? "child-inherited" : "child");
@@ -202,4 +203,18 @@ with tempfile.TemporaryDirectory(prefix='windows-logs-', dir=build) as directory
     finish(start('after-others'))
     assert len(list(temporary.glob('lasrecomp-backup-*.log'))) == 5
     assert all(other.read_text() == 'keep me' for other in others)
-print('PASS: independent/relaunched writers, live latest log, five backups, active-session protection, exit ordering, fallback, other logs untouched')
+    # RecompLauncher keeps stderr (a pipe) as its game output: the log is written all the same, and the launcher's
+    # stream gets every line of it, a relaunched game's included. Other pipes keep the old behaviour (no log).
+    launcher_env = env | {'RECOMPLAUNCHER': '1'}
+    for label, expected in (('launcher', ['stdout:launcher', 'stderr:launcher']),
+                            ('launcher-parent', ['stdout:launcher-parent', 'stderr:launcher-parent', 'stdout:child',
+                                                 'stderr:child', 'parent-after-child'])):
+        process = start(label, launcher_env)
+        out, err = finish(process)
+        log, = temporary.glob(f'lasrecomp-backup-*-{process.pid}.log')
+        assert session_lines(log) == expected, (label, log.read_text())
+        assert out == b'' and err == log.read_bytes(), (label, out, err, log.read_bytes())
+    before = set(temporary.glob('*.log'))
+    assert finish(start('console', env | {'RECOMPLAUNCHER': '0'})) == (b'stdout:console\r\n', b'stderr:console\r\n')
+    assert set(temporary.glob('*.log')) == before
+print('PASS: RecompLauncher log and stream, independent/relaunched writers, live latest log, five backups, active-session protection, exit ordering, fallback, other logs untouched')

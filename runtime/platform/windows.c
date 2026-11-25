@@ -394,10 +394,53 @@ static void prune_logs(const char *dir) {
     free(logs);
 }
 
+// Started by RecompLauncher: it keeps our stderr (a pipe) as its own game output file, which players send with their
+// reports, and its crash report looks for lasrecomp.log next to the exe. The log takes stderr as for a GUI launch, and
+// a thread copies each new line of it into the launcher's stream. Following the file (rather than a pipe in front of
+// it) keeps every line in the log even when the process dies before the copy; a relaunched game (plat_exec) writes
+// the same file while this process waits, so its lines reach the stream too.
+static HANDLE g_tee_out = INVALID_HANDLE_VALUE, g_tee_log = INVALID_HANDLE_VALUE;
+static SRWLOCK g_tee_lock = SRWLOCK_INIT;
+
+// Copy what the log has that the stream hasn't yet. wait: false from a crash (the copying thread may be the one that
+// crashed, holding the lock).
+static void log_tee_drain(bool wait) {
+    if (g_tee_log == INVALID_HANDLE_VALUE) return;
+    fflush(stderr);
+    if (wait) AcquireSRWLockExclusive(&g_tee_lock);
+    else if (!TryAcquireSRWLockExclusive(&g_tee_lock)) return;
+    char buf[16384];
+    DWORD r, w;
+    while (ReadFile(g_tee_log, buf, sizeof buf, &r, NULL) && r)
+        for (char *p = buf; r; p += w, r -= w)
+            if (!WriteFile(g_tee_out, p, r, &w, NULL) || !w) goto done;  // (the launcher went away: the log has it all)
+done:
+    ReleaseSRWLockExclusive(&g_tee_lock);
+}
+
+static DWORD WINAPI log_tee_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        log_tee_drain(true);
+        Sleep(50);
+    }
+    return 0;
+}
+
+static void log_tee_start(HANDLE out) {
+    g_tee_log = CreateFileA(g_log_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (g_tee_log == INVALID_HANDLE_VALUE) { CloseHandle(out); return; }
+    g_tee_out = out;
+    HANDLE t = CreateThread(NULL, 0, log_tee_thread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+}
+
 // NTFS can give the newest session both names, keeping lasrecomp.log current even after a crash. On filesystems
 // without hard links, copy on exit instead. The unique session header identifies who owns the latest report;
 // creation times can collide for simultaneous launches. The startup mutex also covers this replacement.
 static void publish_log(void) {
+    log_tee_drain(true);
     if (!g_log_path[0] || !lock_logs()) return;
     fflush(stdout); fflush(stderr);
     HANDLE latest = CreateFileA(g_log_latest, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -450,12 +493,18 @@ bool plat_cli_write(const char *s, size_t n) {
 bool plat_cli_tty(void) { return g_cli_console && (g_log_path[0] || g_cli_attached); }
 
 static void log_to_file_without_console(void) {
-    // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting.
+    // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting,
+    // and RecompLauncher's, which gets the log's lines as well (log_tee_drain).
     // A relaunched game must still join its GUI session and publish its fallback copy on exit.
-    const char *inherited = getenv("LASRECOMP_LOG_FILE");
-    bool fresh = !inherited || !*inherited;
-    HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
-    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
+    const char *inherited = getenv("LASRECOMP_LOG_FILE"), *rl = getenv("RECOMPLAUNCHER");
+    bool fresh = !inherited || !*inherited, launcher = rl && *rl && strcmp(rl, "0");
+    HANDLE err = GetStdHandle(STD_ERROR_HANDLE), tee = INVALID_HANDLE_VALUE;
+    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) {
+        if (!launcher) return;
+        // (before freopen below closes the inherited handle)
+        if (!DuplicateHandle(GetCurrentProcess(), err, GetCurrentProcess(), &tee, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            return;
+    }
     char dir[MAX_PATH];
     DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
     if (!n || n >= sizeof dir) return;
@@ -523,6 +572,7 @@ static void log_to_file_without_console(void) {
     }
     atexit(publish_log);
     ReleaseMutex(g_log_mutex);
+    if (tee != INVALID_HANDLE_VALUE) log_tee_start(tee);
 }
 
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
@@ -542,6 +592,7 @@ static void require_cpu(void) {
 // Fatal error (rt_fatal_trace): what happened in plain words (runtime/crash_explain.c) in a message box, when there is
 // no console; the technical lines stay in the log.
 void plat_fatal_notice(void) {
+    log_tee_drain(false);
     publish_log();
     char text[1600];
     rt_crash_explain(text, sizeof text, g_log_path);
@@ -677,6 +728,7 @@ void plat_exec(char *const argv[]) {
     DWORD code = 1;
     if (!GetExitCodeProcess(pi.hProcess, &code)) code = 1;
     CloseHandle(pi.hProcess);
+    log_tee_drain(true);
     ExitProcess(code);
 }
 

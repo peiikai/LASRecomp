@@ -694,6 +694,7 @@ void plat_exec(char *const argv[]) {
     if (android_call("restartApp")) sleep(10);
     return;
 #endif
+    session_log_tee_drain(true);
     if (argv) { execv(argv[0], argv); return; }
     char path[4096];
     char **av = self_argv();
@@ -718,6 +719,7 @@ const char *plat_symbol(uint64_t pc, uint64_t *offset) {
 bool rt_fatal_is_driver(void);  // runtime/crash_explain.c
 #endif
 void plat_fatal_notice(void) {
+    session_log_tee_drain(false);
     char text[1600];
     rt_crash_explain(text, sizeof text, g_log_path);
     if (!g_log_path[0]) return;
@@ -853,5 +855,5 @@ const char *plat_cloud_synced(const char *dir) { (void)dir; return NULL; }
 
 // End the process at once, skipping the library teardown: as on Windows, the GPU driver's threads crashed in exit()
 // while the game's threads still submitted work.
-void plat_terminate(void) { _exit(0); }
-void plat_terminate_code(int code) { _exit(code); }
+void plat_terminate(void) { session_log_tee_drain(true); _exit(0); }
+void plat_terminate_code(int code) { session_log_tee_drain(true); _exit(code); }
