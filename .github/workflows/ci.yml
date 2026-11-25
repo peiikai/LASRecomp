@@ -103,7 +103,7 @@ jobs:
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
-      - name: Soft page write tracking (#883: a page armed again while a write waits for it)
+      - name: Soft page write tracking (#883, a page armed again while a write waits for it)
         run: |
           clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking
           build/test-soft-tracking
@@ -245,7 +245,7 @@ jobs:
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
-      - name: Soft page write tracking (#883: a page armed again while a write waits for it)
+      - name: Soft page write tracking (#883, a page armed again while a write waits for it)
         run: |
           clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking
           build/test-soft-tracking
