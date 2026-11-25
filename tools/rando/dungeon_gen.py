@@ -1093,6 +1093,13 @@ def landing_depth(romfs, room, side, slot, min_tile):
             ok, h = free(i, along - 1)
             if ok and (not walk_on or free(i + 1, along - 1)[0]):
                 return round(i * 1.5 + 0.75, 2), round(max(h, 0.0), 2), -0.75
+    # a raised notch with no landing past it: Turtle Rock 03G's west doorway is one 1.5 tile, then the ledge's lip, then
+    # crumbling floor. Landed 2.2 in at height 0, Link stood inside the ledge and the game sent him back to the room
+    # he came from (user's play-test 2026-11-24, 03G as Face Shrine 01H). He lands on the notch and drops off it
+    # himself, as he does in vanilla coming from 03F
+    ok, h = free(0)
+    if ok and h > 0.3:
+        return 0.75, round(h, 2), 0.0
     return 2.2, 0.0, 0.0
 
 
