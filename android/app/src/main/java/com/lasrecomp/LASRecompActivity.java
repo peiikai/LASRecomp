@@ -454,12 +454,10 @@ public class LASRecompActivity extends SDLActivity {
     }
 
     // ---- saves (Settings > Storage: runtime/saves.c, runtime/ui/launcher.mm). The system's pickers give content://
-    // links: a picked saves file is copied to the cache folder first, an export written to the link chosen, and the
-    // sync folder's bundle read and written through the storage framework (syncFetch / syncPut).
+    // links: a picked saves file is copied to the cache folder first, and an export written to the link chosen.
     static native void nativeSavesPicked(String path);  // "" cancelled, null: no picker
     static native void nativeSavesExported(int result);  // 1 written, 0 cancelled, -1 failed
-    static native void nativeSyncFolderPicked(String uri);  // null: cancelled
-    private static final int PICK_SAVES = 0x4c53, EXPORT_SAVES = 0x4c45, PICK_SYNC_FOLDER = 0x4c59;
+    private static final int PICK_SAVES = 0x4c53, EXPORT_SAVES = 0x4c45;
     private String exportFrom;
 
     public void pickSaves() {
@@ -492,93 +490,12 @@ public class LASRecompActivity extends SDLActivity {
         });
     }
 
-    public void pickSyncFolder() {
-        runOnUiThread(() -> {
-            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-                       Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-            try {
-                startActivityForResult(i, PICK_SYNC_FOLDER);
-            } catch (Exception e) {
-                Log.e(TAG, "folder picker: " + e);
-                nativeSyncFolderPicked(null);
-            }
-        });
-    }
-
     private static boolean copyStream(InputStream in, OutputStream o) throws IOException {
         if (in == null || o == null) return false;
         byte[] buf = new byte[1 << 16];
         for (int k; (k = in.read(buf)) > 0; ) o.write(buf, 0, k);
         o.flush();
         return true;
-    }
-
-    // The document named `name` in the picked folder (its top), or null
-    private Uri findInTree(Uri tree, String name) {
-        Uri kids = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-        String[] cols = {DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME};
-        try (Cursor c = getContentResolver().query(kids, cols, null, null, null)) {
-            while (c != null && c.moveToNext())
-                if (name.equals(c.getString(1))) return DocumentsContract.buildDocumentUriUsingTree(tree, c.getString(0));
-        }
-        return null;
-    }
-
-    // The sync folder's bundle to `local`: 1 copied, 0 none there yet, -1 failed (no permission, provider error)
-    public int syncFetch(String treeUri, String name, String local) {
-        try {
-            Uri doc = findInTree(Uri.parse(treeUri), name);
-            if (doc == null) return 0;
-            File dst = new File(local);
-            try (InputStream in = getContentResolver().openInputStream(doc); OutputStream o = new FileOutputStream(dst)) {
-                if (!copyStream(in, o)) return -1;
-            }
-            return 1;
-        } catch (Exception e) {
-            Log.e(TAG, "sync folder read: " + e);
-            return -1;
-        }
-    }
-
-    // `local` into the sync folder as `name`: written whole as another file first, then put in its place (a provider
-    // that can't rename gets it written over the old one)
-    public boolean syncPut(String treeUri, String name, String local) {
-        Uri tree = Uri.parse(treeUri);
-        ContentResolver cr = getContentResolver();
-        Uri part = null;
-        try {
-            Uri dir = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree));
-            Uri old = findInTree(tree, name);
-            part = DocumentsContract.createDocument(cr, dir, "application/zip", name + ".part");
-            if (part == null) return false;
-            try (InputStream in = new java.io.FileInputStream(local); OutputStream o = cr.openOutputStream(part, "wt")) {
-                if (!copyStream(in, o)) throw new IOException("no stream");
-            }
-            Uri renamed = null;
-            try {
-                if (old != null) DocumentsContract.deleteDocument(cr, old);
-                renamed = DocumentsContract.renameDocument(cr, part, name);
-            } catch (Exception e) {
-                Log.w(TAG, "sync folder rename: " + e);
-            }
-            if (renamed == null) {  // (no rename here: written over the old one, the extra copy removed)
-                Uri dst = findInTree(tree, name);
-                if (dst == null) dst = DocumentsContract.createDocument(cr, dir, "application/zip", name);
-                try (InputStream in = new java.io.FileInputStream(local); OutputStream o = cr.openOutputStream(dst, "wt")) {
-                    if (!copyStream(in, o)) throw new IOException("no stream");
-                }
-                DocumentsContract.deleteDocument(cr, part);
-            }
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "sync folder write: " + e);
-            try {
-                if (part != null) DocumentsContract.deleteDocument(cr, part);
-            } catch (Exception ignored) {
-            }
-            return false;
-        }
     }
 
     // Called from the start screen's Choose... (any thread)
@@ -659,20 +576,6 @@ public class LASRecompActivity extends SDLActivity {
                     nativeSavesExported(-1);
                 }
             }, "export-saves").start();
-            return;
-        }
-        if (requestCode == PICK_SYNC_FOLDER) {
-            Uri tree = resultCode == RESULT_OK && data != null ? data.getData() : null;
-            if (tree != null) {
-                try {  // (kept across restarts: the game writes there after every save)
-                    getContentResolver().takePersistableUriPermission(tree,
-                        Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-                } catch (SecurityException e) {
-                    Log.w(TAG, "sync folder permission not kept: " + e);
-                    tree = null;
-                }
-            }
-            nativeSyncFolderPicked(tree != null ? tree.toString() : null);
             return;
         }
         if (requestCode != PICK_GAME_FOLDER) {

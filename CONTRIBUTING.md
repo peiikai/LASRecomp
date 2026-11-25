@@ -140,8 +140,8 @@ notices.
 
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 
-`tools/test_saves.c` (build line at its top) checks saves files and the sync folder (`runtime/saves.c`): export,
-import with backups, damaged saves, unsafe names, seeds, and the merge between two data folders, without game data.
+`tools/test_saves.c` (build line at its top) checks saves files (`runtime/saves.c`): export, import with backups,
+damaged saves, unsafe names and seeds, without game data.
 
 `python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
 

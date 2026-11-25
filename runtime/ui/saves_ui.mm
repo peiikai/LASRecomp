@@ -26,19 +26,18 @@
 static SavesUiHost g_h;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;  // (pickers and threads call back on any thread)
 
-enum { S_NONE, S_WORKING, S_IMPORT_ASK, S_SYNC_MENU, S_SYNC_OFFER, S_MESSAGE };
+enum { S_NONE, S_WORKING, S_IMPORT_ASK, S_MESSAGE };
 static int g_state;                      // (main thread)
 static bool g_open;                      // the popup is open (main thread)
-static SavesInfo g_info;                 // the import's bundle, or the sync folder's
+static SavesInfo g_info;                 // the import's bundle
 static bool g_take[SAVES_MAX_GAMES];     // the import's ticks
 static std::string g_import_path;        // the bundle being imported
 static std::string g_msg;                // S_MESSAGE's text (English, for L_line)
 static bool g_msg_bad;
 
 // filled by callbacks / threads (g_mu), taken by saves_popups
-static std::string g_picked_import, g_picked_export, g_picked_sync, g_done_msg;
-static bool g_has_import, g_has_export, g_has_sync, g_has_done, g_done_bad, g_offer_ready, g_sync_menu_off;
-static SavesInfo g_offer;                // the sync folder's newer saves (g_offer_ready)
+static std::string g_picked_import, g_picked_export, g_done_msg;
+static bool g_has_import, g_has_export, g_has_done, g_done_bad;
 static bool g_bg;                        // a thread is working (g_mu): rows wait
 
 static void finish(const char *msg, bool bad) {  // (any thread) the work's end: a message, or none
@@ -60,25 +59,12 @@ static bool run(void *(*fn)(void *)) {
 
 static void got_import(const char *path);
 
-// ---- the sync folder's newer saves (at the start, and after a folder is picked)
-static void *check_thread(void *) {
-    SavesInfo *info = new SavesInfo;
-    bool any = saves_sync_check(info);
-    pthread_mutex_lock(&g_mu);
-    if (any) g_offer = *info, g_offer_ready = true;
-    pthread_mutex_unlock(&g_mu);
-    delete info;
-    finish(NULL, false);
-    return NULL;
-}
-
 void saves_ui_init(const SavesUiHost &host) {
     static bool done;
     g_h = host;
     saves_app_version(host.app_version);
     if (done) return;
     done = true;
-    if (saves_sync_on()) run(check_thread);
     const char *t = getenv("LARECOMP_SAVES_IMPORT");  // (test: a saves file as if picked for Import saves)
     if (t && *t) got_import(t);
 }
@@ -177,61 +163,6 @@ static void *import_thread(void *) {
     return NULL;
 }
 
-// ---- the sync folder
-static void got_sync(const char *where) {  // (any thread)
-    pthread_mutex_lock(&g_mu);
-    if (where && *where) g_picked_sync = where, g_has_sync = true;
-    pthread_mutex_unlock(&g_mu);
-}
-#ifndef __ANDROID__
-static void SDLCALL picked_sync(void *, const char *const *files, int) { got_sync(files ? files[0] : NULL); }
-#endif
-static void pick_sync(void) {
-#ifdef __ANDROID__
-    if (!android_pick_sync_folder(got_sync)) finish(LN("The folder picker couldn't open."), true);
-#else
-    SDL_ShowOpenFolderDialog(picked_sync, NULL, *g_h.win, NULL, false);
-#endif
-}
-static void *sync_set_thread(void *) {
-    pthread_mutex_lock(&g_mu);
-    std::string w = g_picked_sync;
-    bool off = g_sync_menu_off;
-    g_sync_menu_off = false;
-    pthread_mutex_unlock(&g_mu);
-    char err[200];
-    bool ok = saves_sync_set(off ? NULL : w.c_str(), err, sizeof err);
-    if (!ok) { finish(err, true); return NULL; }
-    if (!off) {  // (the folder may hold another device's newer saves already)
-        SavesInfo *info = new SavesInfo;
-        bool any = saves_sync_check(info);
-        pthread_mutex_lock(&g_mu);
-        if (any) g_offer = *info, g_offer_ready = true;
-        pthread_mutex_unlock(&g_mu);
-        delete info;
-    }
-    finish(NULL, false);
-    return NULL;
-}
-static void *bring_in_thread(void *) {
-    char err[200];
-    bool ok = saves_sync_bring_in(&g_info, err, sizeof err);
-    finish(ok ? LN("Saves brought in.") : err, !ok);
-    return NULL;
-}
-
-// The sync folder as the row shows it: its last part ("LAS saves"), or Off
-static std::string sync_value(void) {
-    if (!saves_sync_on()) return L("Off");
-    std::string s = g_h.shown ? g_h.shown(saves_sync_shown()) : saves_sync_shown();
-    size_t k = s.find_last_of("/\\");
-    if (k != std::string::npos && k + 1 < s.size()) s = s.substr(k + 1);
-    const char *arrow = " \xe2\x80\xba ";  // (iOS: "iCloud Drive › LAS saves")
-    size_t a = s.rfind(arrow);
-    if (a != std::string::npos) s = s.substr(a + strlen(arrow));
-    return s;
-}
-
 void saves_rows(bool busy) {
     pthread_mutex_lock(&g_mu);
     bool bg = g_bg;
@@ -247,13 +178,6 @@ void saves_rows(bool busy) {
     if (opt_action("Import saves", "Import...", "Saves from a file made with Export saves. The saves it replaces are "
                    "backed up first."))
         start_import();
-    std::string v = sync_value();
-    if (off) opt_disable_next();
-    if (opt_action("Sync folder", v.c_str(), "Your saves are copied here after each save. Newer saves found here are "
-                   "offered at the start. Pick the same cloud folder on each device.")) {
-        if (saves_sync_on()) g_state = S_SYNC_MENU;
-        else pick_sync();
-    }
 #ifndef __ANDROID__  // (Android: other apps can't open the app's own folder)
 #if PLAT_IOS
     const char *show = LN("Open in Files");
@@ -279,7 +203,6 @@ static std::string slot_list(unsigned slots) {
 void saves_popups(float s) {
     // what the callbacks and threads left
     pthread_mutex_lock(&g_mu);
-    bool bg = g_bg;
     if (g_has_done) {
         g_has_done = false;
         if (!g_done_msg.empty()) g_msg = g_done_msg, g_msg_bad = g_done_bad, g_state = S_MESSAGE;
@@ -296,12 +219,6 @@ void saves_popups(float s) {
             g_state = S_IMPORT_ASK;
         } else g_msg = err, g_msg_bad = true, g_state = S_MESSAGE;
         pthread_mutex_lock(&g_mu);
-    }
-    if (g_has_sync && g_state == S_NONE) { g_has_sync = false; pthread_mutex_unlock(&g_mu); run(sync_set_thread); pthread_mutex_lock(&g_mu); g_state = S_WORKING; }
-    if (g_offer_ready && !bg && (g_state == S_NONE)) {
-        g_offer_ready = false;
-        g_info = g_offer;
-        g_state = S_SYNC_OFFER;
     }
     pthread_mutex_unlock(&g_mu);
     if (g_state == S_NONE || g_state == S_WORKING) {
@@ -361,33 +278,6 @@ void saves_popups(float s) {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::SetItemDefaultFocus();
-        if (ImGui::Button(L("Cancel"), bw) || esc) next = S_NONE;
-    } else if (g_state == S_SYNC_OFFER) {
-        title(L("Newer saves in your sync folder"));
-        for (int i = 0; i < g_info.n; i++)
-            if (g_info.g[i].newer)
-                ImGui::Text("%s: %s", game_name(g_info.g[i]), slot_list(g_info.g[i].newer).c_str());
-        ImGui::Spacing();
-        ImGui::TextUnformatted(L("The saves they replace are backed up first."));
-        ImGui::Spacing();
-        ImGui::SetItemDefaultFocus();
-        if (ImGui::Button(L("Bring in"), bw)) next = S_WORKING, run(bring_in_thread);
-        ImGui::SameLine();
-        if (ImGui::Button(L("Not now"), bw) || esc) next = S_NONE;
-    } else if (g_state == S_SYNC_MENU) {
-        title(L("Sync folder"));
-        ImGui::TextDisabled("%s", (g_h.shown ? g_h.shown(saves_sync_shown()) : std::string(saves_sync_shown())).c_str());
-        ImGui::Spacing();
-        ImGui::SetItemDefaultFocus();
-        if (ImGui::Button(L("Choose another"), bw)) next = S_NONE, pick_sync();
-        ImGui::SameLine();
-        if (ImGui::Button(L("Turn off"), bw)) {
-            pthread_mutex_lock(&g_mu);
-            g_sync_menu_off = true;
-            pthread_mutex_unlock(&g_mu);
-            next = S_WORKING, run(sync_set_thread);
-        }
-        ImGui::SameLine();
         if (ImGui::Button(L("Cancel"), bw) || esc) next = S_NONE;
     }
     ImGui::PopTextWrapPos();

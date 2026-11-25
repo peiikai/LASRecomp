@@ -1,11 +1,8 @@
-// Save bundles and the sync folder (runtime/saves.c) on synthetic saves, without game data: export, inspect,
-// import (backups, sidecars, seeds, damaged saves, unsafe names, a different seed by the same name) and the sync
-// folder's merge between two data folders.
+// Save bundles (runtime/saves.c) on synthetic saves, without game data: export, inspect and import (backups,
+// sidecars, seeds, damaged saves, unsafe names, a different seed by the same name).
 //
-// macOS:  make build/miniz/.fetched && clang -O1 -g -fobjc-arc -Iruntime -Ibuild/miniz $(pkg-config --cflags sdl3) \
-//           tools/test_saves.c runtime/saves.c runtime/zipfile.c build/miniz/miniz.c runtime/platform/apple_sync.m \
-//           $(pkg-config --libs sdl3) -framework Foundation -o build/test-saves && build/test-saves
-// Linux:  the same without apple_sync.m, -fobjc-arc and -framework Foundation, plus -lpthread
+// make build/miniz/.fetched && cc -O1 -g -Iruntime -Ibuild/miniz $(pkg-config --cflags sdl3) tools/test_saves.c \
+//   runtime/saves.c runtime/zipfile.c build/miniz/miniz.c $(pkg-config --libs sdl3) -o build/test-saves && build/test-saves
 #include <dirent.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -106,10 +103,10 @@ int main(void) {
     const char *tmp = getenv("TMPDIR");
     snprintf(root, sizeof root, "%s/lasrecomp-test-saves-XXXXXX", tmp && *tmp ? tmp : "/tmp");
     if (!mkdtemp(root)) return 1;
-    char A[300], B[300], F[300], bundle[300];
-    snprintf(A, sizeof A, "%s/A", root), snprintf(B, sizeof B, "%s/B", root), snprintf(F, sizeof F, "%s/F", root);
+    char A[300], B[300], bundle[300];
+    snprintf(A, sizeof A, "%s/A", root), snprintf(B, sizeof B, "%s/B", root);
     snprintf(bundle, sizeof bundle, "%s/bundle.zip", root);
-    mkdirs(A), mkdirs(B), mkdirs(F);
+    mkdirs(A), mkdirs(B);
     long long t0 = 1700000000;
 
     // ---- data folder A: vanilla files 1 and autosave, a seed with two slots (one with a flags sidecar), an old seed
@@ -211,60 +208,6 @@ int main(void) {
     CHECK(!saves_inspect(bad, &info, err, sizeof err) && strstr(err, "newer"));
     write_bytes(bad, "not a zip", 9, 0);
     CHECK(!saves_inspect(bad, &info, err, sizeof err));
-
-    // ---- the sync folder: A puts its saves there; B (older file 2 there? no: B has no file 2) gets offered A's newer
-    chdir(A);
-    saves_sync_init();
-    CHECK(!saves_sync_on());
-    CHECK(saves_sync_set(F, err, sizeof err));
-    char fz[400];
-    snprintf(fz, sizeof fz, "%s/LAS Recomp saves.zip", F);
-    CHECK(exists(fz));
-    chdir(B);
-    // B: file 1 the same as A's; the autosave newer here; Zora1's file 2 (A's) not here
-    write_save("save/save_0/savedata3.bin", 44, t0 + 100);
-    remove("rando/Zora1/save/save_0/savedata1.bin");
-    CHECK(saves_sync_set(F, err, sizeof err));  // (merges: B's newer autosave goes in, A's slots stay)
-    CHECK(saves_sync_check(&info));
-    zr = game(&info, "Zora1"), v = game(&info, "");
-    CHECK(zr && zr->newer == 0x2);
-    CHECK(v && v->newer == 0);
-    CHECK(saves_sync_bring_in(&info, err, sizeof err));
-    CHECK(tag_of("rando/Zora1/save/save_0/savedata1.bin") == 12);
-    // A's Old2 (a seed B doesn't have) is still in the sync folder's copy after B's merge
-    z = zip_open(fz, err, sizeof err);
-    CHECK(z && zip_find(z, "rando/Old2/save/save_0/savedata2.bin") >= 0);
-    if (z) zip_close(z);
-    CHECK(!saves_sync_check(&info));  // (nothing newer now)
-    // A sees B's newer autosave
-    chdir(A);
-    saves_sync_init();
-    CHECK(saves_sync_on());
-    CHECK(saves_sync_check(&info));
-    v = game(&info, "");
-    CHECK(v && v->newer == 0x8);
-    CHECK(saves_sync_bring_in(&info, err, sizeof err));
-    CHECK(tag_of("save/save_0/savedata3.bin") == 44);
-    // after a save, the worker merges it into the sync folder by itself
-    write_save("save/save_0/savedata1.bin", 55, t0 + 300);
-    saves_sync_kick();
-    sleep(4);
-    z = zip_open(fz, err, sizeof err);
-    CHECK(z && zip_find(z, "save/save_0/savedata1.bin") >= 0);
-    if (z) zip_close(z);
-    // a half-synced bundle is never written over, and a damaged one is never brought in
-    write_bytes(fz, "PK\003\004 half", 9, 0);
-    write_save("save/save_0/savedata0.bin", 77, t0 + 500);
-    saves_sync_kick();
-    sleep(3);
-    FILE *f = fopen(fz, "rb");
-    char head[16] = {0};
-    if (f) fread(head, 1, 9, f), fclose(f);
-    CHECK(!memcmp(head, "PK\003\004 half", 9));
-    CHECK(!saves_sync_check(&info));
-    // turned off
-    CHECK(saves_sync_set(NULL, err, sizeof err) || 1);
-    CHECK(!saves_sync_on() && !exists("saves_sync.txt"));
 
     char cmd[400];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);

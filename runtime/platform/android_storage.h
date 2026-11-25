@@ -35,11 +35,9 @@ bool android_fetch(const char *url, const char *out, const char *user_agent);
 
 // Saves (runtime/saves.h, Settings > Storage): the system's file picker for a saves file, done(path) on another
 // thread with a local copy of it ("" cancelled, NULL failed); Export's save picker, the local bundle written where the
-// player chose (done: 1 written, 0 cancelled, -1 failed); the sync folder's picker (done(uri) with its content://
-// tree, its read and write permission kept; NULL cancelled). false: no picker could open.
+// player chose (done: 1 written, 0 cancelled, -1 failed). false: no picker could open.
 bool android_pick_saves(void (*done)(const char *path));
 bool android_export_saves(const char *local, const char *name, void (*done)(int result));
-bool android_pick_sync_folder(void (*done)(const char *uri));
 
 #ifdef __cplusplus
 }

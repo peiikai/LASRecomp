@@ -1327,7 +1327,7 @@ miniz
   License:  MIT
   Source:   https://github.com/richgel999/miniz/releases/tag/3.0.2
   Packages: Windows, macOS, Linux, Android, iOS
-  Notes:    Built into the executable: the saves files (Export / Import saves, the sync folder); on the desktop also reads the iOS kit and writes the .ipa (iOS: the kit's miniz-LICENSE.txt).
+  Notes:    Built into the executable: the saves files (Export / Import saves); on the desktop also reads the iOS kit and writes the .ipa (iOS: the kit's miniz-LICENSE.txt).
 
 ----- LICENSE -----
 

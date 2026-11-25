@@ -514,10 +514,6 @@ int main(int argc, char **argv) {
         else root = arg_root;
     }
     rt_paths_init();  // the data root becomes the working directory (runtime/paths.h)
-    {   // the saves' sync folder (runtime/saves.h), before anything saves
-        extern void saves_sync_init(void);
-        saves_sync_init();
-    }
     {   // --load-save / LARECOMP_LOAD_SAVE: straight into a save (a bad or missing one: the normal start)
         extern bool load_save_prepare(void);
         if (load_save_prepare()) skip_launcher = true;

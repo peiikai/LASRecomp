@@ -1,4 +1,4 @@
-// Saves: export, import and the sync folder (runtime/saves.c; the start screen's Settings > Storage rows,
+// Saves: export and import (runtime/saves.c; the start screen's Settings > Storage rows,
 // runtime/ui/launcher.mm).
 //
 // A saves bundle is a .zip laid out as the data folder is, so it can also be unpacked by hand:
@@ -11,13 +11,7 @@
 // Import checks every save (size, version, both CRCs) before anything is written, zips the files it replaces into
 // backups/ first, writes each file in one step (a temporary copy renamed over it) and takes a slot's sidecars with
 // it, so a save and its .flagsx always match. It runs on the start screen only: the game holds no save open there.
-//
-// The sync folder: a folder the player picks (iCloud Drive, a Google Drive / Dropbox / OneDrive folder, any folder
-// on Android through the system's picker) holding one bundle, "LAS Recomp saves.zip". After each save the game
-// merges its slots into it on a background thread, slot by slot, the newer of the two kept (a slot's time is its
-// file's, in UTC); on the start screen a slot newer there than here is offered to bring in, through the import above.
-// One file rather than a folder of saves: a cloud drive that has synced half a folder would pair a save with another
-// device's sidecar; a half-synced zip fails its own checks and is skipped.
+
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>
@@ -34,9 +28,6 @@ typedef struct {
     long long mtime[SAVES_SLOTS];   // when each was saved (seconds since 1970, UTC; 0 not known)
     bool seed_files;                // the bundle carries the seed itself
     const char *problem;            // NULL: can be imported; else why not (English, for L())
-    bool seed_missing;              // (the problem: its seed is neither here nor in the bundle; a sync merge still
-                                    //  carries it along for the devices that have the seed)
-    unsigned newer;                 // saves_sync_check: the slots newer in the sync folder than here
 } SavesGame;
 
 typedef struct {
@@ -62,29 +53,6 @@ bool saves_any(void);
 const char *saves_slot_name(int slot);
 // The app's version, written into bundles (the start screen sets it)
 void saves_app_version(const char *v);
-
-// ---- the sync folder. Where it is lives in saves_sync.txt in the data folder: a path, on iOS the folder's
-// security-scoped bookmark, on Android the folder's content:// URI (its permission kept by the activity).
-void saves_sync_init(void);             // at start, in the data folder (main, before the first save). Off for test
-                                        // runs (LARECOMP_SAVE_DIR)
-bool saves_sync_on(void);
-const char *saves_sync_shown(void);     // the folder as picked (a path; Android: the URI's own name for it); "" when off
-// Use the folder (a path, or Android's URI) from now on and merge into it at once; NULL turns syncing off.
-bool saves_sync_set(const char *where, char *err, size_t n);
-// After the game committed a save (runtime/services/fs.c): a merge into the sync folder shortly, on its own thread
-void saves_sync_kick(void);
-// The start screen: fetches the sync folder's bundle and marks in info the slots newer there than here. true: any.
-// Blocks (a cloud file may download first): call it on a thread of its own.
-bool saves_sync_check(SavesInfo *info);
-// Those newer slots in, through saves_import (backups first)
-bool saves_sync_bring_in(const SavesInfo *info, char *err, size_t n);
-
-// The platform's side of the sync folder: the folder's bundle copied to local, or local into the folder (as one step
-// there). Windows / Linux: plain files (saves.c); macOS / iOS: coordinated with the cloud drive, so an iCloud file is
-// downloaded first (platform/apple_sync.m); Android: through the storage framework (the activity, android_storage.c).
-// fetch: 1 done, 0 no bundle there yet, -1 failed.
-int plat_sync_fetch(const char *where, const char *name, const char *local);
-bool plat_sync_put(const char *where, const char *name, const char *local);
 
 #ifdef __cplusplus
 }

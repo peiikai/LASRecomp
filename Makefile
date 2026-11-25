@@ -111,7 +111,7 @@ EXE      := $(B)/lasrecomp
 DEPINC   := -I$(SDL)/include -I$(FFMPEG)/include
 LDFLAGS  := -L$(SDL)/lib -lSDL3 -Wl,-rpath,$(SDL)/lib -L$(FFMPEG)/lib -lavformat -lavcodec -lavutil -lswscale -Wl,-rpath,$(FFMPEG)/lib \
             -framework CoreFoundation -framework Foundation -framework Metal -framework MetalFX -framework QuartzCore -framework AppKit -framework ImageIO -framework CoreGraphics -framework UniformTypeIdentifiers
-BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/apple_sync.m
+BACKEND_SRC := $(wildcard runtime/nvn/*.m)
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
 UIFLAGS  := -fobjc-arc
@@ -132,7 +132,7 @@ LDFLAGS  := -L$(DEPS)/lib -lSDL3 -lavformat -lavcodec -lavutil -lswscale -lbz2 -
             -framework CoreHaptics -framework GameController -framework CoreMotion -framework CoreBluetooth \
             -framework OpenGLES -framework Security -framework CoreText
 BACKEND_SRC := $(wildcard runtime/nvn/*.m) runtime/platform/ios_glue.m runtime/platform/ios_picker.m \
-               runtime/platform/ios_bookmark.m runtime/platform/ios_prompt.m runtime/platform/apple_sync.m
+               runtime/platform/ios_bookmark.m runtime/platform/ios_prompt.m
 BACKEND_OBJ := $(patsubst runtime/%.m,$(B)/rt/%.o,$(BACKEND_SRC))
 IMGUI_OBJ += $(B)/imgui/imgui_impl_metal.o
 UIFLAGS  := -fobjc-arc

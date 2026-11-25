@@ -1,10 +1,9 @@
-// Saves: export, import and the sync folder (runtime/saves.h). Runs in the data folder (the working directory).
+// Saves: export and import (runtime/saves.h). Runs in the data folder (the working directory).
 #include "saves.h"
 
 #include <SDL3/SDL.h>
 #include <dirent.h>
 #include <errno.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -26,8 +25,6 @@
 
 #define MANIFEST "lasrecomp-saves.txt"
 #define FORMAT 1                       // lasrecomp-saves.txt's first line: "LAS Recomp saves <FORMAT>"
-#define SYNC_FILE "saves_sync.txt"     // in the data folder: where the sync folder is
-#define SYNC_NAME "LAS Recomp saves.zip"
 #define BACKUPS "backups"
 #define KEEP_BACKUPS 20
 enum { SAVE_SIZE = 0x5EE0, SAVE_VERSION = 0xE };
@@ -78,24 +75,6 @@ static void set_mtime(const char *path, long long t) {
     utime(path, &u);
 #endif
 }
-#if !defined(__ANDROID__) && !defined(__APPLE__)  // (plat_sync_*: the plain folders' copy)
-static bool copy_file(const char *from, const char *to) {
-    FILE *in = fopen(from, "rb");
-    if (!in) return false;
-    FILE *out = fopen(to, "wb");
-    if (!out) { fclose(in); return false; }
-    char buf[1 << 15];
-    size_t k;
-    bool ok = true;
-    while ((k = fread(buf, 1, sizeof buf, in)) > 0) ok &= fwrite(buf, 1, k, out) == k;
-    ok &= !ferror(in);
-    fclose(in);
-    ok &= fflush(out) == 0;
-    ok &= fclose(out) == 0;
-    if (!ok) remove(to);
-    return ok;
-}
-#endif
 static void say(char *err, size_t n, const char *msg) {
     if (err && n) snprintf(err, n, "%s", msg);
 }
@@ -209,11 +188,6 @@ typedef struct {
     struct { char seed[128]; long long mtime[SAVES_SLOTS]; bool seed_files; } g[SAVES_MAX_GAMES];
 } Local;
 
-static int local_find(Local *l, const char *seed) {
-    for (int i = 0; i < l->n; i++)
-        if (!strcmp(l->g[i].seed, seed)) return i;
-    return -1;
-}
 // The slots of one game (0 for each missing)
 static void local_slots(const char *seed, long long mt[SAVES_SLOTS]) {
     char d[400], p[600];
@@ -320,7 +294,7 @@ static void *read_entry(ZipReader *z, int i, size_t *sz) {
     return zip_read(z, i, sz);
 }
 
-// info from an open bundle; every save read and checked (a bundle a cloud drive synced only partly fails here)
+// info from an open bundle; every save read and checked
 static bool inspect(ZipReader *z, SavesInfo *info, char *err, size_t n) {
     memset(info, 0, sizeof *info);
     if (!read_manifest(z, info, err, n)) return false;
@@ -375,7 +349,7 @@ static bool inspect(ZipReader *z, SavesInfo *info, char *err, size_t n) {
         if (*g.seed && !g.problem) {
             char p[400];
             snprintf(p, sizeof p, "rando/%s", g.seed);
-            if (!is_dir(p) && !g.seed_files) g.problem = LN("Its seed isn't here and isn't in the file."), g.seed_missing = true;
+            if (!is_dir(p) && !g.seed_files) g.problem = LN("Its seed isn't here and isn't in the file.");
         }
         info->g[w++] = g;
     }
@@ -397,9 +371,7 @@ bool saves_inspect(const char *zip, SavesInfo *info, char *err, size_t n) {
     return ok;
 }
 
-// ---- writing a bundle: each slot from the data folder, or from another bundle (the sync folder's) where that one is
-// newer. changed: anything taken from the data folder that `from` didn't have as it is.
-typedef struct { const char *app; ZipReader *from; const SavesInfo *from_info; bool changed; } Build;
+// ---- writing a bundle: each slot and seed from the data folder
 
 static bool add_local_slot(ZipWriter *w, const char *seed, int slot) {
     char d[400];
@@ -417,16 +389,6 @@ static bool add_local_slot(ZipWriter *w, const char *seed, int slot) {
         ok = zip_add_file(w, name, p, true);
     }
     closedir(dir);
-    return ok;
-}
-static bool add_from_slot(ZipWriter *w, ZipReader *z, const char *seed, int slot) {
-    bool ok = true;
-    for (int i = 0, k = zip_count(z); i < k && ok; i++) {
-        ZipEntry ze;
-        if (!zip_entry_at(z, i, &ze) || ze.is_dir) continue;
-        Entry e = classify(ze.name);
-        if (e.kind == E_SLOT && e.slot == slot && !strcmp(e.seed, seed)) ok = zip_add_from(w, z, i);
-    }
     return ok;
 }
 static bool add_local_seed_files(ZipWriter *w, const char *seed) {
@@ -451,78 +413,45 @@ static bool add_local_seed_files(ZipWriter *w, const char *seed) {
     }
     return ok;
 }
-static bool add_from_seed_files(ZipWriter *w, ZipReader *z, const char *seed) {
-    bool ok = true;
-    for (int i = 0, k = zip_count(z); i < k && ok; i++) {
-        ZipEntry ze;
-        if (!zip_entry_at(z, i, &ze) || ze.is_dir) continue;
-        Entry e = classify(ze.name);
-        if (e.kind == E_SEED && !strcmp(e.seed, seed)) ok = zip_add_from(w, z, i);
-    }
-    return ok;
-}
 
 static const char *game_version_shown(void);
 
-static bool build(const char *out, Build *b, char *err, size_t n) {
+static bool build(const char *out, const char *app, char *err, size_t n) {
     Local *l = malloc(sizeof *l);
     if (!l) { say(err, n, LN("Couldn't write the saves file.")); return false; }
     local_scan(l);
-    // the games: here, then any only in `from` (with a good save)
-    const SavesInfo *fi = b->from_info;
-    if (fi)
-        for (int i = 0; i < fi->n && l->n < SAVES_MAX_GAMES; i++)
-            if ((!fi->g[i].problem || fi->g[i].seed_missing) && fi->g[i].slots && local_find(l, fi->g[i].seed) < 0) {
-                memset(&l->g[l->n], 0, sizeof l->g[l->n]);
-                snprintf(l->g[l->n].seed, sizeof l->g[l->n].seed, "%s", fi->g[i].seed);
-                l->n++;
-            }
     char why[200];
     ZipWriter *w = zip_create(out, why, sizeof why);
     if (!w) { LOG("[saves] %s: %s\n", out, why); free(l); say(err, n, LN("Couldn't write the saves file.")); return false; }
     size_t cap = 4096 + (size_t)l->n * SAVES_SLOTS * 200, used = 0;
     char *man = malloc(cap);
     bool ok = man != NULL;
-    if (ok) used = (size_t)snprintf(man, cap, "LAS Recomp saves %d\napp %s\ngame %s\n", FORMAT, b->app ? b->app : "",
+    if (ok) used = (size_t)snprintf(man, cap, "LAS Recomp saves %d\napp %s\ngame %s\n", FORMAT, app ? app : "",
                                     game_version_shown());
     for (int i = 0; i < l->n && ok; i++) {
         const char *seed = l->g[i].seed;
-        const SavesGame *fg = NULL;
-        if (fi)
-            for (int j = 0; j < fi->n; j++)
-                if ((!fi->g[j].problem || fi->g[j].seed_missing) && !strcmp(fi->g[j].seed, seed)) fg = &fi->g[j];
         bool any = false;
         for (int s = 0; s < SAVES_SLOTS && ok; s++) {
-            long long lt = l->g[i].mtime[s], ft = fg && (fg->slots >> s & 1) ? fg->mtime[s] : 0;
-            bool from_there = fg && (fg->slots >> s & 1) && ft > lt;
-            if (!lt && !from_there) continue;
-            if (from_there) ok = add_from_slot(w, b->from, seed, s);
-            else {
-                // a save that doesn't check out stays out (and out of the sync folder's copy)
-                char p[500];
-                char d[400];
-                save_dir(seed, d, sizeof d);
-                snprintf(p, sizeof p, "%s/savedata%d.bin", d, s);
-                FILE *f = fopen(p, "rb");
-                unsigned char *buf = malloc(SAVE_SIZE + 1);
-                size_t got = f && buf ? fread(buf, 1, SAVE_SIZE + 1, f) : 0;
-                if (f) fclose(f);
-                const char *bad = buf ? saves_check(buf, got) : "";
-                free(buf);
-                if (bad) { LOG("[saves] %s left out: %s\n", p, bad); continue; }
-                ok = add_local_slot(w, seed, s);
-                if (lt != ft) b->changed = true;
-            }
+            long long lt = l->g[i].mtime[s];
+            if (!lt) continue;
+            // a save that doesn't check out stays out
+            char p[500];
+            char d[400];
+            save_dir(seed, d, sizeof d);
+            snprintf(p, sizeof p, "%s/savedata%d.bin", d, s);
+            FILE *f = fopen(p, "rb");
+            unsigned char *buf = malloc(SAVE_SIZE + 1);
+            size_t got = f && buf ? fread(buf, 1, SAVE_SIZE + 1, f) : 0;
+            if (f) fclose(f);
+            const char *bad = buf ? saves_check(buf, got) : "";
+            free(buf);
+            if (bad) { LOG("[saves] %s left out: %s\n", p, bad); continue; }
+            ok = add_local_slot(w, seed, s);
             any = true;
             if (ok && used + 300 < cap)
-                used += (size_t)snprintf(man + used, cap - used, "slot %s %d %lld\n", *seed ? seed : "-", s,
-                                         from_there ? ft : lt);
+                used += (size_t)snprintf(man + used, cap - used, "slot %s %d %lld\n", *seed ? seed : "-", s, lt);
         }
-        if (!any || !*seed || !ok) continue;
-        if (l->g[i].seed_files) {
-            ok = add_local_seed_files(w, seed);
-            if (fg && !fg->seed_files) b->changed = true;
-        } else if (fg && fg->seed_files) ok = add_from_seed_files(w, b->from, seed);
+        if (any && *seed && ok && l->g[i].seed_files) ok = add_local_seed_files(w, seed);
     }
     if (ok) ok = zip_add_mem(w, MANIFEST, man, used);
     free(man);
@@ -541,8 +470,7 @@ bool saves_export(const char *zip, const char *app, char *err, size_t n) {
     if (app) g_app_version = app;
     char tmp[1100];
     snprintf(tmp, sizeof tmp, "%s.part", zip);
-    Build b = {g_app_version, NULL, NULL, false};
-    if (!build(tmp, &b, err, n)) return false;
+    if (!build(tmp, g_app_version, err, n)) return false;
     if (!replace_file(tmp, zip)) {
         remove(tmp);
         say(err, n, LN("Couldn't write the saves file."));
@@ -760,228 +688,4 @@ static const char *game_version_shown(void) {
         snprintf(v, sizeof v, "%s", g ? g->label : "");
     }
     return v;
-}
-
-// ---- the sync folder
-static pthread_mutex_t g_sync_lock = PTHREAD_MUTEX_INITIALIZER;  // (one merge or check at a time)
-static char g_where[8192];   // the folder (path; Android: URI) - "" off
-static char g_line[8192];    // as saves_sync.txt holds it (iOS: the bookmark)
-
-#if !defined(__ANDROID__) && !defined(__APPLE__)
-// A plain folder (Windows, Linux): a copy, and for the put a copy next to it renamed over it
-int plat_sync_fetch(const char *where, const char *name, const char *local) {
-    char p[8400];
-    snprintf(p, sizeof p, "%s/%s", where, name);
-    if (!file_mtime(p)) return 0;
-    return copy_file(p, local) ? 1 : -1;
-}
-bool plat_sync_put(const char *where, const char *name, const char *local) {
-    char p[8400], tmp[8500];
-    snprintf(p, sizeof p, "%s/%s", where, name);
-    snprintf(tmp, sizeof tmp, "%s/.%s.part", where, name);
-    if (!copy_file(local, tmp)) return false;
-    if (!replace_file(tmp, p)) { remove(tmp); return false; }
-    return true;
-}
-#endif
-
-void saves_sync_init(void) {
-    pthread_mutex_lock(&g_sync_lock);
-    g_where[0] = g_line[0] = 0;
-    const char *test = getenv("LARECOMP_SAVE_DIR");
-    FILE *f = test && *test ? NULL : fopen(SYNC_FILE, "rb");  // (test runs save elsewhere: they never sync)
-    if (f) {
-        size_t k = fread(g_line, 1, sizeof g_line - 1, f);
-        fclose(f);
-        g_line[k] = 0;
-        g_line[strcspn(g_line, "\r\n")] = 0;
-    }
-#if PLAT_IOS
-    if (g_line[0] && g_line[0] != '/' && plat_ios_bookmark_resolve(g_line, g_where, sizeof g_where) == 0) {
-        LOG("[saves] the sync folder is gone: syncing is off until one is picked again\n");
-        g_where[0] = 0;
-    } else if (g_line[0] == '/') snprintf(g_where, sizeof g_where, "%s", g_line);
-#else
-    snprintf(g_where, sizeof g_where, "%s", g_line);
-#endif
-    if (g_where[0]) LOG("[saves] sync folder: %s\n", saves_sync_shown());
-    pthread_mutex_unlock(&g_sync_lock);
-}
-
-bool saves_sync_on(void) { return g_where[0] != 0; }
-
-const char *saves_sync_shown(void) {
-#ifdef __ANDROID__
-    // content://<provider>/tree/primary%3ADocuments%2FLAS -> Documents/LAS (the place as the Files app shows it)
-    static char s[1024];
-    const char *t = strstr(g_where, "/tree/");
-    if (!t) return g_where;
-    t += 6;
-    size_t k = 0;
-    for (; *t && *t != '/' && k + 1 < sizeof s; t++) {
-        if (*t == '%' && t[1] && t[2]) {
-            char h[3] = {t[1], t[2], 0};
-            s[k++] = (char)strtol(h, NULL, 16);
-            t += 2;
-        } else s[k++] = *t;
-    }
-    s[k] = 0;
-    char *c = strchr(s, ':');
-    if (c && !strncmp(s, "primary", 7)) memmove(s, c + 1, strlen(c + 1) + 1);  // (internal storage: no volume name)
-    else if (c) *c = '/';
-    return s[0] ? s : "/";
-#else
-    return g_where;
-#endif
-}
-
-// One merge into the sync folder: its bundle fetched, the newer of each slot kept, put back when anything here was
-// newer. (g_sync_lock held)
-static bool merge(void) {
-    if (!g_where[0]) return true;
-    mkdir("cache", 0755);
-    const char *in = "cache/sync-in.zip", *out = "cache/sync-out.zip";
-    remove(in);
-    int got = plat_sync_fetch(g_where, SYNC_NAME, in);
-    if (got < 0) { LOG("[saves] sync: couldn't read the sync folder's saves\n"); return false; }
-    Build b = {g_app_version, NULL, NULL, false};
-    SavesInfo *fi = NULL;
-    char err[200];
-    if (got == 1) {
-        char why[200];
-        b.from = zip_open(in, why, sizeof why);
-        fi = malloc(sizeof *fi);
-        if (b.from && fi && inspect(b.from, fi, err, sizeof err)) b.from_info = fi;
-        else LOG("[saves] sync: the sync folder's saves can't be read (still syncing?): leaving it as it is\n");
-        if (!b.from_info) {  // (a half-synced file is never written over: the next save tries again)
-            if (b.from) zip_close(b.from);
-            free(fi);
-            return false;
-        }
-    }
-    bool ok = build(out, &b, err, sizeof err);
-    if (b.from) zip_close(b.from);
-    free(fi);
-    if (ok && (b.changed || got == 0)) {
-        ok = plat_sync_put(g_where, SYNC_NAME, out);
-        LOG("[saves] sync: %s\n", ok ? "saves written to the sync folder" : "couldn't write to the sync folder");
-    }
-    remove(out);
-    remove(in);
-    return ok;
-}
-
-bool saves_sync_set(const char *where, char *err, size_t n) {
-    pthread_mutex_lock(&g_sync_lock);
-    char line[8192];
-    snprintf(line, sizeof line, "%s", where ? where : "");
-#if PLAT_IOS
-    if (where && !plat_ios_bookmark_make(where, line, sizeof line)) {
-        pthread_mutex_unlock(&g_sync_lock);
-        say(err, n, LN("LAS Recomp can't keep using that folder. Pick another one."));
-        return false;
-    }
-#endif
-#if PLAT_IOS
-    char held[8192];  // (the folder's scope, held from now on: the picker's ends at the next pick)
-    if (where && plat_ios_bookmark_resolve(line, held, sizeof held) == 0) {
-        pthread_mutex_unlock(&g_sync_lock);
-        say(err, n, LN("LAS Recomp can't keep using that folder. Pick another one."));
-        return false;
-    }
-#endif
-    if (!where) remove(SYNC_FILE);
-    else {
-        char l2[8200];
-        int k = snprintf(l2, sizeof l2, "%s\n", line);
-        char tmp[64];
-        snprintf(tmp, sizeof tmp, "%s.tmp", SYNC_FILE);
-        if (!write_file(tmp, l2, (size_t)k) || !replace_file(tmp, SYNC_FILE)) {
-            pthread_mutex_unlock(&g_sync_lock);
-            say(err, n, LN("Couldn't save the setting."));
-            return false;
-        }
-    }
-    snprintf(g_line, sizeof g_line, "%s", line);
-    snprintf(g_where, sizeof g_where, "%s", where ? where : "");
-    LOG("[saves] sync folder %s%s\n", where ? "set: " : "off", where ? saves_sync_shown() : "");
-    bool ok = merge();
-    pthread_mutex_unlock(&g_sync_lock);
-    if (!ok) say(err, n, LN("Couldn't write your saves to that folder."));
-    return ok;
-}
-
-// After a save: one merge a little later (a save writes several files; a few saves in a row merge once), on a
-// thread of its own so the game never waits for a cloud folder.
-static pthread_mutex_t g_kick_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t g_kick_cond = PTHREAD_COND_INITIALIZER;
-static bool g_kicked, g_worker;
-static uint64_t g_kick_at;
-static void *sync_worker(void *arg) {
-    (void)arg;
-    for (;;) {
-        pthread_mutex_lock(&g_kick_lock);
-        while (!g_kicked) pthread_cond_wait(&g_kick_cond, &g_kick_lock);
-        pthread_mutex_unlock(&g_kick_lock);
-        for (;;) {  // until 2 s passed with no new save
-            pthread_mutex_lock(&g_kick_lock);
-            uint64_t since = SDL_GetTicks() - g_kick_at;
-            if (since >= 2000) g_kicked = false;
-            pthread_mutex_unlock(&g_kick_lock);
-            if (since >= 2000) break;
-            SDL_Delay((Uint32)(2000 - since));
-        }
-        pthread_mutex_lock(&g_sync_lock);
-        merge();
-        pthread_mutex_unlock(&g_sync_lock);
-    }
-    return NULL;
-}
-void saves_sync_kick(void) {
-    if (!g_where[0]) return;
-    pthread_mutex_lock(&g_kick_lock);
-    g_kicked = true;
-    g_kick_at = SDL_GetTicks();
-    if (!g_worker) {
-        pthread_t th;
-        if (pthread_create(&th, NULL, sync_worker, NULL) == 0) pthread_detach(th), g_worker = true;
-    }
-    pthread_cond_signal(&g_kick_cond);
-    pthread_mutex_unlock(&g_kick_lock);
-}
-
-bool saves_sync_check(SavesInfo *info) {
-    memset(info, 0, sizeof *info);
-    pthread_mutex_lock(&g_sync_lock);
-    bool any = false;
-    if (g_where[0]) {
-        mkdir("cache", 0755);
-        const char *in = "cache/sync-check.zip";
-        remove(in);
-        char err[200];
-        if (plat_sync_fetch(g_where, SYNC_NAME, in) == 1 && saves_inspect(in, info, err, sizeof err))
-            for (int i = 0; i < info->n; i++) {
-                SavesGame *g = &info->g[i];
-                if (g->problem) continue;
-                long long mt[SAVES_SLOTS];
-                local_slots(g->seed, mt);
-                for (int s = 0; s < SAVES_SLOTS; s++)
-                    if ((g->slots >> s & 1) && g->mtime[s] > mt[s]) g->newer |= 1u << s;
-                any |= g->newer != 0;
-            }
-        if (!any) remove(in);
-    }
-    pthread_mutex_unlock(&g_sync_lock);
-    if (any) LOG("[saves] the sync folder has newer saves\n");
-    return any;
-}
-
-bool saves_sync_bring_in(const SavesInfo *info, char *err, size_t n) {
-    unsigned take[SAVES_MAX_GAMES] = {0};
-    for (int i = 0; i < info->n; i++) take[i] = info->g[i].newer;
-    pthread_mutex_lock(&g_sync_lock);
-    bool ok = saves_import("cache/sync-check.zip", info, take, err, n);
-    remove("cache/sync-check.zip");
-    pthread_mutex_unlock(&g_sync_lock);
-    return ok;
 }
