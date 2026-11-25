@@ -78,7 +78,7 @@ These are the minimums during the beta and may change as development continues.
 > On first launch the app sets up what it needs, including the actual recompilation locally. No game files, assets or fonts are included.
 > The screenshot shows the start screen after setup; no Nintendo artwork is included until provided by the user.
 
-![The start screen: choose vanilla or a randomizer seed, set up your game files, settings](docs/start_screen.jpg)
+![The start screen: play, pick a randomizer seed, settings](docs/start_screen.jpg)
 
 ## Project Discord
 https://discord.gg/DhrgdYqdcY
