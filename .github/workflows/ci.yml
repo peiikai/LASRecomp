@@ -103,6 +103,10 @@ jobs:
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
+      - name: Soft page write tracking (#883, a page armed again while a write waits for it)
+        run: |
+          clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking
+          build/test-soft-tracking
       - name: Settings regression tests
         run: python3 tools/test_settings.py
       - name: Game-files delete guard (links, outside the data folder)
@@ -241,6 +245,10 @@ jobs:
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
+      - name: Soft page write tracking (#883, a page armed again while a write waits for it)
+        run: |
+          clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking
+          build/test-soft-tracking
       - name: Settings regression tests
         run: python3 tools/test_settings.py
       - name: Game-files delete guard (links, outside the data folder)

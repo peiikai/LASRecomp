@@ -143,6 +143,10 @@ items picked up anywhere, floor key spots included, get a message naming their d
 before 26.1) on synthetic SPIR-V pairs: a vertex, tessellation evaluation or geometry shader with a fragment shader,
 and the cases it must leave alone. It needs a C compiler and SPIRV-Tools.
 
+`clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking && build/test-soft-tracking` checks the
+Linux soft page write tracking (mprotect + fault handler) against writer threads and a querying thread. It needs 4K
+pages: Linux, or macOS with `-arch x86_64` (Rosetta).
+
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.
 On Windows, also run `python tools/test_windows_processes.py` to check independent
