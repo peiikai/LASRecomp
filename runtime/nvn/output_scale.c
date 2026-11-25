@@ -27,7 +27,7 @@
 
 #define MAX_TEX 16384.0
 
-// The game's own dynamic resolution (tools/patches.py GAME_DYNRES_SITE) is off: the resolution is the one chosen here,
+// The game's own dynamic resolution (runtime/gen/patches.cpp GAME_DYNRES_SITE) is off: the resolution is the one chosen here,
 // and only our Dynamic changes it. LARECOMP_GAME_DYNRES=1 (test): the game lowers its main pass under GPU load again.
 int rt_game_dynres(void) {
     static int on = -1;

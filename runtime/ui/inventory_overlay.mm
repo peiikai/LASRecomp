@@ -5,7 +5,7 @@
 // dungeon's keys.) With boss / mini-boss souls on, a column right of the item grid shows each dungeon's souls.
 // Pets (runtime/hle/pets.c): the Ghost item sits in the equipment panel's free slot (left of the Secret Medicine),
 // ticked once laid to rest; a companion card left of the panel shows who follows Link and switches it (the page
-// cursor reaches it with LEFT from the grid, pets.c). The Items page is detected by tools/patches.py ITEMS_PAGE_SITE.
+// cursor reaches it with LEFT from the grid, pets.c). The Items page is detected by runtime/gen/patches.cpp ITEMS_PAGE_SITE.
 #include "../game_addresses.h"
 #include <math.h>
 #include <stdint.h>
@@ -21,6 +21,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 uint64_t renderer_present_count(void);
 int souls_owned(int dungeon);  // runtime/hle/souls.c: -1 = no boss souls in this seed
@@ -62,18 +63,19 @@ RT_ON_RESET(inventory_overlay_reset) { g_trade_loaded = 0; g_items_frame = 0, g_
 static void load_trade_flags(void) {
     g_trade_loaded = 1;
     for (int i = 0; i < 14; i++) g_trade_flag[i] = g_trade_done[i] = -1;
-    char path[512];
-    snprintf(path, sizeof path, "%s/flags.tsv", rando_seed_dir());
-    FILE *f = fopen(path, "r");
-    if (!f) return;
-    char name[96];
+    RandoText f;
+    if (!rando_seed_dir() || !rando_text_open(&f, "flags")) return;
+    char name[96], line[256];
     int idx;
-    while (fscanf(f, "%95s %d", name, &idx) == 2)
+    // name, index per line, up to the first line that isn't one (blank lines skipped)
+    while (rando_text_gets(line, sizeof line, &f)) {
+        if (!line[strspn(line, " \t\r\n")]) continue;
+        if (sscanf(line, "%95s %d", name, &idx) != 2) break;
         for (int i = 0; i < 14; i++) {
             if (kTrade[i].flag && !strcmp(kTrade[i].flag, name)) g_trade_flag[i] = idx;
             if (kTrade[i].done && !strcmp(kTrade[i].done, name)) g_trade_done[i] = idx;
         }
-    fclose(f);
+    }
 }
 
 static bool flag_set(int i) { return i >= 0 && i < 2048 && (LD8(EVENT_FLAGS + (i >> 3)) >> (i & 7)) & 1; }
@@ -85,7 +87,7 @@ extern "C" void rt_items_page_tick(void) {
     if (c) g_items_obj = c->x[0];
 }
 
-// tools/patches.py PAUSE_MENU_SITE: the pause menu's update ran (any page, and between pages)
+// runtime/gen/patches.cpp PAUSE_MENU_SITE: the pause menu's update ran (any page, and between pages)
 static std::atomic<uint64_t> g_pause_frame{0};
 extern "C" void rt_pause_menu_tick(void) { g_pause_frame = renderer_present_count(); }
 // mobile/touch_controls.mm: the pause menu is up (L / R there turn its pages, not the boots / shield)
@@ -110,7 +112,7 @@ extern "C" int inventory_items_cursor(void) {
 extern "C" uint64_t inventory_items_obj(void) { return g_items_obj; }
 
 // A tap on an Items page cell or a file select file (runtime/ui/mobile/touch_controls.mm): where the next cursor move
-// goes, whatever the direction pressed, so the cursor goes straight there with the game's own move (tools/patches.py
+// goes, whatever the direction pressed, so the cursor goes straight there with the game's own move (runtime/gen/patches.cpp
 // ITEMS_NAV_SITE, FILE_SELECT_NAV_SITE). An ask lapses after 15 frames, so a later press of the player's own is never
 // taken over. LARECOMP_ITEMS_JUMP / LARECOMP_FILE_JUMP=<n> (tests): the first move there goes to n.
 struct NavJump {
@@ -142,9 +144,11 @@ extern "C" uint32_t rt_items_nav_pick(uint32_t next) {
     LOG("[items] tap: cursor to cell %d\n", cell);
     return (uint32_t)cell;
 }
+extern "C" void load_save_file_select(uint64_t cursor);  // runtime/hle/load_save.c (--load-save)
 // (game thread) the file select, after its list moved the cursor or not: the file a tap asked for instead. Moved: the
 // game's own change of file then runs (the old file at cursor + 1).
 extern "C" int rt_file_nav_pick(uint64_t cursor, int moved) {
+    load_save_file_select(cursor);
     int file = g_file_jump.take();
     if (file < 0) return moved;
     ST8(cursor, (uint8_t)file);
@@ -157,38 +161,18 @@ static bool companion_card(void) {
     return pets_menu_options(o) >= 2;
 }
 
-// The seed's settings.json, read once per seed.
-static const char *seed_settings(void) {
-    const char *dir = rando_seed_dir();
-    if (!dir) return NULL;
-    static std::string seed;
-    static char buf[1 << 16];
-    if (seed != dir) {
-        seed = dir;
-        buf[0] = 0;
-        if (FILE *f = fopen((seed + "/settings.json").c_str(), "rb")) {
-            size_t n = fread(buf, 1, sizeof buf - 1, f);
-            buf[n] = 0;
-            fclose(f);
-        }
-    }
-    return buf;
-}
-
 // The dungeon keys panel: on with keysanity (the seed's settings.json "keysanity" isn't "off"; keys can be anywhere,
 // so the Items screen shows what each dungeon's are).
 static bool keys_shown(void) {
-    const char *s = seed_settings();
-    const char *k = s ? strstr(s, "\"keysanity\":") : NULL;
-    static const char off[] = "\"keysanity\": \"off\"";
-    return k && strncmp(k, off, sizeof off - 1) != 0;
+    if (!rando_seed_dir()) return false;
+    const char *k = rando_setting_str("keysanity");
+    return rando_seed_has(rando_seed(), "keysanity") && !(k && !strcmp(k, "off"));
 }
 
 // The trade sequence row: with keysanity (under the keys) or with the trade quest gifts shuffled ("include-trade-gifts":
 // the trade items can come from anywhere) - then on its own (user 2026-10-11).
 static bool trade_shown(void) {
-    const char *s = seed_settings();
-    return keys_shown() || (s && strstr(s, "\"include-trade-gifts\": true"));
+    return keys_shown() || (rando_seed_dir() && rando_setting("include-trade-gifts"));
 }
 
 extern "C" int rt_tunic_upgrades(void);  // runtime/hle/qol.c

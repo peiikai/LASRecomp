@@ -123,6 +123,32 @@ static void exe_dir(char *out, size_t n) {
     if (s) *s = 0;
 }
 
+#if defined(__linux__) && !defined(__ANDROID__)
+// An unpacked AppImage's folder with portable.txt in it: the tarball (tools/linux/tarball.sh), or an AppImage a
+// launcher unpacked (RecompLauncher's Flatpak: no FUSE there; it starts AppRun with APPDIR set, APPIMAGE not).
+// <folder>/usr/bin/lasrecomp, <folder>/portable.txt. "" if not.
+static void tarball_dir(char *out, size_t n) {
+    out[0] = 0;
+    char e[1024], t[1100];
+    const char *ai = getenv("APPIMAGE");
+    if (ai && *ai) return;  // (a mounted AppImage: read-only)
+    exe_dir(e, sizeof e);
+    size_t k = strlen(e);
+    if (k < 8 || strcmp(e + k - 8, "/usr/bin")) return;
+    e[k - 8] = 0;
+    snprintf(t, sizeof t, "%s/portable.txt", e);
+    if (exists(t)) snprintf(out, n, "%s", e);
+}
+static bool linux_portable(char *root, size_t n) {
+    const char *ai = getenv("APPIMAGE");
+    char p[1100];
+    if (ai && *ai == '/' && (size_t)snprintf(p, sizeof p, "%s.home", ai) < sizeof p && is_dir(p))
+        return (size_t)snprintf(root, n, "%s/.local/share/lasrecomp", p) < n;
+    tarball_dir(p, sizeof p);
+    return p[0] && (size_t)snprintf(root, n, "%s", p) < n;
+}
+#endif
+
 // The platform's data folder. LARECOMP_DATA_HOME (tests) stands in for it.
 static void default_home(char *root, size_t n) {
     const char *t = getenv("LARECOMP_DATA_HOME");
@@ -134,6 +160,11 @@ static void default_home(char *root, size_t n) {
     const char *ext = SDL_GetAndroidExternalStoragePath();
     snprintf(root, n, "%s", ext ? ext : SDL_GetAndroidInternalStoragePath());
 #elif defined(__linux__)
+    // Single folder: an AppImage with a "<file>.AppImage.home" folder next to it (the AppImage runtime's portable
+    // mode, made with --appimage-portable-home; the runtime points $HOME there but leaves $XDG_DATA_HOME alone), or
+    // an unpacked AppImage with portable.txt (the tarball, or a launcher's unpacked copy: data next to the program,
+    // like the Windows zip)
+    if (linux_portable(root, n)) return;
     // (the AppImage is read-only): $XDG_DATA_HOME/lasrecomp, ~/.local/share/lasrecomp by default
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     if (xdg && *xdg == '/') snprintf(root, n, "%s/lasrecomp", xdg);
@@ -223,8 +254,8 @@ static bool in_app(const char *p) {
     c[4] = 0;
     return resolve(e, app, sizeof app) && within(r, app);
 #elif defined(__linux__)
-    const char *d = getenv("APPDIR");
-    return d && *d && resolve(d, app, sizeof app) && within(r, app);
+    const char *d = getenv("APPDIR"), *ai = getenv("APPIMAGE");  // (only a mounted AppImage: an unpacked one is a
+    return ai && *ai && d && *d && resolve(d, app, sizeof app) && within(r, app);  //  folder like the tarball's)
 #else
     (void)app;
     return false;
@@ -253,13 +284,25 @@ static bool pointer_root(const char *home, char *out, size_t n) {
     return true;
 }
 
+static bool has_entries(const char *dir);
+
+// --new-data-dir <folder> / LARECOMP_NEW_DATA_DIR (a launcher's own folder for a new install): used when it holds
+// LAS Recomp's data already, or when the usual data folder (the rules below) has none yet. Existing data wins: a player
+// who played before keeps their folder. NULL: not set.
+static const char *new_data_dir(void) {
+    const char *e = getenv("LARECOMP_NEW_DATA_DIR");
+    return e && *e ? e : NULL;
+}
+
 bool rt_data_root_early(char *out, size_t n) {
-    const char *env = getenv("LARECOMP_DATA_ROOT");
+    const char *env = getenv("LARECOMP_DATA_ROOT"), *nd = new_data_dir();
     if (env && *env) return (size_t)snprintf(out, n, "%s", env) < n;
+    if (nd && has_entries(nd)) return (size_t)snprintf(out, n, "%s", nd) < n;
     if (is_dir("extracted")) return false;  // (dev mode)
     char home[1024];
     default_home(home, sizeof home);
     if (!pointer_root(home, out, n) || !is_dir(out)) snprintf(out, n, "%s", home);
+    if (nd && !has_entries(out)) snprintf(out, n, "%s", nd);
     return true;
 }
 
@@ -334,8 +377,10 @@ void rt_paths_init(void) {
     exe_dir(g_exe_dir, sizeof g_exe_dir);
     default_home(g_home, sizeof g_home);
     char root[1024];
-    const char *env = getenv("LARECOMP_DATA_ROOT");
+    const char *env = getenv("LARECOMP_DATA_ROOT"), *nd = new_data_dir();
+    bool use_new = false;
     if (env && *env) snprintf(root, sizeof root, "%s", env);
+    else if (nd && has_entries(nd)) snprintf(root, sizeof root, "%s", nd), use_new = true;  // (set up there before)
 #if !PLAT_IOS
     else if (is_dir("extracted")) snprintf(root, sizeof root, "%s", g_start), g_dev = true;  // dev / portable: as before
 #endif
@@ -363,6 +408,10 @@ void rt_paths_init(void) {
             }
         }
     }
+    if (nd && !(env && *env) && !use_new) {
+        if (has_entries(root)) fprintf(stderr, "[paths] --new-data-dir: LAS Recomp's data is already in %s: kept there\n", root);
+        else snprintf(root, sizeof root, "%s", nd), g_dev = false;
+    }
     mkdirs(root);
     char msg[1400];
     if (!is_dir(root) || !writable(root) || chdir(root) != 0) {
@@ -371,7 +420,15 @@ void rt_paths_init(void) {
                  "next to the program. Move the \"LAS Recomp\" folder somewhere you can write to (e.g. Documents or "
                  "Desktop, not Program Files) and start it again.", root);
 #else
-        snprintf(msg, sizeof msg, "ReAwakening can't write to its data folder:\n%s", root);
+        char tb[1024] = "";
+#if defined(__linux__) && !defined(__ANDROID__)
+        tarball_dir(tb, sizeof tb);
+#endif
+        if (tb[0] && same_dir(tb, root))
+            snprintf(msg, sizeof msg, "ReAwakening can't write to its folder:\n%s\n\nIt keeps game files, saves and seeds "
+                     "next to the program. Move the folder somewhere you can write to, or delete portable.txt in it to "
+                     "keep them in ~/.local/share/lasrecomp.", root);
+        else snprintf(msg, sizeof msg, "ReAwakening can't write to its data folder:\n%s", root);
 #endif
         fail(msg);
     }

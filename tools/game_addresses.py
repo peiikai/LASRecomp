@@ -10,7 +10,6 @@ built from it on import, so select first. An unknown build ID is an error: there
 """
 from pathlib import Path
 import re
-import sys
 from types import SimpleNamespace
 
 
@@ -47,8 +46,7 @@ def load_versions(path):
     return versions
 
 
-_root = Path(sys._MEIPASS) if hasattr(sys, '_MEIPASS') else Path(__file__).resolve().parent.parent
-TABLE_DIR = _root / 'runtime/game_addresses'
+TABLE_DIR = Path(__file__).resolve().parent.parent / 'runtime/game_addresses'
 VERSIONS = load_versions(TABLE_DIR / 'versions.h')
 
 

@@ -2,16 +2,16 @@
 # make deps-ios: SDL3 and FFmpeg (the same LGPL subset as macOS: the game's movies) as static libraries for iOS
 # (arm64, the Makefile's IOS_MIN), from the sources pinned in tools/build_deps_macos.sh, into build/deps-ios.
 # Static: an .ipa then needs no embedded frameworks to sign. Each step is skipped when its output exists.
-# SIM=1: the same for the iOS Simulator (arm64, into build/deps-ios-sim), the CI's run of the start screen and the
-# embedded Python; only the SDK, the version-min flag and the xcframework slice differ.
-# Needs: Xcode (iOS SDK), cmake and ninja (brew), a host python of the embedded version PYV (brew python@<PYV>).
+# SIM=1: the same for the iOS Simulator (arm64, into build/deps-ios-sim), the CI's build of the simulator app; only
+# the SDK and the version-min flag differ.
+# Needs: Xcode (iOS SDK), cmake and ninja (brew).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 MIN=${IOS_MIN:?the Makefile sets IOS_MIN - run as make deps-ios}
 if [ -n "${SIM:-}" ]; then
-    SDKNAME=iphonesimulator; MINFLAG="-mios-simulator-version-min=$MIN"; SLICENAME=ios-arm64_x86_64-simulator; TAG=ios-sim
+    SDKNAME=iphonesimulator; MINFLAG="-mios-simulator-version-min=$MIN"; TAG=ios-sim
 else
-    SDKNAME=iphoneos; MINFLAG="-miphoneos-version-min=$MIN"; SLICENAME=ios-arm64; TAG=ios
+    SDKNAME=iphoneos; MINFLAG="-miphoneos-version-min=$MIN"; TAG=ios
 fi
 P=$PWD/build/deps-$TAG
 S=$PWD/build/deps/src  # (shared with the macOS deps: the same tarballs)
@@ -59,178 +59,16 @@ if [ ! -f "$P/lib/libavcodec.a" ]; then
         && make -j"$JOBS" && make install)
 fi
 
-# ---- the embedded CPython and the seed generator's packages (runtime/platform/ios_python.m)
-# BeeWare's Python.xcframework (CPython built for iOS, with the stdlib's C extensions); keystone (cross-built, its
-# build files patched: tools/patches/keystone-0.9.2.patch); oead (pybind11, built as a wheel from BeeWare's cross venv); PyYAML
-# without its C extension; evfl and appdirs (pure Python). Result: $P/Python.xcframework and $P/python/site-packages.
-# PYV comes from the Makefile (the one place the version is spelled); PYB is BeeWare's build of it, which fixes the
-# ABI every extension here is built against (a new b-release: rebuild them all - done below by the stamp).
-PYV=${PYV:-3.13}
-PYB=b16
-if [ "$(cat "$P/python-build" 2>/dev/null)" != "$PYV-$PYB" ]; then
-    rm -rf "$P/Python.xcframework" "$P/pyvenv" "$P/wheels" "$P/python"
-    echo "$PYV-$PYB" > "$P/python-build"
-fi
-fetch "https://github.com/beeware/Python-Apple-support/releases/download/$PYV-$PYB/Python-$PYV-iOS-support.$PYB.tar.gz" \
-      22b96f3d0c3663225f078556b036d2ee6ce3ff98c885706585240681335c71ea Python-$PYV-iOS-support.$PYB.tar.gz
-fetch https://github.com/keystone-engine/keystone/archive/refs/tags/0.9.2.tar.gz \
-      c9b3a343ed3e05ee168d29daf89820aff9effb2c74c6803c2d9e21d55b5b7c24 keystone-0.9.2.tar.gz
-fetch https://files.pythonhosted.org/packages/source/o/oead/oead-1.3.0.tar.gz \
-      87145c68dcddec8967fd56565e057cbbb83382554d744fbb5b38295b0dfa615f oead-1.3.0.tar.gz
-fetch https://files.pythonhosted.org/packages/source/P/PyYAML/pyyaml-6.0.2.tar.gz \
-      d584d9ec91ad65861cc08d42e834324ef890a082e591037abe114850ff7bbc3e pyyaml-6.0.2.tar.gz
-fetch https://files.pythonhosted.org/packages/source/q/quicktex/quicktex-0.2.1.tar.gz \
-      1cdd8ff55c0dcf77973e3187076bcb8df91ec3b433a7563638ff2a2b7852f6d0 quicktex-0.2.1.tar.gz
-EVFL_WHL=evfl-1.2.0-py3-none-any.whl
-fetch https://files.pythonhosted.org/packages/py3/e/evfl/$EVFL_WHL \
-      dbfb7c68a99ccbc2942636a7153fe9bae7d869ada31c0cdf441145cc71a4ffde $EVFL_WHL
-APPDIRS_WHL=appdirs-1.4.4-py2.py3-none-any.whl
-fetch https://files.pythonhosted.org/packages/py2.py3/a/appdirs/$APPDIRS_WHL \
-      a841dacd6b99318a741b166adb07e19ee71a274450e68237b4650ca1055ab128 $APPDIRS_WHL
-
-SLICE=$P/Python.xcframework/$SLICENAME
-if [ ! -f "$SLICE/Python.framework/Python" ]; then
-    rm -rf "$P/Python.xcframework" "$S/py-$TAG" && mkdir -p "$S/py-$TAG"
-    tar -xf "$S/Python-$PYV-iOS-support.$PYB.tar.gz" -C "$S/py-$TAG"
-    mv "$S/py-$TAG/Python.xcframework" "$P/Python.xcframework"
-fi
-HOSTPY=${HOSTPY:-$(command -v python$PYV || true)}
-[ -x "$HOSTPY" ] || { echo "a host python$PYV is needed to cross-build the Python packages (brew install python@$PYV)"; exit 1; }
-HOSTPYV=$("$HOSTPY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')
-[ "$HOSTPYV" = "$PYV" ] || { echo "$HOSTPY is Python $HOSTPYV, the embedded one is $PYV: wheels would carry the wrong ABI"; exit 1; }
-# pybind11: oead builds against the copy in its sdist (lib/pybind11), quicktex against the venv's (its pyproject's
-# ~=2.10 is bypassed by --no-build-isolation). The two must agree: a pybind11 module only sees the types of modules
-# built with the same internals version (__pybind11_internals_vN), and the runtime passes oead's objects to nothing
-# else today, but a mismatch is checked below all the same. 3.1.0 is what oead 1.3.0 vendors.
-PYBIND11=3.1.0
-if [ ! -x "$P/pyvenv/bin/python" ]; then  # the cross venv: pip builds wheels for iOS from it
-    "$HOSTPY" -m venv "$P/pyvenv"
-    "$P/pyvenv/bin/pip" install -q --upgrade pip setuptools wheel "scikit-build-core>=0.10" "setuptools-scm>=8" "pybind11==$PYBIND11"
-    "$P/pyvenv/bin/python" "$SLICE/platform-config/arm64-$SDKNAME/make_cross_venv.py" "$P/pyvenv"
-fi
-EXT=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_config_var("EXT_SUFFIX"))')  # .cpython-313-iphoneos.so
-WHEELTAG=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_platform().replace("-", "_").replace(".", "_"))')  # ios_13_0_arm64_iphoneos
-
-# The randomizer's requirements.txt is what the generator is written against; the packages here are pinned by hand
-# (the native ones each need their own recipe, and every download has its checksum), so a bump there must not go
-# unnoticed: every pin is checked against the file's specifier.
-REQ=third_party/LAS-Randomizer/requirements.txt
-req() {  # name [version]: the file's line for name; with a version, fail unless it satisfies the line
-    "$HOSTPY" - "$REQ" "$@" <<'EOF'
-import sys
-from pip._vendor.packaging.requirements import Requirement
-path, name, ver = (sys.argv[1:] + [None])[:3]
-norm = lambda s: s.lower().replace('_', '-')
-for line in open(path):
-    line = line.split('#')[0].strip()
-    if line and norm(Requirement(line).name) == norm(name):
-        if ver and ver not in Requirement(line).specifier:
-            sys.exit(f"{path} wants {line}; tools/build_deps_ios.sh builds {name} {ver}: move its pin (and checksum)")
-        print(line)
-        break
-else:
-    sys.exit(f"{name} is not in {path}")
-EOF
-}
-req keystone-engine 0.9.2 >/dev/null
-req oead 1.3.0 >/dev/null
-req PyYAML 6.0.2 >/dev/null
-req quicktex 0.2.1 >/dev/null
-req Pillow 10.4.0 >/dev/null
-req evfl 1.2.0 >/dev/null
-req appdirs 1.4.4 >/dev/null
-
-if [ ! -f "$P/lib/libkeystone.0.dylib" ]; then
-    unpack keystone-0.9.2.tar.gz keystone-$TAG
-    patch -s -p1 -d "$S/keystone-$TAG" < tools/patches/keystone-0.9.2.patch
-    cmake -S "$S/keystone-$TAG" -B "$S/keystone-$TAG/build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$P" \
-          -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=$SDKNAME -DCMAKE_OSX_ARCHITECTURES=arm64 \
-          -DCMAKE_OSX_DEPLOYMENT_TARGET="$MIN" -DBUILD_SHARED_LIBS=ON -DBUILD_LIBS_ONLY=ON \
-          -DLLVM_TARGETS_TO_BUILD="AArch64" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-          -DCMAKE_CXX_FLAGS="-Wno-everything $MAPFLAGS" -DCMAKE_C_FLAGS="-Wno-everything $MAPFLAGS" \
-          -DPYTHON_EXECUTABLE="$HOSTPY" -DPYTHON_VERSION_STRING=$PYV -DPYTHONINTERP_FOUND=ON
-    cmake --build "$S/keystone-$TAG/build" -j"$JOBS" && cmake --install "$S/keystone-$TAG/build"
-fi
-
-mkdir -p "$P/wheels"
-OEAD_WHL=oead-1.3.0-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
-if [ ! -f "$P/wheels/$OEAD_WHL" ]; then
-    unpack oead-1.3.0.tar.gz oead-$TAG
-    v=$(grep -E '^#define PYBIND11_VERSION_(MAJOR|MINOR|PATCH) ' "$S/oead-$TAG/lib/pybind11/include/pybind11/detail/common.h" | awk '{print $3}' | paste -sd. -)
-    [ "$v" = "$PYBIND11" ] || { echo "oead vendors pybind11 $v, the venv has $PYBIND11: move PYBIND11 in tools/build_deps_ios.sh"; exit 1; }
-    (cd "$S/oead-$TAG" && git init -q && PATH="$SLICE/bin:$PATH" IPHONEOS_DEPLOYMENT_TARGET=$MIN \
-        SETUPTOOLS_SCM_PRETEND_VERSION=1.3.0 CMAKE_GENERATOR=Ninja CFLAGS="$MAPFLAGS" CXXFLAGS="$MAPFLAGS" \
-        "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
-    [ -f "$P/wheels/$OEAD_WHL" ]
-fi
-
-# quicktex (pybind11 2.x): its own setup.py drives CMake and takes the cross venv's Python, as oead's does; it runs
-# `cmake` by name, so cmake's folder goes on PATH (the cross venv's PATH is the slice's bin + the system's). Its
-# CMake gets no sysroot from setup.py, so the compiler is the slice's wrapper (xcrun with the right SDK and -target)
-# through CC / CXX, which CMake honours.
-QUICKTEX_WHL=quicktex-0.2.1-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
-if [ ! -f "$P/wheels/$QUICKTEX_WHL" ]; then
-    unpack quicktex-0.2.1.tar.gz quicktex-$TAG
-    CROSS_CC=$("$P/pyvenv/bin/python" -c 'import sysconfig; print(sysconfig.get_config_var("CC"))')  # arm64-apple-ios[-simulator]-clang
-    (cd "$S/quicktex-$TAG" && PATH="$SLICE/bin:$(dirname "$(command -v cmake)"):$(dirname "$(command -v ninja)"):$PATH" \
-        CC=$CROSS_CC CXX=${CROSS_CC}++ CFLAGS="$MAPFLAGS" CXXFLAGS="$MAPFLAGS" \
-        IPHONEOS_DEPLOYMENT_TARGET=$MIN SETUPTOOLS_SCM_PRETEND_VERSION=0.2.1 CMAKE_GENERATOR=Ninja \
-        "$P/pyvenv/bin/pip" wheel . --no-build-isolation --no-deps -w "$P/wheels")
-    [ -f "$P/wheels/$QUICKTEX_WHL" ]
-fi
-# Pillow: BeeWare's prebuilt iOS wheel (its image codecs linked in statically), pinned by checksum like the sources
-PILLOW_WHL=pillow-10.4.0-cp${PYV/./}-cp${PYV/./}-$WHEELTAG.whl
-if [ -n "${SIM:-}" ]; then PILLOW_SHA=35be44fe3efe66d129d3e9800cdaa3773d752fececbbc3a6fa073767a15dfb64
-else PILLOW_SHA=8e2cd37b032d9246fac4acf5202bdcdfa95269c5f26cc3fcb4d1e1ece5d54c47; fi
-if [ ! -f "$P/wheels/$PILLOW_WHL" ]; then
-    # (the file's own address: the index page behind pip's lookup times out often, and pip then falls back to
-    # pypi.org, which has no iOS wheels)
-    mkdir -p "$P/wheels"
-    curl -fsSL --retry 3 -o "$P/wheels/$PILLOW_WHL" "https://pypi.anaconda.org/beeware/simple/pillow/10.4.0/$PILLOW_WHL"
-    echo "$PILLOW_SHA  $P/wheels/$PILLOW_WHL" | shasum -a 256 -c --quiet || { rm -f "$P/wheels/$PILLOW_WHL"; exit 1; }
-fi
-
-SP=$P/python/site-packages
-if [ ! -f "$SP/oead$EXT" ]; then
-    rm -rf "$SP" && mkdir -p "$SP"
-    unzip -qo "$P/wheels/$OEAD_WHL" -d "$SP"
-    unzip -qo "$P/wheels/$PILLOW_WHL" -d "$SP"
-    rm -f "$SP"/PIL/_imagingtk*.so  # (Tk: not there)
-    unzip -qo "$S/$EVFL_WHL" -d "$SP" && unzip -qo "$S/$APPDIRS_WHL" -d "$SP"
-    unpack pyyaml-6.0.2.tar.gz pyyaml && cp -R "$S/pyyaml/lib/yaml" "$SP/yaml"
-    unpack keystone-0.9.2.tar.gz keystone-py && cp -R "$S/keystone-py/bindings/python/keystone" "$SP/keystone"
-    # keystone.py asks ctypes for 'libkeystone.dylib': the runtime loads the framework first (ios_python.m), and
-    # dyld matches that name against the loaded image's install name, so the leaf must be exactly that
-    cp "$P/lib/libkeystone.0.dylib" "$SP/keystone/libkeystone.dylib"
-    install_name_tool -id @rpath/libkeystone.dylib "$SP/keystone/libkeystone.dylib" 2>/dev/null
-    codesign --force --sign - "$SP/keystone/libkeystone.dylib" 2>/dev/null
-    unzip -qo "$P/wheels/$QUICKTEX_WHL" -d "$SP" && rm -rf "$SP/quicktex/cli"  # (_quicktex: a top-level module)
-    rm -rf "$SP"/*.dist-info "$SP"/oead-stubs
-fi
 # The licence texts of what the app ships statically, for the app's LICENSES/ (tools/bundle_ios.sh; the README's
-# License section names each with its version): from the tarballs and wheels above. Kept every run (site-packages
-# is cached).
+# License section names each with its version): from the tarballs above
 L=$P/licenses
 rm -rf "$L" && mkdir -p "$L"
 unpack SDL3-3.4.18.tar.gz sdl-lic && cp "$S/sdl-lic/LICENSE.txt" "$L/SDL3-LICENSE.txt"
 unpack ffmpeg-9.0.2.tar.xz ffmpeg-lic && cp "$S/ffmpeg-lic/COPYING.LGPLv2.1" "$L/FFmpeg-COPYING.LGPLv2.1.txt"
-cp "$P/Python.xcframework/lib/python$PYV/LICENSE.txt" "$L/Python-LICENSE.txt"
-unpack keystone-0.9.2.tar.gz keystone-lic && cp "$S/keystone-lic/COPYING" "$L/keystone-COPYING.txt" &&
-    cp "$S/keystone-lic/bindings/python/LICENSE.TXT" "$L/keystone-python-LICENSE.txt"
-unpack oead-1.3.0.tar.gz oead-lic && cp "$S/oead-lic/LICENSE.md" "$L/oead-LICENSE.md"
-unpack quicktex-0.2.1.tar.gz quicktex-lic && cp "$S/quicktex-lic/LICENSE.md" "$L/quicktex-LICENSE.md"
-unpack pyyaml-6.0.2.tar.gz pyyaml-lic && cp "$S/pyyaml-lic/LICENSE" "$L/PyYAML-LICENSE.txt"
-rm -rf "$S"/{sdl,ffmpeg,keystone,oead,quicktex,pyyaml}-lic
-for f in "$S/$EVFL_WHL" "$S/$APPDIRS_WHL" "$P/wheels/$PILLOW_WHL"; do  # (the pure-Python wheels and BeeWare's Pillow: their dist-info)
-    w=$(basename "$f" | cut -d- -f1)
-    unzip -qo "$f" "$w-*.dist-info/LICENSE*" -d "$S/$w-lic" && cp "$S"/$w-lic/$w-*.dist-info/LICENSE* "$L/$w-LICENSE.txt"
-    rm -rf "$S/$w-lic"
-done
+rm -rf "$S"/{sdl,ffmpeg}-lic
+# (what an older run built for the embedded Python, which the app no longer has)
+rm -rf "$P/Python.xcframework" "$P/pyvenv" "$P/wheels" "$P/python" "$P/python-build" "$P"/lib/libkeystone*
 ls "$L"
-# (every pybind11 module in site-packages on one internals version: oead's and quicktex's)
-tags=$(for so in "$SP/oead$EXT" "$SP/_quicktex$EXT"; do strings "$so" | grep -o '__pybind11_internals_v[0-9]*' | sort -u | head -1; done | sort -u)
-[ "$(echo "$tags" | wc -l | tr -d ' ')" = 1 ] && [ -n "$tags" ] || { echo "the pybind11 modules disagree on their internals: $tags"; exit 1; }
 
 echo "build/deps-$TAG ready ($SDKNAME $MIN):"
-ls -la "$P"/lib/*.a "$P"/lib/libkeystone.0.dylib
-ls "$SP"
+ls -la "$P"/lib/*.a

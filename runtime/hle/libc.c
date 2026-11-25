@@ -1,6 +1,6 @@
 // The SDK's C library routines (memcpy, memset, memcmp, strlen, ...) on the host's: the recompiled versions are the
 // SDK's byte loops lifted to C, and they were ~3% of the game's CPU time (memcmp alone ~1.5% of the presenting
-// thread in a busy overworld scene). tools/gen.py replaces each function listed in hle_symbols.txt with a call to
+// thread in a busy overworld scene). The generator replaces each function listed in hle_symbols.txt with a call to
 // hle_<name>. Guest pointers are host addresses. The comparisons return the difference of the first unequal bytes,
 // as the SDK's do (not just the sign).
 #include <stdint.h>

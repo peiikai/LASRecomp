@@ -12,6 +12,7 @@
 #include "cosmetic_colour.h"
 #include "hle.h"
 #include "rando.h"
+#include "rando/seed.h"
 #include "settings.h"
 
 static char g_dir[300] = "\1";  // (the seed the picks were made for; seeds switch in place)
@@ -39,21 +40,15 @@ static void refresh_locked(void) {
     g_on = false;
     g_weather = 0;
     memset(g_rgb, 0, sizeof g_rgb);
-    char p[600];
-    static char buf[1 << 16];
-    FILE *f = dir ? (snprintf(p, sizeof p, "%s/settings.json", dir), fopen(p, "rb")) : NULL;
-    if (f) {
-        size_t n = fread(buf, 1, sizeof buf - 1, f);
-        buf[n] = 0;
-        fclose(f);
-        g_on = strstr(buf, "\"random-cosmetics\": true") != NULL;
-    }
-    if (!g_on) return;
+    const RandoSeed *rec = dir ? rando_seed_load(dir) : NULL;
+    g_on = rando_seed_bool(rec, "random-cosmetics");
+    if (!g_on) { rando_seed_free(rec); return; }
     // (the seed's "seed" value: its RNG seed; an older settings.json without one: the folder)
-    const char *name = dir, *end = dir + strlen(dir), *k = strstr(buf, "\"seed\": \"");
-    if (k && strchr(k + 9, '"')) name = k + 9, end = strchr(name, '"');
+    const char *seed = rando_seed_str(rec, "seed");
+    const char *name = seed ? seed : dir, *end = name + strlen(name);
     uint32_t h = 2166136261u;
     for (const char *s = name; s < end; s++) h = (h ^ (uint8_t)*s) * 16777619u;
+    rando_seed_free(rec);
     for (int slot = 0; slot < COL_SLOTS; slot++) {
         uint32_t c = mix32(h ^ (uint32_t)slot * 0x9E3779B1u) & 0xFFFFFF;
         // (grass and walls never black or close to it: they read as holes - user 2026-11-11. A darker pick keeps its

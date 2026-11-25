@@ -45,16 +45,6 @@ int main(int argc,char **argv) {
         CloseHandle(pi.hThread);CloseHandle(pi.hProcess);Sleep(30000);return 0;
     }
     if(argc>1&&!strcmp(argv[1],"--fastfail")) { ExitProcess(0xC0000409u); }
-    if(argc>1&&!strcmp(argv[1],"--cfg")) {  // 0: Control Flow Guard and shadow stacks off in this process
-        PROCESS_MITIGATION_CONTROL_FLOW_GUARD_POLICY p={0};
-        if(!GetProcessMitigationPolicy(GetCurrentProcess(),ProcessControlFlowGuardPolicy,&p,sizeof p)) return 3;
-        DWORD ss=0;  // (ProcessUserShadowStackPolicy = 17: bit 0 EnableUserShadowStack. x64 only: an ARM64
-                     // process reads it as on even when started with it always off - Windows on ARM runner)
-#ifdef __x86_64__
-        if(!GetProcessMitigationPolicy(GetCurrentProcess(),(PROCESS_MITIGATION_POLICY)17,&ss,sizeof ss)) return 4;
-#endif
-        return p.EnableControlFlowGuard?1:(ss&1)?2:0;
-    }
     assert(argc==2);
     char a[1200],b[1200];snprintf(a,sizeof a,"%s/first.pid",argv[1]);snprintf(b,sizeof b,"%s/second.pid",argv[1]);
     const char *one[]={exe,"--parent",a,NULL},*two[]={exe,"--parent",b,NULL};
@@ -69,21 +59,15 @@ int main(int argc,char **argv) {
     const char *code[]={exe,"--code","7",NULL},*crash[]={exe,"--code",NULL};
     assert(plat_proc_wait(plat_spawn(code,NULL,false),true)==7);
     assert(plat_proc_wait(plat_spawn(crash,NULL,false),true)==255);
-    const char *fastfail[]={exe,"--fastfail",NULL},*cfg[]={exe,"--cfg",NULL};
+    const char *fastfail[]={exe,"--fastfail",NULL};
     assert(plat_proc_wait(plat_spawn(fastfail,NULL,false),true)==PLAT_PROC_FAST_FAIL);
-    unsigned long cfg_error=1,ss_error=1;
-    PlatProc nocfg=plat_spawn_no_cfg(cfg,NULL,false,&cfg_error,&ss_error);
-    int nocfg_exit=nocfg?plat_proc_wait(nocfg,true):-2;
-    if(!nocfg||cfg_error||ss_error||nocfg_exit)
-        fprintf(stderr,"CFG-off start: cfg error %lu, shadow stack error %lu, child %d\n",cfg_error,ss_error,nocfg_exit);
-    assert(nocfg&&cfg_error==0&&ss_error==0&&nocfg_exit==0);
     reject_job=true;
     assert(plat_proc_wait(plat_spawn(code,NULL,false),true)==7);
     const char *sleeper[]={exe,"--sleep",NULL};
     PlatProc fallback=plat_spawn(sleeper,NULL,false);
     assert(fallback && !((WinProcess *)fallback)->job && plat_proc_wait(fallback,false)==-1);
     plat_proc_kill(fallback);
-    puts("Windows process trees: isolated cancellation, crash status, CFG- and shadow-stack-off start and fallback without job assignment passed");
+    puts("Windows process trees: isolated cancellation, crash status and fallback without job assignment passed");
     return 0;
 }
 '''

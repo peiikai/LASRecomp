@@ -19,6 +19,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 bool flags_ext_get(int idx);
 void flags_put(int idx, bool on);
@@ -37,10 +38,10 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char p[1024], line[256];
-    snprintf(p, sizeof p, "%s/triforce.tsv", dir);
-    FILE *f = fopen(p, "r");
-    if (!f) return;
-    while (fgets(line, sizeof line, f)) {
+    snprintf(p, sizeof p, "%s: triforce", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "triforce")) return;
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
         char k[16];
         int v;
@@ -58,7 +59,6 @@ static void load(void) {
             else if (!strcmp(k, "done")) g_done = v;
         }
     }
-    fclose(f);
     if (g_item < 0 || g_bits < 0 || g_remain < 0 || g_done < 0) g_needed = 0;
     LOG("[triforce] %d pieces needed of %d placed (item %d, flags %d+)\n", g_needed, g_placed, g_item, g_bits);
 }

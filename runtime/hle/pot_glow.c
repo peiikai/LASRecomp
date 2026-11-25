@@ -13,6 +13,7 @@
 #include "../hle.h"
 #include "../platform.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 // GA(PLAYER_STATUS_PTR): PlayerStatus*: current level name at +0
 #define EVENT_FLAGS (GA(LIVE_SAVE) + 0x5DC0)  // live save: GlobalFlags bitfield (2048 bits)
@@ -37,22 +38,21 @@ static void load(void) {
     int cap = 0;
     // pots.tsv (potsanity), bushes.tsv (bushsanity) and rocks.tsv (rocksanity; flags 2048+: runtime/hle/flags_ext.c):
     // same format
-    static const char *const kFiles[] = {"pots.tsv", "bushes.tsv", "rocks.tsv"};
+    static const char *const kTables[] = {"pots", "bushes", "rocks"};
     for (int k = 0; k < 3; k++) {
         char path[512];
-        snprintf(path, sizeof path, "%s/%s", dir, kFiles[k]);
-        FILE *f = fopen(path, "r");
-        if (!f) continue;
+        snprintf(path, sizeof path, "%s: %s", dir, kTables[k]);
+        RandoText f;
+        if (!rando_text_open(&f, kTables[k])) continue;
         int n0 = g_npots;
         char line[256];
-        while (fgets(line, sizeof line, f)) {
+        while (rando_text_gets(line, sizeof line, &f)) {
             Pot p = {.cut = -1};
             if (sscanf(line, "%39s %f %f %f %d %d %f %f %15s", p.level, &p.x, &p.y, &p.z, &p.flag, &p.cut, &p.small,
                        &p.full, p.room) < 5) continue;
             if (g_npots == cap) g_pots = realloc(g_pots, sizeof(Pot) * (cap = cap ? cap * 2 : 256));
             g_pots[g_npots++] = p;
         }
-        fclose(f);
         LOG("[pots] %d gold spots from %s\n", g_npots - n0, path);
     }
 }

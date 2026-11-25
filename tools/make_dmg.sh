@@ -12,6 +12,7 @@ STAGE=$(mktemp -d)
 trap 'rm -rf "$STAGE"' EXIT
 ditto "$APP" "$STAGE/ReAwakening.app"
 ln -s /Applications "$STAGE/Applications"
+cp THIRD-PARTY-NOTICES.txt "$STAGE/"  # (the licence texts of everything in the app, next to it: tools/notices.py)
 mkdir -p build/dist
 rm -f "$OUT"
 hdiutil create -volname "ReAwakening $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -imagekey zlib-level=9 \

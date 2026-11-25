@@ -93,7 +93,7 @@ static void manifest_tests() {
         CHECK(!upd_parse_manifest(sign(buf), g_pk, &r, &why), "refused: %s", buf);
     }
     // paths
-    const char *ok_paths[] = {"lasrecomp.exe", "zig/lib/std/a.zig", "rando-gen/_internal/x.pyd", "README.md", "saves.txt"};
+    const char *ok_paths[] = {"lasrecomp.exe", "zig/lib/std/a.zig", "lasgen/_internal/x.pyd", "README.md", "saves.txt"};
     for (const char *p : ok_paths) CHECK(upd_safe_path(p), "app path %s", p);
     const char *no_paths[] = {"", "/abs", "a//b", "a/./b", "a/../b", "C:/x", "a\\b", "dir/", "rando/x", "SAVE/x",
                               "cache/pipelines", "fonts/a.ttf", "data_root.txt", "lasrecomp-backup-1.log", ".lasrecomp-update/x",
@@ -145,9 +145,39 @@ static void swap_tests() {
         CHECK(read(p.old_dir() + "/lasrecomp.exe") == "old exe", "old kept");
         CHECK(upd_boot(p, "v2") == UPD_BOOT_STARTED, "first start");
         CHECK(is_new(p), "still new");
+        write(p.app + "/lasgen/lasgen.exe", "old generator");  // (an older version's Python generator helper)
+        write(p.app + "/lasgen/_internal/base_library.zip", "python");
         upd_commit(p);
         CHECK(is_new(p) && data_intact(p) && !upd_exists(p.work()), "committed: work folder gone");
+        CHECK(!upd_exists(p.app + "/lasgen"), "committed: the retired generator helper gone");
         CHECK(upd_boot(p, "v2") == UPD_BOOT_NOTHING, "later starts: nothing");
+    }
+    {   // a folder of the player's own named like a retired one, without its mark, stays
+        UpdPaths p = make_app("retired_own", &files);
+        CHECK(upd_swap(p, files, "v2", "v1", &why), "swap: %s", why.c_str());
+        CHECK(upd_boot(p, "v2") == UPD_BOOT_STARTED, "first start");
+        write(p.app + "/lasgen/notes.txt", "mine");
+        upd_commit(p);
+        CHECK(read(p.app + "/lasgen/notes.txt") == "mine", "a lasgen folder without _internal stays");
+    }
+    {   // the old helper with a file of the player's own in its folder: the helper goes, that file stays
+        UpdPaths p = make_app("retired_foreign", &files);
+        CHECK(upd_swap(p, files, "v2", "v1", &why), "swap: %s", why.c_str());
+        CHECK(upd_boot(p, "v2") == UPD_BOOT_STARTED, "first start");
+        write(p.app + "/lasgen/lasgen.exe", "old generator");
+        write(p.app + "/lasgen/_internal/base_library.zip", "python");
+        write(p.app + "/lasgen/notes.txt", "mine");
+        upd_commit(p);
+        CHECK(!upd_exists(p.app + "/lasgen/lasgen.exe") && !upd_exists(p.app + "/lasgen/_internal"), "helper gone");
+        CHECK(read(p.app + "/lasgen/notes.txt") == "mine", "the player's file kept");
+    }
+    {   // a version that never reached the start screen removes nothing
+        UpdPaths p = make_app("retired_crashy", &files);
+        CHECK(upd_swap(p, files, "v2", "v1", &why), "swap: %s", why.c_str());
+        write(p.app + "/lasgen/_internal/base_library.zip", "python");
+        CHECK(upd_boot(p, "v2") == UPD_BOOT_STARTED, "first start");
+        CHECK(upd_boot(p, "v2") == UPD_BOOT_RESTORED, "restored");
+        CHECK(upd_exists(p.app + "/lasgen/_internal/base_library.zip"), "the old helper kept with the old version");
     }
     {   // the new version starts but never reaches the start screen: the next start restores
         UpdPaths p = make_app("crashy", &files);

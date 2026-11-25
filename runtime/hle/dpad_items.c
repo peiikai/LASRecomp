@@ -5,7 +5,7 @@
 //   cursor then: the stick does.
 //   Using: the game's own item code. Each Items page item has a "use it now?" check (main+0xd50e60 .. 0xd52fb0: Y
 //   newly pressed with the item on Y, PlayerStatus +0xa2, or X with it on X, +0xa3) that runs only while Link may use
-//   items. tools/patches.py EQUIP_Y_*_SITES make a newly pressed direction count there too, for its own item: one press
+//   items. runtime/gen/patches.cpp EQUIP_Y_*_SITES make a newly pressed direction count there too, for its own item: one press
 //   uses it, and with Y or X pressed at the same time both items are used (bomb arrows). X / Y keep their items.
 //   An item no longer owned (a bottle traded, a seed's take-back) leaves its direction.
 // Saved with each save slot: savedataN.bin -> savedataN.bin.dpad, written with the save and matched to it by the
@@ -134,7 +134,7 @@ uint64_t dpad_items_input(uint64_t b) {
     return b & ~DIRS;  // (the stick moves the cursor)
 }
 
-// ---- the item checks (tools/patches.py EQUIP_Y_TEST_SITES / EQUIP_Y_READ_SITES; game thread)
+// ---- the item checks (runtime/gen/patches.cpp EQUIP_Y_TEST_SITES / EQUIP_Y_READ_SITES; game thread)
 // An item check's Y test: the buttons newly pressed, in the game's own bits (Y 3; the d-pad Left 8, Right 9, Down 10,
 // Up 11). Go on to the item on Y?
 int rt_equip_y_test(uint32_t pressed) {

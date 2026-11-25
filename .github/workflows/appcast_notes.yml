@@ -1,0 +1,39 @@
+# The release notes in the macOS update feed (appcast-macOS.xml), so Sparkle's update window shows them: a release's
+# notes are written on its draft, after release.yml has built the feed, so the feed gets them when the release is
+# published and again whenever its notes are edited (tools/sparkle_notes.sh --publish). Until then the feed links to
+# the release page, which Sparkle's window shows instead. A release published without files gets its feed, notes in,
+# from release.yml. Drafts and the nightly release are left alone (nightly.yml adds the nightlies' notes).
+# By hand: gh workflow run appcast_notes.yml -f tag=v0.7.0
+name: Appcast notes
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag'
+        required: true
+permissions:
+  contents: read
+concurrency:  # (edits in a row: the last one wins)
+  group: appcast-notes-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: true
+
+jobs:
+  notes:
+    if: github.event_name != 'release' || (!github.event.release.draft && github.event.release.tag_name != 'nightly')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write  # (the feed asset)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
+      - name: Notes in the Sparkle feed
+        env:
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          [ -x tools/sparkle_notes.sh ] || { echo "no tools/sparkle_notes.sh at this commit"; exit 0; }
+          tools/sparkle_notes.sh --publish "$TAG"

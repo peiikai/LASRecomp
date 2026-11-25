@@ -3,7 +3,7 @@
 // The hookshot actor (ctor main+0xd7e780; states Attach / Shot / Return / Adhere / WaitToReturn) casts a ray each
 // frame of its Shot state (update main+0xd7ecc0). On a hit it reads the hit surface's attribute word (w23); bit
 // 0x4000 = hookshot target: the hook goes to Adhere ("HookshotPierce" effect) and Link's own state pulls him to it.
-// Without the bit it goes to Return ("HookshotHit" clink). tools/patches.py redirects that load here.
+// Without the bit it goes to Return ("HookshotHit" clink). runtime/gen/patches.cpp redirects that load here.
 //
 // On when the active seed was made with "hookshot-anything" (its logic counts on it), or with the Gameplay toggle.
 #include <math.h>
@@ -13,23 +13,14 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 #include "hookshot_snap.h"
 
 #define HOOK_TARGET 0x4000u
 
-// a seed folder's settings.json says "hookshot-anything": true
-static int dir_has_it(const char *dir) {
-    char p[512];
-    snprintf(p, sizeof p, "%s/settings.json", dir);
-    FILE *f = fopen(p, "rb");
-    if (!f) return 0;
-    static char buf[1 << 16];
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    buf[n] = 0;
-    fclose(f);
-    return strstr(buf, "\"hookshot-anything\": true") != NULL;
-}
+// a seed folder's settings say "hookshot-anything": true
+static int dir_has_it(const char *dir) { return rando_seed_dir_bool(dir, "hookshot-anything"); }
 
 static int g_seed_on = -1;  // (per seed: read again after an in-place reboot)
 static int seed_on(void) {

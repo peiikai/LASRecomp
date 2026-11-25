@@ -5,7 +5,7 @@
 // the game's message box names where the player's next progression item lies.
 //
 // The use is caught like the Escape Bottle's, in the game's "may Link use this item now?" predicate for the slot
-// (tools/patches.py BOTTLE1_USE_SITE: only while Link is free to act), and never swings or catches anything.
+// (runtime/gen/patches.cpp BOTTLE1_USE_SITE: only while Link is free to act), and never swings or catches anything.
 // The hints: rando/<seed>/hints.tsv lists the seed's progression steps in hint order (S <Common.bfevfl entry>
 // <location> <item> <copy n> <Seashells / Golden Leaves it needs>) and the closing entry (D <entry>). The first step not yet collected is shown: a step is
 // collected once its check's event flag is set (rando/<seed>/tracker.tsv), or once the save shows the item owned (at
@@ -28,6 +28,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 extern uint64_t renderer_present_count(void);
 extern int game_in_play(void);
@@ -49,16 +50,8 @@ bool hint_sheet_on(void) {
     const char *e = getenv("LARECOMP_HINT_SHEET");
     if (e) return on = atoi(e) != 0;
     on = 0;
-    const char *dir = rando_seed_dir();
-    if (!dir) return false;
-    char path[512], buf[16384];
-    snprintf(path, sizeof path, "%s/settings.json", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return false;
-    size_t n = fread(buf, 1, sizeof buf - 1, f);
-    fclose(f);
-    buf[n] = 0;
-    on = strstr(buf, "\"hint-sheet\": true") != NULL;  // (older seeds: no Hint Sheet)
+    if (!rando_seed_dir() || !rando_seed()) return false;
+    on = rando_setting("hint-sheet");  // (older seeds: no Hint Sheet)
     LOG("[hint] Hint Sheet %s\n", on ? "on" : "off");
     return on;
 }
@@ -83,11 +76,11 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char path[512], line[1024];
-    snprintf(path, sizeof path, "%s/hints.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return;
+    snprintf(path, sizeof path, "%s: hints", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "hints")) return;
     int cap = 0;
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;
         char *c[6] = {0};
         int k = 0;
@@ -104,11 +97,9 @@ static void load(void) {
             st->flag = -1;
         } else if (k >= 2 && c[0][0] == 'D') strlcpy(g_done, c[1], sizeof g_done);
     }
-    fclose(f);
-    snprintf(path, sizeof path, "%s/tracker.tsv", dir);  // C <name> <x> <y> <group> <flag>
-    if ((f = fopen(path, "r"))) {
+    if (rando_text_open(&f, "tracker")) {  // C <name> <x> <y> <group> <flag>
         static char big[16384];
-        while (fgets(big, sizeof big, f)) {
+        while (rando_text_gets(big, sizeof big, &f)) {
             if (big[0] != 'C' || big[1] != '\t') continue;
             big[strcspn(big, "\r\n")] = 0;
             char *c[6] = {0};
@@ -118,18 +109,17 @@ static void load(void) {
             for (int i = 0; i < g_nsteps; i++)
                 if (!strcmp(g_steps[i].loc, c[1])) g_steps[i].flag = atoi(c[5]);
         }
-        fclose(f);
     }
-    snprintf(path, sizeof path, "%s/flags.tsv", dir);
-    if ((f = fopen(path, "r"))) {
+    if (rando_text_open(&f, "flags")) {  // (name, index per line; blank lines skipped, up to the first that isn't one)
         char name[128];
         int idx, fcap = 0;
-        while (fscanf(f, "%127s %d", name, &idx) == 2) {
+        while (rando_text_gets(line, sizeof line, &f)) {
+            if (!line[strspn(line, " \t\r\n")]) continue;
+            if (sscanf(line, "%127s %d", name, &idx) != 2) break;
             if (g_nflags == fcap) g_flags = realloc(g_flags, (fcap = fcap ? fcap * 2 : 256) * sizeof *g_flags);
             strlcpy(g_flags[g_nflags].name, name, sizeof g_flags[0].name);
             g_flags[g_nflags++].idx = idx;
         }
-        fclose(f);
     }
     LOG("[hint] %d steps (closing entry %s)\n", g_nsteps, g_done);
 }

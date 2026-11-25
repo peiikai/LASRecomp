@@ -1,12 +1,12 @@
 # Notes for agents
 
 - **What this is.** ReAwakening (formerly LAS Recomp; the code, files and folders still say lasrecomp) statically recompiles the Switch release of *Link's Awakening* into a native app.
-  - `tools/gen.py` turns the game's executables into C, which is built on the player's machine from their own
+  - The generator (`runtime/gen/`) turns the game's executables into C, which is built on the player's machine from their own
     extracted game files.
   - A host stands in for the Switch OS and services (`runtime/kernel.c`, `loader.c`, `services/`).
   - The game's NVN graphics are drawn with Metal on macOS, iPhone and iPad, and Vulkan on Windows, Linux and
     Android (`runtime/nvn/`).
-  - The randomizer and most features live in `runtime/hle/`, `runtime/ui/` and `tools/rando/`.
+  - The randomizer and most features live in `runtime/rando/`, `runtime/hle/` and `runtime/ui/`.
   - [README.md](README.md) is the player-facing page. [CONTRIBUTING.md](CONTRIBUTING.md) has the layout, building,
     tests and pull request rules.
 
@@ -24,10 +24,10 @@
   | Building | README "Building from source", [docs/BUILD-windows.md](docs/BUILD-windows.md), [docs/linux.md](docs/linux.md), [docs/android.md](docs/android.md) |
   | A crash or hang | the log (`lasrecomp.log` in the data folder): the crash line names the guest address (`main+0x...`). Map it with `tools/sym.py` and read the code there before changing anything. Debug switches: [docs/debug-hooks.md](docs/debug-hooks.md) |
   | Rendering | `runtime/nvn/cmdbuf.c` (recording), `renderer.m` / `metal.m` (Metal), `vulkan/exec.c` (Vulkan), `maxwell/translate.c` (shaders); per-GPU Vulkan defaults: [docs/vulkan-gpu-defaults.md](docs/vulkan-gpu-defaults.md) |
-  | Game behaviour or a new feature | `runtime/hle/` and the hooks in `tools/patches.py` and `runtime/hle/hooks.c` |
+  | Game behaviour or a new feature | `runtime/hle/` and the hooks in `runtime/gen/patches.cpp` (and `tools/patches.py`, the reference) and `runtime/hle/hooks.c` |
   | Saves | [docs/save-format.md](docs/save-format.md), `runtime/services/fs.c` |
   | Game addresses | CONTRIBUTING "Project layout" (`runtime/game_addresses/`, `GA(NAME)`, `tools/version_map.py`) |
-  | Randomizer logic | `tools/rando/` and `third_party/LAS-Randomizer` (local changes marked "LAS Recomp") |
+  | Randomizer logic | `runtime/rando/` (C++; seeds made and applied in the app): [docs/randomizer.md](docs/randomizer.md) |
   | Menu text | `python3 tools/menu_strings.py check` |
 
 - **No Nintendo files, ever.**
@@ -53,7 +53,7 @@
 - **Addresses and patches.**
   - Every game address goes through the version tables and `GA(NAME)`. The game ships as v1.0.0, v1.0.1 and
     v1.1.0, and unknown build IDs are refused.
-  - Every patch in `tools/patches.py` asserts the original instruction word, so a wrong address fails loudly.
+  - Every patch in `runtime/gen/patches.cpp` asserts the original instruction word, so a wrong address fails loudly.
     Keep it that way.
   - Run `python tools/test_game_addresses.py` after touching addresses.
 
@@ -78,7 +78,7 @@
   - Never close or restart a copy of the game the user is playing. Run one test window at a time (`shot.sh` takes
     a lock).
   - Randomizer changes: generate several seeds with different settings and check each one completes. For dungeon
-    room shuffle, run `tools/doorjump_test.sh <seed>`.
+    room shuffle, run `tools/doorjump_test.sh <seed>` and `tools/stairs_test.sh <seed>`.
   - The unit tests are listed in CONTRIBUTING "Tests".
 
 - **Randomizer rules.**

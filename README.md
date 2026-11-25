@@ -17,10 +17,10 @@ native Windows, macOS, Linux, Android and iOS application.
 > Currently supported platforms:
 > - macOS - Apple Silicon only, Metal graphics backend + MetalFX
 > - Windows - x86-64 only, Vulkan graphics backend
-> - Linux - x86-64, Vulkan graphics backend (AppImage)
+> - Linux - x86-64, Vulkan graphics backend (AppImage, or a .tar.gz for Flatpak sandboxes and launchers)
 > - Android - arm64, Vulkan graphics backend
 > - iPhone and iPad - arm64, Metal graphics backend (sideloaded: see [iPhone and iPad](#iphone-and-ipad))
-> - Linux aarch64 (ARM) - **experimental**: the latest build is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental) page; reports welcome
+> - Linux aarch64 (ARM) - **experimental**: on the [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) page; reports welcome
 >   ([docs/linux.md](docs/linux.md) lists what to include)
 
 ## System requirements
@@ -97,6 +97,12 @@ Known issues and their status are on the [GitHub issues page](https://github.com
   get Steam's desktop controller layout, which sends extra keyboard presses.
 - If it won't start, add this to the game's launch options in Steam: `APPIMAGE_EXTRACT_AND_RUN=1 %command%`
 
+## Launchers
+
+ReAwakening can be started from game launchers. `lasrecomp --help` lists the options: start the game directly, choose
+the data folder, set up the game files without a window, change settings for one run. The Windows and Linux releases
+include a profile for RecompLauncher. Details are in [docs/debug-hooks.md](docs/debug-hooks.md#command-line).
+
 ## iPhone and iPad
 
 The iOS app is made on your computer from your own game files, then sideloaded.
@@ -162,25 +168,28 @@ GetMoreRam. More on the iOS app is there too.
 
 ## Building from source
 
-Every platform needs your own game files (v1.0.0, v1.0.1 or v1.1.0): build first, then use the start screen's game-file setup.
-`make gen` then recompiles the game code from your own game files into `generated/`, and `make` builds it into its own
-library next to the app (`build/lasgame.*`); without it the start screen builds that library itself, as it does for
-players. Release builds hold none of the game's code: the start screen builds it on each player's machine from their
-own game files, with the bundled generator (`make gen-helper`) and compiler (`tools/fetch_zig.sh`).
+You need your own extracted game files (v1.0.0, v1.0.1 or v1.1.0). The game's code is never in the repository or a
+release: it is recompiled from your files. There are two ways to get it.
+
+- **Recompile it yourself** (usual for development): put your game files in `extracted/` in the checkout
+  (`extracted/exefs/` and `extracted/romfs/`). Then `make` builds the app, `make gen` recompiles the game's code into
+  `generated/` (the generator, `build/lasgen`, is built first), and `make` again builds that into a library next to
+  the app (`build/lasgame.*`). With `extracted/` in the folder it starts from, the app keeps all its data there.
+- **Let the start screen do it**, as for players: run `tools/fetch_zig.sh` once (the compiler, into `build/zig/`),
+  start the app and choose your game files. It copies them into its data folder and builds the game code itself.
+
+Release builds do the second: the generator is part of the app and `zig/` ships next to it. The game code generator
+needs no Python any more; Python 3 is still used by some dependency and packaging scripts and by the tests.
 
 ### macOS
 
-Requirements: Apple Silicon, Xcode command line tools (clang), [Homebrew](https://brew.sh) `sdl3` and `ffmpeg`,
-Python 3.12.
+Requirements: Apple Silicon, Xcode command line tools (clang), [Homebrew](https://brew.sh) `sdl3` and `ffmpeg`.
 
-1. Build: `make -j10` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j10` again.
-2. Randomizer: create the Python environment for LAS-Randomizer, from `third_party/LAS-Randomizer`:
-   `python3.12 -m venv venv && venv/bin/pip install -r requirements.txt`.
-3. Run: `./build/lasrecomp extracted` (start screen) or `./build/lasrecomp extracted --play` (straight into the game).
-4. Package: `make deps` (once: SDL3, FFmpeg, keystone and Python from pinned sources, built for macOS 15),
-   `make rando-helper` (the seed generator as a standalone helper, so players need no Python), `make gen-helper` and
-   `tools/fetch_zig.sh` (what the start screen builds the game code with), then `make app` ->
-   `build/ReAwakening.app` (macOS 15+, Apple Silicon) and `make dmg` -> `build/dist/ReAwakening-<version>-macOS.dmg`.
+1. Build: `make -j10` -> `build/lasrecomp`. With your files in `extracted/`: `make gen`, then `make -j10` again.
+2. Run: `./build/lasrecomp extracted` (start screen) or `./build/lasrecomp extracted --play` (straight into the game).
+3. Package: `make deps` (once: SDL3 and FFmpeg from pinned sources, built for macOS 15) and `tools/fetch_zig.sh`,
+   then `make app` -> `build/ReAwakening.app` (macOS 15+, Apple Silicon) and `make dmg` ->
+   `build/dist/ReAwakening-<version>-macOS.dmg`.
 
 ### Windows
 
@@ -189,44 +198,55 @@ Requirements: Windows 10+ x86-64, a CPU with AVX2 and a GPU with Vulkan 1.3. Mor
 that page.
 
 1. One-time setup, in PowerShell from the repo root: `powershell -ExecutionPolicy Bypass -File tools\setup_windows.ps1`.
-   It installs MSYS2 (UCRT64: clang, make, SDL3, FFmpeg, Vulkan, shaderc), Python 3.12 for the tools and the
-   randomizer (`third_party\LAS-Randomizer\venv`) and switches the clone to LF line endings.
+   It installs MSYS2 (UCRT64: clang, make, SDL3, FFmpeg, Vulkan, shaderc), Python 3.12 for the tests and switches the
+   clone to LF line endings.
 2. Build, from an MSYS2 UCRT64 shell (or Git Bash with `export PATH="/c/msys64/ucrt64/bin:/c/msys64/usr/bin:$PATH"`):
-   `make -j` -> `build/lasrecomp.exe`. Set up your game files (above), then `make gen` and `make -j` again.
+   `make -j` -> `build/lasrecomp.exe`. With your files in `extracted/`: `make gen`, then `make -j` again.
 3. Run: `./build/lasrecomp.exe extracted`, from a shell with `C:\msys64\ucrt64\bin` on PATH (for the DLLs).
-4. Package: `make deps-windows` (once: LGPL FFmpeg), `make rando-helper RANDO_PY="<path to python.org Python 3.12>"`
-   (MSYS2's Python has no oead wheel), then `make dist` -> `build/dist/ReAwakening-<version>-windows.zip`.
+4. Package: `make deps-windows` (once: LGPL FFmpeg) and `tools/fetch_zig.sh`, then `make dist` ->
+   `build/dist/ReAwakening-<version>-windows-x64.zip`.
 
 ### Linux
 
-Requirements: x86-64 with AVX2 (or aarch64, experimental), a GPU with Vulkan 1.3, clang, SDL 3, FFmpeg, shaderc and
-Vulkan Memory Allocator from your distribution, Python 3.12. Packages, cross builds and details in
+Requirements: x86-64 with AVX2 (or aarch64, experimental), a GPU with Vulkan 1.3, clang, SDL 3.4 or newer, FFmpeg,
+shaderc and Vulkan Memory Allocator from your distribution. Packages, cross builds and details in
 [docs/linux.md](docs/linux.md).
 
-1. Build: `make -j` -> `build/lasrecomp`. Set up your game files (above), then `make gen` and `make -j` again.
+1. Build: `make -j` -> `build/lasrecomp`. With your files in `extracted/`: `make gen`, then `make -j` again.
 2. Run: `./build/lasrecomp extracted`.
 3. Package: `make appimage` (this machine's arch; `ARCH=aarch64` cross-compiles) or `make appimages` (both) ->
    `build/dist/ReAwakening-<version>-linux-<arch>.AppImage`, built in Ubuntu 22.04 containers (podman). `make smoketest`
    checks the x86-64 AppImage before a release.
 
-Where files live (game files, saves, seeds, settings and logs):
-- macOS: `~/Library/Application Support/com.peiikai.lasrecomp/`
-- Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
-- Linux: `~/.local/share/lasrecomp/`
-- Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
-- iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > ReAwakening).
-- You can move it to another folder or drive in Settings > System > Data folder.
-- `LARECOMP_DATA_ROOT=<dir>` overrides all of these.
-- For a bug report, attach `lasrecomp.log` from that folder.
-
 ### Android
 
 Requirements: the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and
-Python 3. Details in [docs/android.md](docs/android.md).
+Python 3 (the dependency script uses it). Details in [docs/android.md](docs/android.md).
 
-1. Dependencies (once): `bash android/deps/build_deps.sh` and `bash android/deps/build_gen_deps.sh`.
+1. Dependencies (once): `bash android/deps/build_deps.sh` and `bash android/deps/build_gen_deps.sh` (zig).
 2. Build: `cd android && ./gradlew assembleDebug` -> `android/app/build/outputs/apk/debug/app-debug.apk`.
 3. Install it on the phone and set up your game files from the start screen. The game code is built on the phone.
+
+### iOS app
+
+Players make the iOS app on a computer (see [iPhone and iPad](#iphone-and-ipad)). To build it from source on a Mac
+instead, with the game code inside, for your own devices: `make deps-ios` (once), your files in `extracted/`,
+`make gen PLATFORM=ios` (into `generated-dyn/`), then `make ipa TEAM_ID=<your team> PROFILE=<.mobileprovision>` ->
+`build/dist/ReAwakening-<version>-iOS.ipa`. `make ios-kit` makes the release's iOS kit instead (no game code). More in
+[docs/ios.md](docs/ios.md).
+
+### Where files live
+
+Game files, saves, seeds, settings and logs:
+- macOS: `~/Library/Application Support/com.peiikai.lasrecomp/`
+- Windows: next to `lasrecomp.exe`, so keep the `LAS Recomp` folder somewhere writable (not Program Files).
+- Linux: `~/.local/share/lasrecomp/` (the tarball: its own folder; see [docs/linux.md](docs/linux.md))
+- Android: `Android/data/com.lasrecomp.android/files` in the phone's storage.
+- iPhone and iPad: the app's folder in Files (On My iPhone / On My iPad > ReAwakening).
+- A source checkout with `extracted/` in the folder the app starts from: that folder.
+- You can move it to another folder or drive in Settings > System > Data folder.
+- `--data-dir <dir>` (or `LARECOMP_DATA_ROOT=<dir>`) overrides all of these.
+- For a bug report, attach `lasrecomp.log` from that folder.
 
 ### Resuming game-code builds
 
@@ -264,7 +284,7 @@ without touching the installed game, your game files or your saves.
   cheats and save editor (#453)
 - **[@wimw85](https://github.com/wimw85)** - much faster game code setup on the Steam Deck and other PCs (#434)
 - **[@missionfloyd](https://github.com/missionfloyd)** - a much smaller game code build, without debug info (#487)
-- **[@wolfchimneyrock](https://github.com/wolfchimneyrock)** - full speed on ARM Mali graphics (#527), the CPU and GPU working in parallel on Mali (#529), and faster render passes on Mali (#528, #534), a cheaper FSR upscale (#532), the game on the big cores of ARM and Intel hybrid CPUs on Linux (#533), no more flickering grass and shadows on Mali (#546), the game starting on Snapdragon (Adreno) devices (#561), much faster shaders on Mali and Adreno (#562, #563, #579), faster graphics memory on Mali with Mesa (#564), GPU tuning tools for Vulkan (#565), no more memory leak on Arm's Mali driver (#607), smaller shader stacks that keep 4 GB Mali boards from running out of memory (#645), and less shader scratch memory on PanVK (#646)
+- **[@wolfchimneyrock](https://github.com/wolfchimneyrock)** - full speed on ARM Mali graphics (#527), the CPU and GPU working in parallel on Mali (#529), and faster render passes on Mali (#528, #534), a cheaper FSR upscale (#532), the game on the big cores of ARM and Intel hybrid CPUs on Linux (#533), no more flickering grass and shadows on Mali (#546), the game starting on Snapdragon (Adreno) devices (#561), much faster shaders on Mali and Adreno (#562, #563, #579), faster graphics memory on Mali with Mesa (#564), GPU tuning tools for Vulkan (#565), no more memory leak on Arm's Mali driver (#607), smaller shader stacks that keep 4 GB Mali boards from running out of memory (#645), less shader scratch memory on PanVK (#646), and no more white triangles over the Field on PanVK before Mesa 26.1 (#633)
 - **[@bgevko](https://github.com/bgevko)** - an option to keep the area's music during Guardian Acorns and Pieces of Power (#642)
 
 **Mobile ports** - special thanks to the people who brought the game to phones and tablets:
@@ -275,8 +295,9 @@ without touching the installed game, your game files or your saves.
 
 Thanks also to everyone who reports issues and tests builds. Your logs and screenshots find most of the bugs.
 
-**LAS-Randomizer** - the randomizer at the heart of this project's randomizer features, vendored (with local
-changes) in `third_party/LAS-Randomizer` under the MIT license. Huge thanks to its authors and community:
+**LAS-Randomizer** - the randomizer at the heart of this project's randomizer features, ported to C++ in
+`runtime/rando/` under its MIT license (`third_party/LAS-Randomizer/LICENSE.txt`). Huge thanks to its authors and
+community:
 - **Owen_Splat** - LAS-Randomizer (https://github.com/Owen-Splat/LAS-Randomizer)
 - **Glan** - created the original early builds of the randomizer (https://github.com/la-switch/LAS-Randomizer)
 - **ProfessorLaw** - additional programming
@@ -305,30 +326,22 @@ none of their files are used):
 - [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) - Windows and Linux renderer (MIT)
 - [Monocypher](https://monocypher.org) by Loup Vaillant and contributors - checks the signature of updates on Windows and
   Linux (CC0, `third_party/monocypher/LICENCE.md`)
+- [yyjson](https://github.com/ibireme/yyjson) by YaoYuan - reads and writes randomizer seed files (MIT,
+  `third_party/yyjson/LICENSE`)
+- [rgbcx](https://github.com/richgel999/bc7enc) by Richard Geldreich, Jr. - compresses the randomizer's recoloured chest
+  and title logo textures (MIT or public domain, `third_party/rgbcx/LICENSE`)
 - [Sparkle](https://sparkle-project.org) - the macOS app's updater (MIT, `Contents/Resources/Sparkle-LICENSE.txt` in the app)
 - [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and Diego
   Gutierrez - the anti-aliasing option (MIT, `third_party/smaa/LICENSE.txt`)
 - [AMD FidelityFX Super Resolution 1](https://github.com/GPUOpen-Effects/FidelityFX-FSR) - the Windows and Linux upscaler
   option, ported to GLSL (MIT)
-- [oead](https://github.com/zeldamods/oead) and [evfl](https://github.com/zeldamods/evfl) - Nintendo file formats, used by LAS-Randomizer
-- [PyInstaller](https://pyinstaller.org) - packs the seed generator into a standalone helper (GPL 2.0+ with the
-  bootloader exception, which allows distributing the packed program). The helper bundles CPython (PSF License),
-  oead / evfl (GPL 2.0+), [Keystone](https://www.keystone-engine.org) (GPL 2.0; Python bindings BSD), quicktex
-  (LGPL 3), Pillow (MIT-CMU), PyYAML (MIT) and appdirs (MIT)
-- The iOS app has no helper: it embeds [BeeWare's](https://beeware.org) build of CPython 3.13 for iOS (PSF License;
-  with bzip2, libffi, mpdecimal, OpenSSL and XZ for the standard library) and the same generator packages, built for
-  iOS, inside the app, and links SDL 3 and FFmpeg statically. Their licence texts ship in the app (`LICENSES/`).
+- The iOS app links SDL 3 and FFmpeg statically. Their licence texts ship in the app (`LICENSES/`).
 - [Zig](https://ziglang.org) - its C compiler (`zig cc`: Clang and LLD) builds the game code on the player's
   machine during setup (MIT; LLVM, Clang, LLD: Apache 2.0 with LLVM exceptions)
-- The game code generator (`tools/gen.py`) is packed by PyInstaller into a standalone helper too. It bundles CPython,
-  [Capstone](https://www.capstone-engine.org) (BSD 3-clause; disassembly), [Unicorn](https://www.unicorn-engine.org)
-  (GPL 2.0; Python bindings BSD; runs small pieces of code to resolve jump tables) and
-  [python-lz4](https://github.com/python-lz4/python-lz4) (BSD 3-clause, with the LZ4 library: BSD 2-clause)
 - [shaderc](https://github.com/google/shaderc) - compiles the translated shaders for Vulkan on Windows, Linux and
   Android (Apache 2.0; with glslang and SPIRV-Tools)
 - The Android app, ported from [LASRecompAndroid](https://github.com/mamcjr/LASRecompAndroid) by mamcjr (MIT), also
-  ships [Python](https://www.python.org) 3.14 for Android (PSF License) to run the game code generator on the device,
-  [volk](https://github.com/zeux/volk) by Arseny Kapoulkine (MIT) to load Vulkan, and
+  ships [volk](https://github.com/zeux/volk) by Arseny Kapoulkine (MIT) to load Vulkan, and
   [libadrenotools](https://github.com/bylaws/libadrenotools) and
   [liblinkernsbypass](https://github.com/bylaws/liblinkernsbypass), Copyright (c) 2021, Billy Laws (BSD 2-Clause; their
   licence text ships in the app), to load a custom Vulkan driver such as Turnip (not included)
@@ -358,40 +371,22 @@ ReAwakening's own code (the recompiler tools, the runtime, the randomizer additi
 Vulkan Memory Allocator (MIT), SMAA (MIT), AMD FSR 1 (MIT), the Baloo 2 and BIZ UDPGothic fonts (SIL OFL 1.1), the Hylia Serif font (free, not for profit), the DejaVu Sans font (Bitstream Vera / DejaVu license), SDL 3 (zlib), FFmpeg (LGPL 2.1+, linked dynamically, and statically in the iOS app), the
 Zig compiler (MIT; its LLVM / Clang / LLD: Apache 2.0 with LLVM exceptions; its C library headers keep their own
 licenses), the iOS kit's Mach-O linker (LLD as built by the Rust project: Apache 2.0 with LLVM exceptions), miniz
-(MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), Sparkle (MIT: the macOS updater), and the generator helpers' bundled libraries listed under Credits (oead / evfl / Keystone in the seed
-generator and Unicorn in the game code generator are under the GPL, versions in the table below: each helper is a separate program the game runs, and its
-sources are this repository plus those projects' published sources). The iOS app is the exception: iOS runs no helper
-processes, so it embeds CPython and the seed generator's packages - oead, evfl and Keystone (GPL 2.0+ / GPL 2.0),
-quicktex (LGPL 3), Pillow, PyYAML, appdirs - and links SDL 3 and FFmpeg (LGPL 2.1+) statically; the app's `LICENSES/`
-folder carries each one's licence text, its sources are this repository plus the versions in the table (the LGPL
-libraries can be relinked: `make deps-ios` builds them from source, `make ipa` the app), and the game code library it
-embeds is built from the player's own game files and never shared. The license covers ReAwakening's code only - it grants
+(MIT: the iOS kit and the .ipa it makes), Monocypher (CC0: update signatures), yyjson (MIT: seed files), rgbcx (MIT: randomizer textures), Sparkle (MIT: the macOS updater). The iOS app links SDL 3 and FFmpeg (LGPL 2.1+) statically; the app's `LICENSES/` folder carries each one's licence text, its sources are this repository plus the
+versions in the table (the LGPL libraries can be relinked: `make deps-ios` builds them from source, `make ipa` the
+app), and the game code library it embeds is built from the player's own game files and never shared. The license covers ReAwakening's code only - it grants
 nothing for Nintendo's game, which you must supply yourself.
 
 ### Source code of bundled third-party components
 
-Release builds include these components; their source code for the exact versions shipped is available here. The
-seed generator's packages are in the desktops' helper and inside the iOS app alike:
+Release builds include these components; their source code for the exact versions shipped is available here. Each
+Windows, macOS, Linux, Android and iOS package carries their full license texts in `THIRD-PARTY-NOTICES.txt` at its
+root (made from [`licenses/`](licenses)):
 
 | Component | Version | License | Source |
 |---|---|---|---|
-| Keystone (seed generator; on iOS built with `tools/patches/keystone-0.9.2.patch`) | 0.9.2 | GPL 2.0 (Python bindings: BSD) | https://github.com/keystone-engine/keystone/releases/tag/0.9.2 |
-| oead (seed generator) | 1.3.0 | GPL 2.0+ | https://github.com/zeldamods/oead/releases/tag/v1.3.0 |
-| evfl (seed generator) | 1.2.0 | GPL 2.0+ | https://github.com/zeldamods/evfl/releases/tag/v1.2.0 |
-| quicktex (seed generator) | 0.2.1 | LGPL 3.0 | https://github.com/drewcassidy/quicktex/releases/tag/v0.2.1 |
-| Pillow (seed generator; on iOS BeeWare's wheel) | 10.4.0 | MIT-CMU | https://github.com/python-pillow/Pillow/releases/tag/10.4.0, https://pypi.anaconda.org/beeware/simple/pillow/ |
-| PyYAML (seed generator) | 6.0.2 | MIT | https://pypi.org/project/PyYAML/6.0.2/ |
-| appdirs (seed generator) | 1.4.4 | MIT | https://pypi.org/project/appdirs/1.4.4/ |
-| pybind11 (oead's and quicktex's Python bindings, built into them on iOS) | 3.1.0 | BSD 3-clause | https://github.com/pybind/pybind11/releases/tag/v3.1.0 |
-| PyInstaller (packs the seed and game code generators) | 6.22.3 | GPL 2.0+ with bootloader exception | https://github.com/pyinstaller/pyinstaller/releases/tag/v6.22.3 |
-| CPython (seed and game code generators) | 3.12.14 (macOS), 3.12.10 (Windows), 3.12.15 (Linux), 3.14.8 (Android) | PSF | https://github.com/python/cpython/releases/tag/v3.12.14, https://github.com/python/cpython/releases/tag/v3.12.10, https://github.com/python/cpython/releases/tag/v3.12.15, https://github.com/python/cpython/releases/tag/v3.14.8 |
-| CPython for iOS, BeeWare's Python-Apple-support build (the iOS app's seed generator; with bzip2 1.0.8, libffi 3.4.7, mpdecimal 4.0.0, OpenSSL 3.5.9, XZ 5.6.4) | 3.13.16 (b16) | PSF; bzip2, libffi (MIT), mpdecimal (BSD 2-clause), OpenSSL (Apache 2.0), XZ (0BSD / public domain) | https://github.com/beeware/Python-Apple-support/releases/tag/3.13-b16, https://github.com/python/cpython/releases/tag/v3.13.16 |
 | Zig (builds the game code during setup; includes LLVM, Clang, LLD) | 0.17.0 | MIT; LLVM: Apache 2.0 with LLVM exceptions | https://ziglang.org/download/0.17.0/zig-0.17.0.tar.xz |
 | LLD, as rust-lld (iOS kit: links the iOS game code on each desktop) | Rust 1.91.0 (LLVM 21.1.2) | Apache 2.0 with LLVM exceptions | https://static.rust-lang.org/dist/rustc-1.91.0-src.tar.xz, https://github.com/rust-lang/llvm-project |
 | miniz (reads the iOS kit, writes the .ipa) | 3.0.2 | MIT | https://github.com/richgel999/miniz/releases/tag/3.0.2 |
-| Capstone (game code generator) | 5.0.9 | BSD 3-clause | https://pypi.org/project/capstone/5.0.9/ |
-| Unicorn (game code generator) | 2.1.4 | GPL 2.0 (Python bindings: BSD) | https://pypi.org/project/unicorn/2.1.4/, https://github.com/unicorn-engine/unicorn |
-| python-lz4 (game code generator; includes LZ4) | 4.4.5 | BSD 3-clause; LZ4: BSD 2-clause | https://pypi.org/project/lz4/4.4.5/ |
 | FFmpeg (LGPL configuration; dynamic on macOS, Windows and Linux, in the Android builds, static in the iOS app: `make deps-ios` relinks it from this source) | 9.0.2 | LGPL 2.1+ | https://ffmpeg.org/releases/ |
 | SDL 3 | 3.4.18 (macOS, Windows; iOS, static, with `tools/patches/SDL3-3.4.18-ios27-orientation.patch`), 3.4.16 (Linux, Android) | zlib | https://github.com/libsdl-org/SDL/releases/tag/release-3.4.18, https://github.com/libsdl-org/SDL/releases/tag/release-3.4.16 |
 | shaderc (Windows, Linux, Android: GLSL to SPIR-V; Linux, Android: with glslang, SPIRV-Tools inside) | 2026.4 (Windows), 2026.3 (Linux, Android) | Apache 2.0 | https://github.com/google/shaderc |
@@ -403,7 +398,12 @@ seed generator's packages are in the desktops' helper and inside the iOS app ali
 | BIZ UDPGothic font (Regular, Linux) | 1.05 (Google Fonts) | SIL OFL 1.1 | https://github.com/googlefonts/morisawa-biz-ud-gothic, https://github.com/google/fonts/tree/main/ofl/bizudpgothic |
 | DejaVu Sans font (Book, Bold) | 2.37 | Bitstream Vera license (DejaVu changes public domain) | https://github.com/dejavu-fonts/dejavu-fonts/releases/tag/version_2_37 |
 | SMAA (shader and lookup textures, built in) | 2013 (repository master) | MIT | https://github.com/iryoku/smaa |
+| Vulkan Memory Allocator (Windows, Linux, Android; built in) | 3.3.0 | MIT | https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/releases/tag/v3.3.0 |
+| AMD FidelityFX Super Resolution 1 (Windows, Linux, Android; ported, built in) | 1.0.2 | MIT | https://github.com/GPUOpen-Effects/FidelityFX-FSR/releases/tag/v1.0.2 |
+| volk, libadrenotools, liblinkernsbypass (Android) | vulkan-sdk-1.4.350.1, 8fae8ce, aa39758 | MIT, BSD 2-clause, BSD 2-clause | https://github.com/zeux/volk, https://github.com/bylaws/libadrenotools, https://github.com/bylaws/liblinkernsbypass |
+| Sparkle (macOS updater) | 2.10.1 | MIT | https://github.com/sparkle-project/Sparkle/releases/tag/2.10.1 |
+| AppImage type 2 runtime (Linux; with libfuse 3.15.0, squashfuse 0.5.2) | 20251108 | MIT; libfuse: LGPL 2.1 | https://github.com/AppImage/type2-runtime/releases/tag/20251108 |
 
 The exact build scripts that fetch and build these (with checksums) are in this repository: `tools/build_deps_macos.sh`,
-`tools/build_deps_windows.sh`, `tools/linux/build_deps.sh`, `tools/build_deps_ios.sh` and `tools/rando/rando_gen.spec`. The Windows build takes SDL 3, shaderc, libiconv and the
+`tools/build_deps_windows.sh`, `tools/linux/build_deps.sh` and `tools/build_deps_ios.sh`. The Windows build takes SDL 3, shaderc, libiconv and the
 compiler runtime from MSYS2's UCRT64 packages (https://packages.msys2.org, which links each package's source).

@@ -6,7 +6,9 @@
 # (appcast-macOS.xml, tools/sparkle_appcast.sh) goes up right after the file and before the older file goes, so it
 # always names a file that is there; without one (no signing key) the old one is removed, so Update never fetches a
 # file of an older round.
-# Usage: tools/nightly_publish.sh <file> <platform suffix, e.g. macOS.dmg>   (GH_TOKEN, GH_REPO set)
+# Usage: tools/nightly_publish.sh <file> <platform suffix, e.g. macOS.dmg> [manifest platform]   (GH_TOKEN, GH_REPO set)
+# The manifest platform defaults to the suffix without its extension; Windows x64 passes "windows" (its files say
+# windows-x64, its manifest stays update-windows.txt); "-": no manifest (a second name for the same file).
 set -euo pipefail
 f=$1
 suffix=$2
@@ -14,8 +16,8 @@ suffix=$2
 new=$(basename "$f" | tr ' ' .)  # (GitHub stores "LAS Recomp-..." as "LAS.Recomp-...")
 case $new in LAS.Recomp-nightly-*-"$suffix") ;; *) echo "nightly_publish.sh: $new is not a nightly $suffix file" >&2; exit 1 ;; esac
 gh release upload nightly "$f" --clobber
-platform=${suffix%.*}  # (windows.zip -> windows, linux-x86_64.AppImage -> linux-x86_64)
-for m in "update-$platform.txt" "appcast-$platform.xml"; do
+platform=${3:-${suffix%.*}}  # (linux-x86_64.AppImage -> linux-x86_64)
+[ "$platform" = - ] || for m in "update-$platform.txt" "appcast-$platform.xml"; do
     if [ -f "$(dirname "$f")/$m" ]; then gh release upload nightly "$(dirname "$f")/$m" --clobber
     else gh release delete-asset nightly "$m" -y 2>/dev/null || true; fi
 done

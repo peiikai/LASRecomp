@@ -58,6 +58,7 @@ android {
             jniLibs.srcDirs(gen.get().asFile.resolve("jniLibs"))
             assets.srcDirs(gen.get().asFile.resolve("assets"))
             res.srcDirs("src/main/res", gen.get().asFile.resolve("res"))
+            resources.srcDirs(gen.get().asFile.resolve("root"))  // (files at the .apk's root: THIRD-PARTY-NOTICES.txt)
         }
     }
 
@@ -99,50 +100,31 @@ val prepareLasRecomp by tasks.registering {
         "volk-LICENSE.md" to "android/deps/out/volk/LICENSE.md").mapValues { repo.resolve(it.value) }
     val libs = listOf("libSDL3.so", "libshaderc_shared.so", "libavcodec.so", "libavformat.so", "libavutil.so",
                       "libswscale.so").map { deps.resolve("lib/$it") } +
-        // the game code builder's programs and libraries (android/deps/build_gen_deps.sh): Python and its launcher,
-        // the generator's native libraries, zig - lib*.so, the only files Android runs from an app
-        listOf("python/libpymain.so", "python/libpython3.14.so", "lib/libcapstone.so", "lib/libunicorn.so",
-               "lib/liblz4.so", "zig/libzig.so").map { deps.resolve("gen/$it") }
-    inputs.files(res.values, libs)
+        // the game code builder's compiler (android/deps/build_gen_deps.sh): zig as lib*.so, the only files Android
+        // runs from an app (the generator itself is in libmain.so: runtime/gen/)
+        listOf("zig/libzig.so").map { deps.resolve("gen/$it") }
+    // the licence texts of everything above and in gen.zip (tools/notices.py), at the root of the .apk as in every
+    // release package (#868)
+    val notices = repo.resolve("THIRD-PARTY-NOTICES.txt")
+    inputs.files(res.values, libs, notices)
     outputs.dir(gen)
     doLast {
         val out = gen.get().asFile
+        notices.copyTo(out.resolve("root/THIRD-PARTY-NOTICES.txt"), overwrite = true)
         for (lib in libs) lib.copyTo(out.resolve("jniLibs/arm64-v8a/${lib.name}"), overwrite = true)
         for ((name, f) in res) f.copyTo(out.resolve("assets/res/$name"), overwrite = true)
     }
 }
-// The game code builder's files, unpacked by the activity into <internal files>/gen (runtime/gamebuild.c): Python's
-// standard library, the generator's bindings, zig's lib/, the generator and the tables it reads, and the headers and
-// entry file the generated code is compiled with; and the seed generator with its modules. Nothing of the game: the
-// player's own files are the input.
+// The game code builder's files, unpacked by the activity into <internal files>/gen (runtime/gamebuild.c): zig's lib/,
+// and the headers and entry file the generated code is compiled with. Nothing of the game: the player's own files are
+// the input.
 val genZip by tasks.registering(Zip::class) {
     val g = deps.resolve("gen")
     archiveFileName.set("gen.zip")
     destinationDirectory.set(gen.map { it.dir("assets") })
-    from(g.resolve("python/lib")) { into("python/lib") }
-    from(g.resolve("python/LICENSE-python.txt")) { into("python") }
-    from(g.resolve("site")) { into("site") }
     from(g.resolve("zig/lib")) { into("zig/lib") }
     from(g.resolve("zig/LICENSE-zig.txt")) { into("zig") }
-    from(repo.resolve("tools")) {
-        include("gen.py", "lifter.py", "analyze.py", "nso.py", "passes.py", "patches.py", "chunk_bounds.py", "simd_c.py", "game_addresses.py")
-        into("tools")
-    }
-    // the seed generator (runtime/ui/rando_tab.mm; gen.py reads tools/rando/patch_variants.json too): tools/rando and
-    // LAS-Randomizer in their source layout (las_headless.py finds it at ../../third_party), as the desktop's rando-gen
-    // bundles them (tools/rando/rando_gen.spec)
-    from(repo.resolve("tools/rando")) {
-        include("*.py", "*.json", "*.yml", "*.txt")
-        into("tools/rando")
-    }
-    from(repo.resolve("third_party/LAS-Randomizer")) {
-        include("RandomizerCore/**", "Resources/**", "LICENSE.txt")
-        exclude("**/__pycache__/**", "**/._*", "**/.DS_Store")
-        into("third_party/LAS-Randomizer")
-    }
-    from(repo.resolve("runtime/game_addresses")) { include("*.h"); into("runtime/game_addresses") }
-    from(repo.resolve("runtime")) { include("cpu.h", "simd.h", "simd_fp.h", "gamelib.h", "hle/hle_symbols.txt"); into("gamelib-src")
-        eachFile { if (name == "hle_symbols.txt") path = "gamelib-src/hle_symbols.txt" } }
+    from(repo.resolve("runtime")) { include("cpu.h", "simd.h", "simd_fp.h", "gamelib.h"); into("gamelib-src") }
     from(repo.resolve("tools/gamelib_entry.c")) { into("gamelib-src") }
     from(repo.resolve("tools")) { include("hot_functions*.txt"); into("gamelib-src") }
     includeEmptyDirs = false

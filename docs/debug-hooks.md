@@ -23,6 +23,46 @@ Put a copy of a save in `build/testsave/save_0/` first (`savedata0.bin`), so the
 `tools/shot.sh <frame> [max seconds]` runs `./build/lasrecomp extracted` with your `LARECOMP_*` variables, saves the
 window at that frame to `build/window.png` and exits.
 
+## Command line
+
+For launchers and scripts. Every option except the one-shot ones (`--prepare`, `--list-settings`, `--help`,
+`--version`) also works as an environment variable, which restarts keep (an update, a data folder move).
+
+| Option | Variable | What it does |
+|---|---|---|
+| `--play` | `LARECOMP_PLAY=1` | Skip the start screen and start the game. Shaders are still prepared first; if that takes more than a moment (the first start), the start screen shows its progress bar and then plays. |
+| `--data-dir <folder>` | `LARECOMP_DATA_ROOT` | Use this folder for game files, saves, seeds, settings and caches this run. It comes before every other rule (`runtime/paths.h`), writes no `data_root.txt`, and Settings > System > Data folder can't move it. |
+| `--new-data-dir <folder>` | `LARECOMP_NEW_DATA_DIR` | Where to keep the data when ReAwakening has none yet (a launcher's game folder). If that folder already has data, it's used. If the usual data folder has data, that one is kept, so a player who played before keeps everything. |
+| `--game-files <folder>` | `LARECOMP_GAME_FILES` | Use the extracted game files in that folder. If the data folder already has that version set up, the game starts. If not, the start screen sets them up (copy, game code build, shaders) and then plays. |
+| `--prepare` | | The setup without a window, then exit: the game files from `--game-files` if needed, the game code, the shaders. Prints `progress <0-1> <step>` lines on stdout and exits 0 when the game is ready to play. On a failure it prints `error <why>` and exits 1 (details in the log). Stopped (SIGINT / SIGTERM): exits 3; the finished game code pieces are kept, so the next run goes on from there. |
+| `--fullscreen` / `--windowed` | | Start fullscreen or in a window this run. Short for `--set fullscreen=1` / `--set fullscreen=0`. |
+| `--set <key>=<value>` | `LARECOMP_SET="key=value;key=value"` | Any `larecomp.ini` setting for this run only. Repeatable; the last one for a key wins. It isn't saved: the file keeps its own value, unless you change that setting in the menu during the run. Unknown keys are ignored with a line in the log. |
+| `--list-settings` | | Print the settings as `larecomp.ini` lines (the data folder's file plus this run's `--set`) and exit. |
+| `--no-update-check` | `LARECOMP_NO_UPDATE_CHECK=1` | No update check and no update this run. |
+| `--version`, `--help` | | Print and exit. |
+
+Printed output goes to stdout, also when it's a file or pipe. On Windows the exe is a GUI program: output goes to its
+stdout when one was handed to it (a redirect, a pipe, a launcher capturing it), else to the console it was started from,
+else to a message box. PowerShell doesn't wait for a GUI program: pipe it (`.\lasrecomp.exe --version | Out-String`) or
+use `Start-Process -Wait`.
+
+Started by RecompLauncher (`RECOMPLAUNCHER=1` is set), there is no update check (the launcher installs updates), and
+`RECOMPLAUNCHER_MODE=bigpicture` starts fullscreen unless the command line says `--windowed`.
+
+The Windows zip, the AppImage (at its root) and the Linux tarball carry `recomplauncher.json`
+(`tools/recomplauncher.json`), RecompLauncher's profile: it asks for the extracted game files, runs `--prepare` on
+them, starts the game, and shows a few video settings and the choice of start screen or straight into the game. Both
+pass `--new-data-dir` with the game's install folder: a new player's data goes there, and a player who already has data
+(an earlier install, or ReAwakening played without the launcher) keeps it where it is. The profile lists both places for
+saves, settings and logs. Not in the macOS .dmg.
+
+Example: a launcher that keeps everything in its own folder.
+
+```sh
+lasrecomp --prepare --data-dir ~/Games/LAS --game-files ~/Games/LAS-files   # once: set up, exit 0
+lasrecomp --play --data-dir ~/Games/LAS --no-update-check --set resolution=2
+```
+
 ## Running and test runs
 
 | Variable | Values | What it does |
@@ -31,8 +71,8 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_FORCE_LAUNCHER` | 1 | Show the start screen even when `LARECOMP_INPUT` is set (which normally skips it). |
 | `LARECOMP_LAUNCHER_AUTOPLAY` | 1, `once` | Press PLAY on the start screen at once. `once`: only the first time, so a "Title screen" reboot stays on the start screen. |
 | `LARECOMP_LAUNCHER_PLAY_AT` | seconds | Press PLAY on the start screen that many seconds in. |
-| `LARECOMP_LAUNCHER_KEYS` | `frame:key,...` | Press keys on the start screen at those frames (`left right up down enter esc`, controller `pl pr pu pd pa pb`). The log names the RANDOMIZER row's choice when it changes. |
-| `LARECOMP_NO_UPDATE_CHECK` | 1 | Skip the update check on the start screen. |
+| `LARECOMP_LAUNCHER_KEYS` | `frame:key,...` | Press keys on the start screen at those frames (`left right up down enter esc`, controller `pl pr pu pd pa pb`, or `b.<button>` with a larecomp.ini button name such as `b.north` or `b.rtrigger`: a real controller event that goes through LAS Menu). The log names the RANDOMIZER row's choice when it changes. |
+| `LARECOMP_NO_UPDATE_CHECK` | 1 | No update check (start screen, Sparkle) and no update. Same as `--no-update-check`. |
 | `LARECOMP_INPUT` | script (see below) | Scripted controller input for player 1. Also skips the start screen and blocks your own input. |
 | `LARECOMP_NO_USER_INPUT` | 0 / 1 | Ignore keyboard, mouse and controllers. On by default when a scripted input hook is set; `0` lets your input through during a scripted run. |
 | `LARECOMP_HOST_INPUT` | script (see below) | Scripted host input that goes through the bindings and menus like a player's: keys, controller buttons, typing, mouse, window resize, screenshots. |
@@ -41,7 +81,7 @@ window at that frame to `build/window.png` and exits.
 | `LARECOMP_PAD_TYPE` | `xbox`, `playstation` (or `ps`), other = Nintendo | Pretend the controller is of this family (button labels and confirm/back layout). |
 | `LARECOMP_SAVE_DIR` | folder | Use this folder for save slots (`save_0/savedata0.bin` ...) instead of the normal save folder. Test runs should always set it to a scratch copy. |
 | `LARECOMP_SETTINGS` | file path | Use this settings file instead of `larecomp.ini`, so test runs never change the player's settings. |
-| `LARECOMP_DATA_ROOT` | folder | Use this folder as the data folder (game files copy, settings, saves, caches). |
+| `LARECOMP_DATA_ROOT` | folder | Use this folder as the data folder (game files copy, settings, saves, caches). Same as `--data-dir`. |
 | `LARECOMP_NO_AUDIO` | 1 / 0 | No audio output at all (game and menu sounds). `0` keeps sound. |
 | `LARECOMP_NO_MOVIE_AUDIO` | 1 | Play movies without their audio track. |
 | `LARECOMP_WINDOW` | `WxH` | Window size in points (default: the remembered size, else 1280x720). Also stops fullscreen. |
@@ -98,6 +138,7 @@ Comma-separated entries, each starting with a frame:
 
 | Variable | Values | What it does |
 |---|---|---|
+| `--load-save` / `LARECOMP_LOAD_SAVE` | `1`-`4` or a save file path | Boot straight into a save (see below). |
 | `LARECOMP_WARP_AT` | `frame:level:locator,...` (see below) | Warp to that level and spawn point at each frame. |
 | `LARECOMP_WARP_ON_LOAD` | `level:locator` | Warp once, about a second after a save is loaded. |
 | `LARECOMP_WARP_MENU_PICK` | text | Warp through the menu's warp tab to the first place whose name matches the text. |
@@ -110,7 +151,34 @@ Comma-separated entries, each starting with a frame:
 | `LARECOMP_RANDO_SEED` | seed folder name | Play this randomizer seed (`rando/<name>/`) instead of the one in the settings. Saves go to the seed's own folder unless `LARECOMP_SAVE_DIR` is set. |
 | `LARECOMP_RANDO_ID` | seed ID | Open the randomizer tab with that seed ID's options. |
 | `LARECOMP_RANDO_GEN_TEST` | `1` or `name[:seed ID]` | Generate a seed as soon as the randomizer tab is shown. |
-| `LARECOMP_RANDO_GEN` | file path | Use this seed generator program instead of the bundled one. |
+| `LARECOMP_RANDO_GEN_SHOTS` | file name prefix | With `LARECOMP_RANDO_GEN_TEST`: save `<prefix>_gen.png` while the seed is being made and `<prefix>_done.png` when it's ready, then press Play Now. |
+| `LARECOMP_RANDO_CAT` | category name | Open the randomizer tab on that category (`Seeds`, `Presets`, `General`, `Goal`, `Items`, ...). |
+| `LARECOMP_RANDO_CAT_CYCLE` | frames | Show each randomizer category in turn, that many frames each (for screenshot series). |
+| `LARECOMP_RANDO_SEED_OPEN` | seed folder name | Open the randomizer tab's Seeds category with that seed selected. |
+| `LARECOMP_RANDO_BUILD` | `0` | Don't build the seed's game files in memory: take them from the seed folder, as for seeds made before `seed.json` (A/B checks). |
+| `LARECOMP_RANDO_DEFER` | `0` | Build every file the seed changes when it loads and keep them all, instead of building dungeon room shuffle's texture banks when the game reads them (A/B checks of memory and load time). |
+
+### Loading a save from the command line
+
+```sh
+./build/lasrecomp extracted --load-save 2                       # file 2 of the file select
+./build/lasrecomp extracted --load-save ~/Downloads/savedata0.bin   # a save file from elsewhere
+```
+
+Skips the start screen, the title and the file select, and loads the save the game's own way: it presses what a
+player would (A on the opening, L + R on the title, the file, A on "load this file?"), so the game lands where that
+save puts you, with its flags and its seed. Combine with `LARECOMP_WARP_ON_LOAD` to go somewhere from there.
+
+- `1`-`4`: the file as numbered on the file select (1-3 the diaries, 4 the autosave, `savedata0-3.bin`) in the save
+  folder of the game being started: the selected randomizer seed's, or the vanilla one (`LARECOMP_SAVE_DIR` and
+  `LARECOMP_RANDO_SEED` apply as usual).
+- A path: the file is copied (with its `.flagsx` file, if there is one) into a scratch save folder, `load_save/` in the
+  data folder, and loaded as file 1. The game saves there for the rest of the session, so your own saves are never
+  read or written. A path inside a seed's folder (`rando/<seed>/save/...`) plays that seed. For a save from someone
+  else's randomizer seed, put their seed folder in `rando/` and set `LARECOMP_RANDO_SEED`.
+- The file is checked first (size, version, checksums). A missing or damaged one gives one line in the log and on
+  the terminal, and the app starts as it would without the option.
+- `lasrecomp.log` lines start with `[loadsave]`: which file, and when it is in play.
 
 ### LARECOMP_WARP_AT format
 
@@ -303,7 +371,6 @@ the start screen's setup otherwise).
 | Variable | Values | What it does |
 |---|---|---|
 | `LARECOMP_GAME_LIB` | file path | Load the game code library from this path first. |
-| `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `lasgen`. |
 | `LARECOMP_CC` | file path | Compiler to use instead of the bundled zig. |
 | `LARECOMP_GUEST_BASE` | hex address | Builds with `DYN_BASE=1` only: start the guest window here (4 GB aligned, ending below 2^39). Without it a desktop `DYN_BASE` build uses `0x7100000000`, so the game runs away from its own addresses. iOS (always `DYN_BASE`) ignores it: the window goes into a free gap found at start-up, 1 GB aligned (`plat_place_guest`). |
 
@@ -313,7 +380,6 @@ Read by scripts in `tools/`, not by the app.
 
 | Variable | Values | What it does |
 |---|---|---|
-| `LARECOMP_ROMFS` | folder | The extracted game's romfs folder, for the Python tests that read game files (`test_field_regions.py`, `test_room_crossing.py`, `test_room_ledges.py`). |
 | `LARECOMP_MIN_FREE_GB` | GB | `tools/game_slot.sh`: free memory to wait for before a test copy starts (default 10). |
 
 Narrow one-off probes (memory dumps and watches at fixed addresses, single-shader skips, per-feature tuning, menu

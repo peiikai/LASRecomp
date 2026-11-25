@@ -3,7 +3,7 @@
 // drawn at both doorways. A pair shows once Link has walked through either end, or all of them with the dungeon's
 // Map (Randomizer tab: off / as explored / as explored + all with the Map; larecomp.ini chaos_letters).
 //
-// Placement: the dungeon map page (main+0xe78740 runs once per frame while it's shown; tools/patches.py
+// Placement: the dungeon map page (main+0xe78740 runs once per frame while it's shown; runtime/gen/patches.cpp
 // DGN_MAP_SITE) holds its layout panes at page+0x8 -> +0x10: N_Map_00 (+0x70: zoom / scroll), N_MapPosition_00
 // (+0x7a8: the dungeon's offset - Face Shrine -16, Tail Cave +48). The room grid P_Grid_00 is 652 x 518 layout
 // units, 8 x 8 cells of 81.5 x 64.75 (1280 x 720 layout, origin at the centre, y up); found 2026-10-09 with
@@ -20,6 +20,7 @@
 extern "C" {
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 #include "../settings.h"
 uint64_t renderer_present_count(void);
 int doorjump_chaos_pairs(const char *level, int *ids, int max);
@@ -110,11 +111,11 @@ RT_ON_RESET(chaos_overlay_cells_reset) { g_ncells = -1; }
 static bool cell_shift(const char *lv, int col, int row, float *x, float *y) {
     if (g_ncells < 0) {
         g_ncells = 0;
-        char p[512];
         const char *dir = rando_seed_dir();
-        FILE *f = dir ? (snprintf(p, sizeof p, "%s/dungeon_map.tsv", dir), fopen(p, "r")) : NULL;
+        RandoText f;
+        bool have = dir && rando_text_open(&f, "dungeon_map");
         char line[128], cell[8];
-        while (f && g_ncells < 640 && fgets(line, sizeof line, f)) {
+        while (have && g_ncells < 640 && rando_text_gets(line, sizeof line, &f)) {
             MapCell &m = g_cells[g_ncells];
             if (sscanf(line, "%23[^\t]\t%7[^\t]\t%f\t%f", m.level, cell, &m.x, &m.y) == 4 && strlen(cell) == 3) {
                 m.row = (cell[0] - '0') * 10 + (cell[1] - '0');
@@ -122,7 +123,6 @@ static bool cell_shift(const char *lv, int col, int row, float *x, float *y) {
                 g_ncells++;
             }
         }
-        if (f) fclose(f);
     }
     for (int i = 0; i < g_ncells; i++)
         if (g_cells[i].col == col && g_cells[i].row == row && !strcmp(g_cells[i].level, lv)) {

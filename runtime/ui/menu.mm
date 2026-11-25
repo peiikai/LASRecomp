@@ -267,7 +267,8 @@ bool menu_handle_event(const SDL_Event *e) {
         if (e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_KP_ENTER) { g_kbd = 2; return true; }
         if (e->key.scancode == SDL_SCANCODE_ESCAPE) { g_kbd = 3; return true; }
     }
-    if (g_kbd.load() == 1 && e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && e->gbutton.button == SDL_GAMEPAD_BUTTON_START) {
+    if (g_kbd.load() == 1 && e->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+        e->gbutton.button == bind_ui_host(BIND_UI_OK)) {  // (LAS Menu's OK)
         g_kbd = 2;
         return true;
     }
@@ -326,20 +327,26 @@ bool menu_handle_event(const SDL_Event *e) {
         QEvent q = {};
         q.kind = QEvent::ANALOG;
         switch (e->gaxis.axis) {
-        case SDL_GAMEPAD_AXIS_LEFTX:
-            q.key = ImGuiKey_GamepadLStickLeft; q.value = v < -0.3f ? -v : 0; push(q);
-            q.key = ImGuiKey_GamepadLStickRight; q.value = v > 0.3f ? v : 0; push(q);
+        case SDL_GAMEPAD_AXIS_LEFTX: case SDL_GAMEPAD_AXIS_LEFTY: {  // (one direction at a time: pad_nav.h)
+            int d = ui_stick_dir(e->gaxis.axis, v);
+            const ImGuiKey keys[4] = {ImGuiKey_GamepadLStickLeft, ImGuiKey_GamepadLStickRight, ImGuiKey_GamepadLStickUp,
+                                      ImGuiKey_GamepadLStickDown};
+            for (int i = 0; i < 4; i++) q.key = keys[i], q.value = d == i ? 1.0f : 0.0f, push(q);
             break;
-        case SDL_GAMEPAD_AXIS_LEFTY:
-            q.key = ImGuiKey_GamepadLStickUp; q.value = v < -0.3f ? -v : 0; push(q);
-            q.key = ImGuiKey_GamepadLStickDown; q.value = v > 0.3f ? v : 0; push(q);
-            break;
+        }
         case SDL_GAMEPAD_AXIS_RIGHTY:  // (scrolls a right column of plain text: option_rows.mm)
             q.key = ImGuiKey_GamepadRStickUp; q.value = v < 0 ? -v : 0; push(q);
             q.key = ImGuiKey_GamepadRStickDown; q.value = v > 0 ? v : 0; push(q);
             break;
-        case SDL_GAMEPAD_AXIS_LEFT_TRIGGER: q.key = ImGuiKey_GamepadL2; q.value = v; push(q); break;
-        case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: q.key = ImGuiKey_GamepadR2; q.value = v; push(q); break;
+        case SDL_GAMEPAD_AXIS_LEFT_TRIGGER: case SDL_GAMEPAD_AXIS_RIGHT_TRIGGER: {
+            bool left = e->gaxis.axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER, tdown;
+            ImGuiKey tk;  // (a LAS Menu action on a trigger: pad_nav.h)
+            if (ui_pad_trigger(e->gaxis.which, e->gaxis.axis, e->gaxis.value, &tk, &tdown)) {
+                QEvent t = {}; t.kind = QEvent::KEY; t.key = tk; t.down = tdown; push(t);
+            }
+            q.key = left ? ImGuiKey_GamepadL2 : ImGuiKey_GamepadR2; q.value = v; push(q);
+            break;
+        }
         default: break;
         }
         return true;
@@ -2187,6 +2194,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
 #else
     ImGui_ImplVulkan_NewFrame();
 #endif
+    ui_nav_repeat(ImGui::GetIO(), g_text_busy);
     ImGui::NewFrame();
     g_touch.scroll_apply(touch_px);
 

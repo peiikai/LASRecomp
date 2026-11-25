@@ -2,9 +2,8 @@
 # make appimage ARCH=<x86_64|aarch64>: build/dist/ReAwakening-<version>-linux-<arch>.AppImage, built in Ubuntu 22.04
 # containers (podman; tools/linux/Containerfile) so it runs on glibc 2.35+ distributions. On a host of the same arch
 # everything is built natively in that arch's container. An aarch64 AppImage on an x86-64 host: the amd64 container
-# cross-compiles against the arm64 image's root filesystem (build/linux/aarch64/sysroot), only the generator helpers
-# are frozen in the arm64 container (PyInstaller builds for the machine it runs on: QEMU, binfmt - slow, since pip
-# also compiles oead and keystone there). No game code inside: the start screen builds it on the player's machine.
+# cross-compiles against the arm64 image's root filesystem (build/linux/aarch64/sysroot). No game code inside: the start
+# screen builds it on the player's machine.
 # See docs/linux.md.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -23,7 +22,6 @@ run() {  # image, command...: the checkout mounted at /src
 
 if [ "$ARCH" = "$(uname -m)" ]; then  # native: one container of this arch does it all
     IMG=$(image "$PODARCH")
-    run "$IMG" tools/linux/rando_helper.sh "$ARCH"
     run "$IMG" tools/linux/package.sh "$ARCH"
     exit 0
 fi
@@ -44,8 +42,5 @@ if [ "$ARCH" = aarch64 ]; then
         done
         touch "$S/.ok"
     fi
-    run "$ARM" tools/linux/rando_helper.sh aarch64
-else
-    run "$AMD" tools/linux/rando_helper.sh x86_64
 fi
 run "$AMD" tools/linux/package.sh "$ARCH"

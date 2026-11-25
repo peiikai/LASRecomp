@@ -140,7 +140,7 @@ else report PASS "no crash, clean exit"; fi
 fps=$(grep -oE '[0-9.]+ fps' "$L" | awk '{s += $1; n++; if ($1 < m || !m) m = $1} END {if (n) printf "%.1f avg, %.1f min", s / n, m}')
 echo "frame rate (2 s samples): $fps" | tee -a "$O/report.txt"
 
-# ---- 4. randomizer: in game, the menu's Randomizer tab generates a seed (the shipped rando-gen helper) and Play Now
+# ---- 4. randomizer: in game, the menu's Randomizer tab generates a seed (natively, in the app) and Play Now
 # switches to it live (in-place reboot); the save is loaded again on the seed. The session ends once Link is in a
 # level on the seed (log), then the seed is deleted. Input keeps loading the save from whatever title screen shows.
 # (LARECOMP_RANDO_GEN_SHOTS is what presses Play Now; its menu screenshots are Metal-only, so none here.)

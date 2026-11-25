@@ -18,7 +18,7 @@
 #                         runtime/platform/ios.entitlements (one entitlement, which a free Apple ID's team grants),
 #                         where such tools read what to ask Apple for
 #   IOS_SIM=1             with SKELETON=1: the app for the iOS Simulator (make ios-sim; the platform names in the
-#                         plists, the simulator's Python slice)
+#                         plists)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 EXE=${1:-build/ios/lasrecomp}
@@ -29,9 +29,9 @@ BUNDLE_ID=${BUNDLE_ID:-com.peiikai.lasrecomp.ios}
 IOS_MIN=${IOS_MIN:?the Makefile sets IOS_MIN - run as make ipa / ios-skeleton}
 if [ -n "${IOS_SIM:-}" ]; then
     [ -n "$SKELETON" ] || { echo "IOS_SIM=1 needs SKELETON=1 (no game code in the simulator)"; exit 1; }
-    PLATFORM_NAME=iphonesimulator; PLATFORM_KEY=iPhoneSimulator; PYSLICE_NAME=ios-arm64_x86_64-simulator
+    PLATFORM_NAME=iphonesimulator; PLATFORM_KEY=iPhoneSimulator
 else
-    PLATFORM_NAME=iphoneos; PLATFORM_KEY=iPhoneOS; PYSLICE_NAME=ios-arm64
+    PLATFORM_NAME=iphoneos; PLATFORM_KEY=iPhoneOS
 fi
 WORK=$(dirname "$EXE")  # (the icon catalog and the plist scratch next to the executable)
 VERSION=$(sed -n 's/^#define LARECOMP_VERSION "\(.*\)"/\1/p' runtime/ui/launcher.mm)
@@ -92,8 +92,8 @@ cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-B
 cp third_party/fonts/DejaVu/LICENSE "$APP/DejaVu-LICENSE.txt"
 # LICENSES/: the texts of what the app links or embeds, unlike the desktops' dynamic libraries and separate
 # helpers (the fonts' above, as the desktops ship them; the README's License section lists each with its version):
-# the ported audio renderer code, Dear ImGui and SMAA from the tree, and the static SDL3 and FFmpeg, the embedded
-# CPython and the seed generator's packages from build/deps-ios/licenses (tools/build_deps_ios.sh)
+# the ported audio renderer code, Dear ImGui, SMAA and the randomizer code ported from LAS-Randomizer from the tree,
+# and the static SDL3 and FFmpeg from build/deps-ios/licenses (tools/build_deps_ios.sh)
 DEPS=${DEPS:-build/deps-ios}
 mkdir -p "$APP/LICENSES"
 cp third_party/ryujinx/LICENSE.txt "$APP/LICENSES/audio-renderer-port-LICENSE.txt"
@@ -102,6 +102,7 @@ cp third_party/smaa/LICENSE.txt "$APP/LICENSES/SMAA-LICENSE.txt"
 cp third_party/LAS-Randomizer/LICENSE.txt "$APP/LICENSES/LAS-Randomizer-LICENSE.txt"
 [ -d "$DEPS/licenses" ] || { echo "no $DEPS/licenses (make deps-ios again: it collects the licence texts)"; exit 1; }
 cp "$DEPS"/licenses/* "$APP/LICENSES/"
+cp THIRD-PARTY-NOTICES.txt "$APP/"  # (the licence texts of everything bundled, as every release package has: tools/notices.py)
 
 # App icon: the asset catalog compiled from the 1024 png (Assets.car + CFBundleIcons); skipped without actool.
 if command -v xcrun >/dev/null && xcrun --find actool >/dev/null 2>&1; then
@@ -179,35 +180,8 @@ EOF
 fi
 plutil -lint "$APP/Info.plist" >/dev/null
 
-# ---- the embedded CPython (runtime/platform/ios_python.m): Python.framework, the stdlib under python/lib, and every
-# C extension (.so: stdlib's and site-packages') as its own Frameworks/<module>.framework, with a <module>.fwork file
-# left in its place for the importer (CPython's iOS loader) - the layout of BeeWare's testbed, build/utils.sh.
-DEPS=${DEPS:-build/deps-ios}
-PYV=${PYV:-3.13}  # (the Makefile's)
-PYSLICE=$DEPS/Python.xcframework/$PYSLICE_NAME
-if [ -f "$PYSLICE/Python.framework/Python" ]; then
-    cp -R "$PYSLICE/Python.framework" "$APP/Frameworks/Python.framework"
-    mkdir -p "$APP/python/lib"
-    rsync -a "$DEPS/Python.xcframework/lib/" "$APP/python/lib/"  # (the pure-Python stdlib, shared by the slices)
-    rsync -a --exclude 'libpython*.dylib' "$PYSLICE/lib-arm64/" "$APP/python/lib/"  # (this slice's extensions)
-    # (no tests, no idle / tkinter: size)
-    rm -rf "$APP"/python/lib/python$PYV/{test,idlelib,tkinter,turtledemo,ensurepip,lib2to3,pydoc_data,__pycache__}
-    find "$APP/python/lib" -name "__pycache__" -type d -prune -exec rm -rf {} +
-    find "$APP/python/lib" -name "*_test*.so" -o -name "xx*.so" | xargs rm -f  # (the test extensions)
-    [ -d "$DEPS/python/site-packages" ] && cp -R "$DEPS/python/site-packages" "$APP/python/site-packages"
-    cp runtime/platform/ios_pyproc.py "$APP/python/site-packages/"  # (what runs the scripts: ios_python.m)
-    # the generator's sources: tools/rando as it is (less the desktop helper's venv / spec and caches), the randomizer's
-    # core and resources
-    mkdir -p "$APP/rando-gen"
-    rsync -a --exclude '__pycache__' --exclude 'venv' --exclude '*.spec' --exclude '.*' tools/rando/ "$APP/rando-gen/"
-    rsync -a --exclude '__pycache__' third_party/LAS-Randomizer/RandomizerCore third_party/LAS-Randomizer/Resources "$APP/rando-gen/"
-    # every .so / .dylib under python/ -> a framework (tools/ios_frameworks.py)
-    n=$(python3 tools/ios_frameworks.py "$APP" "$BUNDLE_ID" "$IOS_MIN" --platform $PLATFORM_KEY)
-    echo "python: $n extension frameworks, $(du -sh "$APP/python" | cut -f1) stdlib + packages, $(du -sh "$APP/rando-gen" | cut -f1) generator"
-fi
-
-# no path of this machine inside (debug paths, the wheels' source file names), as tools/bundle_macos.sh checks. Not
-# on CI: its paths name no one, and BeeWare's prebuilt Pillow holds the CI runner's own
+# no path of this machine inside (debug paths, source file names), as tools/bundle_macos.sh checks. Not on CI: its
+# paths name no one
 if [ "${CI:-}" != true ]; then
     case "$(basename "$HOME")" in runner|runneradmin) home=() ;; *) home=(-e "$HOME") ;; esac
     if grep -rlaF -e "$PWD" ${home[@]+"${home[@]}"} "$APP"; then echo "^ these hold a path of this machine"; exit 1; fi
@@ -216,7 +190,7 @@ fi
 if [ -n "${IOS_SIM:-}" ]; then
     # The simulator runs ad-hoc signed code, every binary signed, and refuses the executable with our entitlement
     # in its signature ("Security policy issue"): plain ad-hoc signatures, inside out.
-    for f in "$APP"/Frameworks/*.framework; do codesign --force --sign - --timestamp=none "$f"; done
+    for f in "$APP"/Frameworks/*.framework; do [ -e "$f" ] && codesign --force --sign - --timestamp=none "$f"; done
     codesign --force --sign - --timestamp=none "$APP"
     echo "$APP (simulator): $(du -sh "$APP" | cut -f1), $(ls "$APP/Frameworks" | wc -l | tr -d ' ') frameworks, ad-hoc signed"
     exit 0
@@ -260,6 +234,7 @@ e['get-task-allow'] = True
 with open(sys.argv[2], 'wb') as f: plistlib.dump(e, f)
 EOF
     for f in "$APP"/Frameworks/*.framework; do  # (inside out: every framework, then the app)
+        [ -e "$f" ] || continue
         codesign --force --sign "$SIGN" --timestamp=none "$f"
     done
     codesign --force --sign "$SIGN" --entitlements "$ENT" --timestamp=none "$APP"

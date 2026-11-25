@@ -2,9 +2,10 @@
 
 Status: builds and runs the game on Vulkan (with your own game files) on x86-64, checked before
 each release by `make smoketest`. aarch64 is **experimental**: tested on a few ARM boards; reports welcome (see the end). `make appimage` / `make appimages`
-package the AppImages. The latest aarch64 one is also on the rolling
+package the AppImages. The aarch64 one is on the rolling
 [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) pre-release
-(`.github/workflows/nightly.yml`); releases from 1.0.0 on carry only the x86-64 one.
+(`.github/workflows/nightly.yml`). A release's aarch64 file is a copy of the newest nightly one, so players on an
+older release build move to the nightlies; from then on the game offers newer nightlies only.
 
 ## Running the AppImage
     chmod +x LAS.Recomp-<version>-linux-x86_64.AppImage
@@ -19,9 +20,34 @@ The start screen asks for the folder with your own game files and sets them up.
 
 Everything the app writes lives in `~/.local/share/lasrecomp` (`$XDG_DATA_HOME/lasrecomp`): game files (`extracted/`),
 saves, seeds, settings (`larecomp.ini`), shader caches, imported fonts. Started without a terminal the log is
-`~/.local/share/lasrecomp/lasrecomp.log`, always the latest run; up to five recent runs are kept as
-`lasrecomp-backup-*.log` (from a terminal it prints there instead). `LARECOMP_DATA_ROOT=<dir>` uses
-another folder.
+`lasrecomp.log` in that folder, always the latest run; up to five recent runs are kept as `lasrecomp-backup-*.log`
+(from a terminal it prints there instead). `--data-dir <folder>` (or `LARECOMP_DATA_ROOT`) uses another folder for
+one run; Settings > System > Data folder moves it for good.
+
+To keep everything next to the AppImage instead, make the AppImage's portable folder once:
+
+    ./LAS.Recomp-<version>-linux-x86_64.AppImage --appimage-portable-home
+
+That creates `LAS.Recomp-<version>-linux-x86_64.AppImage.home` next to it (making that folder by hand works too), and
+the data goes in its `.local/share/lasrecomp`. Updates keep the AppImage's name, so the folder stays in use.
+
+## The tarball (no FUSE)
+
+`ReAwakening-<version>-linux-<arch>.tar.gz` holds the same files as the AppImage in one `LAS Recomp` folder. Use it
+where an AppImage can't mount itself, like inside a Flatpak sandbox:
+
+    tar -xzf LAS.Recomp-<version>-linux-x86_64.tar.gz
+    "LAS Recomp/lasrecomp"
+
+It keeps its data in its own folder, like the Windows zip, because of the `portable.txt` file in it. Delete that file
+to use `~/.local/share/lasrecomp` instead. An AppImage that a launcher unpacked works the same way: `portable.txt`
+next to its `AppRun` keeps the data there. The tarball doesn't update itself: the update dialog shows what's new and a
+Download button.
+
+## Launchers
+
+Command-line options for launchers (`--play`, `--data-dir`, `--game-files`, `--prepare`, `--set`, `--fullscreen`,
+`--no-update-check` and more) are in [debug-hooks.md](debug-hooks.md#command-line), or run `lasrecomp --help`.
 
 Controllers work as on the other systems (SDL3's gamepad support, bundled): Xbox, PlayStation (DualShock 4,
 DualSense), Switch Pro / Joy-Con, 8BitDo and other pads through the kernel's drivers, plugged in or paired while the
@@ -39,7 +65,7 @@ Ubuntu / Debian packages (other distributions: the same libraries under their na
 3.4 from source first - `tools/linux/build_deps.sh` builds the pinned version the AppImage uses (into
 `build/linux/<arch>/deps`).
 
-    sudo apt install clang lld make pkg-config python3-venv libsdl3-dev libavformat-dev libavcodec-dev \
+    sudo apt install clang lld make pkg-config python3 libsdl3-dev libavformat-dev libavcodec-dev \
         libavutil-dev libswscale-dev libvulkan-dev libshaderc-dev libvulkan-memory-allocator-dev glslc vulkan-tools
 
 For Chinese or Korean menus, also install a font for them (`fonts-noto-cjk`). ReAwakening bundles fonts for Russian
@@ -50,10 +76,13 @@ yourself: `make SHADERC=-lshaderc_shared` (or `-lshaderc`).
 
 Then from the repo root:
 
-    python3 -m venv tools/venv && tools/venv/bin/pip install lz4 capstone unicorn
-    make -j         # the start screen only (no game code yet): set up the game files there, or put extracted/ here
-    make gen        # once: recompile the game from your own game files
+    make -j         # the app (no game code yet)
+    make gen        # once, with your game files in extracted/ (exefs/, romfs/): recompile the game's code
     make -j         # -> build/lasrecomp and the game code library build/lasgame.so
+
+Without `extracted/` here, run `tools/fetch_zig.sh` once and set up your game files on the start screen: it builds the
+game code itself, as the AppImage does. The generator is part of the app (`runtime/gen/`; `make lasgen` builds it as a
+command-line tool). Python 3 is only needed for the tests.
 
 Run `./build/lasrecomp` from the repo root: with `extracted/` in the starting folder it uses that folder for
 everything (dev mode) instead of `~/.local/share/lasrecomp`.
@@ -63,11 +92,6 @@ FP/SIMD as inline asm, like Apple Silicon; x86-64 lowers it to C with `-march=x8
 passes the matching `--simd`. A cross build (`ARCH=aarch64` on an x86-64 machine, `SYSROOT=<arm64 root filesystem>`)
 keeps its own `generated-aarch64/` and `build/aarch64/`. Distributions that name shaderc's library
 `libshaderc_shared.so` need `SHADERC=-lshaderc_shared`.
-
-The randomizer from a source checkout uses LAS-Randomizer's own venv (Python 3.12):
-
-    python3.12 -m venv third_party/LAS-Randomizer/venv
-    third_party/LAS-Randomizer/venv/bin/pip install -r third_party/LAS-Randomizer/requirements.txt
 
 ## AppImages
 Needs podman, and for the other arch's AppImage QEMU user emulation with binfmt (`sudo apt install podman qemu-user
@@ -82,11 +106,7 @@ SDL3, an LGPL-only FFmpeg (only the movie codecs, as on Windows / macOS), and sh
 (`tools/linux/build_deps.sh`), then the game against them (`tools/linux/package.sh`). This machine's arch is built
 natively in one container of that arch (the release does both archs that way, on an arm64 runner for aarch64).
 aarch64 on an x86-64 machine is cross-compiled in the amd64 container against the arm64 image's root filesystem
-(`build/linux/aarch64/sysroot`), with only the seed generator helper (`tools/linux/rando_helper.sh`, PyInstaller
-builds for the machine it runs on) frozen in the arm64 container under QEMU, where pip also builds oead and
-keystone-engine from source the first time (no arm64 wheels on PyPI; cached in `build/linux/aarch64/wheels`). The
-generated game code comes from the host (`generated/`, `generated-aarch64/`; `make appimage` runs `make gen` for it
-when missing).
+(`build/linux/aarch64/sysroot`). The AppImage holds no game code: the start screen builds it on the player's machine.
 
 Release check of the x86-64 AppImage (`make smoketest`, tools/linux/smoketest.sh, ~7 minutes on this kind of machine):
 three launches of the AppImage itself - the start screen; a session from a test save warping to four overworld spots
@@ -96,9 +116,13 @@ RELEASE or NOT READY; `build/smoke/sheet.png` shows every screenshot. It needs `
 save outside git (`~/.local/share/lasrecomp-smoketest/save`, or `LARECOMP_SMOKE_SAVE`): copy `save/` from any build
 after starting a new game once.
 
-The AppImage holds `lasrecomp`, `rando-gen/`, the start screen font and the bundled libraries (SDL3,
+The AppImage holds `lasrecomp`, `zig/`, the start screen font and the bundled libraries (SDL3,
 FFmpeg, shaderc). Not bundled: glibc, libstdc++, the Vulkan loader and the GPU drivers (always the system's). No game
 files or fonts.
+
+`make tarball` (after `make appimage`, same `ARCH`) packs that AppDir as the tarball, with `portable.txt` and a
+`lasrecomp` link to `AppRun` (`tools/linux/tarball.sh`). `tools/linux/check_no_game_code.sh` checks both before
+they ship.
 
 ## Differences from macOS / Windows
 - Platform layer `runtime/platform/linux.c`: like macOS, the guest window (0x70_0000_0000..0x73_2000_0000) is one
@@ -112,8 +136,7 @@ files or fonts.
 - Pages: 4K and 16K kernels (Asahi) work; 64K-page kernels (some ARM servers) are not supported.
 
 ## Testing on ARM (aarch64): what to report
-The aarch64 AppImage is on the [Experimental builds](https://github.com/peiikai/LASRecomp/releases/tag/experimental)
-page. It has been tested on a few ARM boards (RK3588 with a Mali GPU), so reports from other hardware
+The aarch64 AppImage is on the [nightly](https://github.com/peiikai/LASRecomp/releases/tag/nightly) page. It has been tested on a few ARM boards (RK3588 with a Mali GPU), so reports from other hardware
 (Asahi Linux, Snapdragon laptops, Raspberry Pi 5 and other boards) are welcome. Please include:
 
 1. **Distribution and kernel**: `cat /etc/os-release | head -3; uname -r; getconf PAGESIZE`

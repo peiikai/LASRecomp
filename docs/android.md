@@ -14,11 +14,11 @@ files, as on the desktop.
 
 ## Building
 
-Needs the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and Python 3.
+Needs the Android SDK with NDK 30.0.16248370, CMake 3.30.4 and platform 36, JDK 17 or newer, bash, curl and Python 3 (`build_deps.sh` uses it; the game code generator is C++ in the app).
 
 ```
 bash android/deps/build_deps.sh        # SDL3, shaderc, volk, Vulkan headers, FFmpeg for arm64 (once)
-bash android/deps/build_gen_deps.sh    # the game code builder and seed generator: Python, its modules, zig (once)
+bash android/deps/build_gen_deps.sh    # the game code builder's compiler: zig (once)
 cd android && ./gradlew assembleDebug  # android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
@@ -62,16 +62,12 @@ fails (or, worse, Gradle quietly keeps the old library).
   Android yet.
 - The game files folder comes from Android's folder picker (a `content://` folder, not a path): the setup copies
   exefs and romfs through the storage framework into the data folder.
-- The game code is built on the device as on the desktop (`runtime/gamebuild.c`): the generator runs on Python for
-  Android, and zig compiles for `aarch64-linux-musl` and links against `libmain.so`. Android runs programs only from
-  the app's native library folder, so Python's launcher and zig ship there as `lib*.so`; the rest is unpacked from
-  `assets/gen.zip` at the first start after an install or update. The library is loaded from a copy in internal
+- The game code is built on the device as on the desktop (`runtime/gamebuild.c`): the generator runs inside the app
+  (`runtime/gen/`), and zig compiles for `aarch64-linux-musl` and links against `libmain.so`. Android runs programs
+  only from the app's native library folder, so zig ships there as `libzig.so`; its library and the headers are
+  unpacked from `assets/gen.zip` at the first start after an install or update. The library is loaded from a copy in internal
   storage, since shared storage is mounted noexec.
-- The randomizer's seed generator runs the same way: Python runs `tools/rando/las_headless.py` from the unpacked files
-  (PyInstaller, which makes the desktop's `rando-gen`, has no Android target). `build_gen_deps.sh` builds its compiled
-  modules (oead, quicktex, Pillow's core, Keystone) for that Python; they load from internal storage like Python's own.
-  Shared storage has no symlinks, so the room shuffle's scratch folder goes in internal storage
-  (`LARECOMP_RANDO_SCRATCH`). A seed takes about five minutes on a Snapdragon 865.
+- The randomizer's seeds are made in the app itself (`runtime/rando/solve/`), as on every platform: no Python.
 
 ## Testing in the emulator
 

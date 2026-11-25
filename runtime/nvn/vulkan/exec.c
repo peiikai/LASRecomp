@@ -18,6 +18,7 @@
 
 #include "../../kernel.h"
 #include "shaders.h"
+#include "spirv_varyings.h"
 #include "vk.h"
 #include "record.h"
 #include "../renderer.h"
@@ -1412,6 +1413,16 @@ void vk_exec_init(void) {
         maxwell_glsl_tint_branch = te ? atoi(te) != 0 : g_vk.props.vendorID == 0x5143 || g_vk.props.vendorID == 0x13B5;
         LOG("[vk] recolour variants %s (%s)\n", maxwell_glsl_tint_branch ? "on" : "off", te ? "LARECOMP_VK_TINT_BRANCH" : "default for this GPU");
     }
+    {   // late depth for discarding fragment shaders (shader.h maxwell_glsl_late_depth): Turnip on Adreno 7xx (Retroid
+        // Pocket 6, Adreno 740: black specks along the grass edges in Mabe Village while the camera moved; the 650 is
+        // fine). LARECOMP_VK_LATE_DEPTH=0 / 1 overrides.
+        const char *name = strstr(g_vk.props.deviceName, "Adreno (TM) ");
+        int gen = name ? atoi(name + 12) / 100 : 0;
+        const char *le = getenv("LARECOMP_VK_LATE_DEPTH");
+        maxwell_glsl_late_depth = le ? atoi(le) != 0 : g_vk.driver_id == VK_DRIVER_ID_MESA_TURNIP && gen >= 7;
+        LOG("[vk] late depth in discarding shaders %s (%s)\n", maxwell_glsl_late_depth ? "on" : "off",
+            le ? "LARECOMP_VK_LATE_DEPTH" : "default for this GPU");
+    }
     // fmin / fmax / saturate as the GPU's min / max / clamp (shader.h maxwell_glsl_fast_minmax) by default on Android,
     // where the fork it comes from measured it on Adreno (Turnip and Qualcomm's driver: the lit pass 1717 -> 1637
     // instructions). LARECOMP_VK_FAST_MINMAX=1 turns it on elsewhere, =0 off anywhere.
@@ -2055,6 +2066,21 @@ static bool spirv_strip_early_tests(uint32_t *w, size_t *nwords) {
     return false;
 }
 
+// Mesa drivers (device.c compact_varyings, for PanVK before 26.1): the pair's varyings renumbered from 0 when a fragment
+// input sits at Location 16 or above (spirv_varyings.c says why). LA's programs are vertex + fragment only, so the
+// vertex shader is the producer. Once per program, before its modules are made; the SPIR-V cache
+// keeps the shaders as translated, and the driver's pipeline cache keys on the modules' words, so its entries follow.
+static void compact_varyings(Prog *p, uint32_t *sv, size_t nv, uint32_t *sf, size_t nf) {
+    static _Atomic int n_done, n_failed;
+    char info[256];
+    int r = spirv_compact_varyings(sv, nv, sf, nf, 16, info, sizeof info);
+    uint64_t v = p->code[0] ? p->code[0] : p->prep_vh, f = p->code[1] ? p->code[1] : p->prep_fh;
+    if (r > 0 && atomic_fetch_add(&n_done, 1) < 16)
+        LOG("[vk] varyings renumbered, vs/fs %llx %llx: %s\n", (unsigned long long)v, (unsigned long long)f, info);
+    else if (r < 0 && atomic_fetch_add(&n_failed, 1) < 8)
+        LOG("[vk] varyings not renumbered, vs/fs %llx %llx: %s\n", (unsigned long long)v, (unsigned long long)f, info);
+}
+
 static void compile_program(void *arg) {
     Prog *p = arg;
     uint64_t t0 = SDL_GetTicksNS();
@@ -2065,6 +2091,7 @@ static void compile_program(void *arg) {
     if (!sv || !sf) { free(sv); free(sf); atomic_store(&p->state, 2); build_end(bs); return; }
     p->nbinds = vk_reflect(sv, nv, p->binds, MAX_BIND);
     p->nbinds += vk_reflect(sf, nf, p->binds + p->nbinds, MAX_BIND - p->nbinds);
+    if (g_vk.compact_varyings) compact_varyings(p, sv, nv, sf, nf);
     p->vs = vk_module(sv, nv);
     p->fs = vk_module(sf, nf);
     if (spirv_strip_early_tests(sf, &nf)) p->fs_late = vk_module(sf, nf);

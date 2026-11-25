@@ -17,6 +17,8 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/apply/build.h"
+#include "../rando/seed.h"
 #include "../ipc.h"
 #include "../platform.h"
 #include "../game_addresses.h"
@@ -127,7 +129,8 @@ static void base_open(void) {
 }
 
 // ------------------------------------------------------------------ RomFS file index (offset -> path)
-typedef struct { uint64_t start, size; char *path; bool warned; const uint8_t *mem; } Overlay;
+// (built: the romfs path of a file the seed's build makes when it's read - rando_built_read; mem: one kept in memory)
+typedef struct { uint64_t start, size; char *path; bool warned; const uint8_t *mem; char *built; } Overlay;
 // in-image patches (copies of RomFS tables with changes): header, dir meta, file hash, file meta
 typedef struct { uint64_t off, size; uint8_t *data; } Patch;
 static Patch patches[8];
@@ -139,6 +142,10 @@ static uint64_t ov_meta_off, ov_meta_size, ov_end;
 // Lets the runtime see which game files are being streamed (e.g. which level is loading).
 typedef struct { uint64_t off, size; char *path; uint32_t meta; } RomFile;
 static RomFile *rom_files;
+// the game's own files by path, for the seed's build (seed_build): a copy, since rom_files grows and is re-sorted
+// after it; kept until the next index or a reset, as files built when read read the game's files then too
+static RomFile *g_game_files;
+static int g_ngame_files;
 static int rom_nfiles;
 static uint64_t rom_data_off;
 
@@ -198,7 +205,9 @@ RT_ON_RESET(fs_reset) {
     pthread_mutex_lock(&g_ov_lock);
     ov_fds_close();
     pthread_mutex_unlock(&g_ov_lock);
-    for (int i = 0; i < ov_n; i++) free(ov[i].path);
+    rando_build_clear();  // (its later builds read the game's files through the index freed below)
+    free(g_game_files), g_game_files = NULL, g_ngame_files = 0;
+    for (int i = 0; i < ov_n; i++) free(ov[i].path), free(ov[i].built);
     for (int i = 0; i < npatches; i++) free(patches[i].data);  // (ov_meta and the extended table are among these)
     for (int i = 0; i < rom_nfiles; i++) free(rom_files[i].path);
     free(ov), free(rom_files);
@@ -245,7 +254,8 @@ static uint32_t romfs_hash(uint32_t parent, const char *name, uint32_t len) {
 
 static int path_cmp(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
-typedef struct { char rel[1024]; char host[1200]; uint64_t size; } NewFile;
+// (mem: built and kept; later: built when read)
+typedef struct { char rel[1024]; char host[1200]; uint64_t size; const uint8_t *mem; bool later; } NewFile;
 
 static void walk_new(const char *root, const char *rel, char **known, int nknown, NewFile **out, int *n, int *cap) {
     char dirp[1200];
@@ -263,10 +273,13 @@ static void walk_new(const char *root, const char *rel, char **known, int nknown
         if (S_ISDIR(sb.st_mode)) { walk_new(root, r2, known, nknown, out, n, cap); continue; }
         const char *key = r2;
         if (bsearch(&key, known, nknown, sizeof *known, path_cmp)) continue;  // replaces an existing file
+        if (rando_built_has(r2)) continue;  // (built: added from there)
         if (*n == *cap) { *cap = *cap ? *cap * 2 : 64; *out = realloc(*out, sizeof **out * *cap); }
         strlcpy((*out)[*n].rel, r2, sizeof (*out)[*n].rel);
         strlcpy((*out)[*n].host, h2, sizeof (*out)[*n].host);
         (*out)[*n].size = (uint64_t)sb.st_size;
+        (*out)[*n].mem = NULL;
+        (*out)[*n].later = false;
         (*n)++;
     }
     closedir(d);
@@ -303,6 +316,19 @@ static void add_new_files(const uint64_t *h, const uint8_t *dmeta, uint64_t dsz,
     NewFile *nf = NULL;
     int n = 0, cap = 0;
     walk_new(root, "", known, rom_nfiles, &nf, &n, &cap);
+    for (size_t k = 0, nb = rando_built_count(); k < nb; k++) {  // files the seed's build adds (runtime/rando/apply)
+        const char *rel = rando_built_path(k);
+        if (bsearch(&rel, known, rom_nfiles, sizeof *known, path_cmp)) continue;
+        if (n == cap) { cap = cap ? cap * 2 : 64; nf = realloc(nf, sizeof *nf * cap); }
+        size_t sz = 0;
+        uint64_t later_size = 0;
+        nf[n].mem = rando_built_file(rel, &sz);
+        nf[n].later = !nf[n].mem && rando_built_deferred(rel, &later_size);
+        nf[n].size = nf[n].later ? later_size : sz;
+        strlcpy(nf[n].rel, rel, sizeof nf[n].rel);
+        snprintf(nf[n].host, sizeof nf[n].host, "%s/romfs/%s", seed, rel);  // (its name for logs and filters)
+        n++;
+    }
     free(known);
     if (!n) return;
     rom_files = realloc(rom_files, sizeof(RomFile) * (rom_nfiles + n));
@@ -354,7 +380,7 @@ static void add_new_files(const uint64_t *h, const uint8_t *dmeta, uint64_t dsz,
         memcpy(hcopy + 4 * bucket, &entry, 4);
         o += 0x20 + ((nl + 3) & ~3u);
         if (ov_n == ov_cap) { ov_cap = ov_cap ? ov_cap * 2 : 256; ov = realloc(ov, sizeof *ov * ov_cap); }
-        ov[ov_n++] = (Overlay){data_at, size, strdup(nf[i].host), false, NULL};
+        ov[ov_n++] = (Overlay){data_at, size, strdup(nf[i].host), false, nf[i].mem, nf[i].later ? strdup(nf[i].rel) : NULL};
         rom_files[rom_nfiles++] = (RomFile){data_at, size, strdup(nf[i].rel), entry};
         data_at = (data_at + size + 0xF) & ~0xFull;
         added++;
@@ -362,7 +388,7 @@ static void add_new_files(const uint64_t *h, const uint8_t *dmeta, uint64_t dsz,
     // the new table goes before the new data (keep the overlay list sorted by start)
     if (ov_n == ov_cap) { ov_cap = ov_cap ? ov_cap * 2 : 256; ov = realloc(ov, sizeof *ov * ov_cap); }
     memmove(ov + (ov_n - added) + 1, ov + (ov_n - added), sizeof *ov * added);
-    ov[ov_n - added] = (Overlay){meta_at, nsz, NULL, false, meta};
+    ov[ov_n - added] = (Overlay){meta_at, nsz, NULL, false, meta, NULL};
     ov_n++;
     ov_end = data_at;
     uint64_t fmeta_off = meta_at, fmeta_size = o;
@@ -372,6 +398,63 @@ static void add_new_files(const uint64_t *h, const uint8_t *dmeta, uint64_t dsz,
     patches[npatches++] = (Patch){h[3], dsz, dcopy};
     patches[npatches++] = (Patch){hoff, hsz, hcopy};
     LOG("[fs] randomizer: %d new romfs files\n", added);
+}
+
+// ---- the seed's files built in memory (runtime/rando/apply/build.h), from the game's files the index lists
+static int by_path_cmp(const void *a, const void *b) { return strcmp(((const RomFile *)a)->path, ((const RomFile *)b)->path); }
+static RomFile *rom_find(const char *path) {
+    RomFile key = {0, 0, (char *)path, 0};
+    return bsearch(&key, g_game_files, g_ngame_files, sizeof *g_game_files, by_path_cmp);
+}
+static uint8_t *build_read(void *ctx, const char *path, size_t *size) {  // (any thread: base_pread locks)
+    (void)ctx;
+    RomFile *f = rom_find(path);
+    if (!f) return NULL;
+    uint8_t *b = malloc(f->size ? f->size : 1);
+    if (!b || base_pread(b, f->size, f->off) != (ssize_t)f->size) { free(b); return NULL; }
+    *size = (size_t)f->size;
+    return b;
+}
+static char **build_list(void *ctx, const char *dir, size_t *count) {  // (a folder's file names, as os.listdir)
+    (void)ctx;
+    size_t dl = strlen(dir), n = 0, cap = 0;
+    char **v = NULL;
+    for (int i = 0; i < rom_nfiles; i++) {  // (files and folders in it, each once: os.listdir)
+        const char *p = rom_files[i].path;
+        if (strncmp(p, dir, dl) || p[dl] != '/') continue;
+        const char *name = p + dl + 1, *slash = strchr(name, '/');
+        size_t nl = slash ? (size_t)(slash - name) : strlen(name);
+        bool have = false;
+        for (size_t k = n; k-- > 0 && !have;) have = strlen(v[k]) == nl && !strncmp(v[k], name, nl);
+        if (have) continue;
+        if (n == cap) v = realloc(v, sizeof *v * (cap = cap ? cap * 2 : 64));
+        char *c = malloc(nl + 1);
+        memcpy(c, name, nl), c[nl] = 0;
+        v[n++] = c;
+    }
+    *count = n;
+    return v ? v : calloc(1, sizeof *v);  // (an empty folder: none; NULL would say no such folder)
+}
+static void seed_build(const uint8_t *dmeta, uint64_t dsz) {
+    (void)dmeta, (void)dsz;
+    rando_build_clear();
+    const char *e = getenv("LARECOMP_RANDO_BUILD");  // 0: the seed's files come from its folder (A/B checks)
+    if (!rando_seed_dir() || (e && !atoi(e))) return;
+    size_t len = 0;
+    char *json = rando_seed_decisions_json(rando_seed(), &len);
+    if (!json) return;  // (a seed made before the decisions: its folder)
+    free(g_game_files);  // (the paths are rom_files', freed with them on a reset - after rando_build_clear)
+    g_game_files = malloc(sizeof *g_game_files * (rom_nfiles ? rom_nfiles : 1));
+    memcpy(g_game_files, rom_files, sizeof *g_game_files * rom_nfiles);
+    g_ngame_files = rom_nfiles;
+    qsort(g_game_files, g_ngame_files, sizeof *g_game_files, by_path_cmp);
+    bool built = rando_build_seed(json, len, build_read, build_list, NULL);
+    free(json);
+    char p[1100];
+    struct stat sb;
+    snprintf(p, sizeof p, "%s/romfs", rando_seed_dir());
+    if (!built && (stat(p, &sb) || !S_ISDIR(sb.st_mode)))  // (no folder copy to fall back on: the seed plays vanilla)
+        LOG("[fs] ERROR: the seed's game files couldn't be built and its folder has none: it plays without its changes\n");
 }
 
 static void rom_index(void) {
@@ -405,11 +488,21 @@ static void rom_index(void) {
     }
     // Randomizer seed: replacement files are served from the seed folder. The file-meta table is patched
     // (in a copy) to point them at data appended past the end of the image; reads there go to host files.
+    seed_build(dmeta, dsz);
     for (int i = 0; i < rom_nfiles; i++) {
         char host[1200];
-        if (!rando_romfs_override(rom_files[i].path, host, sizeof host)) continue;
+        size_t built_size = 0;
+        uint64_t later_size = 0;
+        const uint8_t *built = rando_built_file(rom_files[i].path, &built_size);
+        bool later = !built && rando_built_deferred(rom_files[i].path, &later_size);  // (built when read)
         struct stat sb;
-        if (stat(host, &sb)) continue;
+        if (built || later) {  // (its name for logs and filters: where the seed folder would hold it)
+            snprintf(host, sizeof host, "%s/romfs/%s", rando_seed_dir(), rom_files[i].path);
+            sb.st_size = (off_t)(built ? built_size : later_size);
+        } else {
+            if (!rando_romfs_override(rom_files[i].path, host, sizeof host)) continue;
+            if (stat(host, &sb)) continue;
+        }
         if (!ov_meta) {
             ov_meta = malloc(fsz);
             memcpy(ov_meta, fmeta, fsz);
@@ -425,7 +518,8 @@ static void rom_index(void) {
         ov[ov_n].size = size;
         ov[ov_n].path = strdup(host);
         ov[ov_n].warned = false;
-        ov[ov_n].mem = NULL;
+        ov[ov_n].mem = built;
+        ov[ov_n].built = later ? strdup(rom_files[i].path) : NULL;
         ov_n++;
         ov_end = (ov_end + size + 0xF) & ~0xFull;
     }
@@ -477,9 +571,21 @@ static ssize_t romfs_read(uint8_t *dst, uint64_t size, uint64_t off) {
             uint64_t in = o - ov[i].start, avail = ((ov[i].size + 0xF) & ~0xFull) - in;
             if (n > avail) n = avail;
             ssize_t r;
-            if (ov[i].mem) {  // in-memory blob (the extended file table)
+            if (ov[i].built) {  // a file the seed's build makes when it's read (room shuffle's level texture banks)
+                uint64_t want = in < ov[i].size ? (n < ov[i].size - in ? n : ov[i].size - in) : 0;
+                r = want ? (ssize_t)rando_built_read(ov[i].built, in, dst + done, (size_t)want) : 0;
+                if ((uint64_t)r != want && !ov[i].warned) {
+                    LOG("[fs] ERROR: %s gave %lld of %llu bytes at %llu: zeros there\n", ov[i].built, (long long)r,
+                        (unsigned long long)want, (unsigned long long)in);
+                    ov[i].warned = true;
+                }
+                extern void enemy_random_filter(const char *host, uint64_t off, uint8_t *dst, uint64_t n);
+                if (r > 0 && ov[i].path) enemy_random_filter(ov[i].path, in, dst + done, (uint64_t)r);
+            } else if (ov[i].mem) {  // in memory: the extended file table, or a file the seed built
                 r = in < ov[i].size ? (ssize_t)(n < ov[i].size - in ? n : ov[i].size - in) : 0;
                 memcpy(dst + done, ov[i].mem + in, (size_t)r);
+                extern void enemy_random_filter(const char *host, uint64_t off, uint8_t *dst, uint64_t n);
+                if (r > 0 && ov[i].path) enemy_random_filter(ov[i].path, in, dst + done, (uint64_t)r);
             } else {
                 uint64_t want = in < ov[i].size ? (n < ov[i].size - in ? n : ov[i].size - in) : 0;
                 r = 0;

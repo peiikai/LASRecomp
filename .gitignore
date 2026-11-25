@@ -11,6 +11,7 @@ generated-*/
 build/
 /cache/
 save/
+/load_save/
 /larecomp.ini
 /gamecontrollerdb.txt
 # tools and Python environments (machine-specific)

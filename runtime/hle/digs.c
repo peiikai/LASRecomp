@@ -16,7 +16,7 @@
 // a vector of {std::string, refs}; the game never fills it - we install our own storage). An item actor that dies
 // with Link next to it was picked up; any other death (the Field unloading) leaves it to be spawned again.
 // Holes: the game fills in its oldest holes beyond 80 (f_7000d22d10); with digsanity the limit is HOLE_CAP
-// (tools/patches.py HOLE_CAP_SITES). ObjHolesDug actors (type 0x1cd) belong to the Field's loaded scene and are gone
+// (runtime/gen/patches.cpp HOLE_CAP_SITES). ObjHolesDug actors (type 0x1cd) belong to the Field's loaded scene and are gone
 // once Link leaves the Field. Every few frames the screens around Link are checked: a dug tile without a live hole
 // gets one spawned the way the shovel does (f_7000d228d0), a dug check whose item is still there gets its item back.
 // Tall grass and bushes would grow back over a dug tile on reload: the factory skips them there (rt_digs_skip_plant,
@@ -31,6 +31,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 // GA(PLAYER_STATUS_PTR): PlayerStatus*: current level name at +0
 // GA(GAME_MGR): +0x4a8: the current scene (weak), scene +0x228 -> +0x1b8 room sp
@@ -106,13 +107,13 @@ static bool enabled(void) {
     if (!dir && ENV("LARECOMP_DIG_TEST")) { g_tiles = calloc(NTILES, sizeof(Tile)); return g_on = 1; }  // (no items)
     if (!dir) return false;
     char path[512];
-    snprintf(path, sizeof path, "%s/digs.tsv", dir);
-    FILE *f = fopen(path, "r");
-    if (!f) return false;
+    snprintf(path, sizeof path, "%s: digs", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "digs")) return false;
     g_tiles = calloc(NTILES, sizeof(Tile));
     char line[1024];
     int n = 0, items = 0;
-    while (fgets(line, sizeof line, f)) {
+    while (rando_text_gets(line, sizeof line, &f)) {
         line[strcspn(line, "\r\n")] = 0;  // (Windows seeds: CRLF lines, read in binary mode)
         if (line[0] == '#') continue;
         char *col[11], *save = NULL;
@@ -131,7 +132,6 @@ static bool enabled(void) {
         }
         n++;
     }
-    fclose(f);
     g_on = n > 0;
     LOG("[digs] %d dig tiles, %d with items (%s)\n", n, items, path);
     return g_on;

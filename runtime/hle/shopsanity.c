@@ -17,6 +17,7 @@
 
 #include "../hle.h"
 #include "../rando.h"
+#include "../rando/seed.h"
 
 // GA(FLAG_PTR): the event-flag bitfield (runtime/hle/flags_ext.c)
 
@@ -30,18 +31,21 @@ static void load(void) {
     const char *dir = rando_seed_dir();
     if (!dir) return;
     char p[600];
-    snprintf(p, sizeof p, "%s/shopsanity.tsv", dir);
-    FILE *f = fopen(p, "r");
-    if (!f) return;
-    char kind[16];
+    snprintf(p, sizeof p, "%s: shopsanity", dir);
+    RandoText f;
+    if (!rando_text_open(&f, "shopsanity")) return;
+    char kind[16], line[256];
     Entry e = {0};
-    while (g_n < 64 && fscanf(f, "%15s %d %d %d", kind, &e.id, &e.done, &e.give) == 4) {
+    // one entry per line, up to the first line that isn't one (blank lines skipped)
+    while (g_n < 64 && rando_text_gets(line, sizeof line, &f)) {
+        if (!line[strspn(line, " \t\r\n")]) continue;
+        int got = sscanf(line, "%15s %d %d %d %d", kind, &e.id, &e.done, &e.give, &e.add);
+        if (got < 4) break;
         e.kind = !strcmp(kind, "prize");
-        e.add = 255;
-        if (e.kind && fscanf(f, "%d", &e.add) != 1) break;
+        if (e.kind && got < 5) break;
+        if (!e.kind) e.add = 255;
         g_e[g_n++] = e;
     }
-    fclose(f);
     LOG("[shopsanity] %d entries from %s\n", g_n, p);
 }
 
@@ -68,7 +72,7 @@ int rt_shop_add_item(Cpu *c) {
     return 1;
 }
 
-// tools/patches.py PRIZE_ADD_SITE, before AddPrize(x0 row, x1 count, x2 index)
+// runtime/gen/patches.cpp PRIZE_ADD_SITE, before AddPrize(x0 row, x1 count, x2 index)
 void rt_add_prize(Cpu *c) {
     const Entry *e = find(1, (int)(uint8_t)c->x[0]);
     if (!e) return;

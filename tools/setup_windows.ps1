@@ -1,6 +1,6 @@
 # One-time setup of a Windows machine for building LARecomp (see docs/BUILD-windows.md).
 # Installs MSYS2 (clang, lld, make, SDL3, FFmpeg, Vulkan loader/headers, shaderc) and Python 3.12, then creates
-# tools/venv (lifter: unicorn, capstone, lz4). Safe to re-run.
+# tools/venv (the Python tests: unicorn, capstone, lz4). Safe to re-run.
 # On Windows on ARM (experimental): MSYS2 CLANGARM64 instead of UCRT64, and an x64 Python 3.12 (unicorn / capstone
 # have no ARM64 Windows wheels; it runs under emulation).
 $ErrorActionPreference = 'Stop'
@@ -21,7 +21,7 @@ $pkgs = @('make', 'zip', 'unzip') + (@('clang', 'lld', 'sdl3', 'ffmpeg', 'vulkan
 if (-not $arm) { $pkgs += "$mp-nasm" }  # (make deps-windows: FFmpeg's VP9 assembly; ARM64 assembles with clang)
 & $bash -lc "pacman -S --needed --noconfirm $($pkgs -join ' ')"
 
-# Python for the tools: the python.org build (prebuilt unicorn / capstone wheels; MSYS2's Python can't build them)
+# Python for the tests and tools: the python.org build (prebuilt unicorn / capstone wheels; MSYS2's Python can't build them)
 if ($arm) {
     # x64 next to any ARM64 3.12 (winget won't install both under one id), from python.org's signed installer
     $py = "$env:LOCALAPPDATA\Programs\Python\Python312-x64\python.exe"
@@ -41,17 +41,11 @@ if ($arm) {
 if (-not (Test-Path "$root\tools\venv\Scripts\python.exe")) { & $py -m venv "$root\tools\venv" }
 & "$root\tools\venv\Scripts\python.exe" -m pip install -q lz4 capstone unicorn
 
-# Randomizer (LAS-Randomizer's own venv, used by the Randomizer tab's seed generator)
-$las = "$root\third_party\LAS-Randomizer"
-if (-not (Test-Path "$las\venv\Scripts\python.exe")) { & $py -m venv "$las\venv" }
-& "$las\venv\Scripts\python.exe" -m pip install -q -r "$las\requirements.txt"
-
 # LF line endings in this clone (the bash tools break with CRLF; Git for Windows defaults to autocrlf=true)
 git -C $root config core.autocrlf false
 git -C $root config core.eol lf
 if ($arm) {
     Write-Host 'Done. Build from an MSYS2 CLANGARM64 shell (or put C:\msys64\clangarm64\bin;C:\msys64\usr\bin first on PATH): make -j'
-    Write-Host "Helpers (x64 Python, no py launcher): make rando-helper RANDO_PY=`"$($py -replace '\\', '/')`" (same for gen-helper)"
 } else {
     Write-Host 'Done. Build from an MSYS2 UCRT64 shell (or put C:\msys64\ucrt64\bin;C:\msys64\usr\bin first on PATH): make -j'
 }
