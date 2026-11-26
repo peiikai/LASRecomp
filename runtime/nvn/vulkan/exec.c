@@ -28,6 +28,7 @@
 #include "../pace.h"
 #include "../recolour.h"
 #include "../screen_filter.h"
+#include "../present_area.h"
 #include "../shader_prep.h"
 #include "../../settings.h"
 #include "../weather.h"
@@ -8518,6 +8519,8 @@ void vk_present_draw(VkCommandBuffer cb, TexBackend *b, float vx, float vy, floa
     memcpy(pc, pv, 32);
     pc[1] = (float)g_vk.sc_quarter;
     screen_filter_params(pc + 8);
+    // (the downscale average, present.frag: the game image or SMAA's, both its size; FSR's lands about 1:1)
+    if (!upscaled) present_area_params(pc + 8, pv[6] * b->width, pv[7] * b->height, vw, vh);
     rec_CmdPushConstants(cb, present_layout, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0, 48, pc);
     fullscreen_vertex_bind(cb);
     rec_CmdDraw(cb, 3, 1, 0, 0);

@@ -88,6 +88,7 @@ lasrecomp --play --data-dir ~/Games/LAS --no-update-check --set resolution=2
 | `LARECOMP_WINDOW_POS` | `x,y` | Window position. |
 | `LARECOMP_HIDDEN` | 1 | Never show the window: renders off screen without taking focus. The game also keeps running when unfocused. |
 | `LARECOMP_SCALE` | number | Force the render height in units of 1080 lines (`0.5` = 540 lines, `1` = 1080, `2` = 2160). Overrides the resolution setting. |
+| `LARECOMP_PRESENT_AREA` | 0 | Downscale with one bilinear tap again (as before the area average) when the game renders larger than the window. For A/B shots. |
 | `LARECOMP_WINDOW_SHOT` | frame | Save the final window image (game and menus) at that frame. |
 | `LARECOMP_SHOT_PATH` | file path | Where `LARECOMP_WINDOW_SHOT` (and the start screen shot) is saved. Default `build/window.png`. |
 | `LARECOMP_EXIT_AFTER_SHOT` | 1 | Exit right after the `LARECOMP_WINDOW_SHOT` image is saved. |

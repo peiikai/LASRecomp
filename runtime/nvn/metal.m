@@ -32,6 +32,7 @@
 #include "recolour.h"
 #include "tex_hash.h"
 #include "screen_filter.h"
+#include "present_area.h"
 #include "interp.h"
 
 static id<MTLDevice> dev;
@@ -856,14 +857,19 @@ static bool upload_nv12_now(NvnTexture *t, const void *nv12, uint32_t w, uint32_
 static const char *present_src =
     "#include <metal_stdlib>\n"
     "using namespace metal;\n"
-    "struct V { float4 pos [[position]]; float2 uv; };\n"
+    "struct V { float4 pos [[position]]; float2 uv; float4 cr [[flat]]; };\n"
     "vertex V vs(uint vid [[vertex_id]], constant float4 *pv [[buffer(0)]]) {\n"
     "  float2 p = float2((vid << 1) & 2, vid & 2);\n"
     "  V o; o.pos = float4(p * 2.0 - 1.0, 0, 1);\n"
-    "  float2 uv = float2(p.x, pv[0].x > 0.5 ? p.y : 1.0 - p.y); o.uv = pv[1].xy + uv * pv[1].zw; return o; }\n"
+    "  float2 uv = float2(p.x, pv[0].x > 0.5 ? p.y : 1.0 - p.y); o.uv = pv[1].xy + uv * pv[1].zw;\n"
+    "  o.cr = float4(pv[1].xy, pv[1].xy + pv[1].zw); return o; }\n"
     "fragment float4 fs(V in [[stage_in]], texture2d<float> t [[texture(0)]], sampler s [[sampler(0)]],\n"
     "                   constant float4 &pf [[buffer(0)]]) {\n"
-    "  float3 c = t.sample(s, in.uv).rgb;\n"
+    "  float3 c;\n"
+    PRESENT_AREA_SRC("float2", "float3", "int", "t.read(uint2(x, y))", "float2(t.get_width(), t.get_height())",
+                     "select(pow((q + 0.055) / 1.055, float3(2.4)), q / 12.92, q <= 0.04045)",
+                     "select(1.055 * pow(a, float3(1.0 / 2.4)) - 0.055, a * 12.92, a <= 0.0031308)",
+                     "t.sample(s, in.uv)", "in.uv", "in.cr")
     SCREEN_FILTER_SRC("float3")  // (the screen filter: screen_filter.h)
     "  return float4(c, 1.0); }\n";
 
@@ -1455,6 +1461,7 @@ static void compose(id<MTLCommandBuffer> cb, NvnTexture *t, id<MTLTexture> dst, 
         [enc setVertexBytes:pv length:sizeof pv atIndex:0];
         float pf[4];
         screen_filter_params(pf);
+        present_area_params(pf, crop[2] * src.width, crop[3] * src.height, vw, vh);
         [enc setFragmentBytes:pf length:sizeof pf atIndex:0];
         [enc setFragmentTexture:src atIndex:0];
         [enc setFragmentSamplerState:present_sampler atIndex:0];
