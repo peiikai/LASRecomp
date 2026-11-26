@@ -1,5 +1,5 @@
 // Save bundles (runtime/saves.c) on synthetic saves, without game data: export, inspect and import (backups,
-// sidecars, seeds, damaged saves, unsafe names, a different seed by the same name).
+// sidecars, seeds, damaged saves, unsafe names, a different seed by the same name, many seeds, cut-off imports).
 //
 // make build/miniz/.fetched && cc -O1 -g -Iruntime -Ibuild/miniz $(pkg-config --cflags sdl3) tools/test_saves.c \
 //   runtime/saves.c runtime/zipfile.c build/miniz/miniz.c $(pkg-config --libs sdl3) -o build/test-saves && build/test-saves
@@ -17,6 +17,11 @@
 #include "zipfile.h"
 
 const GameVersion *game_version_of(const char *game_dir) { (void)game_dir; return NULL; }  // (no game files here)
+bool plat_remove_tree(const char *dir) {
+    char c[1200];
+    snprintf(c, sizeof c, "rm -rf '%s'", dir);
+    return system(c) == 0;
+}
 
 static int g_fail;
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #c); g_fail++; } } while (0)
@@ -143,7 +148,7 @@ int main(void) {
         CHECK(zip_find(z, "rando/NoSaves/seed.json") < 0);
         zip_close(z);
     }
-    SavesInfo info;
+    SavesInfo info = {0};
     CHECK(saves_inspect(bundle, &info, err, sizeof err));
     CHECK(info.n == 3 && !strcmp(info.app, "vtest"));
     const SavesGame *v = game(&info, ""), *zr = game(&info, "Zora1"), *old = game(&info, "Old2");
@@ -156,7 +161,7 @@ int main(void) {
     CHECK(saves_inspect(bundle, &info, err, sizeof err));
     old = game(&info, "Old2");
     CHECK(old && old->problem);
-    unsigned take[SAVES_MAX_GAMES] = {0};
+    unsigned take[8] = {0};
     for (int i = 0; i < info.n; i++) take[i] = info.g[i].problem ? 0 : info.g[i].slots;
     CHECK(saves_import(bundle, &info, take, err, sizeof err));
     CHECK(tag_of("save/save_0/savedata0.bin") == 1 && tag_of("save/save_0/savedata3.bin") == 4);
@@ -208,6 +213,88 @@ int main(void) {
     CHECK(!saves_inspect(bad, &info, err, sizeof err) && strstr(err, "newer"));
     write_bytes(bad, "not a zip", 9, 0);
     CHECK(!saves_inspect(bad, &info, err, sizeof err));
+
+    // ---- many seeds: none left out (the list grows as needed)
+    char C[300];
+    snprintf(C, sizeof C, "%s/C", root);
+    mkdirs(C);
+    chdir(C);
+    enum { MANY = 150 };
+    for (int i = 0; i < MANY; i++) {
+        char p[200];
+        snprintf(p, sizeof p, "rando/Many%03d/save/save_0/savedata0.bin", i);
+        write_save(p, (uint8_t)i, t0);
+        snprintf(p, sizeof p, "rando/Many%03d/seed.json", i);
+        write_bytes(p, "{}", 2, 0);
+    }
+    char many[300];
+    snprintf(many, sizeof many, "%s/many.zip", root);
+    CHECK(saves_export(many, "vtest", err, sizeof err));
+    CHECK(saves_inspect(many, &info, err, sizeof err));
+    CHECK(info.n == MANY && game(&info, "Many000") && game(&info, "Many149"));
+
+    // ---- back in B: an import cut off earlier (a seed's .import folder, a sidecar's working copy) is cleared
+    chdir(B);
+    write_bytes("rando/Zora2.import/stale.txt", "old", 3, 0);
+    write_save("save/save_0/savedata1.bin", 55, t0);
+    write_bytes("save/save_0/savedata1.bin.flagsx.pending", "OLD", 3, t0);
+    w = zip_create(bad, err, sizeof err);
+    make_save(sb, 61);
+    zip_add_mem(w, "save/save_0/savedata1.bin", sb, sizeof sb);
+    make_save(sb, 62);
+    zip_add_mem(w, "rando/Zora2/save/save_0/savedata0.bin", sb, sizeof sb);
+    zip_add_mem(w, "rando/Zora2/seed.json", "{}", 2);
+    zip_add_mem(w, "rando/Zora2/seed_id.txt", "CCCCC-33333\n", 12);
+    man = "LAS Recomp saves 1\napp x\ngame y\nslot - 1 5\nslot Zora2 0 5\n";
+    zip_add_mem(w, "lasrecomp-saves.txt", man, strlen(man));
+    CHECK(zip_finish(w));
+    // old backups, one made in the same second as the oldest: the oldest goes first when the import makes the 21st
+    write_bytes("backups/saves-20200101-000000.zip", "x", 1, 0);
+    write_bytes("backups/saves-20200101-000000-2.zip", "x", 1, 0);
+    for (int i = 1; i <= 17; i++) {
+        char p[100];
+        snprintf(p, sizeof p, "backups/saves-20200101-0000%02d.zip", i);
+        write_bytes(p, "x", 1, 0);
+    }
+    CHECK(count_files("backups") == 20);
+    CHECK(saves_inspect(bad, &info, err, sizeof err) && info.n == 2);
+    unsigned all[2] = {info.g[0].slots, info.g[1].slots};
+    CHECK(saves_import(bad, &info, all, err, sizeof err));
+    CHECK(tag_of("save/save_0/savedata1.bin") == 61 && !exists("save/save_0/savedata1.bin.flagsx.pending"));
+    CHECK(tag_of("rando/Zora2/save/save_0/savedata0.bin") == 62 && exists("rando/Zora2/seed.json"));
+    CHECK(!exists("rando/Zora2.import") && !exists("rando/Zora2/stale.txt"));
+    CHECK(count_files("backups") == 20);
+    CHECK(!exists("backups/saves-20200101-000000.zip") && exists("backups/saves-20200101-000000-2.zip"));
+
+    // ---- a seed here without a seed_id.txt, and the bundle's has one: can't be the same seed
+    remove("rando/Zora2/seed_id.txt");
+    CHECK(saves_inspect(bad, &info, err, sizeof err));
+    zr = game(&info, "Zora2");
+    CHECK(zr && zr->problem);
+
+    // ---- names Windows reads as another file: left out
+    w = zip_create(bad, err, sizeof err);
+    make_save(sb, 70);
+    zip_add_mem(w, "save/save_0/savedata2.bin", sb, sizeof sb);
+    zip_add_mem(w, "save/save_0/savedata2.bin.x:stream", "s", 1);
+    zip_add_mem(w, "save/save_0/savedata2.bin.flagsx.", "s", 1);
+    zip_add_mem(w, "rando/Dot./save/save_0/savedata0.bin", sb, sizeof sb);
+    zip_add_mem(w, "rando/Space /save/save_0/savedata0.bin", sb, sizeof sb);
+    zip_add_mem(w, "rando/con.txt/save/save_0/savedata0.bin", sb, sizeof sb);
+    zip_add_mem(w, "rando/COM3/save/save_0/savedata0.bin", sb, sizeof sb);
+    zip_add_mem(w, "rando/Fine/a:b", "s", 1);
+    zip_add_mem(w, "rando/Fine/save/save_0/savedata0.bin", sb, sizeof sb);
+    zip_add_mem(w, "rando/Fine/seed.json", "{}", 2);
+    man = "LAS Recomp saves 1\napp x\ngame y\n";
+    zip_add_mem(w, "lasrecomp-saves.txt", man, strlen(man));
+    CHECK(zip_finish(w));
+    CHECK(saves_inspect(bad, &info, err, sizeof err));
+    CHECK(info.n == 2 && game(&info, "") && game(&info, "Fine"));
+    unsigned two[2] = {info.g[0].slots, info.g[1].slots};
+    CHECK(saves_import(bad, &info, two, err, sizeof err));
+    CHECK(tag_of("save/save_0/savedata2.bin") == 70 && count_files("rando/Fine") == 3);  // (save, seed.json, exefs)
+    CHECK(!exists("save/save_0/savedata2.bin.x:stream"));
+    saves_info_free(&info);
 
     char cmd[400];
     snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);

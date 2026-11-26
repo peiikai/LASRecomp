@@ -130,6 +130,7 @@ void ios_export_file(SDL_Window *win, const char *path, void (*done)(int result)
     UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[u] asCopy:YES];
     p.delegate = g_export_picker;
     p.shouldShowFileExtensions = YES;
+    p.modalInPresentation = YES;  // (a swipe down would close it without telling the delegate: Cancel only)
     [root presentViewController:p animated:YES completion:nil];
 }
 

@@ -20,7 +20,7 @@
 extern "C" {
 #endif
 
-enum { SAVES_MAX_GAMES = 64, SAVES_SLOTS = 4 };
+enum { SAVES_SLOTS = 4 };
 
 typedef struct {
     char seed[128];                 // "" the vanilla game, else the seed's folder name
@@ -32,7 +32,7 @@ typedef struct {
 
 typedef struct {
     int n;
-    SavesGame g[SAVES_MAX_GAMES];
+    SavesGame *g;                   // n games (saves_info_free)
     char app[32], game[48];         // what made it (from its lasrecomp-saves.txt)
 } SavesInfo;
 
@@ -42,9 +42,11 @@ const char *saves_check(const unsigned char *b, size_t n);
 // Every save (vanilla and each seed's, with the seeds) into a new bundle at zip. app: the app's version, for its
 // lasrecomp-saves.txt. false: err says why (nothing is left at zip).
 bool saves_export(const char *zip, const char *app, char *err, size_t n);
-// What the bundle at zip holds, each save checked. false: it isn't a saves bundle (err says why).
+// What the bundle at zip holds, each save checked. false: it isn't a saves bundle (err says why). info starts zeroed
+// or holds an earlier saves_inspect, which is freed first.
 bool saves_inspect(const char *zip, SavesInfo *info, char *err, size_t n);
-// The slots take[i] of game i of info (saves_inspect of the same zip) into the data folder: the files they replace
+void saves_info_free(SavesInfo *info);
+// The slots take[i] (info->n of them) of game i of info (saves_inspect of the same zip) into the data folder: the files they replace
 // zipped into backups/ first. false: err says why; a failure before the first write leaves everything as it was.
 bool saves_import(const char *zip, const SavesInfo *info, const unsigned *take, char *err, size_t n);
 // Any save at all in the data folder (Export has something to do)

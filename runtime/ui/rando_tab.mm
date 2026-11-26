@@ -89,6 +89,8 @@ static void scan(void) {
     if (!d) return;
     while (struct dirent *e = readdir(d)) {
         if (e->d_name[0] == '.') continue;
+        size_t nl = strlen(e->d_name);
+        if (nl > 7 && !strcmp(e->d_name + nl - 7, ".import")) continue;  // (a seed still being imported: runtime/saves.c)
         std::string dir = std::string("rando/") + e->d_name;
         struct stat sb;
         if (stat((dir + "/exefs/1.0.0.pchtxt").c_str(), &sb)) continue;

@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <string>
+#include <vector>
 
 #include "imgui.h"
 #include "i18n.h"
@@ -30,7 +31,7 @@ enum { S_NONE, S_WORKING, S_IMPORT_ASK, S_MESSAGE };
 static int g_state;                      // (main thread)
 static bool g_open;                      // the popup is open (main thread)
 static SavesInfo g_info;                 // the import's bundle
-static bool g_take[SAVES_MAX_GAMES];     // the import's ticks
+static std::vector<char> g_take;         // the import's ticks, one per game of g_info
 static std::string g_import_path;        // the bundle being imported
 static std::string g_msg;                // S_MESSAGE's text (English, for L_line)
 static bool g_msg_bad;
@@ -118,7 +119,8 @@ static void *export_thread(void *) {
     std::string to = g_picked_export;
     pthread_mutex_unlock(&g_mu);
     size_t k = to.size();
-    if (k < 4 || SDL_strcasecmp(to.c_str() + k - 4, ".zip")) to += ".zip";
+    struct stat st;  // (".zip" added only where it replaces nothing: the dialog asked about the name without it)
+    if ((k < 4 || SDL_strcasecmp(to.c_str() + k - 4, ".zip")) && stat((to + ".zip").c_str(), &st) != 0) to += ".zip";
     char err[200];
     bool ok = saves_export(to.c_str(), NULL, err, sizeof err);
     finish(ok ? LN("Saves exported.") : err, !ok);
@@ -153,12 +155,21 @@ static void start_import(void) {
     SDL_ShowOpenFileDialog(picked_import, NULL, *g_h.win, f, 1, NULL, false);
 #endif
 }
+// Android: the picked file is a copy in the app's cache (LASRecompActivity's PICK_SAVES), removed once it's used
+static void drop_picked(void) {
+#ifdef __ANDROID__
+    static const char tail[] = "/picked-saves.zip";
+    size_t k = g_import_path.size(), m = sizeof tail - 1;
+    if (k > m && !g_import_path.compare(k - m, m, tail)) remove(g_import_path.c_str());
+#endif
+}
 static void *import_thread(void *) {
-    unsigned take[SAVES_MAX_GAMES] = {0};
+    std::vector<unsigned> take(g_info.n ? g_info.n : 1, 0);
     for (int i = 0; i < g_info.n; i++)
         if (g_take[i]) take[i] = g_info.g[i].slots;
     char err[200];
-    bool ok = saves_import(g_import_path.c_str(), &g_info, take, err, sizeof err);
+    bool ok = saves_import(g_import_path.c_str(), &g_info, take.data(), err, sizeof err);
+    drop_picked();
     finish(ok ? LN("Saves imported.") : err, !ok);
     return NULL;
 }
@@ -215,9 +226,10 @@ void saves_popups(float s) {
         pthread_mutex_unlock(&g_mu);
         char err[200];
         if (saves_inspect(g_import_path.c_str(), &g_info, err, sizeof err)) {
+            g_take.assign(g_info.n, 0);
             for (int i = 0; i < g_info.n; i++) g_take[i] = !g_info.g[i].problem;
             g_state = S_IMPORT_ASK;
-        } else g_msg = err, g_msg_bad = true, g_state = S_MESSAGE;
+        } else g_msg = err, g_msg_bad = true, g_state = S_MESSAGE, drop_picked();
         pthread_mutex_lock(&g_mu);
     }
     pthread_mutex_unlock(&g_mu);
@@ -258,11 +270,23 @@ void saves_popups(float s) {
     } else if (g_state == S_IMPORT_ASK) {
         title(L("Import saves"));
         bool any = false;
+        // (many seeds: the list scrolls, so the buttons stay on screen)
+        const ImGuiStyle &st = ImGui::GetStyle();
+        float list_w = 0, list_h = SDL_min(g_info.n * ImGui::GetFrameHeightWithSpacing(), 420 * sc);
+        for (int i = 0; i < g_info.n; i++) {
+            const SavesGame &g = g_info.g[i];
+            const char *what = g.problem ? L(g.problem) : NULL;
+            std::string slots = what ? "" : slot_list(g.slots);
+            list_w = SDL_max(list_w, ImGui::GetFrameHeight() + st.ItemInnerSpacing.x + ImGui::CalcTextSize(game_name(g)).x +
+                                         st.ItemSpacing.x + ImGui::CalcTextSize(what ? what : slots.c_str()).x);
+        }
+        ImGui::BeginChild("##games", ImVec2(list_w + st.ScrollbarSize + st.ItemSpacing.x, list_h));
         for (int i = 0; i < g_info.n; i++) {
             const SavesGame &g = g_info.g[i];
             ImGui::PushID(i);
             ImGui::BeginDisabled(g.problem != NULL);
-            ImGui::Checkbox(game_name(g), &g_take[i]);
+            bool on = g_take[i];
+            if (ImGui::Checkbox(game_name(g), &on)) g_take[i] = on;
             ImGui::EndDisabled();
             ImGui::SameLine();
             if (g.problem) ImGui::TextColored(red, "%s", L(g.problem));
@@ -270,6 +294,7 @@ void saves_popups(float s) {
             ImGui::PopID();
             any |= g_take[i] && !g.problem;
         }
+        ImGui::EndChild();
         ImGui::Spacing();
         ImGui::TextUnformatted(L("These saves replace the ones you have. A backup goes to the backups folder."));
         ImGui::Spacing();
@@ -278,7 +303,7 @@ void saves_popups(float s) {
         ImGui::EndDisabled();
         ImGui::SameLine();
         ImGui::SetItemDefaultFocus();
-        if (ImGui::Button(L("Cancel"), bw) || esc) next = S_NONE;
+        if (ImGui::Button(L("Cancel"), bw) || esc) next = S_NONE, drop_picked();
     }
     ImGui::PopTextWrapPos();
     ImGui::PopFont();
