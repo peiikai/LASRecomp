@@ -4,6 +4,7 @@
 // bundle version, tools/bundle_macos.sh). Test (tools/test_update_tags.cpp): no game, no network.
 #pragma once
 #include <stdio.h>
+#include <initializer_list>
 #include <string>
 
 // Higher = newer; -1: not a release tag (alpha_*, test-*, anything else). v0.<n>.<m> ranks with beta_<n>.<m>
@@ -45,21 +46,26 @@ static inline std::string tag_label(const std::string &t, bool with_word) {
 // Rolling builds are never on the normal releases: each kind sits on one rolling pre-release named after it, its files
 // named LAS.Recomp-<kind>-<YYYYMMDDHHMM>-<commit>-<platform>.<ext>. Kinds: "experimental" (experimental platforms,
 // from the retired experimental.yml) and "nightly" (every platform from develop, .github/workflows/nightly.yml).
+// ReAwakening-<kind>-... counts too: the bridge for renaming those files later (the player-facing name), so builds
+// from now on find either name. Builds from before only know LAS.Recomp-, so the files keep that name until players
+// have moved on (tools/nightly_publish.sh can carry both names for a while).
 // The newest stamp of that kind for this platform (e.g. "linux-aarch64"), found in the releases JSON; 0: none.
 static inline long long newest_rolling(const std::string &body, const std::string &kind, const std::string &platform) {
-    const std::string key = "LAS.Recomp-" + kind + "-";
     long long best = 0;
-    for (size_t at = 0; (at = body.find(key, at)) != std::string::npos;) {
-        at += key.size();
-        long long stamp = 0;
-        size_t i = at;
-        for (; i < body.size() && i - at < 12 && body[i] >= '0' && body[i] <= '9'; i++) stamp = stamp * 10 + (body[i] - '0');
-        if (i - at != 12 || i >= body.size() || body[i] != '-') continue;
-        size_t dash = body.find('-', i + 1);  // (after the commit)
-        if (dash == std::string::npos || body.compare(dash + 1, platform.size(), platform) ||
-            dash + 1 + platform.size() >= body.size() || body[dash + 1 + platform.size()] != '.')
-            continue;
-        if (stamp > best) best = stamp;
+    for (const char *prefix : {"LAS.Recomp-", "ReAwakening-"}) {
+        const std::string key = prefix + kind + "-";
+        for (size_t at = 0; (at = body.find(key, at)) != std::string::npos;) {
+            at += key.size();
+            long long stamp = 0;
+            size_t i = at;
+            for (; i < body.size() && i - at < 12 && body[i] >= '0' && body[i] <= '9'; i++) stamp = stamp * 10 + (body[i] - '0');
+            if (i - at != 12 || i >= body.size() || body[i] != '-') continue;
+            size_t dash = body.find('-', i + 1);  // (after the commit)
+            if (dash == std::string::npos || body.compare(dash + 1, platform.size(), platform) ||
+                dash + 1 + platform.size() >= body.size() || body[dash + 1 + platform.size()] != '.')
+                continue;
+            if (stamp > best) best = stamp;
+        }
     }
     return best;
 }

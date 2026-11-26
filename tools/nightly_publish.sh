@@ -14,15 +14,21 @@ f=$1
 suffix=$2
 [ -f "$f" ] || { echo "nightly_publish.sh: no file $f" >&2; exit 1; }
 new=$(basename "$f" | tr ' ' .)  # (GitHub stores "LAS Recomp-..." as "LAS.Recomp-...")
-case $new in LAS.Recomp-nightly-*-"$suffix") ;; *) echo "nightly_publish.sh: $new is not a nightly $suffix file" >&2; exit 1 ;; esac
+# Either name: LAS.Recomp-nightly-... (what every installed nightly looks for) or ReAwakening-nightly-... (builds from
+# the bridge on find both, runtime/ui/update_tags.h newest_rolling). Both may be up for the same round at once.
+case $new in LAS.Recomp-nightly-*-"$suffix" | ReAwakening-nightly-*-"$suffix") ;;
+    *) echo "nightly_publish.sh: $new is not a nightly $suffix file" >&2; exit 1 ;; esac
+round=${new#*-nightly-}  # (<stamp>-<commit>-<suffix>: the same for both names)
 gh release upload nightly "$f" --clobber
 platform=${3:-${suffix%.*}}  # (linux-x86_64.AppImage -> linux-x86_64)
 [ "$platform" = - ] || for m in "update-$platform.txt" "appcast-$platform.xml"; do
     if [ -f "$(dirname "$f")/$m" ]; then gh release upload nightly "$(dirname "$f")/$m" --clobber
     else gh release delete-asset nightly "$m" -y 2>/dev/null || true; fi
 done
-# (this platform's older nightly files out, after the new one is up: the page never lacks this platform)
+# (this platform's files of older rounds out, under either name, after the new one is up: the page never lacks this
+# platform; this round's file under the other name stays)
 gh release view nightly --json assets -q '.assets[].name' | while read -r old; do
-    case $old in LAS.Recomp-nightly-*-"$suffix") [ "$old" = "$new" ] || gh release delete-asset nightly "$old" -y ;; esac
+    case $old in LAS.Recomp-nightly-*-"$suffix" | ReAwakening-nightly-*-"$suffix")
+        [ "${old#*-nightly-}" = "$round" ] || gh release delete-asset nightly "$old" -y ;; esac
 done
 echo "nightly: $new"
