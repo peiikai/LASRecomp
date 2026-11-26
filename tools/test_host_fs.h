@@ -69,6 +69,7 @@ void weather_cycle_save_written(const char *p, uint64_t a, int64_t o, int64_t n)
 void dpad_items_save_read(const char *p, uint64_t a, int64_t o, int64_t n) {}  // (runtime/hle/dpad_items.c)
 void dpad_items_save_written(const char *p, uint64_t a, int64_t o, int64_t n) {}
 void pace_hitch(const char *why) {}  // (runtime/nvn/pace.c: a save commit is a stall)
+void saves_finish_dir(const char *d) { (void)d; }  // (runtime/saves.c: an import's leftovers; tools/test_saves.c)
 static int notices;  // save-failed warnings shown (fs.c tells the player once per run)
 void menu_save_failed(const char *folder) { notices++; }
 #ifdef __linux__

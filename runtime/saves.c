@@ -30,8 +30,8 @@
 #define BACKUPS "backups"
 #define KEEP_BACKUPS 20
 enum { SAVE_SIZE = 0x5EE0, SAVE_VERSION = 0xE };
-enum { MAX_ENTRY = 64 << 20 };
-enum { NAME_MAX_SAVES = 96 };          // a file name in a save folder (savedataN.bin and its sidecars)         // no file of a bundle is bigger (a seed.json is about 1 MB)
+enum { MAX_ENTRY = 64 << 20 };         // no file of a bundle is bigger (a seed.json is about 1 MB)
+enum { NAME_MAX_SAVES = 96 };          // a file name in a save folder (savedataN.bin and its sidecars)
 
 // ---- small file helpers
 static bool is_dir(const char *p) {
@@ -690,7 +690,7 @@ static bool import_seed(ZipReader *z, const char *seed) {
 //   still there), else removed
 // - a save whose sidecar's rename didn't happen (savedataN.bin.flagsx.pending, its data already renamed): finished, as
 //   runtime/services/fs.c's mount does (recover_save_flags), so a backup holds the save with its own flags
-static void finish_dir(const char *d) {
+void saves_finish_dir(const char *d) {
     DIR *dir = opendir(d);
     if (!dir) return;
     char names[64][NAME_MAX_SAVES];
@@ -727,14 +727,14 @@ static void finish_dir(const char *d) {
     sync_dir(d);
 }
 void saves_recover(void) {
-    finish_dir("save/save_0");
+    saves_finish_dir("save/save_0");
     DIR *r = opendir("rando");
     struct dirent *e;
     while (r && (e = readdir(r))) {
         if (!seed_name_ok(e->d_name, strlen(e->d_name))) continue;
         char d[400];
         save_dir(e->d_name, d, sizeof d);
-        finish_dir(d);
+        saves_finish_dir(d);
     }
     if (r) closedir(r);
 }
@@ -743,13 +743,13 @@ void saves_recover(void) {
 // every file of it in the bundle written as a working copy (.pending), the old files the bundle doesn't have set
 // aside (<file>.import: a .flagsx of the old save must never pair with the new one, and the old save must never lose
 // its own), the save renamed into place, the set-aside files removed, its sidecars renamed after it. A cut-off import
-// is made whole by finish_dir. false: the save wasn't replaced (the slot is as it was).
+// is made whole by saves_finish_dir. false: the save wasn't replaced (the slot is as it was).
 static bool import_slot(ZipReader *z, const char *seed, int slot, long long mtime) {
     enum { MAX_FILES = 16 };
     char d[400];
     save_dir(seed, d, sizeof d);
     mkdirs(d);
-    // working copies of this slot left behind (finish_dir already finished a pair whose save was renamed): this
+    // working copies of this slot left behind (saves_finish_dir already finished a pair whose save was renamed): this
     // import replaces the slot whole
     DIR *dir = opendir(d);
     struct dirent *e;
@@ -826,7 +826,7 @@ static bool import_slot(ZipReader *z, const char *seed, int slot, long long mtim
         snprintf(from, sizeof from, "%s/%s.import", d, aside[a]);
         remove(from);
     }
-    // (a sidecar that can't be renamed now keeps its working copy: the game's next mount, or finish_dir, finishes
+    // (a sidecar that can't be renamed now keeps its working copy: the game's next mount, or saves_finish_dir, finishes
     // it. The save is imported either way.)
     for (int f = 0; f < nf; f++) {
         if (f == data) continue;
@@ -862,7 +862,7 @@ bool saves_import(const char *zip, const SavesInfo *info, const unsigned *take, 
         if (t[i]) {
             char d[400];
             save_dir(now->g[i].seed, d, sizeof d);
-            finish_dir(d);
+            saves_finish_dir(d);
         }
     char made[200] = "";
     if (ok && !backup(now, t, made, sizeof made)) {

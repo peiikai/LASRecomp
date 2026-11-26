@@ -51,6 +51,9 @@ void saves_info_free(SavesInfo *info);
 bool saves_import(const char *zip, const SavesInfo *info, const unsigned *take, char *err, size_t n);
 // Save folders a cut-off import or game save left half done, made whole (the start screen, before any game runs)
 void saves_recover(void);
+// One save folder made whole the same way (runtime/services/fs.c: every save mount, before it reads anything, so a
+// game started without the start screen never reads a save whose old files a cut-off import set aside)
+void saves_finish_dir(const char *dir);
 // Any save at all in the data folder (Export has something to do)
 bool saves_any(void);
 // A slot as the start screen names it ("File 1" ... "Autosave"), English for L()
