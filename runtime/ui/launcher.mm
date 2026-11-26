@@ -2852,7 +2852,11 @@ extern "C" void launcher_run(const char *root) {
             float touch_px = g_touch.frame(io.DeltaTime, [&](float x, float y) { io.AddMousePosEvent(x, y); },
                                            [&](bool down) { io.AddMouseButtonEvent(0, down); });
             ui_nav_repeat(io, ui_text_busy());
+            // B / Esc on the start screen: nothing to go back to, so ImGui mustn't drop the selected row (its nav
+            // update, in NewFrame, clears it at a root window otherwise)
+            io.ConfigNavEscapeClearFocusItem = page != MAIN;
             ImGui::NewFrame();
+            io.ConfigNavEscapeClearFocusItem = true;  // (the default again for everything else)
             g_touch.scroll_apply(touch_px);
             const Page frame_page = page;  // (menu_sfx_frame: B on the main page does nothing)
 
