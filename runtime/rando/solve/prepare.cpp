@@ -349,7 +349,11 @@ Prepared prepare(const Value &request, const GameFiles &game) {
         add_qty(item_defs, most_junk(item_defs, Value(List{"rupee-50", "rupee-20", "rupee-100", "rupee-300"})), -1);
     }
     auto has_pet = [&](const char *p) { return std::find(st.pets.begin(), st.pets.end(), p) != st.pets.end(); };
-    if (has_pet("rooster") && !logic_defs.dict().erase("rooster-statue")) throw PyError("KeyError", "'rooster-statue'");
+    if (has_pet("rooster")) {  // (the grave's song gives a check instead: the rooster comes from his own item)
+        Value &grave = logic_defs.at("rooster-statue");
+        if (grave.get("type") != Value("follower")) throw PyError("AssertionError", "pets: rooster-statue isn't a follower");
+        grave.set("type", "item"), grave.set("subtype", "npc");
+    }
     if (has_pet("ghost")) {
         if (logic_defs.at("ghost-reward").get("condition-basic") != Value("surf-harp"))
             throw PyError("AssertionError", "pets: ghost-reward isn't surf-harp");

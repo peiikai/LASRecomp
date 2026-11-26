@@ -430,7 +430,7 @@ static void solve(bool trick) {
             done[i] = 1;
             A(n.id) = 1;
             if (n.type == T_FOLLOWER || n.name == "moblin-cave") give("bow-wow");
-            if (n.name == "rooster-statue") give("rooster");
+            if (n.type == T_FOLLOWER && n.name == "rooster-statue") give("rooster");
             grew = true;
         }
     }
@@ -547,7 +547,7 @@ static void solve_costs(void) {
                 upd(pit[i], c), upd(heavy[i], c);
             }
             if (!reached(bowwow) && (n.type == T_FOLLOWER || n.name == "moblin-cave")) upd(bowwow, c);
-            if (!reached(rooster) && n.name == "rooster-statue") upd(rooster, c);
+            if (!reached(rooster) && n.type == T_FOLLOWER && n.name == "rooster-statue") upd(rooster, c);
         }
         if (!changed) break;
     }
