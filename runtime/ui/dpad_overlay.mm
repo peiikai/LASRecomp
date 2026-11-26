@@ -24,6 +24,12 @@ extern "C" {
 #include "../hle.h"
 #include "../settings.h"
 uint8_t *texpatch_ui_rgba(const char *name, int *w, int *h);  // runtime/nvn/texpatch.c
+uint8_t *texpatch_ui_rgba_tinted(const char *name, const float tint[8], int *w, int *h);
+uint8_t *texpatch_hint_icon_rgba(const float tint[8], int *w, int *h);
+bool hint_sheet_on(void);  // runtime/hle/hint_sheet.c
+void hint_sheet_icon_tint(float tint[8]);
+bool escape_bottle_on(void);  // runtime/hle/escape.c
+void escape_bottle_icon_tint(float tint[8]);
 #ifdef __APPLE__
 void *ui_metal_device(void);
 #else
@@ -39,6 +45,11 @@ int hud_xy_alpha(void);  // runtime/hle/hud_corners.c
 int mirror_fill_alpha(void);  // runtime/hle/mirror.c
 }
 
+// The bottles the Items page and X / Y draw in their own look (only while empty: one holding a fairy keeps the fairy's
+// icon there too): the first as the Hint Sheet (the dungeon map's icon, sky blue), the third as the Escape Bottle (gold)
+#define HINT_ICON "~hint sheet"
+#define ESCAPE_ICON "~escape bottle"
+
 // item slot -> its icon (the Items page's: a bottle holding a fairy has its own)
 static const char *icon_name(int slot, uint64_t ps) {
     switch (slot) {
@@ -51,7 +62,11 @@ static const char *icon_name(int slot, uint64_t ps) {
     case 8: return "ItemMagicPowder_00^w";
     case 9: return "ItemRocsFeather_00^w";
     case 12: return "ItemOcarina_03^w";
-    case 13: case 14: case 15: return LD8(ps + 0xc0) >> (slot - 13) & 1 ? "ItemBottle_01^w" : "ItemBottle_00^w";
+    case 13: case 14: case 15:
+        if (LD8(ps + 0xc0) >> (slot - 13) & 1) return "ItemBottle_01^w";
+        if (slot == 13 && hint_sheet_on()) return HINT_ICON;
+        if (slot == 15 && escape_bottle_on()) return ESCAPE_ICON;
+        return "ItemBottle_00^w";
     }
     return NULL;
 }
@@ -103,7 +118,12 @@ static const Icon *icon(const char *name) {
     Icon &ic = g_icons[i];
     ic.name = name, ic.state = -1;
     int w, h;
-    if (uint8_t *px = texpatch_ui_rgba(name, &w, &h)) {
+    float tint[8];
+    uint8_t *px;
+    if (!strcmp(name, HINT_ICON)) hint_sheet_icon_tint(tint), px = texpatch_hint_icon_rgba(tint, &w, &h);
+    else if (!strcmp(name, ESCAPE_ICON)) escape_bottle_icon_tint(tint), px = texpatch_ui_rgba_tinted("ItemBottle_00^w", tint, &w, &h);
+    else px = texpatch_ui_rgba(name, &w, &h);
+    if (px) {
         ic.id = upload(px, w, h);
         if (ic.id) ic.state = 1;
         free(px);

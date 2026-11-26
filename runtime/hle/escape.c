@@ -162,6 +162,11 @@ static void bomb_bag_tint(float tint[8]) {
     memcpy(tint, navy, sizeof navy);
 }
 
+static const float kGold[8] = {1.30f, 0.86f, 0.16f, 1.0f, 0.12f, 0.05f, 0.0f, 1.25f};  // (UI: unlit, 0-1; deep gold)
+
+// The icon's tint alone (the D-pad's copy: runtime/ui/dpad_overlay.mm)
+void escape_bottle_icon_tint(float tint[8]) { memcpy(tint, kGold, sizeof kGold); }
+
 void escape_bottle_tint(int kind, const float *ui, uint32_t ui_size, float tint[8]) {
     extern bool hint_sheet_tint(int kind, const float *ui, uint32_t ui_size, float tint[8]);
     if (hint_sheet_tint(kind, ui, ui_size, tint) || kind == 5) return;  // (the Hint Sheet: runtime/hle/hint_sheet.c)
@@ -195,6 +200,5 @@ void escape_bottle_tint(int kind, const float *ui, uint32_t ui_size, float tint[
     if (LD8(ps + 0xa2) == 0xf) on |= fabsf(hx - 476) < 24 && fabsf(hy - 296) < 24;
     if (LD8(ps + 0xa3) == 0xf) on |= fabsf(hx - 571) < 24 && fabsf(hy - 310) < 24;
     if (!on) return;
-    static const float gold[8] = {1.30f, 0.86f, 0.16f, 1.0f, 0.12f, 0.05f, 0.0f, 1.25f};  // (UI: unlit, 0-1; deep gold)
-    memcpy(tint, gold, sizeof gold);
+    escape_bottle_icon_tint(tint);
 }
