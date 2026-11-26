@@ -49,6 +49,8 @@ void saves_info_free(SavesInfo *info);
 // The slots take[i] (info->n of them) of game i of info (saves_inspect of the same zip) into the data folder: the files they replace
 // zipped into backups/ first. false: err says why; a failure before the first write leaves everything as it was.
 bool saves_import(const char *zip, const SavesInfo *info, const unsigned *take, char *err, size_t n);
+// Save folders a cut-off import or game save left half done, made whole (the start screen, before any game runs)
+void saves_recover(void);
 // Any save at all in the data folder (Export has something to do)
 bool saves_any(void);
 // A slot as the start screen names it ("File 1" ... "Autosave"), English for L()

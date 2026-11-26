@@ -2180,6 +2180,7 @@
 {"That file isn't a LAS Recomp saves file.", "LAS Recomp 저장 파일이 아닙니다."},
 {"That saves file is from a newer LAS Recomp. Update LAS Recomp first.", "더 새로운 LAS Recomp에서 만든 저장 파일입니다. 먼저 LAS Recomp를 업데이트하세요."},
 {"Another seed with the same name is here.", "같은 이름의 다른 시드가 이미 있습니다."},
+{"Windows can't use this seed's name.", "Windows에서는 이 시드의 이름을 사용할 수 없습니다."},
 {"A save in it is damaged.", "안에 있는 저장 데이터가 손상되었습니다."},
 {"Its seed isn't here and isn't in the file.", "그 시드가 여기에도 파일에도 없습니다."},
 {"There are no saves in that file.", "그 파일에 저장 데이터가 없습니다."},

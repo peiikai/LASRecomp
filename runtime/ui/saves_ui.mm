@@ -66,6 +66,7 @@ void saves_ui_init(const SavesUiHost &host) {
     saves_app_version(host.app_version);
     if (done) return;
     done = true;
+    saves_recover();
     const char *t = getenv("LARECOMP_SAVES_IMPORT");  // (test: a saves file as if picked for Import saves)
     if (t && *t) got_import(t);
 }

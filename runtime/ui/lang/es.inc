@@ -2180,6 +2180,7 @@
 {"That file isn't a LAS Recomp saves file.", "Ese archivo no es un archivo de partidas de LAS Recomp."},
 {"That saves file is from a newer LAS Recomp. Update LAS Recomp first.", "Ese archivo de partidas es de una versión más nueva de LAS Recomp. Actualiza LAS Recomp primero."},
 {"Another seed with the same name is here.", "Ya hay aquí otra semilla con el mismo nombre."},
+{"Windows can't use this seed's name.", "Windows no puede usar el nombre de esta semilla."},
 {"A save in it is damaged.", "Una partida que contiene está dañada."},
 {"Its seed isn't here and isn't in the file.", "Su semilla no está aquí ni en el archivo."},
 {"There are no saves in that file.", "No hay partidas en ese archivo."},

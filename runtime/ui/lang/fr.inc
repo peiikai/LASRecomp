@@ -2180,6 +2180,7 @@
 {"That file isn't a LAS Recomp saves file.", "Ce fichier n'est pas un fichier de sauvegardes LAS Recomp."},
 {"That saves file is from a newer LAS Recomp. Update LAS Recomp first.", "Ce fichier de sauvegardes vient d'une version plus récente de LAS Recomp. Mettez d'abord LAS Recomp à jour."},
 {"Another seed with the same name is here.", "Une autre seed du même nom est déjà ici."},
+{"Windows can't use this seed's name.", "Windows ne peut pas utiliser le nom de cette seed."},
 {"A save in it is damaged.", "Une sauvegarde qu'il contient est endommagée."},
 {"Its seed isn't here and isn't in the file.", "Sa seed n'est ni ici ni dans le fichier."},
 {"There are no saves in that file.", "Ce fichier ne contient aucune sauvegarde."},

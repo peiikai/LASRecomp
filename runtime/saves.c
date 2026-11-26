@@ -30,7 +30,8 @@
 #define BACKUPS "backups"
 #define KEEP_BACKUPS 20
 enum { SAVE_SIZE = 0x5EE0, SAVE_VERSION = 0xE };
-enum { MAX_ENTRY = 64 << 20 };         // no file of a bundle is bigger (a seed.json is about 1 MB)
+enum { MAX_ENTRY = 64 << 20 };
+enum { NAME_MAX_SAVES = 96 };          // a file name in a save folder (savedataN.bin and its sidecars)         // no file of a bundle is bigger (a seed.json is about 1 MB)
 
 // ---- small file helpers
 static bool is_dir(const char *p) {
@@ -135,10 +136,20 @@ static const char *const SLOT_NAMES[SAVES_SLOTS] = {LN("File 1"), LN("File 2"), 
 const char *saves_slot_name(int slot) { return slot >= 0 && slot < SAVES_SLOTS ? SLOT_NAMES[slot] : ""; }
 
 // ---- names in a bundle (and in the data folder: the same layout)
-// A file or folder name that means the same on every system: no separators or characters Windows refuses (a ':'
-// would write an NTFS stream of another file), no dot or space last (Windows drops them: "abc." is "abc"), no
-// device name (CON, NUL, COM1, ... with or without an extension)
-static bool name_ok(const char *s, size_t n) {
+#ifdef _WIN32
+// A Windows device name (CON, NUL, COM1, ... with or without an extension): there it opens the device, not a file
+static bool device_name(const char *s, size_t n) {
+    size_t b = 0;
+    while (b < n && s[b] != '.') b++;
+    static const char *const dev[] = {"CON", "PRN", "AUX", "NUL"};
+    for (int i = 0; i < 4; i++)
+        if (b == 3 && !SDL_strncasecmp(s, dev[i], 3)) return true;
+    return b == 4 && (!SDL_strncasecmp(s, "COM", 3) || !SDL_strncasecmp(s, "LPT", 3)) && s[3] >= '1' && s[3] <= '9';
+}
+#endif
+// A name that means the same on every system: no separators or characters Windows refuses (a ':' would write an
+// NTFS stream of another file), no dot or space last (Windows drops them: "abc." is "abc"). Windows: no device name.
+static bool plain_name_ok(const char *s, size_t n) {
     if (!n || s[n - 1] == '.' || s[n - 1] == ' ') return false;
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char)s[i];
@@ -146,19 +157,19 @@ static bool name_ok(const char *s, size_t n) {
             c == '>' || c == '|' || c == 0x7F)
             return false;
     }
-    size_t b = 0;
-    while (b < n && s[b] != '.') b++;
-    static const char *const dev[] = {"CON", "PRN", "AUX", "NUL"};
-    for (int i = 0; i < 4; i++)
-        if (b == 3 && !SDL_strncasecmp(s, dev[i], 3)) return false;
-    if (b == 4 && (!SDL_strncasecmp(s, "COM", 3) || !SDL_strncasecmp(s, "LPT", 3)) && s[3] >= '1' && s[3] <= '9')
-        return false;
     return true;
 }
+static bool name_ok(const char *s, size_t n) {
+#ifdef _WIN32
+    if (device_name(s, n)) return false;
+#endif
+    return plain_name_ok(s, n);
+}
 // A seed's folder name as the app makes them; nothing that could leave rando/ (no separators, no "..", no dot
-// first), and not an import's working folder (<seed>.import)
+// first), and not an import's working folder (<seed>.import). A device name passes: older seeds may have one (the
+// rando tab made them), and on Windows such a seed is shown as one that can't be imported (inspect).
 static bool seed_name_ok(const char *s, size_t n) {
-    if (!n || n >= sizeof(((SavesGame *)0)->seed) || s[0] == '.' || !name_ok(s, n)) return false;
+    if (!n || n >= sizeof(((SavesGame *)0)->seed) || s[0] == '.' || !plain_name_ok(s, n)) return false;
     return !(n >= 7 && !memcmp(s + n - 7, ".import", 7));
 }
 // The save folder of a game: "save/save_0" or "rando/<seed>/save/save_0"
@@ -366,7 +377,7 @@ static void seed_id_there(ZipReader *z, const char *seed, char *out, size_t n) {
 static bool inspect(ZipReader *z, SavesInfo *info, char *err, size_t n) {
     saves_info_free(info);
     memset(info, 0, sizeof *info);
-    if (!read_manifest(z, info, err, n)) return false;
+    if (!read_manifest(z, info, err, n)) { saves_info_free(info); return false; }
     for (int i = 0, k = zip_count(z); i < k; i++) {
         ZipEntry ze;
         if (!zip_entry_at(z, i, &ze) || ze.is_dir) continue;
@@ -398,6 +409,10 @@ static bool inspect(ZipReader *z, SavesInfo *info, char *err, size_t n) {
         if (!g.slots && !g.problem) continue;
         for (int s = 0; s < SAVES_SLOTS; s++)
             if (!(g.slots >> s & 1)) g.mtime[s] = 0;
+#ifdef _WIN32
+        if (*g.seed && !g.problem && device_name(g.seed, strlen(g.seed)))
+            g.problem = LN("Windows can't use this seed's name.");
+#endif
         if (*g.seed && !g.problem) {
             char p[400];
             snprintf(p, sizeof p, "rando/%s", g.seed);
@@ -670,16 +685,72 @@ static bool import_seed(ZipReader *z, const char *seed) {
     return ok;
 }
 
+// A save folder as a cut-off import or save left it, made whole before anything reads or replaces it:
+// - an import's old files set aside (<file>.import): put back if its save wasn't replaced yet (savedataN.bin.pending
+//   still there), else removed
+// - a save whose sidecar's rename didn't happen (savedataN.bin.flagsx.pending, its data already renamed): finished, as
+//   runtime/services/fs.c's mount does (recover_save_flags), so a backup holds the save with its own flags
+static void finish_dir(const char *d) {
+    DIR *dir = opendir(d);
+    if (!dir) return;
+    char names[64][NAME_MAX_SAVES];
+    int k = 0;
+    struct dirent *e;
+    while ((e = readdir(dir)) && k < 64) {
+        size_t m = strlen(e->d_name);
+        if (m < NAME_MAX_SAVES && ((m > 7 && !strcmp(e->d_name + m - 7, ".import")) ||
+                                   (m > 15 && !strcmp(e->d_name + m - 15, ".flagsx.pending"))))
+            snprintf(names[k++], NAME_MAX_SAVES, "%s", e->d_name);
+    }
+    closedir(dir);
+    for (int pass = 0; pass < 2; pass++)  // (the set-aside files first: they decide nothing about the sidecars)
+        for (int i = 0; i < k; i++) {
+            size_t m = strlen(names[i]);
+            bool aside = !strcmp(names[i] + m - 7, ".import");
+            if (aside != !pass) continue;
+            char p[700], base[700], data_pending[700];
+            snprintf(p, sizeof p, "%s/%s", d, names[i]);
+            snprintf(base, sizeof base, "%s/%.*s", d, (int)(m - (aside ? 7 : 15)), names[i]);
+            int slot = slot_of_file(strrchr(base, '/') + 1);
+            if (slot < 0) continue;
+            snprintf(data_pending, sizeof data_pending, "%s/savedata%d.bin.pending", d, slot);
+            bool replaced = !file_mtime(data_pending);
+            if (aside) {
+                if (replaced || file_mtime(base)) remove(p);
+                else replace_file(p, base);
+            } else if (replaced) {
+                char flags[700];
+                snprintf(flags, sizeof flags, "%s.flagsx", base);
+                if (replace_file(p, flags)) LOG("[saves] finished %s\n", flags);
+            }
+        }
+    sync_dir(d);
+}
+void saves_recover(void) {
+    finish_dir("save/save_0");
+    DIR *r = opendir("rando");
+    struct dirent *e;
+    while (r && (e = readdir(r))) {
+        if (!seed_name_ok(e->d_name, strlen(e->d_name))) continue;
+        char d[400];
+        save_dir(e->d_name, d, sizeof d);
+        finish_dir(d);
+    }
+    if (r) closedir(r);
+}
+
 // One slot, in the order runtime/services/fs.c commits a save (its mount finishes a cut-off one the same way):
-// every file of it in the bundle written as a working copy (.pending), the old files the bundle doesn't have removed
-// (a .flagsx of the old save must never pair with the new one), then the save renamed into place and its sidecars
-// after it. Once the save is in place a sidecar's working copy that couldn't be renamed stays for the next mount.
+// every file of it in the bundle written as a working copy (.pending), the old files the bundle doesn't have set
+// aside (<file>.import: a .flagsx of the old save must never pair with the new one, and the old save must never lose
+// its own), the save renamed into place, the set-aside files removed, its sidecars renamed after it. A cut-off import
+// is made whole by finish_dir. false: the save wasn't replaced (the slot is as it was).
 static bool import_slot(ZipReader *z, const char *seed, int slot, long long mtime) {
-    enum { MAX_FILES = 16, NAME = 64 };
+    enum { MAX_FILES = 16 };
     char d[400];
     save_dir(seed, d, sizeof d);
     mkdirs(d);
-    // working copies of this slot left by an import or save that was cut off: this import replaces the slot whole
+    // working copies of this slot left behind (finish_dir already finished a pair whose save was renamed): this
+    // import replaces the slot whole
     DIR *dir = opendir(d);
     struct dirent *e;
     while (dir && (e = readdir(dir))) {
@@ -694,21 +765,21 @@ static bool import_slot(ZipReader *z, const char *seed, int slot, long long mtim
     }
     if (dir) closedir(dir);
 
-    char files[MAX_FILES][NAME];
-    int nf = 0;
+    char files[MAX_FILES][NAME_MAX_SAVES], aside[MAX_FILES][NAME_MAX_SAVES];
+    int nf = 0, na = 0;
     bool ok = true;
     for (int i = 0, k = zip_count(z); i < k && ok; i++) {
         ZipEntry ze;
         if (!zip_entry_at(z, i, &ze) || ze.is_dir) continue;
         Entry en = classify(ze.name);
         if (en.kind != E_SLOT || en.slot != slot || strcmp(en.seed, seed)) continue;
-        if (nf == MAX_FILES || strlen(en.file) >= NAME) { ok = false; break; }
+        if (nf == MAX_FILES || strlen(en.file) + 8 >= NAME_MAX_SAVES) { ok = false; break; }
         size_t sz = 0;
         unsigned char *b = read_entry(z, i, &sz);
         if (!b || (is_data_file(en.file) && saves_check(b, sz))) { free(b); ok = false; break; }
         char p[600];
         snprintf(p, sizeof p, "%s/%s.pending", d, en.file);
-        snprintf(files[nf++], NAME, "%s", en.file);
+        snprintf(files[nf++], NAME_MAX_SAVES, "%s", en.file);
         ok = write_file(p, b, sz);
         free(b);
     }
@@ -716,26 +787,33 @@ static bool import_slot(ZipReader *z, const char *seed, int slot, long long mtim
     for (int f = 0; f < nf; f++)
         if (is_data_file(files[f])) data = f;
     if (data < 0) ok = false;
+    char from[600], to[600];
     if (ok) {  // this slot's files here that the bundle doesn't have (a sidecar of the old save, its screenshot)
         dir = opendir(d);
-        while (dir && (e = readdir(dir))) {
+        while (ok && dir && (e = readdir(dir))) {
             if (slot_of_file(e->d_name) != slot) continue;
             bool keep = false;
             for (int f = 0; f < nf; f++) keep |= !strcmp(files[f], e->d_name);
             if (keep) continue;
-            char p[600];
-            snprintf(p, sizeof p, "%s/%s", d, e->d_name);
-            remove(p);
+            if (na == MAX_FILES || strlen(e->d_name) + 7 >= NAME_MAX_SAVES) { ok = false; break; }
+            snprintf(to, sizeof to, "%s/%s", d, e->d_name);
+            snprintf(from, sizeof from, "%s.import", to);
+            if (replace_file(to, from)) snprintf(aside[na++], NAME_MAX_SAVES, "%s", e->d_name);
+            else ok = false;
         }
         if (dir) closedir(dir);
     }
-    char from[600], to[600];
     if (ok) {
         snprintf(to, sizeof to, "%s/%s", d, files[data]);
         snprintf(from, sizeof from, "%s.pending", to);
         ok = replace_file(from, to);
     }
-    if (!ok) {  // (the save isn't replaced: every working copy goes)
+    if (!ok) {  // (the save isn't replaced: the set-aside files back, every working copy gone)
+        for (int a = 0; a < na; a++) {
+            snprintf(to, sizeof to, "%s/%s", d, aside[a]);
+            snprintf(from, sizeof from, "%s.import", to);
+            replace_file(from, to);
+        }
         for (int f = 0; f < nf; f++) {
             snprintf(from, sizeof from, "%s/%s.pending", d, files[f]);
             remove(from);
@@ -744,19 +822,22 @@ static bool import_slot(ZipReader *z, const char *seed, int slot, long long mtim
     }
     set_mtime(to, mtime);
     sync_dir(d);
+    for (int a = 0; a < na; a++) {
+        snprintf(from, sizeof from, "%s/%s.import", d, aside[a]);
+        remove(from);
+    }
+    // (a sidecar that can't be renamed now keeps its working copy: the game's next mount, or finish_dir, finishes
+    // it. The save is imported either way.)
     for (int f = 0; f < nf; f++) {
         if (f == data) continue;
         snprintf(to, sizeof to, "%s/%s", d, files[f]);
         snprintf(from, sizeof from, "%s.pending", to);
-        if (!replace_file(from, to)) {
-            LOG("[saves] imported %s, but not %s yet: the next start finishes it\n", files[data], files[f]);
-            ok = false;
-            continue;
-        }
-        set_mtime(to, mtime);
+        if (replace_file(from, to)) set_mtime(to, mtime);
+        else LOG("[saves] imported %s, but not %s yet: it is finished the next time the saves are opened\n",
+                 files[data], files[f]);
     }
     sync_dir(d);
-    return ok;
+    return true;
 }
 
 bool saves_import(const char *zip, const SavesInfo *info, const unsigned *take, char *err, size_t n) {
@@ -777,6 +858,12 @@ bool saves_import(const char *zip, const SavesInfo *info, const unsigned *take, 
             ok = false;
         } else t[j] = take[i];
     }
+    for (int i = 0; ok && i < now->n; i++)  // (a cut-off import or save made whole first, so the backup holds it whole)
+        if (t[i]) {
+            char d[400];
+            save_dir(now->g[i].seed, d, sizeof d);
+            finish_dir(d);
+        }
     char made[200] = "";
     if (ok && !backup(now, t, made, sizeof made)) {
         say(err, n, LN("Couldn't back up your saves first. Nothing was changed."));

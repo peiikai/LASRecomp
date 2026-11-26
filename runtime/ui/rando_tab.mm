@@ -429,6 +429,13 @@ static std::string clean_name(const char *in) {  // a seed name as a folder name
     }
     while (!n.empty() && n.back() == ' ') n.pop_back();
     while (!n.empty() && (n[0] == ' ' || n[0] == '.')) n.erase(0, 1);
+    // never a Windows device name (con, nul, com1, ...): Windows can't make that folder or import its saves
+    std::string low = n;
+    for (char &c : low) c = (char)tolower((unsigned char)c);
+    bool device = low == "con" || low == "prn" || low == "aux" || low == "nul" ||
+                  (low.size() == 4 && (!low.compare(0, 3, "com") || !low.compare(0, 3, "lpt")) && low[3] >= '1' &&
+                   low[3] <= '9');
+    if (device) n += '_';
     return n;
 }
 

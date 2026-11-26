@@ -2180,6 +2180,7 @@
 {"That file isn't a LAS Recomp saves file.", "該檔案不是 LAS Recomp 存檔檔案。"},
 {"That saves file is from a newer LAS Recomp. Update LAS Recomp first.", "該存檔檔案來自較新版本的 LAS Recomp。請先更新 LAS Recomp。"},
 {"Another seed with the same name is here.", "這裡已有另一個同名種子。"},
+{"Windows can't use this seed's name.", "Windows 無法使用此種子的名稱。"},
 {"A save in it is damaged.", "其中有存檔已損壞。"},
 {"Its seed isn't here and isn't in the file.", "它的種子不在這裡，也不在檔案中。"},
 {"There are no saves in that file.", "該檔案中沒有存檔。"},

@@ -1008,6 +1008,8 @@ static std::vector<std::string> list_seeds() {
     if (DIR *d = opendir("rando")) {
         while (struct dirent *e = readdir(d)) {
             if (e->d_name[0] == '.') continue;
+            size_t nl = strlen(e->d_name);
+            if (nl > 7 && !strcmp(e->d_name + nl - 7, ".import")) continue;  // (a seed still being imported: saves.c)
             if (rando_seed_there(e->d_name)) out.push_back(e->d_name);  // (seed.json or an older settings.json, + romfs)
         }
         closedir(d);

@@ -2180,6 +2180,7 @@
 {"That file isn't a LAS Recomp saves file.", "LAS Recomp のセーブファイルではありません。"},
 {"That saves file is from a newer LAS Recomp. Update LAS Recomp first.", "新しい LAS Recomp で作られたセーブファイルです。先に LAS Recomp を更新してください。"},
 {"Another seed with the same name is here.", "同じ名前の別のシードがすでにあります。"},
+{"Windows can't use this seed's name.", "このシードの名前はWindowsでは使えません。"},
 {"A save in it is damaged.", "中のセーブデータが壊れています。"},
 {"Its seed isn't here and isn't in the file.", "そのシードはここにもファイルにもありません。"},
 {"There are no saves in that file.", "そのファイルにセーブデータはありません。"},

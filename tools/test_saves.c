@@ -181,6 +181,7 @@ int main(void) {
         if (!info.g[i].seed[0]) take[i] = 1;  // (file 1 only)
     CHECK(saves_import(bundle, &info, take, err, sizeof err));
     CHECK(tag_of("save/save_0/savedata0.bin") == 1 && !exists("save/save_0/savedata0.bin.dpad"));
+    CHECK(!exists("save/save_0/savedata0.bin.dpad.import"));
     CHECK(count_files("backups") == 1);
     CHECK(!exists("save/save_0/savedata0.bin.pending"));
 
@@ -261,6 +262,7 @@ int main(void) {
     unsigned all[2] = {info.g[0].slots, info.g[1].slots};
     CHECK(saves_import(bad, &info, all, err, sizeof err));
     CHECK(tag_of("save/save_0/savedata1.bin") == 61 && !exists("save/save_0/savedata1.bin.flagsx.pending"));
+    CHECK(!exists("save/save_0/savedata1.bin.flagsx") && !exists("save/save_0/savedata1.bin.flagsx.import"));
     CHECK(tag_of("rando/Zora2/save/save_0/savedata0.bin") == 62 && exists("rando/Zora2/seed.json"));
     CHECK(!exists("rando/Zora2.import") && !exists("rando/Zora2/stale.txt"));
     CHECK(count_files("backups") == 20);
@@ -289,11 +291,33 @@ int main(void) {
     zip_add_mem(w, "lasrecomp-saves.txt", man, strlen(man));
     CHECK(zip_finish(w));
     CHECK(saves_inspect(bad, &info, err, sizeof err));
-    CHECK(info.n == 2 && game(&info, "") && game(&info, "Fine"));
-    unsigned two[2] = {info.g[0].slots, info.g[1].slots};
+    // (device names are seed names everywhere but Windows, where they are listed as not importable; here neither
+    // seed is in the file or the folder)
+    CHECK(info.n == 4 && game(&info, "") && game(&info, "Fine"));
+    CHECK(game(&info, "COM3") && game(&info, "COM3")->problem && game(&info, "con.txt")->problem);
+    unsigned two[4] = {0};
+    for (int i = 0; i < info.n; i++) two[i] = info.g[i].problem ? 0 : info.g[i].slots;
     CHECK(saves_import(bad, &info, two, err, sizeof err));
     CHECK(tag_of("save/save_0/savedata2.bin") == 70 && count_files("rando/Fine") == 3);  // (save, seed.json, exefs)
     CHECK(!exists("save/save_0/savedata2.bin.x:stream"));
+
+    // ---- cut off mid-import: old files set aside before the save was replaced come back; after, they go
+    write_save("save/save_0/savedata2.bin.pending", 80, t0);
+    write_bytes("save/save_0/savedata2.bin.flagsx.import", "KEEP", 4, t0);
+    write_save("save/save_0/savedata0.bin", 81, t0);
+    write_bytes("save/save_0/savedata0.bin.flagsx.import", "GONE", 4, t0);
+    // a game save whose sidecar rename didn't happen (its data already renamed): finished, not dropped
+    write_save("save/save_0/savedata3.bin", 82, t0);
+    write_bytes("save/save_0/savedata3.bin.flagsx", "OLD", 3, t0);
+    write_bytes("save/save_0/savedata3.bin.flagsx.pending", "NEW", 3, t0);
+    saves_recover();
+    CHECK(tag_of("save/save_0/savedata2.bin") == 70 && exists("save/save_0/savedata2.bin.flagsx"));
+    CHECK(!exists("save/save_0/savedata2.bin.flagsx.import") && !exists("save/save_0/savedata0.bin.flagsx.import"));
+    CHECK(!exists("save/save_0/savedata0.bin.flagsx"));
+    FILE *ff = fopen("save/save_0/savedata3.bin.flagsx", "rb");
+    char fl[8] = "";
+    if (ff) fread(fl, 1, 7, ff), fclose(ff);
+    CHECK(!strcmp(fl, "NEW") && !exists("save/save_0/savedata3.bin.flagsx.pending"));
     saves_info_free(&info);
 
     char cmd[400];
