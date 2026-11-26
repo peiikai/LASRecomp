@@ -5,6 +5,10 @@
 // this one (the start screen re-executing itself for the game) get LASRECOMP_LOG_APPEND and append to the same log.
 #pragma once
 #include <dirent.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,10 +76,85 @@ static void session_log_prune(const char *dir) {
     free(logs);
 }
 
+// Started by RecompLauncher (Linux; it has no macOS build): it keeps our stderr as its own game output file, which
+// players send with their reports, and its crash report looks for the log in the data folder. stderr goes to the log as
+// for any start, and a thread copies each new line of the log into the launcher's stream. Following the file (rather
+// than a pipe in front of it) keeps every line in the log even when the process dies before the copy. The stream's
+// descriptor stays open across exec (LASRECOMP_LOG_TEE: its number), so a re-executed process carries on where this
+// one stopped.
+#ifndef __APPLE__
+static int g_tee_out = -1, g_tee_log = -1;
+static pthread_mutex_t g_tee_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void session_log_tee_copy(void) {
+    char buf[16384];
+    for (ssize_t r; (r = read(g_tee_log, buf, sizeof buf)) > 0 || (r < 0 && errno == EINTR);)
+        for (char *p = buf; r > 0;) {
+            ssize_t w = write(g_tee_out, p, (size_t)r);
+            if (w < 0 && errno == EINTR) continue;
+            if (w <= 0) return;  // (the launcher went away: the log still has everything)
+            p += w;
+            r -= w;
+        }
+}
+
+// Copy what the log has that the stream hasn't yet. wait: false from a crash (the copying thread may be the one that
+// crashed, holding the lock).
+static void session_log_tee_drain(bool wait) {
+    if (g_tee_log < 0) return;
+    fflush(stderr);
+    if (wait ? pthread_mutex_lock(&g_tee_lock) : pthread_mutex_trylock(&g_tee_lock)) return;
+    session_log_tee_copy();
+    pthread_mutex_unlock(&g_tee_lock);
+}
+static void session_log_tee_drain_at_exit(void) { session_log_tee_drain(true); }
+
+static void *session_log_tee_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        session_log_tee_drain(true);
+        usleep(50000);
+    }
+    return NULL;
+}
+
+// Before stderr moves to the log: the launcher's stream (a fresh start) or the one a re-executed process was handed.
+static int session_log_tee_out(bool append) {
+    if (append) {
+        const char *e = getenv("LASRECOMP_LOG_TEE");
+        int fd = e && *e ? atoi(e) : -1;
+        return fd > STDERR_FILENO && fcntl(fd, F_GETFD) != -1 ? fd : -1;
+    }
+    const char *rl = getenv("RECOMPLAUNCHER");
+    if (!rl || !*rl || !strcmp(rl, "0") || isatty(STDERR_FILENO)) return -1;
+    int fd = dup(STDERR_FILENO);  // (no FD_CLOEXEC: kept across exec)
+    if (fd < 0) return -1;
+    char v[16];
+    snprintf(v, sizeof v, "%d", fd);
+    setenv("LASRECOMP_LOG_TEE", v, 1);
+    signal(SIGPIPE, SIG_IGN);  // (the launcher closing its end: the copy stops instead of the game)
+    return fd;
+}
+
+static void session_log_tee_start(int out, const char *path, bool append) {
+    g_tee_log = open(path, O_RDONLY | O_CLOEXEC);
+    if (g_tee_log < 0) return;
+    // (appending after exec: the process before drained the log up to there)
+    if (append) lseek(g_tee_log, 0, SEEK_END);
+    g_tee_out = out;
+    atexit(session_log_tee_drain_at_exit);
+    pthread_t t;
+    if (pthread_create(&t, NULL, session_log_tee_thread, NULL) == 0) pthread_detach(t);
+}
+#endif
+
 // stdout / stderr -> <dir>/lasrecomp.log (path_out: its path, emptied on failure).
 static void session_log_open(const char *dir, char *path_out, size_t n) {
     snprintf(path_out, n, "%s/lasrecomp.log", dir);
     bool append = getenv("LASRECOMP_LOG_APPEND") != NULL;
+#ifndef __APPLE__
+    int tee = session_log_tee_out(append);
+#endif
     if (!append) {
         session_log_backup(dir, "lasrecomp.prev.log");  // (the earlier macOS scheme's one backup)
         session_log_backup(dir, "lasrecomp.log");
@@ -85,6 +164,9 @@ static void session_log_open(const char *dir, char *path_out, size_t n) {
     setvbuf(stderr, NULL, _IONBF, 0);
     dup2(STDERR_FILENO, STDOUT_FILENO);
     setenv("LASRECOMP_LOG_APPEND", "1", 1);
+#ifndef __APPLE__
+    if (tee >= 0) session_log_tee_start(tee, path_out, append);
+#endif
     // (a first line: an empty log then means writing failed - e.g. a full disk - not another start; its pid names
     // the backup later)
     time_t now = time(NULL);
