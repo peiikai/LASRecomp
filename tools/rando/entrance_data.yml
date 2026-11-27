@@ -3691,7 +3691,7 @@ connectors:
       bidirectional: false
     - from: cave
       to: house
-      cond: null
+      cond: golden-leaf:5
       bidirectional: false
     traversal:
     - from: richard-villa
@@ -3699,13 +3699,13 @@ connectors:
       cond: golden-leaf:5
     - from: richard-villa-cave-exit
       to: richard-villa
-      cond: null
+      cond: golden-leaf:5
     items:
     - location: villa-cave
       node: cave
       cond: feather | rooster | hookshot
     confidence: high
-    notes: RichardHouse_01A zone 1 -> RichardCave_02A opens with 5 golden leaves; leaving backwards is free (LADXR).
+    notes: RichardHouse_01A zone 1 -> RichardCave_02A opens with 5 golden leaves. Richard blocks the stairs from both sides until he has them (the cave's stairs land behind him), unlike LADXR's free way back.
   catfish-maw-dive:
     levels:
     - CatfishsMawEnter
