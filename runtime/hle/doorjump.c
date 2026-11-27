@@ -525,6 +525,21 @@ void doorjump_tick(uint64_t frame) {
         case 'S': nz = tz0 + 12.0f - across; nx = tx0 + j->partner * 0.75f + j->lateral; break;
         default: nz = tz0 + across; nx = tx0 + j->partner * 0.75f + j->lateral; break;
         }
+        // The game sees him in the new room and its scroll walks him 0.75 on the way he went (the bigger of his x / z
+        // moves: east 05C -> 03G, west 03C -> 04A, south 01C -> 04A, all Turtle Rock). After a jump that can be straight
+        // back out through the landing doorway: landed 0.75 in on Turtle Rock 03G's raised notch (as 04A, user's
+        // BraveMoblin398), he was walked out to the edge and the jump back fired, six times in a row. Land that much
+        // further in where it would leave him less than a half tile inside; the scroll walks him back to the landing
+        float wx = nx - x, wz = nz - z;
+        char went = fabsf(wx) > fabsf(wz) ? (wx > 0 ? 'E' : 'W') : (wz > 0 ? 'S' : 'N');
+        if (went == j->tside && across < 1.5f) {
+            switch (j->tside) {
+            case 'E': nx -= 0.75f; break;
+            case 'W': nx += 0.75f; break;
+            case 'S': nz -= 0.75f; break;
+            default: nz += 0.75f; break;
+            }
+        }
         LOG("[doorjump] %s %02d%c %c: (%.2f, %.2f) -> %02d%c %c (%.2f, %.2f)%s\n", lv, j->row, 'A' + j->col, j->side, x,
             z, j->trow, 'A' + j->tcol, j->tside, nx, nz, fast ? " (dash / jump)" : "");
         { extern void pace_hitch(const char *why);  // nvn/pace.c
