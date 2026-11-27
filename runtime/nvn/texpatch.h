@@ -30,6 +30,10 @@ int texpatch_ui_rgba_list(const char *const *names, int n, uint8_t **out, int *w
 // The Hint Sheet's icon: the dungeon map's, on a bottle-icon-sized canvas (drawn in place of the first bottle's icon;
 // runtime/hle/hint_sheet.c hint_sheet_icon_draw says which draws). NULL: not in the game files.
 NvnTexture *texpatch_hint_icon(void);
+// Overlay copies (RGBA8, malloc'd; NULL if missing) of icons the renderers draw tinted (`tint`: as the per-draw ltint):
+// a UI texture by name, and the Hint Sheet's icon above (runtime/ui/dpad_overlay.mm: the D-pad's special bottles)
+uint8_t *texpatch_ui_rgba_tinted(const char *name, const float tint[8], int *w, int *h);
+uint8_t *texpatch_hint_icon_rgba(const float tint[8], int *w, int *h);
 // Known texture `id` is one of the Items page's cursor brackets (hidden while the companion card has the cursor)
 bool texpatch_is_item_cursor(int id);
 // A draw sampled known texture `id` (the renderer, each draw's textures)

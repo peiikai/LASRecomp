@@ -1211,6 +1211,22 @@ void texpatch_apply(int id, uint32_t lv, uint8_t *blocks, uint32_t w, uint32_t h
 // (144 x 144, as ItemBottle_00^w: the same pane draws it at the size the game draws its own item icons), RGBA8 sRGB,
 // made once from the user's own game files. The renderers sample it in place of the bottle icon for the Hint Sheet's
 // draws. NULL: the game files don't have it.
+#define HINT_ICON_SIZE 144
+static uint8_t *hint_canvas(const Ref **map) {  // (malloc'd, HINT_ICON_SIZE squared; NULL: no map icon)
+    pthread_once(&g_once, load_refs);
+    int i = ref_of(R_DGN_MAP);
+    if (i < 0 || g_refs[i].kind != K_BC3) return NULL;
+    const Ref *r = *map = &g_refs[i];
+    uint32_t bw = (r->w + 3) / 4, bh = (r->h + 3) / 4, S = HINT_ICON_SIZE;
+    uint8_t *lin = malloc((size_t)bw * bh * 16), *img = malloc((size_t)r->w * r->h * 4), *canvas = calloc((size_t)S * S, 4);
+    tegra_deswizzle(r->data, lin, bw, bh, 1, 16, r->bhl, 0);
+    decode_image(r, lin, bw * 16, img);
+    uint32_t ox = (S - r->w) / 2, oy = (S - r->h) / 2;
+    for (uint32_t y = 0; y < r->h; y++) memcpy(canvas + ((y + oy) * S + ox) * 4, img + y * r->w * 4, r->w * 4);
+    free(lin), free(img);
+    return canvas;
+}
+
 NvnTexture *texpatch_hint_icon(void) {
     static NvnTexture t;
     static int state;  // 0 not made yet, 1 made, -1 none
@@ -1218,16 +1234,10 @@ NvnTexture *texpatch_hint_icon(void) {
     pthread_mutex_lock(&lock);
     if (!state) {
         state = -1;
-        pthread_once(&g_once, load_refs);
-        int i = ref_of(R_DGN_MAP);
-        if (i >= 0 && g_refs[i].kind == K_BC3) {
-            const Ref *r = &g_refs[i];
-            uint32_t bw = (r->w + 3) / 4, bh = (r->h + 3) / 4, S = 144;
-            uint8_t *lin = malloc((size_t)bw * bh * 16), *img = malloc((size_t)r->w * r->h * 4), *canvas = calloc((size_t)S * S, 4);
-            tegra_deswizzle(r->data, lin, bw, bh, 1, 16, r->bhl, 0);
-            decode_image(r, lin, bw * 16, img);
-            uint32_t ox = (S - r->w) / 2, oy = (S - r->h) / 2;
-            for (uint32_t y = 0; y < r->h; y++) memcpy(canvas + ((y + oy) * S + ox) * 4, img + y * r->w * 4, r->w * 4);
+        const Ref *r;
+        uint8_t *canvas = hint_canvas(&r);
+        if (canvas) {
+            uint32_t S = HINT_ICON_SIZE;
             t.target = 1;  // (2D)
             t.format = r->srgb ? 0x38 : 0x25;  // RGBA8 sRGB / unorm, as the map's own colour space
             t.width = t.height = S;
@@ -1240,7 +1250,7 @@ NvnTexture *texpatch_hint_icon(void) {
             tegra_swizzle(canvas, mem, l0.wb, l0.hb, 1, 4, l0.block_height_log2, l0.block_depth_log2);
             t.addr = (uint64_t)(uintptr_t)mem;
             strlcpy(t.label, "HintSheetIcon", sizeof t.label);
-            free(lin), free(img), free(canvas);
+            free(canvas);
             state = 1;
             LOG("[texpatch] Hint Sheet icon made from %s\n", r->name);
         }
@@ -1253,7 +1263,7 @@ NvnTexture *texpatch_hint_icon(void) {
 // encoding) from the user's UI archives: out[i] NULL if it isn't there or its format isn't one of ours. Each archive is
 // read once for the whole list. The caller frees them; returns how many were found.
 // (Runtime-made icons for our overlays: runtime/ui/triforce_icons.mm, race_overlay.mm - nothing of the game ships.)
-int texpatch_ui_rgba_list(const char *const *want, int nwant, uint8_t **out, int *w_out, int *h_out) {
+static int ui_rgba_list(const char *const *want, int nwant, uint8_t **out, int *w_out, int *h_out, bool *srgb_out) {
     static const char *const arcs[] = {"region_common/ui/Game.arc", "regionUS/common/ui/GameRegionCommon.arc",
                                        "regionEU/common/ui/GameRegionCommon.arc", "region_common/ui/StartUp.arc"};
     int found = 0;
@@ -1298,6 +1308,7 @@ int texpatch_ui_rgba_list(const char *const *want, int nwant, uint8_t **out, int
                     decode_image(&r, lin, bw * 16, out[wi]);
                     free(lin);
                     w_out[wi] = (int)w, h_out[wi] = (int)h;
+                    if (srgb_out) srgb_out[wi] = r.srgb;
                     found++;
                 }
             }
@@ -1307,8 +1318,49 @@ int texpatch_ui_rgba_list(const char *const *want, int nwant, uint8_t **out, int
     return found;
 }
 
+int texpatch_ui_rgba_list(const char *const *want, int nwant, uint8_t **out, int *w_out, int *h_out) {
+    return ui_rgba_list(want, nwant, out, w_out, h_out, NULL);
+}
+
 // One of them (NULL: not there)
 uint8_t *texpatch_ui_rgba(const char *want, int *w_out, int *h_out) {
     uint8_t *out;
     return texpatch_ui_rgba_list(&want, 1, &out, w_out, h_out) ? out : NULL;
+}
+
+// The renderers' per-draw tint (translate.c `ltint`: rgb = mix(rgb, t0.rgb * lum^t1.w + t1.rgb * lum, t0.w), on the
+// sampled colour - linear for an sRGB texture) applied to decoded pixels, for our overlays' copies of icons the game
+// draws tinted: the D-pad's Hint Sheet and Escape Bottle (runtime/ui/dpad_overlay.mm).
+static uint8_t lin_srgb(float v) {
+    v = v <= 0.0031308f ? v * 12.92f : 1.055f * powf(v, 1 / 2.4f) - 0.055f;
+    return (uint8_t)(fminf(fmaxf(v, 0), 1) * 255 + 0.5f);
+}
+static void tint_rgba(uint8_t *px, size_t n, bool srgb, const float t[8]) {
+    if (t[3] <= 0) return;
+    for (size_t i = 0; i < n; i++, px += 4) {
+        float g[3];
+        for (int k = 0; k < 3; k++) g[k] = srgb ? srgb_lin(px[k]) : px[k] / 255.0f;
+        float l = g[0] * 0.299f + g[1] * 0.587f + g[2] * 0.114f;
+        for (int k = 0; k < 3; k++) {
+            float o = g[k] + (t[k] * powf(l, t[7]) + t[4 + k] * l - g[k]) * t[3];
+            px[k] = srgb ? lin_srgb(o) : (uint8_t)(fminf(fmaxf(o, 0), 1) * 255 + 0.5f);
+        }
+    }
+}
+
+uint8_t *texpatch_ui_rgba_tinted(const char *want, const float tint[8], int *w_out, int *h_out) {
+    uint8_t *out;
+    bool srgb;
+    if (!ui_rgba_list(&want, 1, &out, w_out, h_out, &srgb)) return NULL;
+    tint_rgba(out, (size_t)*w_out * *h_out, srgb, tint);
+    return out;
+}
+
+uint8_t *texpatch_hint_icon_rgba(const float tint[8], int *w_out, int *h_out) {
+    const Ref *r;
+    uint8_t *canvas = hint_canvas(&r);
+    if (!canvas) return NULL;
+    *w_out = *h_out = HINT_ICON_SIZE;
+    tint_rgba(canvas, (size_t)HINT_ICON_SIZE * HINT_ICON_SIZE, r->srgb, tint);
+    return canvas;
 }
