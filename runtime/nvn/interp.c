@@ -1240,6 +1240,10 @@ bool interp_prepare(float t) {
         // blending (a position or matrix element can pass through an exact zero while it moves); values near zero
         // (denormal leftovers, 1e-15) don't count, nor a value back at its value of two frames ago (the toggle
         // rule shows this frame's: in Mabe Village 16-30 buffers an image, which then kept blending their other values).
+        // Nor rounding noise beside large values in its row of four (#899: after an NPC talk the camera block's
+        // fragment-stage copy held 0.445, -1.9e-06, -254.3, 254.5 and the -1.9e-06 went to 0 and back as the camera
+        // zoomed out - the whole block showed this frame's camera while the vertex stage blended it, and the
+        // tilt-shift blur and the near-camera dither fade of those in-betweens went wrong: flicker).
         // LARECOMP_INTERP_ZERO_SWITCH=0: blended (research).
         static int zero_switch = -1;
         if (zero_switch < 0) { const char *e = getenv("LARECOMP_INTERP_ZERO_SWITCH"); zero_switch = !e || atoi(e); }
@@ -1251,8 +1255,11 @@ bool interp_prepare(float t) {
         if (zero_switch && cc->stage == 1)
             for (uint32_t q = 0; q < nf && !onoff; q++) {
                 bool tog = toggles && a2 && a2[q] == b[q] && a[q] != b[q];  // (back at its value of two frames ago)
-                onoff = !done[q] && ((tog && cc->size >= 2048) ||
-                                     ((a[q] == 0) != (b[q] == 0) && fmaxf(fabsf(a[q]), fabsf(b[q])) > 1e-6f && !tog));
+                if (!done[q] && tog && cc->size >= 2048) { onoff = true; break; }
+                if (done[q] || tog || (a[q] == 0) == (b[q] == 0)) continue;
+                float v = fmaxf(fabsf(a[q]), fabsf(b[q])), row = 0;
+                for (uint32_t r = q & ~3u; r < (q & ~3u) + 4 && r < nf; r++) row = fmaxf(row, fmaxf(fabsf(a[r]), fabsf(b[r])));
+                onoff = v > 1e-6f && v > 1e-5f * row;
             }
         s_onoff += onoff;
         for (uint32_t q = 0; q < nf; q++) {
