@@ -896,12 +896,41 @@ int plat_proc_wait(PlatProc p, bool block) {
 // not redirects) are ordinary files and folders. w: a \\?\ path in a 32768-wide buffer, len its length; attr and
 // tag: its FindFirstFile attributes and reparse tag.
 static bool cloud_placeholder(DWORD tag) { return (tag & 0xFFFF0FFF) == 0x9000001A; }  // IO_REPARSE_TAG_CLOUD(_1.._F)
+// A read-only file's name removed without clearing the attribute: a hard link's attributes are its file's, and the
+// data folder's game files are hard links to the player's own (runtime/romfs_build.c) - clearing it there made their
+// files writable. Windows 10 1809 and later; false elsewhere (the caller clears it then).
+#ifndef FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE
+#define FILE_DISPOSITION_FLAG_DELETE 0x1
+#define FILE_DISPOSITION_FLAG_POSIX_SEMANTICS 0x2
+#define FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE 0x10
+typedef struct { DWORD Flags; } FILE_DISPOSITION_INFO_EX;
+#endif
+static bool delete_keep_attributes(const wchar_t *w) {
+    HANDLE h = CreateFileW(w, DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+                           FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FILE_DISPOSITION_INFO_EX d = {FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS |
+                                  FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE};
+    bool ok = SetFileInformationByHandle(h, (FILE_INFO_BY_HANDLE_CLASS)21 /* FileDispositionInfoEx */, &d, sizeof d);
+    CloseHandle(h);
+    return ok;
+}
+
 static bool remove_tree_w(wchar_t *w, size_t len, DWORD attr, DWORD tag) {
     bool dir = attr & FILE_ATTRIBUTE_DIRECTORY;
     if ((attr & FILE_ATTRIBUTE_REPARSE_POINT) && !cloud_placeholder(tag))  // junction / symlink: the link only
         return dir ? RemoveDirectoryW(w) != 0 : DeleteFileW(w) != 0;
+    if (!dir) {
+        // (attr is the folder entry's copy, which NTFS updates only for the name a change went through: a file made
+        // read-only through the player's own name still reads as writable here, and DeleteFileW is then refused)
+        if (!(attr & FILE_ATTRIBUTE_READONLY) && DeleteFileW(w)) return true;
+        if (delete_keep_attributes(w)) return true;
+        DWORD now = GetFileAttributesW(w);  // (the file's own; Windows before 10 1809: cleared to delete)
+        if (now != INVALID_FILE_ATTRIBUTES && (now & FILE_ATTRIBUTE_READONLY))
+            SetFileAttributesW(w, now & ~FILE_ATTRIBUTE_READONLY);
+        return DeleteFileW(w) != 0;
+    }
     if (attr & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(w, attr & ~FILE_ATTRIBUTE_READONLY);
-    if (!dir) return DeleteFileW(w) != 0;
     bool ok = true;
     if (len + 3 >= 32768) return false;
     wcscpy(w + len, L"\\*");
