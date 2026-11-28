@@ -293,7 +293,9 @@ static bool copy_file(const char *src, const char *dst, uint64_t size, uint64_t 
     if (link(src, dst) == 0) goto linked;  // (same volume: a hard link)
 #endif
     {
-        FILE *in = fopen(src, "rb"), *out = in ? fopen(dst, "wb") : NULL;
+        // (dst is gone - removed above - unless that failed: then it may still be a link to the player's file, and
+        // this fails rather than write into it)
+        FILE *in = fopen(src, "rb"), *out = in ? romfs_create_new(dst) : NULL;
         bool ok = in && out;
         static uint8_t buf[1 << 20];
         while (ok) {

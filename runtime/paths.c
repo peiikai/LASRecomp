@@ -20,6 +20,7 @@
 #include "gamelib.h"
 #include "paths.h"
 #include "platform.h"
+#include "romfs_build.h"
 
 static char g_root[1024], g_start[1024], g_exe_dir[1024];
 
@@ -670,7 +671,7 @@ static bool copy_file(Move *m, const char *s, const char *d, const struct stat *
 #else                                                                                       //  name, no copy)
     if (!*no_links && link(s, d) == 0) { moved(m, st->st_size); return true; }
 #endif
-    FILE *in = fopen(s, "rb"), *out = in ? fopen(d, "wb") : NULL;
+    FILE *in = fopen(s, "rb"), *out = in ? romfs_create_new(d) : NULL;  // (never into a file still there: a link)
     bool ok = in && out;
     errno = 0;
     while (ok) {
