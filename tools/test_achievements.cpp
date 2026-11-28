@@ -89,5 +89,26 @@ int main(int argc,char **argv) {
     event_save[0x5de8] = 0x40;
     got = activities.sample(event_save.data(), event_save.size());
     assert(got.size() == 1 && has(got, "LA-079"));
-    puts("Achievement tests passed: thresholds, deduplication, reloads, persistence, masks and I/O errors.");
+    {   // One-time import: the first save opened is credited at once (no popups); other saves never import; reset
+        // arms it again.
+        std::string ip=path+".import"; remove(ip.c_str());
+        Tracker im; assert(im.open(ip) && !im.imported());
+        Save a=fresh(); put(a,0x5548,31);  // 5 shells
+        assert(im.sample(a.data(),a.size()).empty());
+        assert(im.imported() && im.unlocked(16) && im.unlocked(17) && !im.unlocked(18));
+        Save b=fresh(); b[8]=2; put(b,0x5548,0x7fff);  // another playthrough with 15 shells: not imported
+        assert(im.sample(b.data(),b.size()).empty() && !im.unlocked(18));
+        Tracker again; assert(again.open(ip) && again.imported() && again.unlocked(17) && !again.unlocked(18));
+        assert(again.reset() && !again.imported() && !again.unlocked(17));
+        assert(again.sample(b.data(),b.size()).empty() && again.unlocked(18) && again.unlocked(19));
+        Tracker last; assert(last.open(ip) && last.imported() && last.unlocked(19));
+        // Reset while a save is open: held until the next load, then that save is imported.
+        assert(last.sample(b.data(),b.size()).empty());
+        last.hold_import(true); assert(last.reset());
+        last.baseline(); assert(last.sample(b.data(),b.size()).empty() && !last.imported() && !last.unlocked(18));
+        last.hold_import(false); last.baseline();
+        assert(last.sample(b.data(),b.size()).empty() && last.imported() && last.unlocked(18));
+        remove(ip.c_str());
+    }
+    puts("Achievement tests passed: import, reset, thresholds, deduplication, reloads, persistence, masks and I/O errors.");
 }

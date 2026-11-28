@@ -30,7 +30,7 @@ const std::vector<Rule> &catalog() {
 }
 void Tracker::baseline() { ready_ = false; }
 bool Tracker::open(const std::string &path) {
-    path_ = path; error_.clear(); writable_ = false; ready_ = false;
+    path_ = path; error_.clear(); writable_ = false; ready_ = false; imported_ = false;
     earned_.assign(catalog().size(), false); seen_ = earned_;
     FILE *f = fopen(path.c_str(), "rb");
     if (!f && errno != ENOENT) { error_ = "Cannot read achievement history"; return false; }
@@ -41,6 +41,7 @@ bool Tracker::open(const std::string &path) {
             // A partial final append is not an unlock. Each new record starts with a newline.
             if (!strchr(line, '\n')) continue;
             if (sscanf(line, "%31s %lld %c", id, &stamp, &extra) != 2 || stamp <= 0) continue;
+            if (!strcmp(id, "IMPORTED")) { imported_ = true; continue; }
             for (size_t i = 0; i < catalog().size(); ++i)
                 if (!strcmp(id, catalog()[i].id)) earned_[i] = true;
         }
@@ -49,6 +50,37 @@ bool Tracker::open(const std::string &path) {
         if (!ok) { error_ = "Cannot read achievement history"; return false; }
     }
     writable_ = true;
+    return true;
+}
+// The first save opened with no import yet: what it already meets is earned at once, without popups. Then a marker,
+// so other saves never import again (until reset()).
+bool Tracker::import_save(const uint8_t *save) {
+    std::string lines;
+    long long now = (long long)time(nullptr);
+    for (size_t i = 0; i < catalog().size(); ++i)
+        if (!earned_[i] && satisfied(catalog()[i], save)) lines += "\n" + std::string(catalog()[i].id) + " " + std::to_string(now) + "\n";
+    lines += "\nIMPORTED " + std::to_string(now) + "\n";
+    FILE *f = fopen(path_.c_str(), "ab");
+    if (!f) { error_ = "Cannot save achievement unlock"; return false; }
+    bool ok = fwrite(lines.data(), 1, lines.size(), f) == lines.size();
+    if (fflush(f)) ok = false;
+    if (fclose(f)) ok = false;
+    if (!ok) { error_ = "Cannot save achievement unlock"; return false; }
+    for (size_t i = 0; i < catalog().size(); ++i)
+        if (satisfied(catalog()[i], save)) earned_[i] = true;
+    imported_ = true;
+    error_.clear();
+    return true;
+}
+bool Tracker::reset() {
+    if (!writable_) return false;
+    FILE *f = fopen(path_.c_str(), "wb");
+    if (!f || fclose(f)) { error_ = "Cannot save achievement unlock"; return false; }
+    earned_.assign(catalog().size(), false);
+    seen_ = earned_;
+    imported_ = false;
+    ready_ = false;
+    error_.clear();
     return true;
 }
 bool Tracker::unlocked(size_t i) const { return i < earned_.size() && earned_[i]; }
@@ -70,6 +102,7 @@ std::vector<size_t> Tracker::sample(const uint8_t *save, size_t size) {
     }
     if (!ready_ || memcmp(uuid_.data(), save + 8, 16)) {
         memcpy(uuid_.data(), save + 8, 16);
+        if (!imported_ && !hold_import_) import_save(save);
         for (size_t i = 0; i < catalog().size(); ++i) seen_[i] = satisfied(catalog()[i], save);
         ready_ = true;
         return out;

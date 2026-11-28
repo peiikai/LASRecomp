@@ -11,15 +11,26 @@ data folder, separate from Nintendo saves. They apply to this game's local insta
 A history read failure disables tracking for the session rather than replacing unreadable progress. Failed
 writes are logged and remain eligible for another attempt; no popup is shown until the write succeeds.
 
-Opening a save establishes a baseline: existing items do not unlock achievements. A save's UUID identifies a
+Achievements count for the whole app: all save slots share one history. The first save opened with no history
+is imported once, silently: everything it already meets is unlocked, and an `IMPORTED` line marks the history.
+Other saves are never imported. The reset corner of the Achievements page (with a confirmation) clears the
+history; the next save loaded after that is imported again (not the one already open).
+
+After the import, opening a save establishes a baseline: existing items do not unlock achievements. A save's UUID identifies a
 new playthrough; full save reads are matched to the live UUID, body CRC and achievement progress to recognize
 reloads of the same playthrough. Tracking also rebases when leaving gameplay or rebooting. Already satisfied
 baseline rules stay suppressed for that session, even if an item disappears and is reacquired. Earned IDs
 persist across restarts and cannot award twice. Loading a new game allows previously unearned rules again.
 
-The popup is 25% larger than the first gameplay preview and lasts seven seconds: circle entrance, swirling ring, horizontal expansion, reading time, contraction,
-then disappearance. Whole letters disappear from right to left when the inner edge reaches them. Text is never
-resized or wrapped during contraction. Popups queue and pause while the host menu or keyboard is open.
+Popups are off by default (vanilla). Players turn them on with **Show achievement popups** in Settings > Display,
+or with the checkbox on the first-start aspect ratio question. With popups off, unlocks are still recorded and
+listed in the menu. A popup lasts about four seconds in the menu's theme colors: the badge circle fades in,
+widens into a banner, holds for reading, then narrows and fades. Whole letters disappear from right to left as
+the inner edge reaches them. Popups queue and wait while the LAS menu or keyboard is open.
+
+Nothing is awarded while the LAS menu is open, since it holds the save editor. Tracking takes a new baseline
+when the menu closes, so save-editor changes do not unlock anything. The Cheats page only refills health,
+ammo and rupees, which no achievement uses.
 The menu and popup share original badges for each achievement category. Locked badges use muted colors,
 and a lock badge keeps the hidden story achievement a surprise.
 
@@ -35,11 +46,11 @@ Stable IDs LA-001 through LA-080 are in `runtime/achievement_rules.inc`:
 - Four trading-item acquisitions (current item, not proof of completing a particular quest event).
 - Three capacity upgrades and owning 1, 2 and 3 bottles.
 
-Open **Achievements** from the LAS menu to see the total unlocked and filter the catalog by locked or unlocked.
+Open **Achievements** from the LAS menu to see the total unlocked. Tabs at the top (All, Unlocked, Locked; L / R
+or Q / E switch them) filter the list. Each achievement is a card the controller cursor can move through.
 When a vanilla save is loaded, collection goals show current progress in that save. The final story achievement
-stays hidden until earned. Importing existing progress and disabling popups are still pending. Randomizer sessions
-are excluded because collection totals and acquisition semantics can differ. Save-editor changes and cheats
-can satisfy these local rules; this is not a competitive or anti-cheat system.
+stays hidden until earned. Randomizer sessions
+are excluded because collection totals and acquisition semantics can differ. This is not a competitive or anti-cheat system.
 
 The eight activity and story rules reward meeting the Color Dungeon guards, claiming the Fairy Queen's reward,
 landing a small or big fish, earning the 150 cm fishing reward, winning the Yoshi Doll, clearing Dampé's first

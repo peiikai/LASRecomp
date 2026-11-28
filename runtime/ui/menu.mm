@@ -725,6 +725,8 @@ static void tab_display(void) {
                    "current level. Mostly for testing and bug reports.");
         opt_child_end();
     }
+    opt_toggle("Show achievement popups", &g_settings.achievement_popups, false,
+               "Shows a short popup when you earn an achievement.");
 #ifdef __APPLE__
     if (opt_toggle("Metal HUD", &g_settings.metal_hud, false,
                    "Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a "
@@ -1195,6 +1197,33 @@ static bool vanilla_popup(float scale, bool seed, bool in_game) {
     return reset;
 }
 
+// The Achievements page's reset corner: a yes / no first (as Reset to vanilla)
+extern "C" void achievements_clear_all(void);
+static void achievements_reset_popup(float scale) {
+    if (!ImGui::BeginPopupModal("##achreset", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        return;
+    ImGui::PushFont(g_font_big);
+    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Reset achievements?"));
+    ImGui::PopFont();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(L("This clears all achievements.\nThe next save you load counts its progress again."));
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImVec2 bs(220 * scale, 0);
+    for (const char *s : {L("Reset"), L("Cancel")})
+        bs.x = fmaxf(bs.x, ImGui::CalcTextSize(s).x + 2 * ImGui::GetStyle().FramePadding.x + 16 * scale);
+    if (ImGui::Button(L("Reset"), bs)) {
+        ImGui::CloseCurrentPopup();
+        achievements_clear_all();
+    }
+    ImGui::SameLine();
+    ImGui::SetItemDefaultFocus();
+    if (ImGui::Button(L("Cancel"), bs) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 extern "C" bool inventory_overlay_wanted(void);
 extern "C" bool tracker_overlay_wanted(void);
 extern "C" bool tracker_dungeon_wanted(void);
@@ -1205,7 +1234,7 @@ extern "C" void chaos_overlay_draw(ImVec2 display, ImFont *font);
 extern "C" void inventory_overlay_draw(ImVec2 display, ImFont *font);
 extern "C" bool race_overlay_wanted(void);
 extern "C" void race_overlay_draw(ImVec2 display, ImFont *font, float scale);
-extern "C" bool achievements_overlay_wanted(bool visible);
+extern "C" bool achievements_overlay_wanted(bool menu_open, bool kbd);
 extern "C" void achievements_menu_draw(void);
 extern "C" void achievements_overlay_draw(ImVec2 display, ImFont *font, float scale);
 extern "C" bool pickup_flyin_wanted(void);  // (silent pickups: pickup_flyin.mm)
@@ -2081,7 +2110,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool kbd = g_kbd.load() == 1;
     bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
     bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
-    bool achievement = achievements_overlay_wanted(!open && !kbd);
+    bool achievement = achievements_overlay_wanted(open, kbd);
     bool dpad = !open && dpad_overlay_wanted();
 #ifdef __APPLE__
     plastic_perf_note(cb, open);  // (LARECOMP_UI_PERF test only)
@@ -2300,6 +2329,10 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                 if (page == BAR_SETTINGS) {
                     if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
                     vanilla_popup(scale, rando_seed_dir() != NULL, true);
+                }
+                if (page == BAR_ACHIEVEMENTS) {
+                    if (plastic_reset_corner(bx, scale, LN("Reset achievements"))) ImGui::OpenPopup("##achreset");
+                    achievements_reset_popup(scale);
                 }
             }
 

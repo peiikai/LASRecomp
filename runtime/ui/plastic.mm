@@ -729,9 +729,9 @@ static bool corner_button(float bx, float scale, int slot, bool reset, bool in_p
 bool plastic_close_corner(float bx, float scale) { return corner_button(bx, scale, 0, false); }
 bool plastic_close_pane(float bx, float scale) { return corner_button(bx, scale, 0, false, true); }
 
-bool plastic_reset_corner(float bx, float scale) {
+bool plastic_reset_corner(float bx, float scale, const char *tip) {
     bool r = corner_button(bx, scale, 1, true);
-    if (ImGui::IsItemHovered() || (ImGui::IsItemFocused() && GImGui->NavCursorVisible)) ImGui::SetTooltip("%s", L("Reset to vanilla"));
+    if (ImGui::IsItemHovered() || (ImGui::IsItemFocused() && GImGui->NavCursorVisible)) ImGui::SetTooltip("%s", L(tip ? tip : "Reset to vanilla"));
     return r;
 }
 

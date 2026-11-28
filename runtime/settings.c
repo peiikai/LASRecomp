@@ -246,6 +246,7 @@ static bool settings_apply(const char *key, const char *val) {
             if (!strcmp(val, corners[i])) g_settings.fps_corner = i;
     }
     else if (!strcmp(key, "frame_interp")) g_settings.frame_interp = atoi(val) != 0;
+    else if (!strcmp(key, "achievement_popups")) g_settings.achievement_popups = atoi(val) != 0;
     else if (!strcmp(key, "metal_hud")) g_settings.metal_hud = atoi(val) != 0;
     else if (!strcmp(key, "resolution")) {  // (auto: never chosen, the GPU's default)
         int n = atoi(val);
@@ -583,6 +584,7 @@ static void write_settings(FILE *f) {
     fprintf(f, "frame_interp = %d\n", g_settings.frame_interp);
 #ifdef __APPLE__
     fprintf(f, "metal_hud = %d\n", g_settings.metal_hud);
+    fprintf(f, "achievement_popups = %d\n", g_settings.achievement_popups);
 #endif
     fprintf(f, "upscaler = %s\n", g_settings.upscaler_auto ? "auto" : g_settings.upscaler == UPSCALE_METALFX ? "metalfx" :
                                    g_settings.upscaler == UPSCALE_FSR1 ? "fsr1" : "bilinear");

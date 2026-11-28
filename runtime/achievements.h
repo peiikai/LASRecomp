@@ -25,12 +25,16 @@ public:
     void baseline();
     std::vector<size_t> sample(const uint8_t *save, size_t size);
     bool unlocked(size_t index) const;
+    bool reset();  // forget every unlock; the next save opened is imported again
+    bool imported() const { return imported_; }
+    void hold_import(bool hold) { hold_import_ = hold; }  // (after a reset: wait for the next save load)
     const std::string &error() const { return error_; }
 private:
     std::string path_, error_;
     std::vector<bool> earned_, seen_;
     std::array<uint8_t, 16> uuid_{};
-    bool ready_ = false, writable_ = false;
+    bool ready_ = false, writable_ = false, imported_ = false, hold_import_ = false;
+    bool import_save(const uint8_t *save);
     bool record(size_t index);
 };
 }

@@ -1234,6 +1234,9 @@ static bool aspect_prompt(float s) {
         if (ImGui::Button(L("Original 16:9"), ImVec2(bw, 44 * s))) pick = ASPECT_ORIGINAL;
         ImGui::SameLine(0, gap);
         if (ImGui::Button(L("Unlocked, fill the screen"), ImVec2(bw, 44 * s))) pick = ASPECT_UNLOCKED;
+        ImGui::Dummy(ImVec2(0, 10 * s));
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 2 * bw - gap) * 0.5f);
+        ImGui::Checkbox(L("Show achievement popups"), &g_settings.achievement_popups);  // (off: vanilla)
         if (pick >= 0) {
             g_settings.aspect = pick;
             g_settings.aspect_asked = true;
