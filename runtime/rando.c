@@ -7,7 +7,7 @@
 // chosen in the menu (larecomp.ini `rando_seed`); switching reboots the game in place (runtime/main.c), which calls
 // rando_boot.
 //
-// Code patches: gen.py compiled every variant of every patched instruction in (tools/rando/patch_variants.json);
+// Code patches: the generator (runtime/gen/) compiled every variant of every patched instruction in (tools/rando/patch_variants.json);
 // rando_word() tells the generated code which one the seed uses (0 = the original instruction).
 //
 // Every supported game version reads 1.0.0.pchtxt: 1.0.1 / 1.1.0 changed one function, and every randomizer patch
@@ -203,7 +203,7 @@ bool rando_romfs_override(const char *path, char *out, size_t cap) {
     return stat(out, &sb) == 0 && S_ISREG(sb.st_mode);
 }
 
-// Items page: hide the item explanation text in randomizer seeds (tools/patches.py ITEM_EXPLANATION_SITE); it
+// Items page: hide the item explanation text in randomizer seeds (runtime/gen/patches.cpp ITEM_EXPLANATION_SITE); it
 // overlaps the inventory overlay's dungeon-key / trade rows and the player knows the items.
 int rt_hide_item_explanation(void) {
     static int env = -1;  // LARECOMP_SHOW_ITEM_TEXT=1 keeps it

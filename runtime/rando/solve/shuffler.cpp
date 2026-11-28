@@ -733,7 +733,7 @@ struct ItemShuffler::Impl {
             if (settings_access.n[i]) access.set((int)i, 1);
 
         set_place(id("moblin-cave"), id("bow-wow"));  // (the followers stay vanilla)
-        set_place(id("rooster-statue"), id("rooster"));
+        if (S.logic_defs.at("rooster-statue").get("type") == Value("follower")) set_place(id("rooster-statue"), id("rooster"));
 
         shuffle(important_items);
         shuffle(seashell_items);

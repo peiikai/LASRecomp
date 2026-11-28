@@ -1,4 +1,4 @@
-// Check tracker for randomizer seeds: it takes over the pause menu's Map page (tools/patches.py MAP_PAGE_SITE). The
+// Check tracker for randomizer seeds: it takes over the pause menu's Map page (runtime/gen/patches.cpp MAP_PAGE_SITE). The
 // game's island art, zoom / scroll, explored fog, place names and Link marker stay; the game's own cursor and button
 // bar are hidden (map_page_takeover) and our layer drives the page:
 //   bullets  one small numbered bullet beside each of the game's place names ("Mabe Village"...): the area's open
@@ -430,7 +430,7 @@ static void solve(bool trick) {
             done[i] = 1;
             A(n.id) = 1;
             if (n.type == T_FOLLOWER || n.name == "moblin-cave") give("bow-wow");
-            if (n.name == "rooster-statue") give("rooster");
+            if (n.type == T_FOLLOWER && n.name == "rooster-statue") give("rooster");
             grew = true;
         }
     }
@@ -547,7 +547,7 @@ static void solve_costs(void) {
                 upd(pit[i], c), upd(heavy[i], c);
             }
             if (!reached(bowwow) && (n.type == T_FOLLOWER || n.name == "moblin-cave")) upd(bowwow, c);
-            if (!reached(rooster) && n.name == "rooster-statue") upd(rooster, c);
+            if (!reached(rooster) && n.type == T_FOLLOWER && n.name == "rooster-statue") upd(rooster, c);
         }
         if (!changed) break;
     }
@@ -891,7 +891,7 @@ static void map_page_takeover(uint64_t obj) {
 }
 
 
-// ---- the dungeon map page (tools/patches.py DGN_MAP_SITE / DGN_MAP_END_SITE, runtime/ui/chaos_overlay.mm): while the
+// ---- the dungeon map page (runtime/gen/patches.cpp DGN_MAP_SITE / DGN_MAP_END_SITE, runtime/ui/chaos_overlay.mm): while the
 // tracker drives it, the page's cursor brackets (W_Cursor_00) and its button bar (L_Operation_00) are switched off the
 // same way, found breadth first from the page object (LARECOMP_PANE_SCAN=<frame>:1 lists its panes)
 namespace {

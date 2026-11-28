@@ -6,7 +6,7 @@
 // (tools/rando/quick_pickups.py); for those the runtime does the same steps itself and removes the item actor, and
 // the event is never requested. Everything else (an item-get cutscene, a message, a trap) keeps its event.
 //
-// ACTOR_EVENT_SITE (tools/patches.py; main+0x94a568 in main+0x94a510, an actor's AI starting one of its events, right
+// ACTOR_EVENT_SITE (runtime/gen/patches.cpp; main+0x94a568 in main+0x94a510, an actor's AI starting one of its events, right
 // before it builds the event request): x20 = the AI, [AI + 0x58] = its actor, the entry name ($2 of a SinkingSword
 // item actor: its location) resolved at [x29 - 0x40] (pointer, length). The skip target is the function's no-event
 // return.

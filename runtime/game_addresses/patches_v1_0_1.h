@@ -1,4 +1,4 @@
-// Link's Awakening 1.0.1 / 1.1.0: patch sites and targets used by tools/patches.py and the runtime.
+// Link's Awakening 1.0.1 / 1.1.0: patch sites and targets used by runtime/gen/patches.cpp and the runtime.
 // Keep values literal hex: tools/game_addresses.py reads this same file. Every game version has the same names.
 // These are guest addresses, not host pointers. Object field offsets remain with their structures.
 // An X-macro list (no include guard): included with GA_ADDR(name, value) defined (runtime/game_addresses.h).

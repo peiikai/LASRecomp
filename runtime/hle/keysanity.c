@@ -2,7 +2,7 @@
 // keys / Nightmare Key / map / compass / beak to the CURRENT dungeon only (outside one it does nothing). Seeds with
 // keysanity give them with a dungeon index (upstream LAS dev convention: 0-7 = Tail Cave..Turtle Rock, 9 = Color
 // Dungeon): this hook
-// (tools/patches.py ADD_ITEM_SITE: the inner add main+0x8d08e0 that AddItem, chests and drops all call) applies those straight to that dungeon's save record.
+// (runtime/gen/patches.cpp ADD_ITEM_SITE: the inner add main+0x8d08e0 that AddItem, chests and drops all call) applies those straight to that dungeon's save record.
 // index -1 (vanilla behaviour, the item's own dungeon) is left to the game.
 //
 // Save record (notes/save_format.md): live save + 0xE0 + 0x10 * rec, dungeon n -> rec 2(n-1), Color Dungeon -> 18;

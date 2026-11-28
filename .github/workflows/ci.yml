@@ -103,6 +103,10 @@ jobs:
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
+      - name: Soft page write tracking (#883, a page armed again while a write waits for it)
+        run: |
+          clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking
+          build/test-soft-tracking
       - name: Settings regression tests
         run: python3 tools/test_settings.py
       - name: Game-files delete guard (links, outside the data folder)
@@ -166,6 +170,8 @@ jobs:
           build/test-simd-rounding
       - name: Game address table tests
         run: python3 tools/test_game_addresses.py
+      - name: Third-party notices match licenses/ (#868)
+        run: python3 tools/notices.py check
       - name: Vulkan synchronization failure regression
         run: python3 tools/test_vulkan_sync_errors.py
       - name: Shader translator instruction semantics
@@ -248,6 +254,10 @@ jobs:
         run: |
           clang -O2 -pthread tools/test_condvar.c -o build/test-condvar
           build/test-condvar
+      - name: Soft page write tracking (#883, a page armed again while a write waits for it)
+        run: |
+          clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking
+          build/test-soft-tracking
       - name: Settings regression tests
         run: python3 tools/test_settings.py
       - name: Game-files delete guard (links, outside the data folder)
@@ -423,11 +433,12 @@ jobs:
         run: |
           brew install ninja
           make deps
-          make gen-helper
           tools/fetch_zig.sh
           make -j"$(sysctl -n hw.ncpu)" app
       - name: Finished macOS app launches (dynamic-library loading)
         run: python3 tools/smoke_macos_app.py "build/LAS Recomp.app"
+      - name: Third-party notices in the app (#868)
+        run: python3 tools/notices.py package "build/LAS Recomp.app"
 
   # The iOS app itself (make PLATFORM=ios: the Metal renderer) and the skeleton app the iOS kit holds
   # (tools/bundle_ios.sh SKELETON=1); needs Xcode's iOS SDK, so a Mac runner. Its static SDL3 / FFmpeg
@@ -464,6 +475,7 @@ jobs:
           if nm "$A/lasrecomp" | grep ' _f_70' >/dev/null; then echo "::error::game code in the iOS executable"; exit 1; fi
           links=$(find "$A" -type l); [ -z "$links" ] || { echo "::error::symlinks in the app (an iOS install drops them): $links"; exit 1; }
           codesign -d --entitlements :- "$A/lasrecomp" 2>/dev/null | grep -q increased-memory-limit || { echo "::error::entitlements not in the executable's signature"; exit 1; }
+          python3 tools/notices.py package "$A"  # (third-party notices at its root, #868)
           du -sh "$A"
       - name: Simulator deps cache
         id: deps-sim
@@ -599,18 +611,6 @@ jobs:
         uses: ./.github/actions/ios-gamebuild-test
         with:
           shell: msys2 {0}
-      # (the game code generator's unicorn, as lasgen is built: an x64 python.org Python; last, so its PATH
-      # change touches no step above)
-      - uses: actions/setup-python@v5
-        id: uc-py
-        with:
-          python-version: '3.12'
-          architecture: x64
-      - name: unicorn's longjmp in the generator (#779)
-        shell: pwsh
-        run: |
-          & '${{ steps.uc-py.outputs.python-path }}' -m pip install -q unicorn==2.1.4
-          & '${{ steps.uc-py.outputs.python-path }}' tools/test_win_longjmp.py
 
   # Windows on ARM (experimental builds): the same app build and Windows tests natively on an ARM64 runner, MSYS2
   # CLANGARM64 as tools/setup_windows.ps1 sets it up there. Left out: the x86 SIMD rounding test (-mfma) and the shader
@@ -702,18 +702,6 @@ jobs:
         uses: ./.github/actions/ios-gamebuild-test
         with:
           shell: msys2 {0}
-      # (the game code generator's unicorn, as lasgen is built: an x64 python.org Python, under x64 emulation here; last, so its PATH
-      # change touches no step above)
-      - uses: actions/setup-python@v5
-        id: uc-py
-        with:
-          python-version: '3.12'
-          architecture: x64
-      - name: unicorn's longjmp in the generator (#779)
-        shell: pwsh
-        run: |
-          & '${{ steps.uc-py.outputs.python-path }}' -m pip install -q unicorn==2.1.4
-          & '${{ steps.uc-py.outputs.python-path }}' tools/test_win_longjmp.py
 
   # Android (arm64): the app (android/, libmain.so with the moving guest window) builds with the NDK, and the APK holds
   # only the runtime, SDL, shaderc and the shipped fonts and icon - nothing of the game, whose code is built on the
@@ -735,7 +723,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: android/deps/out
-          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh', 'android/gen/**') }}
+          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh') }}
       - name: Dependencies (SDL3, shaderc, volk, Vulkan headers; the game code builder)
         if: steps.deps.outputs.cache-hit != 'true'
         run: |
@@ -746,3 +734,4 @@ jobs:
       - name: The APK holds no game files
         run: |
           tools/check_apk.sh android/app/build/outputs/apk/debug/app-debug.apk
+          python3 tools/notices.py package android/app/build/outputs/apk/debug/app-debug.apk  # (at its root, #868)

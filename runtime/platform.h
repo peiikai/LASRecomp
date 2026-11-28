@@ -160,14 +160,6 @@ PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_
 int plat_proc_wait(PlatProc p, bool block);  // exit code, or -1 while still running (block = false)
 #define PLAT_PROC_SIGNALED 256               // + N: ended by signal N instead of exiting (not on Windows)
 #define PLAT_PROC_FAST_FAIL 512              // Windows: ended by a security check (0xC0000409, e.g. Control Flow Guard)
-#ifdef _WIN32
-// plat_spawn with Control Flow Guard and shadow stacks off for the child (the generator: unicorn's longjmp fails
-// CFG's check, #337, and can't unwind with a shadow stack; tools/win_longjmp.py, #779).
-// *error: 0 = started with CFG off; else why not (then it was started normally, or not at all if that failed too).
-// *shadow_stack_error: the same for shadow stacks (when only that is refused, it was started with CFG off alone).
-PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,
-                           unsigned long *shadow_stack_error);
-#endif
 void plat_proc_kill(PlatProc p);             // end it and what it started (then it's gone: no wait)
 bool plat_remove_tree(const char *dir);      // rm -rf
 // dir is synced to a cloud drive: the service's name ("OneDrive" on Windows: under a OneDrive folder, or a cloud

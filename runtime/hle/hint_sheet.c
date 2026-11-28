@@ -5,7 +5,7 @@
 // the game's message box names where the player's next progression item lies.
 //
 // The use is caught like the Escape Bottle's, in the game's "may Link use this item now?" predicate for the slot
-// (tools/patches.py BOTTLE1_USE_SITE: only while Link is free to act), and never swings or catches anything.
+// (runtime/gen/patches.cpp BOTTLE1_USE_SITE: only while Link is free to act), and never swings or catches anything.
 // The hints: rando/<seed>/hints.tsv lists the seed's progression steps in hint order (S <Common.bfevfl entry>
 // <location> <item> <copy n> <Seashells / Golden Leaves it needs>) and the closing entry (D <entry>). The first step not yet collected is shown: a step is
 // collected once its check's event flag is set (rando/<seed>/tracker.tsv), or once the save shows the item owned (at
@@ -345,6 +345,9 @@ static void sky_blue(float tint[8], bool lit) {
     static const float model[8] = {0.45f, 0.85f, 1.40f, 1.0f, 0.06f, 0.12f, 0.18f, 1.0f};
     memcpy(tint, have ? env : lit ? model : ui, 8 * sizeof(float));
 }
+
+// The icon's tint alone (the D-pad's copy: runtime/ui/dpad_overlay.mm)
+void hint_sheet_icon_tint(float tint[8]) { sky_blue(tint, false); }
 
 bool hint_sheet_tint(int kind, const float *ui, uint32_t ui_size, float tint[8]) {
     if (!hint_sheet_on()) return false;

@@ -92,6 +92,20 @@ with tempfile.TemporaryDirectory() as t:
     s = settings(run(['--data-dir', str(d), '--list-settings'], dict(rl, RECOMPLAUNCHER_MODE='desktop')).stdout)
     check('RecompLauncher desktop: the file\'s setting', s.get('fullscreen') == '0', s)
 
+    # RecompLauncher keeps our stderr as its game output: the log is still written (Windows: next to the exe; Linux:
+    # the data folder), and every line of it reaches that stream too. (macOS: unchanged, RecompLauncher has no macOS
+    # build.)
+    if sys.platform != 'darwin':
+        p = subprocess.Popen([str(EXE), '--data-dir', str(d), '--list-settings'], env=dict(base, RECOMPLAUNCHER='1'),
+                             cwd=t, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        out, err = p.communicate(timeout=120)
+        logs = list(EXE.parent.glob(f'lasrecomp-backup-*-{p.pid}.log')) if os.name == 'nt' else [d / 'lasrecomp.log']
+        text = logs[0].read_text(errors='replace') if logs and logs[0].exists() else ''
+        check('RecompLauncher: the log is written', '[paths] data: ' in text, [str(l) for l in logs])
+        check('... and the launcher gets the same lines', err == text, err[-300:] + ' / ' + text[-300:])
+        for log in logs:
+            log.unlink(missing_ok=True)
+
     # --new-data-dir (RecompLauncher's profile): a new player's data goes there; a player with data already keeps it
     normal, new = t / 'platform-home', t / 'new'
     folder, _ = data_of(['--new-data-dir', str(new)])

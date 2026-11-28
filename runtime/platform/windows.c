@@ -394,10 +394,53 @@ static void prune_logs(const char *dir) {
     free(logs);
 }
 
+// Started by RecompLauncher: it keeps our stderr (a pipe) as its own game output file, which players send with their
+// reports, and its crash report looks for lasrecomp.log next to the exe. The log takes stderr as for a GUI launch, and
+// a thread copies each new line of it into the launcher's stream. Following the file (rather than a pipe in front of
+// it) keeps every line in the log even when the process dies before the copy; a relaunched game (plat_exec) writes
+// the same file while this process waits, so its lines reach the stream too.
+static HANDLE g_tee_out = INVALID_HANDLE_VALUE, g_tee_log = INVALID_HANDLE_VALUE;
+static SRWLOCK g_tee_lock = SRWLOCK_INIT;
+
+// Copy what the log has that the stream hasn't yet. wait: false from a crash (the copying thread may be the one that
+// crashed, holding the lock).
+static void log_tee_drain(bool wait) {
+    if (g_tee_log == INVALID_HANDLE_VALUE) return;
+    fflush(stderr);
+    if (wait) AcquireSRWLockExclusive(&g_tee_lock);
+    else if (!TryAcquireSRWLockExclusive(&g_tee_lock)) return;
+    char buf[16384];
+    DWORD r, w;
+    while (ReadFile(g_tee_log, buf, sizeof buf, &r, NULL) && r)
+        for (char *p = buf; r; p += w, r -= w)
+            if (!WriteFile(g_tee_out, p, r, &w, NULL) || !w) goto done;  // (the launcher went away: the log has it all)
+done:
+    ReleaseSRWLockExclusive(&g_tee_lock);
+}
+
+static DWORD WINAPI log_tee_thread(void *arg) {
+    (void)arg;
+    for (;;) {
+        log_tee_drain(true);
+        Sleep(50);
+    }
+    return 0;
+}
+
+static void log_tee_start(HANDLE out) {
+    g_tee_log = CreateFileA(g_log_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (g_tee_log == INVALID_HANDLE_VALUE) { CloseHandle(out); return; }
+    g_tee_out = out;
+    HANDLE t = CreateThread(NULL, 0, log_tee_thread, NULL, 0, NULL);
+    if (t) CloseHandle(t);
+}
+
 // NTFS can give the newest session both names, keeping lasrecomp.log current even after a crash. On filesystems
 // without hard links, copy on exit instead. The unique session header identifies who owns the latest report;
 // creation times can collide for simultaneous launches. The startup mutex also covers this replacement.
 static void publish_log(void) {
+    log_tee_drain(true);
     if (!g_log_path[0] || !lock_logs()) return;
     fflush(stdout); fflush(stderr);
     HANDLE latest = CreateFileA(g_log_latest, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -450,12 +493,18 @@ bool plat_cli_write(const char *s, size_t n) {
 bool plat_cli_tty(void) { return g_cli_console && (g_log_path[0] || g_cli_attached); }
 
 static void log_to_file_without_console(void) {
-    // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting.
+    // An inherited pipe/file (tools, terminal) is already somewhere useful. Only the GUI launch needs redirecting,
+    // and RecompLauncher's, which gets the log's lines as well (log_tee_drain).
     // A relaunched game must still join its GUI session and publish its fallback copy on exit.
-    const char *inherited = getenv("LASRECOMP_LOG_FILE");
-    bool fresh = !inherited || !*inherited;
-    HANDLE err = GetStdHandle(STD_ERROR_HANDLE);
-    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) return;
+    const char *inherited = getenv("LASRECOMP_LOG_FILE"), *rl = getenv("RECOMPLAUNCHER");
+    bool fresh = !inherited || !*inherited, launcher = rl && *rl && strcmp(rl, "0");
+    HANDLE err = GetStdHandle(STD_ERROR_HANDLE), tee = INVALID_HANDLE_VALUE;
+    if (fresh && !g_cli && err && err != INVALID_HANDLE_VALUE && GetFileType(err) != FILE_TYPE_UNKNOWN) {
+        if (!launcher) return;
+        // (before freopen below closes the inherited handle)
+        if (!DuplicateHandle(GetCurrentProcess(), err, GetCurrentProcess(), &tee, 0, FALSE, DUPLICATE_SAME_ACCESS))
+            return;
+    }
     char dir[MAX_PATH];
     DWORD n = GetModuleFileNameA(NULL, dir, sizeof dir);
     if (!n || n >= sizeof dir) return;
@@ -523,6 +572,7 @@ static void log_to_file_without_console(void) {
     }
     atexit(publish_log);
     ReleaseMutex(g_log_mutex);
+    if (tee != INVALID_HANDLE_VALUE) log_tee_start(tee);
 }
 
 // The recompiled game code is built for x86-64-v3 (Makefile GENARCH: AVX2, FMA, BMI2): say so instead of crashing
@@ -542,6 +592,7 @@ static void require_cpu(void) {
 // Fatal error (rt_fatal_trace): what happened in plain words (runtime/crash_explain.c) in a message box, when there is
 // no console; the technical lines stay in the log.
 void plat_fatal_notice(void) {
+    log_tee_drain(false);
     publish_log();
     char text[1600];
     rt_crash_explain(text, sizeof text, g_log_path);
@@ -677,6 +728,7 @@ void plat_exec(char *const argv[]) {
     DWORD code = 1;
     if (!GetExitCodeProcess(pi.hProcess, &code)) code = 1;
     CloseHandle(pi.hProcess);
+    log_tee_drain(true);
     ExitProcess(code);
 }
 
@@ -767,28 +819,7 @@ ssize_t pwrite(int fd, const void *buf, size_t n, off_t off) { return prw(fd, (v
 // ---- child processes
 typedef struct { HANDLE process, job; } WinProcess;
 
-// Control Flow Guard and user-mode shadow stacks off for one child (plat_spawn_no_cfg), as process mitigation
-// policies: they win over the system-wide Exploit protection settings, which the exe's header (tools/pe_no_cfg.py)
-// does not. unicorn (the generator's jump tables) leaves the code it generated with longjmp from a setjmp that saved
-// no frame, and VCRUNTIME140's longjmp stops the process (0xC0000409) for that when CFG is on (#337); with a shadow
-// stack it would unwind instead (RtlUnwindEx), through generated code that has no unwind data. Under x64 emulation
-// on ARM (Windows 11 26H1) the generator still ended there with both off, so it now replaces unicorn's setjmp and
-// longjmp with its own (tools/win_longjmp.py, #779).
-#ifndef PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY
-#define PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY 0x00020007
-#endif
-#ifndef PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF
-#define PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF (0x00000002ull << 40)
-#endif
-#ifndef PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF
-#define PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF (0x00000002ull << 28)
-#endif
-
-// no_cfg: NULL = a plain start; else *no_cfg = 0 when the child runs with CFG off, or the error that prevented it
-// (then it is started without the policy). *no_ss likewise for shadow stacks: a Windows that doesn't take that
-// policy gets CFG off alone.
-static PlatProc spawn_child(const char *const argv[], const char *log_path, bool append_log, unsigned long *no_cfg,
-                            unsigned long *no_ss) {
+PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
     static __thread char cmd[32768];
     cmd[0] = 0;
     for (int i = 0; argv[i]; i++) append_arg(cmd, sizeof cmd, argv[i]);
@@ -808,41 +839,7 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
     MultiByteToWideChar(CP_UTF8, 0, argv[0], -1, wprog, MAX_PATH);
     for (wchar_t *p = wprog; *p; p++) if (*p == L'/') *p = L'\\';
     const wchar_t *app = GetFullPathNameW(wprog, MAX_PATH, wfull, NULL) ? wfull : NULL;
-    BOOL ok = FALSE;
-    if (no_cfg) {
-        *no_cfg = *no_ss = ERROR_NOT_SUPPORTED;
-        // first both policies, then CFG alone (a Windows without shadow stack support may refuse the second word)
-        for (int both = 1; both >= 0 && !ok; both--) {
-            STARTUPINFOEXW six = {.StartupInfo = si};
-            six.StartupInfo.cb = sizeof six;
-            DWORD64 policy[2] = {PROCESS_CREATION_MITIGATION_POLICY_CONTROL_FLOW_GUARD_ALWAYS_OFF,
-                                 both ? PROCESS_CREATION_MITIGATION_POLICY2_CET_USER_SHADOW_STACKS_ALWAYS_OFF : 0};
-            unsigned long e;
-            SIZE_T size = 0;
-            InitializeProcThreadAttributeList(NULL, 1, 0, &size);
-            six.lpAttributeList = size ? (LPPROC_THREAD_ATTRIBUTE_LIST)malloc(size) : NULL;
-            if (!six.lpAttributeList || !InitializeProcThreadAttributeList(six.lpAttributeList, 1, 0, &size)) {
-                e = six.lpAttributeList ? GetLastError() : ERROR_NOT_ENOUGH_MEMORY;
-                free(six.lpAttributeList);
-                six.lpAttributeList = NULL;
-            } else if (!UpdateProcThreadAttribute(six.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
-                                                  policy, sizeof policy, NULL, NULL)) {
-                e = GetLastError();
-            } else {
-                ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE,
-                                    CREATE_NO_WINDOW | CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
-                                    &six.StartupInfo, &pi);
-                e = ok ? 0 : GetLastError();  // (older Windows: ERROR_INVALID_PARAMETER; or a policy refuses it)
-            }
-            if (six.lpAttributeList) {
-                DeleteProcThreadAttributeList(six.lpAttributeList);
-                free(six.lpAttributeList);
-            }
-            if (both) *no_ss = e;
-            if (ok || !both) *no_cfg = e;
-        }
-    }
-    if (!ok) ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+    BOOL ok = CreateProcessW(app, wcmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED, NULL, NULL, &si, &pi);
     if (!ok) fprintf(stderr, "[plat] could not start %s (error %lu)\n", argv[0], GetLastError());
     CloseHandle(log);
     if (!ok) return 0;
@@ -869,19 +866,6 @@ static PlatProc spawn_child(const char *const argv[], const char *log_path, bool
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
     return (PlatProc)child;
-}
-
-PlatProc plat_spawn(const char *const argv[], const char *log_path, bool append_log) {
-    return spawn_child(argv, log_path, append_log, NULL, NULL);
-}
-
-PlatProc plat_spawn_no_cfg(const char *const argv[], const char *log_path, bool append_log, unsigned long *error,
-                           unsigned long *shadow_stack_error) {
-    unsigned long e = 0, ss = 0;
-    PlatProc p = spawn_child(argv, log_path, append_log, &e, &ss);
-    if (error) *error = e;
-    if (shadow_stack_error) *shadow_stack_error = ss;
-    return p;
 }
 
 void plat_proc_kill(PlatProc p) {

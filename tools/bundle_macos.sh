@@ -2,8 +2,8 @@
 # make app: build/LAS Recomp.app from <exe> (default build/mac15/lasrecomp). Contents/MacOS: the executable;
 # Contents/Frameworks: every non-system dylib it loads (SDL3, FFmpeg; from build/deps, else Homebrew), load
 # paths rewritten to @rpath; Contents/Resources: the icon and what the start screen builds the game code with on the
-# player's machine (runtime/gamebuild.c): the generator helper (build/helper/lasgen), the compiler (build/zig, tools/fetch_zig.sh)
-# and the headers the code is compiled against (gamelib-src/); Contents/Frameworks/Sparkle.framework: the updater
+# player's machine (runtime/gamebuild.c, whose generator is in the executable): the compiler (build/zig,
+# tools/fetch_zig.sh) and the headers the code is compiled against (gamelib-src/); Contents/Frameworks/Sparkle.framework: the updater
 # (tools/fetch_sparkle.sh, runtime/ui/sparkle.mm), with the feed of this build's channel. Ad-hoc signed. No game files, game code or fonts: the
 # app keeps those in ~/Library/Application Support/<bundle id> (runtime/paths.h).
 # MACOS_MIN=<x.y>: LSMinimumSystemVersion, and every Mach-O inside must be built for it or older (else it fails and
@@ -22,10 +22,8 @@ read -r VERSION BUILD_NUMBER <<EOF_V
 $(tools/bundle_version.sh "$TAG" "$TEST_OF")
 EOF_V
 [ -n "$BUILD_NUMBER" ] || { echo "no bundle version for $TAG"; exit 1; }
-GEN_HELPER=build/helper/lasgen
 ZIG=build/zig
 [ -x "$EXE" ] || { echo "no $EXE"; exit 1; }
-[ -x "$GEN_HELPER/lasgen" ] || { echo "no $GEN_HELPER (make gen-helper)"; exit 1; }
 [ -x "$ZIG/zig" ] || { echo "no $ZIG (tools/fetch_zig.sh)"; exit 1; }
 # the app must hold no game code: that's built on the player's machine (grep without -q: with pipefail, nm cut off
 # early would hide a match)
@@ -57,17 +55,16 @@ if [ "$UPDATE_KEY" != "$(printf '%064d' 0)" ]; then
     <key>SUEnableAutomaticChecks</key><false/>
     <key>SUVerifyUpdateBeforeExtraction</key><true/>"
 fi
-cp -R "$GEN_HELPER" "$C/Resources/lasgen"
 cp -R "$ZIG" "$C/Resources/zig"
 mkdir "$C/Resources/gamelib-src"
-cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c runtime/hle/hle_symbols.txt \
-   "$C/Resources/gamelib-src/"
+cp runtime/cpu.h runtime/simd.h runtime/simd_fp.h runtime/gamelib.h tools/gamelib_entry.c "$C/Resources/gamelib-src/"
 cp docs/icon/icon.icns "$C/Resources/icon.icns"
 cp docs/icon/icon_1024.png "$C/Resources/icon.png"  # (window / Dock icon at run time)
 cp third_party/fonts/Baloo2/Baloo2-SemiBold.ttf "$C/Resources/Baloo2-SemiBold.ttf"  # (start screen; OFL, README "License")
 cp third_party/fonts/Baloo2/OFL.txt "$C/Resources/Baloo2-OFL.txt"
 cp third_party/fonts/DejaVu/DejaVuSans.ttf third_party/fonts/DejaVu/DejaVuSans-Bold.ttf "$C/Resources/"  # (last-resort fonts)
 cp third_party/fonts/DejaVu/LICENSE "$C/Resources/DejaVu-LICENSE.txt"
+cp THIRD-PARTY-NOTICES.txt "$C/Resources/"  # (the licence texts of everything bundled: tools/notices.py; the .dmg has it too)
 
 # ---- dylibs: copy every non-system dependency, recursively; point all references at @rpath/<name>
 is_system() { case "$1" in /usr/lib/*|/System/*) return 0;; esac; return 1; }
@@ -161,8 +158,7 @@ done < <(machos)
 codesign -f -s - "$APP"
 codesign --verify --deep --strict "$APP"
 if find "$APP" -name 'lasgame*' | grep . >/dev/null; then echo "game code inside $APP"; exit 1; fi
-# no path of this machine inside (configure lines, debug paths, frozen Python's file names). Not on CI: its paths
-# name no one, and prebuilt wheels hold the CI runner's own (/Users/runner/...)
+# no path of this machine inside (configure lines, debug paths). Not on CI: its paths name no one
 if [ "${CI:-}" != true ]; then
     case "$(basename "$HOME")" in runner|runneradmin) home=() ;; *) home=(-e "$HOME") ;; esac
     if grep -rlaF -e "$PWD" ${home[@]+"${home[@]}"} "$APP"; then echo "^ these hold a path of this machine"; exit 1; fi

@@ -27,7 +27,7 @@
 // 16.2 ms or, in gameplay, shown a vsync late - see pace_frame -, and the median frame within ~3 ms of that: a few
 // hitches or spikes in frames that otherwise fit don't count), the game is held in its 30 fps mode: its least extra
 // vsyncs becomes 1, and the counters report a frame of at least PACE_SLOW_NS as before (its own dynamic resolution,
-// which read them too, is off: tools/patches.py GAME_DYNRES_SITE).
+// which read them too, is off: runtime/gen/patches.cpp GAME_DYNRES_SITE).
 // Its 30 fps mode is two world steps a frame (+0x4e0 counts the extra one down) and a present interval of 2 (+0x4e1 + 1,
 // to nvnWindowSetPresentInterval). On the Switch the display waits out that interval; here nothing did, so a held
 // frame that fit in one vsync was still shown after one: the game asked for interval 2 the whole hold, yet a Steam

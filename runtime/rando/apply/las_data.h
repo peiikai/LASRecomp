@@ -24,7 +24,7 @@ extern const char *const RED_TUNIC_FOUND_FLAG, *const BLUE_TUNIC_FOUND_FLAG;
 extern const char *const GORIYA_FLAG, *const MAMU_FLAG, *const MANBO_FLAG;
 extern const char *const BEACH_LOOSE_FLAG, *const WOODS_LOOSE_FLAG, *const POTHOLE_FLAG, *const DREAM_SHRINE_FLAG;
 extern const char *const ROOSTER_CAVE_FLAG, *const MERMAID_CAVE_FLAG;
-extern const char *const BOMBS_FOUND_FLAG, *const ROOSTER_FOUND_FLAG, *const BOWWOW_FOUND_FLAG;
+extern const char *const BOMBS_FOUND_FLAG, *const ROOSTER_GRAVE_FLAG, *const BOWWOW_FOUND_FLAG;
 extern const char *const INFINITE_BOMBS, *const INFINITE_ARROWS, *const INFINITE_POWDER, *const HIGH_JUMP;
 
 // check -> flag; check -> room (file name without .leb); item key -> model file; look -> chest model file

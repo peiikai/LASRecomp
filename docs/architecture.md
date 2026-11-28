@@ -8,18 +8,19 @@ fit together. File names are on the current development branch.
 1. **Game files.** The player picks a folder with their own extracted game files (`exefs/` and `romfs/`). The start
    screen (`runtime/ui/launcher.mm`) checks the game version by the main program's build ID (v1.0.0, v1.0.1 and
    v1.1.0 are supported) and keeps the files in the data folder. Nothing from the game ships with the app.
-2. **Recompiling.** `tools/gen.py` (with `lifter.py`, `passes.py`, `simd_c.py`) turns the AArch64 code of
+2. **Recompiling.** The generator (`runtime/gen/`, in the app; `make lasgen` builds it as a command-line tool) turns
+   the AArch64 code of
    `exefs/main` and `exefs/sdk` into C, one C function per game function. Indirect calls go through a lookup table
    from guest address to function (`runtime/dispatch.c`). FP and SIMD instructions become C helpers
    (`runtime/simd.h`, `simd_fp.h`) that match the Switch CPU's results, fused multiply-add included.
-3. **Code patches.** While generating, `tools/patches.py` changes or hooks specific instructions. Every patch checks
+3. **Code patches.** While generating, `runtime/gen/patches.cpp` changes or hooks specific instructions. Every patch checks
    the original instruction word first, so a wrong address or version fails the build instead of patching the wrong
    thing. A hook site calls `rt_hook()` (`runtime/hle/hooks.c`), so what a hook does can change without rebuilding
    the game code.
-4. **Building on the player's machine.** In a release, the start screen runs the frozen generator and a bundled
-   compiler (zig) to build the game code library from the player's files (`runtime/gamebuild.c`). The pieces are
+4. **Building on the player's machine.** In a release, the start screen runs the generator (inside the app) and a
+   bundled compiler (zig) to build the game code library from the player's files (`runtime/gamebuild.c`). The pieces are
    cached, so an update only rebuilds what changed. The C is split into files at fixed game addresses
-   (`tools/chunk_bounds.py`), so a change to one function only rebuilds its own file. In a source checkout, `make gen` and `make` do the same.
+   (`runtime/gen/chunk_bounds.inc`), so a change to one function only rebuilds its own file. In a source checkout, `make gen` and `make` do the same.
 5. **Loading.** `runtime/loader.c` loads the game code library (`runtime/gamelib.c`) and binds its imports, host
    (HLE) replacements first. `runtime/romfs_build.c` lays out the game's RomFS from the player's `romfs/` folder
    without copying the data.

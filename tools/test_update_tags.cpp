@@ -134,6 +134,22 @@ int main(void) {
         CHECK(newest_nightly(later, "windows-x64") == 202612200400LL, "new builds: the new name alone");
         CHECK(newest_nightly(later, "windows") == 0, "old builds don't take windows-x64 for theirs");
     }
+    {  // the file name bridge: ReAwakening-<kind>-... counts like LAS.Recomp-<kind>-..., the newest of either wins
+        std::string both = "\"name\":\"LAS.Recomp-nightly-202612010400-abc1234-macOS.dmg\"\n"
+                           "\"name\":\"ReAwakening-nightly-202612010400-abc1234-macOS.dmg\"\n";
+        std::string renamed = "\"name\":\"LAS.Recomp-nightly-202612010400-abc1234-macOS.dmg\"\n"
+                              "\"name\":\"ReAwakening-nightly-202612020400-def5678-macOS.dmg\"\n"
+                              "\"name\":\"ReAwakening-nightly-202612030400-0123456-android.apk\"\n"
+                              "\"name\":\"ReAwakening-experimental-202612040400-0123456-linux-aarch64.AppImage\"\n"
+                              "\"name\":\"ReAwakening-v0.7.0-macOS.dmg\"\n";
+        CHECK(newest_nightly(both, "macOS") == 202612010400LL, "both names, one round");
+        CHECK(newest_nightly(renamed, "macOS") == 202612020400LL, "the new name only: %lld", newest_nightly(renamed, "macOS"));
+        CHECK(newest_nightly(renamed, "android") == 202612030400LL, "android under the new name");
+        CHECK(newest_experimental(renamed, "linux-aarch64") == 202612040400LL, "experimental under the new name");
+        CHECK(newest_nightly(renamed, "linux-aarch64") == 0, "experimental files aren't nightlies");
+        CHECK(newest_nightly("\"name\":\"ReAwakening-nightly-2026120204-def5678-macOS.dmg\"\n", "macOS") == 0,
+              "a short stamp doesn't count");
+    }
     {  // the self-updater's manifests on the nightly page are never taken for a nightly build
         std::string body = "\"name\":\"update-macOS.txt\"\n\"name\":\"update-windows.txt\"\n"
                            "\"browser_download_url\":\"https://github.com/x/releases/download/nightly/update-windows.txt\"\n";

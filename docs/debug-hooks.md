@@ -47,7 +47,9 @@ else to a message box. PowerShell doesn't wait for a GUI program: pipe it (`.\la
 use `Start-Process -Wait`.
 
 Started by RecompLauncher (`RECOMPLAUNCHER=1` is set), there is no update check (the launcher installs updates), and
-`RECOMPLAUNCHER_MODE=bigpicture` starts fullscreen unless the command line says `--windowed`.
+`RECOMPLAUNCHER_MODE=bigpicture` starts fullscreen unless the command line says `--windowed`. The log is written as
+for any start (`lasrecomp.log`: next to the exe on Windows, in the data folder on Linux), and its lines also go to the
+stderr the launcher captures.
 
 The Windows zip, the AppImage (at its root) and the Linux tarball carry `recomplauncher.json`
 (`tools/recomplauncher.json`), RecompLauncher's profile: it asks for the extracted game files, runs `--prepare` on
@@ -88,6 +90,7 @@ lasrecomp --play --data-dir ~/Games/LAS --no-update-check --set resolution=2
 | `LARECOMP_WINDOW_POS` | `x,y` | Window position. |
 | `LARECOMP_HIDDEN` | 1 | Never show the window: renders off screen without taking focus. The game also keeps running when unfocused. |
 | `LARECOMP_SCALE` | number | Force the render height in units of 1080 lines (`0.5` = 540 lines, `1` = 1080, `2` = 2160). Overrides the resolution setting. |
+| `LARECOMP_PRESENT_AREA` | 0 | Downscale with one bilinear tap again (as before the area average) when the game renders larger than the window. For A/B shots. |
 | `LARECOMP_WINDOW_SHOT` | frame | Save the final window image (game and menus) at that frame. |
 | `LARECOMP_SHOT_PATH` | file path | Where `LARECOMP_WINDOW_SHOT` (and the start screen shot) is saved. Default `build/window.png`. |
 | `LARECOMP_EXIT_AFTER_SHOT` | 1 | Exit right after the `LARECOMP_WINDOW_SHOT` image is saved. |
@@ -371,7 +374,6 @@ the start screen's setup otherwise).
 | Variable | Values | What it does |
 |---|---|---|
 | `LARECOMP_GAME_LIB` | file path | Load the game code library from this path first. |
-| `LARECOMP_GEN` | file path | Code generator to use instead of the bundled `lasgen`. |
 | `LARECOMP_CC` | file path | Compiler to use instead of the bundled zig. |
 | `LARECOMP_GUEST_BASE` | hex address | Builds with `DYN_BASE=1` only: start the guest window here (4 GB aligned, ending below 2^39). Without it a desktop `DYN_BASE` build uses `0x7100000000`, so the game runs away from its own addresses. iOS (always `DYN_BASE`) ignores it: the window goes into a free gap found at start-up, 1 GB aligned (`plat_place_guest`). |
 

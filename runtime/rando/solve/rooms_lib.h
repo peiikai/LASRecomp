@@ -84,6 +84,7 @@ struct Room {
     std::array<Atoms, 4> shutter;
     std::vector<int> tex;                            // room_textures (indexes into the texture name table)
     std::map<std::tuple<int, int, int>, Land> land;  // (side, slot, min tile)
+    std::set<std::pair<int, int>> shallow_water;     // (side, tile index) of 'blocked:water' doors not over deep water
 };
 
 struct Data {

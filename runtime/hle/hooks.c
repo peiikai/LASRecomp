@@ -1,4 +1,4 @@
-// Hook points: instructions of the game's code that call into the runtime (tools/patches.py HOOKS). The generated
+// Hook points: instructions of the game's code that call into the runtime (runtime/gen/patches.cpp HOOKS). The generated
 // code at a hook site runs `rt_hook(c, site)` first; what a hook does lives here, so changing it rebuilds the app,
 // not the game code.
 //

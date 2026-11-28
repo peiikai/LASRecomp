@@ -77,9 +77,9 @@ public class LASRecompActivity extends SDLActivity {
         setWindowStyle(true);  // (SDL's immersive full screen: no status or navigation bar)
     }
 
-    // The game code builder's files (assets/gen.zip: Python's standard library, the bindings, the generator, zig's lib/,
-    // the headers) into <internal files>/gen, once per install or update, on a thread of its own: tens of thousands of
-    // files. gen/.ready marks it done (runtime/gamebuild.c waits for it).
+    // The game code builder's files (assets/gen.zip: zig's lib/, the headers) into <internal files>/gen, once per
+    // install or update, on a thread of its own: thousands of files. gen/.ready marks it done (runtime/gamebuild.c waits
+    // for it).
     private void unpackBuilder() {
         File dir = new File(getFilesDir(), "gen"), ready = new File(dir, ".ready");
         String stamp;

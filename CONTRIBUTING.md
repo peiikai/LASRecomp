@@ -59,8 +59,9 @@ if it has moved since you branched.
 
 See the README's "Building from source" for macOS, [docs/BUILD-windows.md](docs/BUILD-windows.md) for Windows,
 [docs/linux.md](docs/linux.md) for Linux and [docs/android.md](docs/android.md) for Android.
-In short: set up your own game files (v1.0.0, v1.0.1 or v1.1.0) on the start screen, `make gen` once to recompile the game code from
-them, then `make -j10`.
+In short: put your own game files (v1.0.0, v1.0.1 or v1.1.0) in `extracted/` (`exefs/` and `romfs/`), `make -j10`, `make gen`
+once to recompile the game code from them, then `make -j10` again. The generator (`runtime/gen/`) is C++ and builds
+with the app; no Python is needed for it.
 
 ## More documentation
 
@@ -71,10 +72,15 @@ them, then `make -j10`.
 
 ## Project layout
 
-- `tools/gen.py` - the recompiler: translates the game's executables into C (`generated/`, never committed).
-  `tools/patches.py` holds code patches applied during generation; every patch site checks the original instruction
-  word, so a wrong address fails loudly instead of silently. `tools/chunk_bounds.py` holds where the C is split into
-  files (made with `gen.py --new-chunk-bounds`; new cuts make every file compile once).
+- `runtime/gen/` - the recompiler: translates the game's executables into C (`generated/`, never committed). The app
+  runs it during setup; `make lasgen` builds it as a command-line tool (`make gen`). `runtime/gen/patches.cpp` holds
+  code patches applied during generation; every patch site checks the original instruction word, so a wrong address
+  fails loudly instead of silently. `runtime/gen/chunk_bounds.inc` holds where the C is split into files (made with
+  `lasgen --new-chunk-bounds`; new cuts make every file compile once).
+- `tools/gen.py` and its modules - the Python generator the C++ one was ported from, kept as the reference until the
+  port has shipped. A change to the generator, a patch or the chunk cuts goes into both, and
+  `tools/test_gen_cpp.py build/lasgen <game folder>` must report the C identical (gen.py needs a Python with
+  unicorn, capstone and lz4, e.g. `python3 -m venv tools/venv && tools/venv/bin/pip install unicorn capstone lz4`).
 - `runtime/game_addresses/` - the game's addresses, one table per game version: `versions.h` lists the versions
   by the main program's build ID (1.0.1 and 1.1.0 share one), `patches_<version>.h` holds the addresses used by the
   patch generator (read by `tools/game_addresses.py`, part of the game-library identity) and `runtime_<version>.h`
@@ -92,6 +98,10 @@ them, then `make -j10`.
 - `runtime/rando/` - the randomizer: seed generation (`solve/`), the game files a seed changes (`apply/`), the file
   formats (`fmt/`). See [docs/randomizer.md](docs/randomizer.md).
 - `third_party/LAS-Randomizer` - the licence of LAS-Randomizer (MIT), whose randomizer `runtime/rando/` is ported from.
+- `licenses/` - the license text of each third-party component the release packages carry, made by
+  `tools/notices.py`, which also writes `THIRD-PARTY-NOTICES.txt` (shipped at the root of every package). When you add
+  a bundled library or change a pinned version, update its entry in `tools/notices.py`, then run
+  `python3 tools/notices.py fetch <id>` and `python3 tools/notices.py build`.
 
 ## Testing your change
 
@@ -124,6 +134,10 @@ The comparison checks every generated C file byte-for-byte.
 New menu text is written in English. Run `python3 tools/menu_strings.py check` to see what each language is missing;
 untranslated text shows in English.
 
+`python3 tools/notices.py check` checks that `licenses/` and `THIRD-PARTY-NOTICES.txt` match the component list;
+`python3 tools/notices.py package <file>` checks a built .zip, .tar.gz, .dmg, .AppImage, .apk or .laskit carries the
+notices.
+
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 
 `python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
@@ -143,6 +157,10 @@ The updater: `tools/test_update.cpp` (manifest, signature, the swap and its roll
 `python3 tools/test_spirv_varyings.py` checks the Vulkan backend's varying renumbering (on for Mesa drivers, for PanVK
 before 26.1) on synthetic SPIR-V pairs: a vertex, tessellation evaluation or geometry shader with a fragment shader,
 and the cases it must leave alone. It needs a C compiler and SPIRV-Tools.
+
+`clang -O2 -pthread tools/test_soft_tracking.c -o build/test-soft-tracking && build/test-soft-tracking` checks the
+Linux soft page write tracking (mprotect + fault handler) against writer threads and a querying thread. It needs 4K
+pages: Linux, or macOS with `-arch x86_64` (Rosetta).
 
 Build-cache regression tests use synthetic inputs and the production scheduler:
 `python tools/test_build_cache.py` and `python tools/test_gamebuild_resume.py`.

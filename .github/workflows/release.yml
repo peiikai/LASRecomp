@@ -133,7 +133,7 @@ jobs:
             build/deps
             !build/deps/src
           key: deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/build_deps_macos.sh') }}
-      - name: Deps (SDL3, LGPL FFmpeg, Python)
+      - name: Deps (SDL3, LGPL FFmpeg)
         run: make deps
       - uses: actions/cache/save@v4
         if: steps.deps.outputs.cache-hit != 'true'
@@ -142,17 +142,12 @@ jobs:
             build/deps
             !build/deps/src
           key: ${{ steps.deps.outputs.cache-primary-key }}
-      - name: pip cache
-        uses: actions/cache@v4
-        with:
-          path: ~/Library/Caches/pip
-          key: pip-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
-      - name: Game code generator helper
-        run: make gen-helper
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       - name: App and disk image
         run: make -j"$(sysctl -n hw.ncpu)" dmg
+      - name: Third-party notices in the disk image and the app (#868)
+        run: python3 tools/notices.py package build/dist/*.dmg
       # bundle_macos.sh checked the executable; here everything inside the app: no game code in any Mach-O, no
       # game files, no generated C (gamelib-src/: the headers and the entry stub it's compiled with; zig/lib: zig's own
       # runtime sources)
@@ -195,11 +190,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.sha }}
-      # the generator helpers are frozen from a python.org-style CPython 3.12 (MSYS2's Python has no oead wheel)
-      - uses: actions/setup-python@v5
-        id: py
-        with:
-          python-version: '3.12'
       # MSYS2 UCRT64 as tools/setup_windows.ps1 sets it up (minus the debugger / validation layers; no FFmpeg:
       # the release links make deps-windows' LGPL one), nasm for FFmpeg's VP9 assembly, zip / unzip for the
       # release zip and the compiler download
@@ -227,10 +217,6 @@ jobs:
             build/deps-win
             !build/deps-win/src
           key: ${{ steps.deps.outputs.cache-primary-key }}
-      - name: Generator helpers
-        run: |
-          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make gen-helper GEN_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
@@ -238,6 +224,10 @@ jobs:
       #  manifest, update-windows.txt, which keeps its name)
       - name: Release zip
         run: make -j"$(nproc)" dist
+      # (the runner's own Python: MSYS2 here has none)
+      - name: Third-party notices in the zip (#868)
+        shell: pwsh
+        run: python tools/notices.py package (Get-ChildItem build/dist/*.zip).FullName
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -273,12 +263,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.check.outputs.sha }}
-      # the generator helpers are frozen from a python.org-style CPython 3.12 (MSYS2's Python has no oead wheel)
-      - uses: actions/setup-python@v5
-        id: py
-        with:
-          python-version: '3.12'
-          architecture: x64  # (as nightly.yml: the x64 Python, emulated, for the generator helpers)
       # MSYS2 CLANGARM64, as nightly.yml's Windows on ARM build
       - uses: msys2/setup-msys2@v2
         with:
@@ -303,15 +287,15 @@ jobs:
             build/deps-win
             !build/deps-win/src
           key: ${{ steps.deps.outputs.cache-primary-key }}
-      - name: Generator helpers
-        run: |
-          PY=$(cygpath -u '${{ steps.py.outputs.python-path }}')
-          make gen-helper GEN_PY="$PY"
       - name: Compiler for the player's machine
         run: tools/fetch_zig.sh
       # (make dist: the exe holds no game code, no GPL codec libraries)
       - name: Release zip
         run: make -j"$(nproc)" dist
+      # (the runner's own Python: MSYS2 here has none)
+      - name: Third-party notices in the zip (#868)
+        shell: pwsh
+        run: python tools/notices.py package (Get-ChildItem build/dist/*.zip).FullName
       - name: No game files or generated C
         run: |
           D="build/dist/LAS Recomp"
@@ -366,6 +350,8 @@ jobs:
           for t in aarch64-macos x86_64-linux aarch64-linux x86_64-windows aarch64-windows; do LLD_TARGET=$t tools/fetch_lld.sh; done
       - name: Kit
         run: make -j"$(sysctl -n hw.ncpu)" ios-kit
+      - name: Third-party notices in the kit and its app (#868)
+        run: python3 tools/notices.py package build/dist/*.laskit
       # bundle_ios.sh checked the executable; here the whole app: no game code in any Mach-O (f_70...: the game's own
       # addresses, under --dyn-base too), no game files; and the kit as the runtime reads it: the app under Payload/,
       # no symlink entries in it (an iOS install drops them; zipinfo's 'l'), every host's linker in it
@@ -397,8 +383,8 @@ jobs:
           compression-level: 0
 
   # Each arch on a runner of its own arch: tools/linux/appimage.sh then builds everything natively in one container
-  # (its cross path - the amd64 container plus the arm64 one under QEMU for the generator helpers - stays for an
-  # x86-64 machine building the aarch64 AppImage).
+  # (its cross path - the amd64 container against the arm64 one's files - stays for an x86-64 machine building the
+  # aarch64 AppImage).
   linux:
     needs: check
     if: needs.check.outputs.skip != 'true'
@@ -419,27 +405,17 @@ jobs:
         with:
           path: build/linux/${{ matrix.arch }}/deps
           key: deps-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/build_deps.sh', 'tools/linux/Containerfile') }}
-      # the helper's wheels
-      - name: Wheels cache
-        id: wheels
-        uses: actions/cache/restore@v4
-        with:
-          path: build/linux/${{ matrix.arch }}/wheels
-          key: wheels-linux-${{ matrix.arch }}-${{ hashFiles('tools/linux/gen_helper.sh', 'tools/linux/Containerfile') }}
       - name: AppImage
         run: make appimage ARCH=${{ matrix.arch }}
-      # saved once complete (shaderc: build_deps.sh's last part; .ok: the helper's wheels all installed), even when a
+      - name: Third-party notices in the AppImage (#868)
+        run: python3 tools/notices.py package build/dist/*.AppImage
+      # saved once complete (shaderc: build_deps.sh's last part), even when a
       # later part of the build fails
       - uses: actions/cache/save@v4
         if: always() && steps.deps.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/deps/lib/libshaderc_shared.so*', matrix.arch)) != ''
         with:
           path: build/linux/${{ matrix.arch }}/deps
           key: ${{ steps.deps.outputs.cache-primary-key }}
-      - uses: actions/cache/save@v4
-        if: always() && steps.wheels.outputs.cache-hit != 'true' && hashFiles(format('build/linux/{0}/gen-venv/.ok', matrix.arch)) != ''
-        with:
-          path: build/linux/${{ matrix.arch }}/wheels
-          key: ${{ steps.wheels.outputs.cache-primary-key }}
       # package.sh checked the executable; here the whole AppDir that was packed (readelf: any arch's ELF), then the
       # tarball made from it (the same files in one folder, for places without FUSE: tools/linux/tarball.sh)
       - name: No game code
@@ -447,6 +423,7 @@ jobs:
       - name: Tarball
         run: |
           make tarball ARCH=${{ matrix.arch }}
+          python3 tools/notices.py package build/dist/*.tar.gz  # (third-party notices, #868)
           ls -la build/dist
       - name: Data folder rules
         run: tools/linux/check_portable.sh ${{ matrix.arch }}
@@ -498,6 +475,7 @@ jobs:
           grep -aq "nightly-$STAMP-$COMMIT" dl/squashfs-root/usr/bin/lasrecomp || { echo "::error::$NAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
           # (as the linux job's check)
           tools/linux/check_no_game_code.sh dl/squashfs-root
+          python3 tools/notices.py package dl/squashfs-root  # (third-party notices, #868)
           cp "dl/$NAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.AppImage"
           # the same round's tarball, when that nightly has one (nightlies from before the tarball don't: then the
           # release has no linux-aarch64 tarball, and says nothing of it)
@@ -509,6 +487,7 @@ jobs:
             mkdir dl/tar && tar -xzf "dl/$TNAME" -C dl/tar
             grep -aq "nightly-$STAMP-$COMMIT" "dl/tar/LAS Recomp/usr/bin/lasrecomp" || { echo "::error::$TNAME is not nightly-$STAMP-$COMMIT inside"; exit 1; }
             tools/linux/check_no_game_code.sh "dl/tar/LAS Recomp"
+            python3 tools/notices.py package "dl/tar/LAS Recomp"
             cp "dl/$TNAME" "build/dist/LAS Recomp-$VERSION-linux-aarch64.tar.gz"
           else echo "::warning::no $TNAME on the nightly release: no linux-aarch64 tarball in this release"; fi
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
@@ -545,7 +524,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: android/deps/out
-          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh', 'android/gen/**') }}
+          key: android-deps-${{ hashFiles('android/deps/build_deps.sh', 'android/deps/build_gen_deps.sh') }}
       - name: Dependencies (SDL3, shaderc, volk, Vulkan headers; the game code builder)
         if: steps.deps.outputs.cache-hit != 'true'
         run: |
@@ -576,6 +555,7 @@ jobs:
           APK=android/app/build/outputs/apk/release/app-release.apk
           "$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner" verify --print-certs "$APK"
           tools/check_apk.sh "$APK"
+          python3 tools/notices.py package "$APK"  # (third-party notices at its root, #868)
           mkdir -p build/dist && cp "$APK" "build/dist/LAS Recomp-$VERSION-android.apk" && ls -la build/dist
       - uses: actions/upload-artifact@v4
         with:

@@ -511,6 +511,37 @@ void pets_apply(SeedBuild &b) {
         f.remove_after("Event6");
         b.write_flow("Field.bfevfl", flow);
     }
+    if (pets[0] == 0 && placed(d, "rooster-statue") != "rooster") {
+        // The grave's song gives the check at rooster-statue, not the rooster (he comes from his own item; reviving
+        // him too gave a second rooster and skipped the logic). After the bones turn to light the whiteout fades
+        // back, the item is held up and the zone music returns. The bones stay gone once the item is given: their
+        // layout condition (one that hides them: the rooster following; LAS already dropped the Evening Calm Organ
+        // one, npc_changes) becomes data::ROOSTER_GRAVE_FLAG, so a found rooster following Link doesn't hide them.
+        // (Seeds from before this hold the rooster there, as one now can by chance: the vanilla revival gives him.)
+        GSheet npcs = b.read_sheet("Npc.gsheet");
+        GStruct *bones = nullptr;
+        for (GStruct &v : npcs.values)
+            if (!bones && at(v, "symbol").s == "ObjRoosterBones") bones = &v;
+        if (!bones) throw std::runtime_error("pets: no ObjRoosterBones");
+        GValue &lc = at(*bones, "layoutConditions");
+        if (lc.structs.size() != 1 || at(lc.structs[0], "parameter").s != "FlyingCucco")
+            throw std::runtime_error("pets: ObjRoosterBones changed");
+        lc.structs = {{{"category", gi(1)}, {"parameter", gs(data::ROOSTER_GRAVE_FLAG)}, {"layoutID", gi(-1)}}};
+        b.write_sheet("Npc.gsheet", npcs);
+        EventFlow flow = b.read_flow("RoosterBones.bfevfl");
+        EvflFlowchart &fc = flow.flowchart;
+        Flow f(b, fc);
+        EvflEvent &e6 = f.event("Event6"), &e18 = f.event("Event18");
+        if (fc.actors[e6.actor].actions[e6.action] != "Destroy" || e6.next != event_index(fc, "Event5") ||
+            fc.actors[e18.actor].actions[e18.action] != "StartPreset")
+            throw std::runtime_error("pets: RoosterBones.bfevfl changed");
+        SeedBuild::ItemInfo it = b.item_info("rooster-statue", false);
+        std::string music = f.action("Audio", "PlayZoneBGM", {{"stopbgm", true}}, "Event37");
+        std::string get = insert_item_get(f, it.key, it.index, "", music);
+        std::string fade = f.action("Fade", "StartPreset", {{"preset", 10}}, get);
+        f.insert_after("Event6", f.action("EventFlags", "SetFlag", {{"symbol", data::ROOSTER_GRAVE_FLAG}, {"value", true}}, fade));
+        b.write_flow("RoosterBones.bfevfl", flow);
+    }
     if (marin) {
         EventFlow flow = b.read_flow("Walrus.bfevfl");
         EvflFlowchart &fc = flow.flowchart;

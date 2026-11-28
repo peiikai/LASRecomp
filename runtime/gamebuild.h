@@ -1,5 +1,5 @@
 // Builds the game code library (runtime/gamelib.h) on the player's machine, from their own game files: the generator
-// (tools/gen.py; shipped frozen as lasgen/) turns exefs/main and exefs/sdk into C, the bundled compiler (zig/) builds
+// (runtime/gen/, in the app) turns exefs/main and exefs/sdk into C, the bundled compiler (zig/) builds
 // that into <game_dir>/lasgame.*. The compiled pieces are kept in <game_dir>/.gamebuild: an update compiles only the
 // pieces whose generated C changed.
 #pragma once
@@ -29,8 +29,6 @@ typedef struct {
 bool gamebuild_run(const char *game_dir, const GameBuildOpts *opts, char *why, size_t why_size);
 // After a failed gamebuild_run: a helper was killed by a signal (e.g. out of memory); why then says so, for the player.
 bool gamebuild_killed(void);
-// After a failed gamebuild_run: Windows security settings (Control Flow Guard) stopped the generator (#337).
-bool gamebuild_cfg_stopped(void);
 // The generator and the compiler are there (shipped builds; a source checkout with tools/venv and clang).
 bool gamebuild_available(void);
 // The iOS build's tools: the bundled zig, and in the kit (a .laskit file, tools/ios_kit.sh, never a folder) the app,

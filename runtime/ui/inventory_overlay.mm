@@ -5,7 +5,7 @@
 // dungeon's keys.) With boss / mini-boss souls on, a column right of the item grid shows each dungeon's souls.
 // Pets (runtime/hle/pets.c): the Ghost item sits in the equipment panel's free slot (left of the Secret Medicine),
 // ticked once laid to rest; a companion card left of the panel shows who follows Link and switches it (the page
-// cursor reaches it with LEFT from the grid, pets.c). The Items page is detected by tools/patches.py ITEMS_PAGE_SITE.
+// cursor reaches it with LEFT from the grid, pets.c). The Items page is detected by runtime/gen/patches.cpp ITEMS_PAGE_SITE.
 #include "../game_addresses.h"
 #include <math.h>
 #include <stdint.h>
@@ -87,7 +87,7 @@ extern "C" void rt_items_page_tick(void) {
     if (c) g_items_obj = c->x[0];
 }
 
-// tools/patches.py PAUSE_MENU_SITE: the pause menu's update ran (any page, and between pages)
+// runtime/gen/patches.cpp PAUSE_MENU_SITE: the pause menu's update ran (any page, and between pages)
 static std::atomic<uint64_t> g_pause_frame{0};
 extern "C" void rt_pause_menu_tick(void) { g_pause_frame = renderer_present_count(); }
 // mobile/touch_controls.mm: the pause menu is up (L / R there turn its pages, not the boots / shield)
@@ -112,7 +112,7 @@ extern "C" int inventory_items_cursor(void) {
 extern "C" uint64_t inventory_items_obj(void) { return g_items_obj; }
 
 // A tap on an Items page cell or a file select file (runtime/ui/mobile/touch_controls.mm): where the next cursor move
-// goes, whatever the direction pressed, so the cursor goes straight there with the game's own move (tools/patches.py
+// goes, whatever the direction pressed, so the cursor goes straight there with the game's own move (runtime/gen/patches.cpp
 // ITEMS_NAV_SITE, FILE_SELECT_NAV_SITE). An ask lapses after 15 frames, so a later press of the player's own is never
 // taken over. LARECOMP_ITEMS_JUMP / LARECOMP_FILE_JUMP=<n> (tests): the first move there goes to n.
 struct NavJump {

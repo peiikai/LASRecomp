@@ -16,7 +16,7 @@ static uint64_t g_world_frame = ~0ull;  // the mirrored scene was drawn
 static uint64_t g_scene_frame = ~0ull;  // the scene composite was drawn (mirrored or not)
 
 // Could an image of sw x sh be the scene, composited into a w x h window image? The game's dynamic resolution rendered
-// busy scenes smaller (1536x864, 1280x720 into a 1920x1080 window image: the outdoors, D8; off now - tools/patches.py
+// busy scenes smaller (1536x864, 1280x720 into a 1920x1080 window image: the outdoors, D8; off now - runtime/gen/patches.cpp
 // GAME_DYNRES_SITE - but LARECOMP_GAME_DYNRES=1 brings it back), so any size from half the
 // window's width up, at its aspect ratio; the scratch draws into the window images sample a quarter of it or less.
 // (Requiring the window's own size left those frames unmirrored: the world flipped back and forth, issue #66.)
@@ -96,7 +96,7 @@ bool mirror_input(void) {
 
 
 // The in-world action prompt ("Lift", "Read", "Talk"... - Cm_HUD's L_Interact_00) sits at its target's spot on screen.
-// tools/patches.py PROMPT_POS_SITE: the HUD writes the prompt pane's translation (x right of the centre) each time it
+// runtime/gen/patches.cpp PROMPT_POS_SITE: the HUD writes the prompt pane's translation (x right of the centre) each time it
 // places it; in mirror mode, with the mirrored world on screen, x is mirrored - the prompt itself reads as ever.
 #include <string.h>
 #include "../hle.h"
