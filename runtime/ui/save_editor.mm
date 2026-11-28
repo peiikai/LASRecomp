@@ -454,8 +454,10 @@ extern "C" void save_editor_draw(float scale) {
 }
 
 // ---- debug helpers (LARECOMP_SAVE_DUMP_AT=<frame>: log the live save at that frame)
+extern "C" void achievements_save_read(uint64_t, int64_t, int64_t);
 extern "C" void save_editor_file_read(const char *path, uint64_t addr, int64_t off, int64_t size) {
-    (void)path; (void)addr; (void)off; (void)size;
+    (void)path;
+    achievements_save_read(addr, off, size);
 }
 
 extern "C" void cheats_frame(void);      // cheats.mm

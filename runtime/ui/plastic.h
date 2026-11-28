@@ -47,7 +47,7 @@ bool plastic_close_corner(float size, float scale);
 // touch screens: the same X inside the current window (a pane), at its top right
 bool plastic_close_pane(float size, float scale);
 // a round reset arrow just left of that X, the same size, with its tooltip; true when clicked
-bool plastic_reset_corner(float size, float scale);
+bool plastic_reset_corner(float size, float scale, const char *tip = nullptr);  // (tip: "Reset to vanilla")
 // iPhone: the screen's rounded corners' radius, in the current window's units (0 elsewhere); the menus set it each frame
 extern float g_plastic_corner_r;
 // touch screens: the centre height of the last pane's close X (plastic_close_pane) and the ImGui frame it was drawn in -

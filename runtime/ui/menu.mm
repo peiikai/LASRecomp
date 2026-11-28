@@ -118,7 +118,7 @@ static void set_open(bool open);
 // launcher.mm's.
 // (Cosmetics and Cheats left the Settings tabs for entries of their own: Cosmetics by Settings, Cheats by the Save
 // Editor - user 2026-11-11)
-enum { BAR_SETTINGS, BAR_COSMETICS, BAR_RANDO, BAR_WARP, BAR_EDITOR, BAR_CHEATS, BAR_RESET, BAR_QUIT, BAR_CLOSE, BAR_N };
+enum { BAR_SETTINGS, BAR_COSMETICS, BAR_RANDO, BAR_WARP, BAR_EDITOR, BAR_CHEATS, BAR_RESET, BAR_QUIT, BAR_ACHIEVEMENTS, BAR_CLOSE, BAR_N };
 static std::atomic<int> g_page{-1};  // the entry whose page is open (-1: the bar alone)
 static int g_bar_cur;  // the bar's cursor (render thread)
 static void page_open(int page);
@@ -129,13 +129,13 @@ static int g_shown_tab = -1000;  // the page drawn last (its id)
 extern "C" void menu_test_open(void) {
     set_open(true);
     // (test) LARECOMP_MENU_BAR=<entry>: the bar alone, its cursor on that entry. Otherwise a page, as before the bar:
-    // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 5 Cheats, 7 Cosmetics, 9 Quit, 10 Reset, any other a
+    // LARECOMP_MENU_TAB=4 Warp, 2 Save Editor, 3 Randomizer, 5 Cheats, 7 Cosmetics, 9 Quit, 10 Reset, 12 Achievements, any other a
     // Settings tab
     if (getenv("LARECOMP_MENU_NOTICE")) menu_save_failed(getenv("LARECOMP_SAVE_DIR"));  // (test: the failed-save notice)
     if (getenv("LARECOMP_MENU_BAR")) { g_bar_cur = atoi(getenv("LARECOMP_MENU_BAR")) % BAR_N; return; }
     int t = getenv("LARECOMP_MENU_TAB") ? atoi(getenv("LARECOMP_MENU_TAB")) : -1;
     int page = t == 4 ? BAR_WARP : t == 2 ? BAR_EDITOR : t == 3 ? BAR_RANDO : t == 5 ? BAR_CHEATS : t == 7 ? BAR_COSMETICS
-             : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET : BAR_SETTINGS;
+             : t == 9 ? BAR_QUIT : t == 10 ? BAR_RESET : t == 12 ? BAR_ACHIEVEMENTS : BAR_SETTINGS;
     page_open(page);
     if (t >= 0 && page == BAR_SETTINGS) { extern int g_tab_request_ext; g_tab_request_ext = t; }
     // (test) LARECOMP_PREVIEW=<row label>: that row's live preview opens straight away (its page: LARECOMP_MENU_TAB)
@@ -725,6 +725,8 @@ static void tab_display(void) {
                    "current level. Mostly for testing and bug reports.");
         opt_child_end();
     }
+    opt_toggle("Show achievement popups", &g_settings.achievement_popups, false,
+               "Shows a short popup when you earn an achievement.");
 #ifdef __APPLE__
     if (opt_toggle("Metal HUD", &g_settings.metal_hud, false,
                    "Shows Apple's performance overlay with frame rate, GPU time and memory. Turning it on may need a "
@@ -1195,6 +1197,33 @@ static bool vanilla_popup(float scale, bool seed, bool in_game) {
     return reset;
 }
 
+// The Achievements page's reset corner: a yes / no first (as Reset to vanilla)
+extern "C" void achievements_clear_all(void);
+static void achievements_reset_popup(float scale) {
+    if (!ImGui::BeginPopupModal("##achreset", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar))
+        return;
+    ImGui::PushFont(g_font_big);
+    ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Reset achievements?"));
+    ImGui::PopFont();
+    ImGui::Spacing();
+    ImGui::TextUnformatted(L("This clears all achievements.\nThe next save you load counts its progress again."));
+    ImGui::Spacing();
+    ImGui::Spacing();
+    ImVec2 bs(220 * scale, 0);
+    for (const char *s : {L("Reset"), L("Cancel")})
+        bs.x = fmaxf(bs.x, ImGui::CalcTextSize(s).x + 2 * ImGui::GetStyle().FramePadding.x + 16 * scale);
+    if (ImGui::Button(L("Reset"), bs)) {
+        ImGui::CloseCurrentPopup();
+        achievements_clear_all();
+    }
+    ImGui::SameLine();
+    ImGui::SetItemDefaultFocus();
+    if (ImGui::Button(L("Cancel"), bs) || ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 extern "C" bool inventory_overlay_wanted(void);
 extern "C" bool tracker_overlay_wanted(void);
 extern "C" bool tracker_dungeon_wanted(void);
@@ -1205,6 +1234,9 @@ extern "C" void chaos_overlay_draw(ImVec2 display, ImFont *font);
 extern "C" void inventory_overlay_draw(ImVec2 display, ImFont *font);
 extern "C" bool race_overlay_wanted(void);
 extern "C" void race_overlay_draw(ImVec2 display, ImFont *font, float scale);
+extern "C" bool achievements_overlay_wanted(bool menu_open, bool kbd);
+extern "C" void achievements_menu_draw(void);
+extern "C" void achievements_overlay_draw(ImVec2 display, ImFont *font, float scale);
 extern "C" bool pickup_flyin_wanted(void);  // (silent pickups: pickup_flyin.mm)
 extern "C" void pickup_flyin_draw(ImVec2 display, ImFont *font, float scale);
 extern "C" bool race_overlay_key(char *out, size_t cap);
@@ -1744,7 +1776,7 @@ bool menu_reset_corner(float bx, float scale, ImFont *font, ImFont *font_big, bo
 // the entry under it, a click opens it (the page is drawn from the next frame: the press that opened it isn't the
 // page's too).
 static const char *g_bar_names[BAR_N] = {LN("Settings"), LN("Cosmetics"), LN("Randomizer"), LN("Warp"), LN("Save Editor"),
-                                         LN("Cheats"), LN("Reset"), LN("Quit"), ""};
+                                         LN("Cheats"), LN("Reset"), LN("Quit"), LN("Achievements"), ""};
 // an entry's tab at x, y (w x ph), its name in the current font at size fs
 static void bar_entry(ImDrawList *dl, float x, float y, float w, float ph, float pad, float fs, bool sel, bool hot,
                       const char *name, float scale) {
@@ -2078,6 +2110,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     bool kbd = g_kbd.load() == 1;
     bool race = race_overlay_wanted();  // (run timer, race seed hash: race_overlay.mm)
     bool flyin = pickup_flyin_wanted() && !open;  // (a silent pickup's card)
+    bool achievement = achievements_overlay_wanted(open, kbd);
     bool dpad = !open && dpad_overlay_wanted();
 #ifdef __APPLE__
     plastic_perf_note(cb, open);  // (LARECOMP_UI_PERF test only)
@@ -2089,7 +2122,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
     // (the stick / D-pad takes the thumb on the Movement row's preview only: on the others the panel may sit over it)
     touch_preview_play(PLAT_TOUCH && open && preview_active() && g_tab == 10 && g_settings.touch_mode != 2 &&
                        !strcmp(preview_label(), "Movement"));
-    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin, dpad, touch)) {
+    if (!render_needed(open, kbd, inv, trk, trkd, chaos, race, flyin || achievement, dpad, touch)) {
         if (g_inited) { pthread_mutex_lock(&q_lock); q_events.clear(); pthread_mutex_unlock(&q_lock); }
         g_ov_same = 0;  // (shown again: built afresh first)
         return;
@@ -2118,7 +2151,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         // (only the FPS counter, the run timer and the d-pad cross; input only reaches ImGui while the menu or the name
         // entry is up)
         // (not the advanced overlay: it changes every frame)
-        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !touch && !(g_settings.show_fps && g_settings.fps_advanced) &&
+        if (!open && !kbd && !inv && !trk && !trkd && !chaos && !flyin && !achievement && !touch && !(g_settings.show_fps && g_settings.fps_advanced) &&
             race_overlay_key(rk, sizeof rk)) {
             pthread_mutex_lock(&q_lock);
             bool events = !q_events.empty();
@@ -2208,6 +2241,7 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
         else fps_box(scale);
     }
 
+    if (achievement) achievements_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont(), scale);
     if (race) race_overlay_draw(io.DisplaySize, g_menu_font_big, scale);
     if (dpad) dpad_overlay_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont(), scale);
     if (flyin) pickup_flyin_draw(io.DisplaySize, g_font_big ? g_font_big : ImGui::GetFont(), scale);
@@ -2279,10 +2313,13 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                           page == BAR_CHEATS;  // (touch: their X is in a pane, or on the page's first line: menu_page_head)
 #if PLAT_TOUCH
             // (an icon for the title; Settings': tabs_body)
-            float page_indent = page != BAR_SETTINGS ? menu_page_corner(only[page], scale) : 0;
+            float page_indent = page != BAR_SETTINGS && page != BAR_ACHIEVEMENTS ? menu_page_corner(only[page], scale) : 0;
+            if (page == BAR_ACHIEVEMENTS)
+                ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L("Achievements"));
 #else
             ImGui::PushFont(g_font_big);
-            ImGui::TextColored(plastic_col(plastic_theme().title), "%s", L(titles[page]));
+            ImGui::TextColored(plastic_col(plastic_theme().title), "%s",
+                               page == BAR_ACHIEVEMENTS ? L("Achievements") : L(titles[page]));
             ImGui::PopFont();
 #endif
             bool back = false;
@@ -2293,11 +2330,16 @@ void menu_render(void *cmd, uint32_t target_w, uint32_t target_h) {
                     if (plastic_reset_corner(bx, scale)) ImGui::OpenPopup("##vanilla");
                     vanilla_popup(scale, rando_seed_dir() != NULL, true);
                 }
+                if (page == BAR_ACHIEVEMENTS) {
+                    if (plastic_reset_corner(bx, scale, LN("Reset achievements"))) ImGui::OpenPopup("##achreset");
+                    achievements_reset_popup(scale);
+                }
             }
 
             bool any_popup = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId), typing = ui_text_busy();  // (before
             g_page_x = PLAT_TOUCH && (page == BAR_COSMETICS || page == BAR_CHEATS), g_page_x_scale = scale;
-            tabs_body(scale, true, NULL, only[page]);                                             //  the pages run)
+            if (page == BAR_ACHIEVEMENTS) achievements_menu_draw();
+            else tabs_body(scale, true, NULL, only[page]);
             g_page_x = false;
 #if PLAT_TOUCH
             if (page_indent > 0) ImGui::Unindent(page_indent);
