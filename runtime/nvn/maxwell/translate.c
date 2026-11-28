@@ -2464,10 +2464,12 @@ static ShaderInfo *glsl_finish(Ctx *c, bool any_branch, bool dbg) {
     return info;
 }
 
-// BRX (indirect branch, Vulkan / GLSL only): label just the targets its jump table can name. A BRX used to make every
+// BRX (indirect branch): label just the targets its jump table can name. A BRX used to make every
 // instruction a case of the dispatcher switch (any one may be a target): hundreds of cases falling into each other
 // inside the dispatcher loop. Suspected of what AMD's Windows driver never finishes building (issue #237: the dialogue
 // body text's vertex shader stayed "building", its draws skipped - Tarin's name showed, the message stayed blank).
+// Metal as well: with every instruction a case, Apple's compiler is slow on big BRX shaders (ReTri's cold start took
+// over 18 min on an M3 Max); LAS's BRX vertex shaders compile about 2x faster with the table's targets only.
 // The compiler puts the table in the program's own constants (cb1, after the code: blob + const_offset), loaded into
 // the BRX register by an LDC c[0x1][Rx + table] shortly before: BRX Ra, imm goes to pc + 8 + table[k] + imm. Entries
 // are read until one isn't an instruction of this shader (the end of the table; a word past it that still looks like
@@ -3216,7 +3218,7 @@ ShaderInfo *maxwell_translate(const uint8_t *blob, size_t max_size, int stage, c
         }
         if ((w & 0xfff0000000000000ull) == 0xe250000000000000ull) {  // BRX: its jump table's targets, else any instruction
             any_branch = true;
-            if (!c->glsl || !brx_table_labels(c, code, i, end, blob, max_size, label)) memset(label, 1, end);
+            if (!brx_table_labels(c, code, i, end, blob, max_size, label)) memset(label, 1, end);
         }
         if ((w & 0xfff8000000000000ull) == 0xf0f8000000000000ull || (w & 0xfff0000000000000ull) == 0xe340000000000000ull ||
             (w & 0xfff0000000000000ull) == 0xe350000000000000ull)
