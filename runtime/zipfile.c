@@ -131,6 +131,12 @@ bool zip_add_file(ZipWriter *w, const char *name, const char *path, bool compres
     return !w->failed;
 }
 
+bool zip_add_mem(ZipWriter *w, const char *name, const void *data, size_t size) {
+    if (w->failed) return false;
+    if (!mz_zip_writer_add_mem(&w->z, name, data, size, MZ_DEFAULT_LEVEL)) w->failed = true;
+    return !w->failed;
+}
+
 bool zip_add_from(ZipWriter *w, ZipReader *src, int i) {
     if (w->failed) return false;
     if (!mz_zip_writer_add_from_zip_reader(&w->z, &src->z, (mz_uint)i)) w->failed = true;

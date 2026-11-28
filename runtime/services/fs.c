@@ -23,6 +23,7 @@
 #include "../platform.h"
 #include "../game_addresses.h"
 #include "../romfs_build.h"
+#include "../saves.h"
 #include "../ui/menu.h"
 
 #define FS_PATH_NOT_FOUND MAKE_RESULT(2, 1)
@@ -1185,6 +1186,7 @@ static Service *open_host_fs(const char *sub) {
         if (g_live_mounts[i] && !strcmp(g_live_mounts[i]->root, fs->root)) other_live = true;
     if (fs->journaled && other_live) LOG("[save] %s is still mounted: its working copies are left alone\n", fs->root);
     if (fs->journaled && !other_live) {  // (a working copy left by a crash: never committed - dropped, as on the Switch)
+        saves_finish_dir(fs->root);  // (a cut-off import's set-aside files: back before the dropped working copies)
         if (!recover_save_flags(fs->root)) {
             int error = errno;
             pthread_mutex_unlock(&g_mount_lock);

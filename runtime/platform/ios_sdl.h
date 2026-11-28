@@ -19,6 +19,9 @@ void ios_ShowOpenFolderDialog(SDL_DialogFileCallback callback, void *userdata, S
 // folder (no security scope needed). The callback as above, with every path picked.
 void ios_ShowOpenFileDialog(SDL_DialogFileCallback callback, void *userdata, SDL_Window *window,
                             const SDL_DialogFileFilter *filters, int nfilters, const char *default_location, bool allow_many);
+// A file the app made put where the player picks in Files, as a copy (the start screen's Export saves). done on the
+// main thread: 1 saved, 0 cancelled, -1 no window to show the picker over.
+void ios_export_file(SDL_Window *window, const char *path, void (*done)(int result));
 // A file:// URL to a folder opens the Files app there (shareddocuments://); anything else as SDL opens it.
 bool ios_OpenURL(const char *url);
 #ifdef __cplusplus

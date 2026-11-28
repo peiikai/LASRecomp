@@ -32,6 +32,7 @@
 #include "pad_nav.h"
 #include "plastic.h"
 #include "ios_export_ui.h"
+#include "saves_ui.h"
 #include "live_preview.h"
 #include "menu.h"
 #include "mobile/touch_ui.h"
@@ -1007,6 +1008,8 @@ static std::vector<std::string> list_seeds() {
     if (DIR *d = opendir("rando")) {
         while (struct dirent *e = readdir(d)) {
             if (e->d_name[0] == '.') continue;
+            size_t nl = strlen(e->d_name);
+            if (nl > 7 && !strcmp(e->d_name + nl - 7, ".import")) continue;  // (a seed still being imported: saves.c)
             if (rando_seed_there(e->d_name)) out.push_back(e->d_name);  // (seed.json or an older settings.json, + romfs)
         }
         closedir(d);
@@ -2148,6 +2151,7 @@ static void storage_rows(bool busy) {
     if (busy || fixed) opt_disable_next();
     if (opt_action("Data folder", "Change...", d.c_str(), true)) choose_data_folder();
 #endif
+    saves_rows(busy || g_df != DF_NONE);  // export, import, the saves folder (runtime/ui/saves_ui.mm)
 }
 
 #ifdef __ANDROID__
@@ -2429,6 +2433,15 @@ extern "C" void launcher_run(const char *root) {
 #if LARECOMP_IOSEXPORT
     ios_export_wire();
 #endif
+    {   // the saves rows (runtime/ui/saves_ui.mm)
+#ifdef __ANDROID__
+        void (*reveal)(const std::string &) = NULL;  // (no folder to show there: saves_ui.mm has no such row)
+#else
+        void (*reveal)(const std::string &) = [](const std::string &dir) { reveal_folder(dir); };
+#endif
+        SavesUiHost h = {&g_font_small, &g_font_menu, &g_launcher_win, reveal, LARECOMP_VERSION};
+        saves_ui_init(h);
+    }
 #if PLAT_TOUCH
     plat_touch_shortcuts_sync();  // (seeds added or deleted outside the app since the last run)
 #endif
@@ -3465,6 +3478,7 @@ extern "C" void launcher_run(const char *root) {
                 // Settings, the System window at the first setup)
                 menu_style_begin(ds.y / 1080.0f), plastic_widgets(true), pieces = true;
                 data_folder_popup(s);
+                if (g_df == DF_NONE) saves_popups(s);  // (runtime/ui/saves_ui.mm)
                 notice_popup(s);
                 update_dialog(s);
                 plastic_widgets(false), menu_style_end();

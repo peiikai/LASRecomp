@@ -453,6 +453,51 @@ public class LASRecompActivity extends SDLActivity {
         return out.toArray(new String[0]);
     }
 
+    // ---- saves (Settings > Storage: runtime/saves.c, runtime/ui/launcher.mm). The system's pickers give content://
+    // links: a picked saves file is copied to the cache folder first, and an export written to the link chosen.
+    static native void nativeSavesPicked(String path);  // "" cancelled, null: no picker
+    static native void nativeSavesExported(int result);  // 1 written, 0 cancelled, -1 failed
+    private static final int PICK_SAVES = 0x4c53, EXPORT_SAVES = 0x4c45;
+    private String exportFrom;
+
+    public void pickSaves() {
+        runOnUiThread(() -> {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("*/*");  // (a .zip a cloud app or a PC put there may carry any type)
+            try {
+                startActivityForResult(i, PICK_SAVES);
+            } catch (Exception e) {
+                Log.e(TAG, "file picker: " + e);
+                nativeSavesPicked(null);
+            }
+        });
+    }
+
+    public void exportSaves(String from, String name) {
+        runOnUiThread(() -> {
+            exportFrom = from;
+            Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.setType("application/zip");
+            i.putExtra(Intent.EXTRA_TITLE, name);
+            try {
+                startActivityForResult(i, EXPORT_SAVES);
+            } catch (Exception e) {
+                Log.e(TAG, "save picker: " + e);
+                nativeSavesExported(-1);
+            }
+        });
+    }
+
+    private static boolean copyStream(InputStream in, OutputStream o) throws IOException {
+        if (in == null || o == null) return false;
+        byte[] buf = new byte[1 << 16];
+        for (int k; (k = in.read(buf)) > 0; ) o.write(buf, 0, k);
+        o.flush();
+        return true;
+    }
+
     // Called from the start screen's Choose... (any thread)
     public void pickGameFolder() {
         runOnUiThread(() -> {
@@ -501,6 +546,36 @@ public class LASRecompActivity extends SDLActivity {
                 else if (data.getData() != null) picks.add(data.getData());
             }
             new Thread(() -> nativeFilesPicked(copyPicked(picks)), "copy-picked").start();
+            return;
+        }
+        if (requestCode == PICK_SAVES) {
+            Uri f = resultCode == RESULT_OK && data != null ? data.getData() : null;
+            if (f == null) { nativeSavesPicked(""); return; }
+            new Thread(() -> {
+                File dst = new File(getCacheDir(), "picked-saves.zip");
+                try (InputStream in = getContentResolver().openInputStream(f); OutputStream o = new FileOutputStream(dst)) {
+                    if (!copyStream(in, o)) throw new IOException("no stream");
+                    nativeSavesPicked(dst.getPath());
+                } catch (Exception e) {
+                    Log.e(TAG, "picked saves: " + e);
+                    dst.delete();
+                    nativeSavesPicked(null);
+                }
+            }, "copy-saves").start();
+            return;
+        }
+        if (requestCode == EXPORT_SAVES) {
+            Uri f = resultCode == RESULT_OK && data != null ? data.getData() : null;
+            String from = exportFrom;
+            if (f == null || from == null) { nativeSavesExported(0); return; }
+            new Thread(() -> {
+                try (InputStream in = new java.io.FileInputStream(from); OutputStream o = getContentResolver().openOutputStream(f, "wt")) {
+                    nativeSavesExported(copyStream(in, o) ? 1 : -1);
+                } catch (Exception e) {
+                    Log.e(TAG, "export saves: " + e);
+                    nativeSavesExported(-1);
+                }
+            }, "export-saves").start();
             return;
         }
         if (requestCode != PICK_GAME_FOLDER) {

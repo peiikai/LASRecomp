@@ -104,6 +104,36 @@ void ios_ShowOpenFileDialog(SDL_DialogFileCallback cb, void *ud, SDL_Window *win
     [root presentViewController:p animated:YES completion:nil];
 }
 
+// A file the app made (a saves bundle) put where the player chooses: Files (On My iPhone, iCloud Drive, other apps'
+// folders), as a copy. done: 1 saved, 0 cancelled, -1 no window to show it over (main thread).
+@interface LASExportPicker : NSObject <UIDocumentPickerDelegate>
+@property(nonatomic) void (*done)(int);
+@end
+
+@implementation LASExportPicker
+- (void)documentPicker:(UIDocumentPickerViewController *)c didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls {
+    if (self.done) self.done(urls.count ? 1 : 0);
+}
+- (void)documentPickerWasCancelled:(UIDocumentPickerViewController *)c {
+    if (self.done) self.done(0);
+}
+@end
+
+static LASExportPicker *g_export_picker;
+
+void ios_export_file(SDL_Window *win, const char *path, void (*done)(int result)) {
+    UIViewController *root = root_controller(win);
+    if (!root) { fprintf(stderr, "[picker] no root view controller\n"); done(-1); return; }
+    if (!g_export_picker) g_export_picker = [LASExportPicker new];
+    g_export_picker.done = done;
+    NSURL *u = [NSURL fileURLWithPath:@(path)];
+    UIDocumentPickerViewController *p = [[UIDocumentPickerViewController alloc] initForExportingURLs:@[u] asCopy:YES];
+    p.delegate = g_export_picker;
+    p.shouldShowFileExtensions = YES;
+    p.modalInPresentation = YES;  // (a swipe down would close it without telling the delegate: Cancel only)
+    [root presentViewController:p animated:YES completion:nil];
+}
+
 // A file:// URL to a folder: the Files app there ("Show in Finder" is "Open in Files"); the rest as SDL does it.
 bool ios_OpenURL(const char *url) {
     @autoreleasepool {

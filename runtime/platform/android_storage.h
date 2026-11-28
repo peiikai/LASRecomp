@@ -33,6 +33,12 @@ bool android_driver_error_dialog(const char *text);
 // on any failure (the file is then gone).
 bool android_fetch(const char *url, const char *out, const char *user_agent);
 
+// Saves (runtime/saves.h, Settings > Storage): the system's file picker for a saves file, done(path) on another
+// thread with a local copy of it ("" cancelled, NULL failed); Export's save picker, the local bundle written where the
+// player chose (done: 1 written, 0 cancelled, -1 failed). false: no picker could open.
+bool android_pick_saves(void (*done)(const char *path));
+bool android_export_saves(const char *local, const char *name, void (*done)(int result));
+
 #ifdef __cplusplus
 }
 #endif

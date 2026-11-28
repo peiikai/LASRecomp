@@ -240,3 +240,41 @@ JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativePromptDone(JNI
     prompt_answer(serial, 1, (const char *)b, (size_t)n);
     (*env)->ReleaseByteArrayElements(env, text, b, JNI_ABORT);
 }
+
+// ---- saves (runtime/saves.h): the activity's pickers
+static void (*g_saves_picked)(const char *);
+static void (*g_saves_exported)(int);
+
+bool android_pick_saves(void (*done)(const char *path)) {
+    g_saves_picked = done;
+    return android_call("pickSaves");
+}
+JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeSavesPicked(JNIEnv *env, jclass cls, jstring path) {
+    (void)cls;
+    void (*done)(const char *) = g_saves_picked;
+    if (!done) return;
+    const char *p = path ? (*env)->GetStringUTFChars(env, path, NULL) : NULL;
+    done(p);
+    if (p) (*env)->ReleaseStringUTFChars(env, path, p);
+}
+
+bool android_export_saves(const char *local, const char *name, void (*done)(int result)) {
+    JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+    jobject act = (jobject)SDL_GetAndroidActivity();
+    if (!env || !act) return false;
+    jmethodID m = activity_method(env, act, "exportSaves", "(Ljava/lang/String;Ljava/lang/String;)V");
+    bool ok = m != NULL;
+    if (ok) {
+        g_saves_exported = done;
+        jstring jl = (*env)->NewStringUTF(env, local), jn = (*env)->NewStringUTF(env, name);
+        (*env)->CallVoidMethod(env, act, m, jl, jn);
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env), ok = false;
+        (*env)->DeleteLocalRef(env, jl), (*env)->DeleteLocalRef(env, jn);
+    }
+    (*env)->DeleteLocalRef(env, act);
+    return ok;
+}
+JNIEXPORT void JNICALL Java_com_lasrecomp_LASRecompActivity_nativeSavesExported(JNIEnv *env, jclass cls, jint result) {
+    (void)env, (void)cls;
+    if (g_saves_exported) g_saves_exported((int)result);
+}

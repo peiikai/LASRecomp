@@ -90,16 +90,16 @@ UI_SRC   := $(wildcard runtime/ui/*.mm) $(wildcard runtime/ui/mobile/*.mm)  # (m
 UI_OBJ   := $(patsubst runtime/%.mm,$(B)/rt/%.o,$(UI_SRC))
 IMGUI_OBJ := $(B)/imgui/imgui.o $(B)/imgui/imgui_draw.o $(B)/imgui/imgui_tables.o $(B)/imgui/imgui_widgets.o \
              $(B)/imgui/imgui_impl_sdl3.o
-# The iOS export (the start screen's "Recomp for iOS": runtime/iosexport.c, runtime/ui/ios_export_ui.mm, --build-ios)
-# is in the desktop apps unless IOSEXPORT=0: it reads the kit and writes the .ipa with miniz (MIT; build/miniz,
-# fetched by tools/fetch_miniz.sh - the one fetch a plain `make` does), through runtime/zipfile.c. Not in the iOS app.
+# Zip archives with miniz (MIT; build/miniz, fetched by tools/fetch_miniz.sh - the one fetch a plain `make` does),
+# through runtime/zipfile.c: save bundles (runtime/saves.c) on every platform. The iOS export (the start screen's
+# "Recomp for iOS": runtime/iosexport.c, runtime/ui/ios_export_ui.mm, --build-ios) reads the kit and writes the .ipa
+# with it too; it is in the desktop apps unless IOSEXPORT=0. Not in the iOS app.
 IOSEXPORT ?= $(if $(filter ios,$(PLATFORM)),0,1)
 MINIZ    := build/miniz
 EXPORTFLAG := -DLARECOMP_IOSEXPORT=$(IOSEXPORT)
-ifeq ($(IOSEXPORT),1)
 MINIZ_OBJ := $(B)/third_party/miniz.o
-else
-RT_SRC   := $(filter-out runtime/zipfile.c runtime/iosexport.c,$(RT_SRC))
+ifneq ($(IOSEXPORT),1)
+RT_SRC   := $(filter-out runtime/iosexport.c,$(RT_SRC))
 UI_SRC   := $(filter-out runtime/ui/ios_export_ui.mm,$(UI_SRC))
 UI_OBJ   := $(patsubst runtime/%.mm,$(B)/rt/%.o,$(UI_SRC))
 endif

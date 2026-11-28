@@ -89,6 +89,8 @@ static void scan(void) {
     if (!d) return;
     while (struct dirent *e = readdir(d)) {
         if (e->d_name[0] == '.') continue;
+        size_t nl = strlen(e->d_name);
+        if (nl > 7 && !strcmp(e->d_name + nl - 7, ".import")) continue;  // (a seed still being imported: runtime/saves.c)
         std::string dir = std::string("rando/") + e->d_name;
         struct stat sb;
         if (stat((dir + "/exefs/1.0.0.pchtxt").c_str(), &sb)) continue;
@@ -427,6 +429,13 @@ static std::string clean_name(const char *in) {  // a seed name as a folder name
     }
     while (!n.empty() && n.back() == ' ') n.pop_back();
     while (!n.empty() && (n[0] == ' ' || n[0] == '.')) n.erase(0, 1);
+    // never a Windows device name (con, nul, com1, ...): Windows can't make that folder or import its saves
+    std::string low = n;
+    for (char &c : low) c = (char)tolower((unsigned char)c);
+    bool device = low == "con" || low == "prn" || low == "aux" || low == "nul" ||
+                  (low.size() == 4 && (!low.compare(0, 3, "com") || !low.compare(0, 3, "lpt")) && low[3] >= '1' &&
+                   low[3] <= '9');
+    if (device) n += '_';
     return n;
 }
 

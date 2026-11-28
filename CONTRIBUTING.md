@@ -140,6 +140,9 @@ notices.
 
 `python tools/test_save.py` exercises the production save handlers against temporary files, without game data.
 
+`tools/test_saves.c` (build line at its top) checks saves files (`runtime/saves.c`): export, import with backups,
+damaged saves, unsafe names and seeds, without game data.
+
 `python tools/test_powerup_music.py` checks power-up music toggles, guest-state preservation and reboot resets without game data.
 
 The randomizer's native random numbers: `tools/test_pyrandom.cpp` (build line at its top) checks

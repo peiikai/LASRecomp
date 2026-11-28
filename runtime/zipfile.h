@@ -1,4 +1,4 @@
-// Zip archives (miniz, tools/fetch_miniz.sh): the iOS kit the player downloads (.laskit: the app, the linkers, the headers) is
+// Zip archives (miniz, tools/fetch_miniz.sh): save bundles (runtime/saves.c), and the iOS kit the player downloads (.laskit: the app, the linkers, the headers) is
 // read here, the toolchain of this host taken out of it, and the .ipa written from its Payload/ entries (cloned as
 // they are) plus the game code library. Entries keep their Unix mode in the external attributes (Info-ZIP's
 // convention): the linker comes out executable on every host, which a folder on Windows can't give.
@@ -35,6 +35,8 @@ bool zip_extract(ZipReader *z, const char *prefix, const char *dir, char *why, s
 // their Unix mode included; a file added here gets no mode at all (miniz can't write one; the library doesn't need one).
 ZipWriter *zip_create(const char *path, char *why, size_t why_size);
 bool zip_add_file(ZipWriter *w, const char *name, const char *path, bool compress);
+// An entry from memory (a small text file made on the spot), compressed.
+bool zip_add_mem(ZipWriter *w, const char *name, const void *data, size_t size);
 // Entry i of src copied as it is: its name, data (no recompression) and central-directory record.
 bool zip_add_from(ZipWriter *w, ZipReader *src, int i);
 // Finish and close; false when anything failed to write (the file is left for the caller to remove).
