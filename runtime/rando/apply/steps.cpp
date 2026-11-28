@@ -41,7 +41,7 @@ static const char *const kOrder[] = {
     "las_headless.write_room", "entrance_logic.raft_shop_to_dock", "dungeon_gen._fix_room", "escape_bottle.apply",
     "hint_sheet.apply", "seed_hints._owl_flows", "souls.write_spots", "triforce.write_spots", "digs.apply",
     "underwater.apply", "seashell_spots.apply", "apple_trees.apply", "keysanity_text.apply", "roam.write",
-    "miniboss_guard.apply", "enemy_random.write", "refill_gets.apply", "bomb_bag_text.apply",
+    "miniboss_guard.apply", "enemy_random.write", "refill_gets.apply", "arrow_bow_text.apply", "bomb_bag_text.apply",
     "powder_bag_text.apply", "silent_pickups._flow", "chest_looks.write_models", "chest_looks.sweep",
     "fast_egg.apply", "quick_pickups.apply", "seed_tables.write_flags", "environments.apply",
 };

@@ -434,6 +434,59 @@ void refill_gets_apply(SeedBuild &b) {
         add_message(b, NO_BAG.at(item), item == "Bomb" ? bomb_no_bag_text : powder_no_bag_text);
 }
 
+// ======== arrow_bow_text.py
+// An arrow refill held up at a check (pot filler in a chest, a seashell reward, an NPC) shows Item.bfevfl entry
+// "Arrow" (the get's own entry "Arrow", or none: the game then takes the item's): the game's no-bow line
+// (System:GetArrow), which the game itself only shows while Link has no bow - with the bow its arrows are picked up
+// without a word. So every such get first asks for the bow (Inventory.HasItem itemType 5, as the tool shop's bow
+// does): with it the arrow is held up with no message (entry ArrowNoText), without it the game's own line stays (and
+// runtime/hle/keysanity.c hands out a blue rupee instead). Shared gets whose item is the flow's argument (chests,
+// seashell rewards) ask for the arrow first (CompareString: case 0 = equal).
+void arrow_bow_text_apply(SeedBuild &b) {
+    const std::string ENTRY = "ArrowNoText";
+    int n = 0;
+    for (const std::string &name : written_flows(b)) {
+        if (name == "Item.bfevfl") continue;
+        EventFlow flow = b.read_flow(name);
+        EvflFlowchart &fc = flow.flowchart;
+        Flow f(b, fc);
+        bool changed = false;
+        size_t count = fc.events.size();
+        for (size_t i = 0; i < count; i++) {
+            if (!is_action(fc, (uint16_t)i, "Link", "GenericItemGetSequenceByKey")) continue;
+            const EvflValue *key = fc.events[i].params.get("itemKey"), *msg = fc.events[i].params.get("messageEntry");
+            if (truthy(msg) && !(msg->type == EvflValue::String && msg->s == "Arrow")) continue;
+            bool literal = key && key->type == EvflValue::String && key->s == "Arrow";
+            if (!literal && !is_arg(key)) continue;
+            const EvflValue *kc = fc.events[i].params.get("keepCarry");
+            EvflValue keep = kc ? *kc : EvflValue::of_bool(false);
+            std::string ev = fc.events[i].name;
+            size_t before = fc.events.size();
+            std::string have = f.action("Link", "GenericItemGetSequenceByKey",
+                                        {{"itemKey", "Arrow"}, {"keepCarry", keep}, {"messageEntry", ENTRY}},
+                                        name_of(fc, fc.events[i].next));
+            std::string head = f.sw("Inventory", "HasItem", {{"itemType", 5}, {"count", 1}}, {{0, ev}, {1, have}});
+            if (!literal)
+                head = f.sw("FlowControl", "CompareString", {{"value1", key->s}, {"value2", "Arrow"}}, {{0, head}, {1, ev}});
+            std::set<uint16_t> fresh;
+            for (size_t j = before; j < fc.events.size(); j++) fresh.insert((uint16_t)j);
+            retarget(fc, (uint16_t)i, event_index(fc, head), fresh);
+            changed = true;
+            n++;
+        }
+        if (changed) b.write_flow(name, flow);
+    }
+    if (!n) return;
+    ensure_item_flow(b);
+    EventFlow flow = b.read_flow("Item.bfevfl");
+    Flow f(b, flow.flowchart);
+    if (!f.find_entry(ENTRY)) {
+        f.add_entry_point(ENTRY);
+        f.action_chain(ENTRY, {{"Timer", "Wait", {{"time", 0.0}}}});
+    }
+    b.write_flow("Item.bfevfl", flow);
+}
+
 // ======== silent_pickups.py
 namespace {
 const int SILENT_BASE = 3000;
