@@ -346,6 +346,9 @@ static void sky_blue(float tint[8], bool lit) {
     memcpy(tint, have ? env : lit ? model : ui, 8 * sizeof(float));
 }
 
+// The icon's tint alone (the D-pad's copy: runtime/ui/dpad_overlay.mm)
+void hint_sheet_icon_tint(float tint[8]) { sky_blue(tint, false); }
+
 bool hint_sheet_tint(int kind, const float *ui, uint32_t ui_size, float tint[8]) {
     if (!hint_sheet_on()) return false;
     if (kind == 5) {
