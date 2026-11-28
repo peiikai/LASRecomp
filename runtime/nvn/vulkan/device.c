@@ -1760,11 +1760,20 @@ static int ip_mids(TexBackend *b, uint64_t frame) {  // (the in-betweens shown)
     if (!interp_replays_allowed(frame, total_frames, now)) { ip_not_made[IP_NOT_ALLOWED]++; return 0; }
     if (!interp_replay_lock()) { ip_not_made[IP_LOCKED]++; return 0; }
     int made = 0;
+    // LARECOMP_INTERP_SEQ=<from>:<n>:<dir> (tests, as metal.m): the game's image and each in-between of frames from..from+n-1
+    // saved as <dir>/<frame>_<k>.png (k 0: the game's, 1..: the in-betweens in order) - what each image showed
+    static long seq_from = -1, seq_n;
+    static char seq_dir[200];
+    if (seq_from < 0) { const char *e = getenv("LARECOMP_INTERP_SEQ"); seq_from = 0; if (e) sscanf(e, "%ld:%ld:%199s", &seq_from, &seq_n, seq_dir); }
+    bool seq = seq_n && (long)frame >= seq_from && (long)frame < seq_from + seq_n;
+    char seq_path[256];
+    if (seq) { snprintf(seq_path, sizeof seq_path, "%s/%06llu_0.png", seq_dir, (unsigned long long)frame); renderer_save_texture_tex(b, seq_path); }
     if (ip_hold(b, false)) {
         extern void renderer_interp_replay(void);
         for (int m = 1; m <= allowed; m++) {
             if (!interp_prepare((float)m / (float)(allowed + 1))) break;
             renderer_interp_replay();
+            if (seq) { snprintf(seq_path, sizeof seq_path, "%s/%06llu_%d.png", seq_dir, (unsigned long long)frame, m); renderer_save_texture_tex(b, seq_path); }
             ip_present_mid(b);
             made++;
         }
