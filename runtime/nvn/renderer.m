@@ -34,7 +34,7 @@ static id<MTLRenderCommandEncoder> enc;
 // (texture pool lookups, state hashing, uniform copies: 4-9 ms an image in the field, the game held back to 20-30 fps).
 // Copies between textures are recorded as blocks that encode them again. Calls on `enc` go through the E_* wrappers.
 // LARECOMP_INTERP_TAPE=0: replays translate the lists again (the old path).
-enum { TP_PASS, TP_END, TP_PIPE, TP_DSS, TP_STREF, TP_STREF2, TP_BLENDC, TP_CULL, TP_WIND, TP_FILL, TP_BIAS,
+enum { TP_PASS, TP_END, TP_PIPE, TP_DSS, TP_STREF, TP_STREF2, TP_BLENDC, TP_CULL, TP_WIND, TP_FILL, TP_CLIP, TP_BIAS,
        TP_VIEWPORT, TP_SCISSOR, TP_BUF, TP_BYTES, TP_TEX, TP_SMP, TP_DRAW, TP_DRAWI, TP_BLOCK };
 typedef struct {
     uint8_t op, stage; uint16_t idx;
@@ -136,6 +136,7 @@ static void E_blendc(const float *c) {
 static void E_cull(MTLCullMode m) { [enc setCullMode:m]; if (tp_on()) tp_push(TP_CULL)->a = m; }
 static void E_wind(MTLWinding w) { [enc setFrontFacingWinding:w]; if (tp_on()) tp_push(TP_WIND)->a = w; }
 static void E_fill(MTLTriangleFillMode m) { [enc setTriangleFillMode:m]; if (tp_on()) tp_push(TP_FILL)->a = m; }
+static void E_clip(MTLDepthClipMode m) { [enc setDepthClipMode:m]; if (tp_on()) tp_push(TP_CLIP)->a = m; }
 static void E_bias(float bias, float slope, float clamp) {
     [enc setDepthBias:bias slopeScale:slope clamp:clamp];
     if (tp_on()) { TapeOp *o = tp_push(TP_BIAS); o->f[0] = bias, o->f[1] = slope, o->f[2] = clamp; }
@@ -3287,12 +3288,20 @@ static uint64_t pipeline_state_hash(Prog *pr) {
 }
 
 // The draw's state as a variant record (shader_prep.h): what its program and pipeline depend on, in NVN terms
+// A draw into the game's shadow map: depth clamped, not clipped at the light's near plane (output_scale_shadow_clamp)
+static bool shadow_clamp(void) {
+    NvnTexture *d = st.rt.depth;
+    return d && output_scale_is_shadow_map(d->target, d->samples, d->width, d->height, d->format, (d->flags & 8) != 0) &&
+           output_scale_shadow_clamp();
+}
+
 static void rec_from_state(ShaderRec *r, bool flip_x, uint32_t mode) {
     memset(r, 0, sizeof *r);
     r->kind = 'G';
     r->vs = shader_stage_hash(&st.program->stages[0]);
     r->fs = shader_stage_hash(&st.program->stages[1]);
-    r->flags = (nvn_window_origin() == 0 ? SR_FLIP_Y : 0) | (nvn_depth_mode() == 0 ? SR_DEPTH_MINUS_ONE : 0) | (flip_x ? SR_FLIP_X : 0);
+    r->flags = (nvn_window_origin() == 0 ? SR_FLIP_Y : 0) | (nvn_depth_mode() == 0 ? SR_DEPTH_MINUS_ONE : 0) | (flip_x ? SR_FLIP_X : 0) |
+               (shadow_clamp() ? SR_DEPTH_CLAMP : 0);
     r->nattrib = (uint8_t)(st.nattrib < 16 ? st.nattrib : 16);
     memcpy(r->attrib, st.attrib, sizeof r->attrib[0] * r->nattrib);
     r->nstream = (uint8_t)(st.nstream < 16 ? st.nstream : 16);
@@ -4506,6 +4515,7 @@ static void draw_one(CmdRec *r, bool indexed) {
     bool ccw = st.poly[1] == 1;
     E_wind((ccw != vkey.flip_y) ? MTLWindingCounterClockwise : MTLWindingClockwise);
     E_fill(st.poly[2] == 1 ? MTLTriangleFillModeLines : MTLTriangleFillModeFill);
+    E_clip(shadow_clamp() ? MTLDepthClipModeClamp : MTLDepthClipModeClip);
     {   // polygon offset (decals on floors: without it they z-fight). Enables: bit 2 = fill (NVN PolygonOffsetEnable)
         static float last[3] = {0, 0, 0};
         float f[3] = {0, 0, 0};
@@ -6372,6 +6382,7 @@ bool renderer_interp_tape_replay(void) {
             case TP_CULL: [e setCullMode:(MTLCullMode)o->a]; break;
             case TP_WIND: [e setFrontFacingWinding:(MTLWinding)o->a]; break;
             case TP_FILL: [e setTriangleFillMode:(MTLTriangleFillMode)o->a]; break;
+            case TP_CLIP: [e setDepthClipMode:(MTLDepthClipMode)o->a]; break;
             case TP_BIAS: [e setDepthBias:o->f[0] slopeScale:o->f[1] clamp:o->f[2]]; break;
             case TP_VIEWPORT: [e setViewport:(MTLViewport){o->f[0], o->f[1], o->f[2], o->f[3], o->f[4], o->f[5]}]; break;
             case TP_SCISSOR: [e setScissorRect:(MTLScissorRect){(NSUInteger)o->a, (NSUInteger)o->b, (NSUInteger)o->c, (NSUInteger)o->d}]; break;
