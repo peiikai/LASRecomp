@@ -1141,6 +1141,18 @@ float output_scale_shadow_slope(void) {
     return raw ? 1 : output_scale_shadow();
 }
 
+// Draws into the shadow map clamp depth to the light's range (Metal depth clip mode clamp, Vulkan depthClampEnable)
+// instead of being clipped at its near plane. The game fits the light's near plane to the camera's view, and a tall
+// caster above it lost its top: Eagle Tower's upper floors were cut off, the map held the inside of an open tube, and
+// its shadow on the ground had lit gaps (issue #905, seen walking left past the owl statue in front of the tower).
+// Clamped, the cut part lands at the near plane, still in front of every receiver: the tower's shadow is whole, as on
+// the Switch. LARECOMP_SHADOW_CLIP=1 (A/B tests): clipped as before.
+bool output_scale_shadow_clamp(void) {
+    static int clip = -1;
+    if (clip < 0) clip = getenv("LARECOMP_SHADOW_CLIP") != NULL;
+    return !clip;
+}
+
 // Shadows Off: the draws into the shadow map are skipped (renderer.m / vulkan/exec.c draw). The game still clears it to
 // 1.0 every frame, which its lit shaders' compare taps read as unshadowed, so nothing is shaded.
 bool output_scale_shadow_off(void) {

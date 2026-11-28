@@ -35,6 +35,7 @@ bool output_scale_is_shadow_map(uint32_t target, uint32_t samples, uint32_t w, u
 float output_scale_shadow(void);
 float output_scale_shadow_slope(void);  // the slope factor of its polygon offset times this
 bool output_scale_shadow_off(void);  // Shadows Off: nothing is drawn into it
+bool output_scale_shadow_clamp(void);  // draws into it clamp depth instead of clipping at the light's near plane
 // (diagnostics) "[scale] frame f drawable WxH -> render scale sx x sy" whenever the render scale or the window changes
 void output_scale_log(unsigned long long frame, double dw, double dh, const OutScale *o);  // the frame rate Dynamic holds (60 out of reach), else 0
 

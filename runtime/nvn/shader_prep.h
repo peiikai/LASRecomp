@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { SR_FLIP_Y = 1, SR_DEPTH_MINUS_ONE = 2, SR_FLIP_X = 4 };
+enum { SR_FLIP_Y = 1, SR_DEPTH_MINUS_ONE = 2, SR_FLIP_X = 4, SR_DEPTH_CLAMP = 8 };
 
 typedef struct {
     char kind;               // 'G' graphics pipeline, 'C' compute program

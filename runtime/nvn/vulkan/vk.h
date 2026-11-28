@@ -52,6 +52,7 @@ typedef struct {
     VkSemaphore timeline;      // value = last completed submission number
     VkCommandPool pool;        // render thread only
     bool custom_border, divisor, host_import, dmabuf;
+    bool depth_clamp;  // depthClamp feature (draws into the shadow map: output_scale_shadow_clamp)
     // VK_EXT_vertex_input_dynamic_state (exec.c): the vertex layout is set per draw (vkCmdSetVertexInputEXT), not
     // baked into each pipeline - fewer pipelines. Off: no extension / feature, or LARECOMP_VK_DYN_VERTEX=0.
     bool vids;
